@@ -16,3 +16,8 @@ frontend/node_modules/
 backend/.env
 .env
 .env.*
+
+# secrets
+backend/.env
+.env
+.env.*
