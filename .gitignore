@@ -11,3 +11,8 @@ frontend/node_modules/
 
 # OS
 .DS_Store
+
+# secrets
+backend/.env
+.env
+.env.*
