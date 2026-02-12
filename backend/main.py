@@ -1,0 +1,438 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import time
+from io import BytesIO
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from backend directory so OPENAI_API_KEY etc. are available
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from typing import Optional
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, HTMLResponse
+
+from engine.compute import compute_cashflows
+from generate_scenarios import generate_scenarios
+from lease_extract import extract_lease
+from models import (
+    CashflowResult,
+    CreateReportRequest,
+    CreateReportResponse,
+    ExtractionResponse,
+    GenerateScenariosRequest,
+    GenerateScenariosResponse,
+    LeaseExtraction,
+    ReportRequest,
+    Scenario,
+)
+from scenario_extract import (
+    extract_text_from_pdf,
+    extract_text_from_pdf_with_ocr,
+    extract_text_from_docx,
+    extract_scenario_from_text,
+    text_quality_requires_ocr,
+)
+from reports_store import load_report, save_report
+from routes.api import router as api_router
+from routes.webhooks import router as webhooks_router
+from brands import get_brand, list_brands
+from cache.disk_cache import (
+    get_cached_extraction,
+    set_cached_extraction,
+    get_cached_report,
+    set_cached_report,
+)
+
+REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
+
+app = FastAPI(title="Lease Deck Backend", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(api_router)
+app.include_router(webhooks_router)
+
+
+@app.on_event("startup")
+def startup_log() -> None:
+    import logging
+    port = os.environ.get("PORT", "8010")
+    host = os.environ.get("HOST", "127.0.0.1")
+    has_openai = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+    logging.getLogger("uvicorn.error").info(
+        f"Backend starting on http://{host}:{port} (OPENAI_API_KEY configured: {has_openai})"
+    )
+    if not has_openai:
+        logging.getLogger("uvicorn.error").warning(
+            "OPENAI_API_KEY is not set. Extraction and AI features will not work."
+        )
+    print("Backend ready on http://127.0.0.1:8010", flush=True)
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.post("/extract", response_model=ExtractionResponse)
+def extract_document(
+    file: UploadFile = File(...),
+    force_ocr: Optional[bool] = Form(None),
+    ocr_pages: int = Form(5),
+) -> ExtractionResponse:
+    """
+    Accept PDF or DOCX (multipart): extract text. For PDF, OCR runs when forced, or automatically
+    when text quality is poor (short text, low alnum ratio, replacement chars, many short lines).
+    force_ocr: true = always OCR, false = never OCR, omit = auto. Returns ocr_used and extraction_source.
+    ocr_pages: max PDF pages to OCR when OCR runs (default 5).
+    """
+    filename = file.filename or "(no name)"
+    content_type = getattr(file, "content_type", None) or ""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    fn = file.filename.lower()
+    if not (fn.endswith(".pdf") or fn.endswith(".docx")):
+        raise HTTPException(status_code=400, detail="File must be PDF or DOCX")
+    try:
+        contents = file.file.read()
+    except Exception as e:
+        print(f"[extract] Failed to read file: {e!s}")
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {e}") from e
+    size = len(contents)
+    print(f"[extract] filename={filename!r} content_type={content_type!r} size_bytes={size}")
+    if size == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    cache_key: bool | str = "auto" if force_ocr is None else force_ocr
+    cached = get_cached_extraction(contents, cache_key)
+    if cached is not None:
+        print(f"[extract] cache hit for {filename!r}")
+        return ExtractionResponse.model_validate(cached)
+
+    buf = BytesIO(contents)
+    text = ""
+    source = "docx"
+    ocr_used = False
+    extraction_source: str = "text"
+    try:
+        if fn.endswith(".pdf"):
+            pages = 5
+            try:
+                pages = max(1, min(50, int(ocr_pages)))
+            except (TypeError, ValueError):
+                pass
+            if force_ocr is True:
+                text, source = extract_text_from_pdf_with_ocr(buf, force_ocr=True, ocr_pages=pages)
+                ocr_used = source in ("ocr", "pdf_text+ocr")
+                extraction_source = "ocr"
+                print(f"[extract] path=pdf force_ocr=true source={source!r} text_len={len(text)}")
+            elif force_ocr is False:
+                text = extract_text_from_pdf(buf)
+                source = "pdf_text"
+                extraction_source = "text"
+                print(f"[extract] path=pdf force_ocr=false text_len={len(text)}")
+            else:
+                # Auto: first pass without OCR, then OCR if quality is poor
+                text = extract_text_from_pdf(buf)
+                if text_quality_requires_ocr(text):
+                    buf.seek(0)
+                    text, source = extract_text_from_pdf_with_ocr(buf, force_ocr=True, ocr_pages=pages)
+                    ocr_used = True
+                    extraction_source = "auto_ocr"
+                    print(f"[extract] path=pdf auto_ocr triggered source={source!r} text_len={len(text)}")
+                else:
+                    source = "pdf_text"
+                    extraction_source = "text"
+                    print(f"[extract] path=pdf auto no OCR text_len={len(text)}")
+        else:
+            text = extract_text_from_docx(buf)
+            source = "docx"
+            extraction_source = "text"
+            print(f"[extract] path=docx text_len={len(text)}")
+    except ValueError as e:
+        print(f"[extract] ValueError: {e!s}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except ImportError as e:
+        print(f"[extract] ImportError: {e!s}")
+        raise HTTPException(
+            status_code=503,
+            detail="OCR or DOCX support not available. Install pdf2image, pytesseract, and poppler (system) for OCR; python-docx for DOCX.",
+        ) from e
+    except Exception as e:
+        print(f"[extract] Text extraction error: {e!s}")
+        err_msg = str(e).lower()
+        if "poppler" in err_msg or "tesseract" in err_msg:
+            raise HTTPException(
+                status_code=503,
+                detail="OCR failed. Ensure poppler and tesseract are installed (e.g. brew install poppler tesseract).",
+            ) from e
+        raise HTTPException(status_code=500, detail=f"Text extraction failed: {e!s}") from e
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="No text could be extracted from the document")
+    try:
+        response = extract_scenario_from_text(text, source=source)
+        response = response.model_copy(update={"ocr_used": ocr_used, "extraction_source": extraction_source})
+        set_cached_extraction(contents, cache_key, response.model_dump(mode="json"))
+        return response
+    except ValueError as e:
+        print(f"[extract] LLM ValueError: {e!s}")
+        if "OPENAI_API_KEY" in str(e):
+            raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured.") from e
+        if "rate" in str(e).lower() or "quota" in str(e).lower():
+            raise HTTPException(status_code=429, detail="API rate limit or quota exceeded. Please try again later.") from e
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[extract] AI extraction error: {e!s}")
+        err_lower = str(e).lower()
+        if "rate" in err_lower or "quota" in err_lower:
+            raise HTTPException(status_code=429, detail="API rate limit or quota exceeded. Please try again later.") from e
+        raise HTTPException(status_code=500, detail=f"AI extraction failed: {e!s}") from e
+
+
+@app.post("/upload_lease", response_model=LeaseExtraction)
+def upload_lease(file: UploadFile = File(...)) -> LeaseExtraction:
+    """
+    Accept a PDF lease document, extract text, run LLM extraction, return LeaseExtraction
+    with per-field value, confidence, and citation snippet.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+    try:
+        contents = file.file.read()
+        if len(contents) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+        from io import BytesIO
+        return extract_lease(BytesIO(contents))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {e!s}")
+
+
+@app.post("/compute", response_model=CashflowResult)
+def compute_scenario(scenario: Scenario) -> CashflowResult:
+    """
+    Compute tenant-side lease economics for a given scenario.
+    """
+    _, result = compute_cashflows(scenario)
+    return result
+
+
+@app.post("/generate_scenarios", response_model=GenerateScenariosResponse)
+def generate_scenarios_endpoint(req: GenerateScenariosRequest):
+    """
+    Generate Renewal and Relocation scenarios from a single request.
+    Returns two full Scenario objects for comparison.
+    """
+    return generate_scenarios(req)
+
+
+@app.post("/debug_cashflows")
+def debug_cashflows(scenario: Scenario) -> dict:
+    """
+    Return monthly cashflows array for debugging (same scenario body as /compute).
+    """
+    cashflows, _ = compute_cashflows(scenario)
+    return {"cashflows": cashflows}
+
+
+@app.post("/reports", response_model=CreateReportResponse)
+def create_report(req: CreateReportRequest) -> CreateReportResponse:
+    """
+    Store a report (scenarios + results + optional branding) and return reportId.
+    """
+    data = {
+        "scenarios": [{"scenario": e.scenario, "result": e.result.model_dump()} for e in req.scenarios],
+        "branding": req.branding.model_dump() if req.branding else {},
+    }
+    report_id = save_report(data)
+    return CreateReportResponse(report_id=report_id)
+
+
+@app.get("/reports/{report_id}")
+def get_report(report_id: str):
+    """
+    Return stored report JSON for the report page to consume.
+    """
+    data = load_report(report_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return data
+
+
+@app.get("/brands")
+def get_brands_list():
+    """Return list of available brands for UI dropdown."""
+    return [b.model_dump() for b in list_brands()]
+
+
+def _report_id(brand_id: str, scenario_dict: dict, meta_dict: dict) -> str:
+    """Generate a unique report ID for headers."""
+    scenario_hash = hashlib.sha256(json.dumps(scenario_dict, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    meta_hash = hashlib.sha256(json.dumps(meta_dict, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    payload = f"{brand_id}{scenario_hash}{meta_hash}{time.time():.3f}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _pdf_filename(meta_dict: dict) -> str:
+    """Clean filename from proposal_name or default."""
+    name = (meta_dict.get("proposal_name") or "").strip()
+    if name:
+        name = re.sub(r"[^\w\s-]", "", name)[:50].strip() or "lease-analysis"
+        name = re.sub(r"[-\s]+", "-", name)
+    else:
+        name = "lease-financial-analysis"
+    return f"{name}.pdf"
+
+
+@app.post("/report")
+def build_report_pdf_endpoint(req: ReportRequest) -> Response:
+    """
+    Build institutional report PDF: run compute, then generate PDF with brand.
+    Validates brand_id (400) and scenario (422). Returns X-Report-ID header.
+    Uses cache when same scenario+brand+meta; does not regenerate PDF.
+    """
+    brand = get_brand(req.brand_id)
+    if brand is None:
+        raise HTTPException(status_code=400, detail=f"Unknown brand_id: {req.brand_id}")
+
+    meta_dict = req.meta.model_dump() if req.meta else {}
+    scenario_dict = req.scenario.model_dump(mode="json")
+    report_id = _report_id(req.brand_id, scenario_dict, meta_dict)
+    base_headers = {"X-Report-ID": report_id}
+
+    _, compute_result = compute_cashflows(req.scenario)
+
+    cached_pdf = get_cached_report(scenario_dict, req.brand_id, meta_dict)
+    if cached_pdf is not None:
+        filename = _pdf_filename(meta_dict)
+        return Response(
+            content=cached_pdf,
+            media_type="application/pdf",
+            headers={
+                **base_headers,
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    try:
+        from reporting.report_builder import build_report_pdf
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Report module not available. Use POST /report/preview for HTML.",
+        )
+    try:
+        pdf_bytes = build_report_pdf(
+            req.scenario,
+            compute_result,
+            brand,
+            meta_dict,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Playwright is required for PDF. Install: pip install playwright && playwright install chromium. Use POST /report/preview for HTML without Playwright.",
+        )
+    except Exception as e:
+        print(f"[report] PDF generation failed: {e!s}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF generation failed: {e!s}. Use POST /report/preview to get HTML instead.",
+        ) from e
+
+    set_cached_report(scenario_dict, req.brand_id, meta_dict, pdf_bytes)
+    filename = _pdf_filename(meta_dict)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            **base_headers,
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@app.post("/report/preview", response_class=HTMLResponse)
+def build_report_preview(req: ReportRequest) -> str:
+    """
+    Return report as HTML (no Playwright required). Same request body as POST /report.
+    Validates brand_id (400) and scenario (422). Returns X-Report-ID header.
+    """
+    brand = get_brand(req.brand_id)
+    if brand is None:
+        raise HTTPException(status_code=400, detail=f"Unknown brand_id: {req.brand_id}")
+
+    meta_dict = req.meta.model_dump() if req.meta else {}
+    scenario_dict = req.scenario.model_dump(mode="json")
+    report_id = _report_id(req.brand_id, scenario_dict, meta_dict)
+
+    _, compute_result = compute_cashflows(req.scenario)
+
+    from reporting.report_builder import build_report_html
+    html_str = build_report_html(req.scenario, compute_result, brand, meta_dict)
+    return HTMLResponse(html_str, headers={"X-Report-ID": report_id})
+
+
+@app.get("/reports/{report_id}/pdf")
+def get_report_pdf(report_id: str):
+    """
+    Load report page in Playwright and return PDF stream.
+    """
+    data = load_report(report_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Playwright not installed. Run: pip install playwright && playwright install chromium",
+        )
+
+    url = f"{REPORT_BASE_URL}/report?reportId={report_id}"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.emulate_media(media="print")
+        page.wait_for_timeout(1500)  # allow charts to render
+        pdf_bytes = page.pdf(format="A4", print_background=True, margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"})
+        browser.close()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="lease-deck-{report_id[:8]}.pdf"'},
+    )
+
+
+def get_app() -> FastAPI:
+    """
+    Convenience accessor for ASGI servers.
+    """
+    return app
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="127.0.0.1",
+        port=8010,
+        reload=True,
+    )

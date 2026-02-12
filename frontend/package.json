@@ -1,0 +1,33 @@
+{
+  "name": "lease-deck-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "clean": "rm -rf .next",
+    "dev": "next dev",
+    "dev:clean": "rm -rf .next && next dev",
+    "dev:report": "next dev -p 3001",
+    "generate:example-report": "python3 scripts/generate_example_report_pdf.py",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "framer-motion": "^12.34.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^2.15.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.0"
+  }
+}

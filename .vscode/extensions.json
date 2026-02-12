@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "openai.chatgpt"
+  ],
+  "unwantedRecommendations": [
+    "github.copilot",
+    "github.copilot-chat",
+    "codeium.codeium",
+    "continue.continue",
+    "sourcegraph.cody-ai",
+    "tabnine.tabnine-vscode"
+  ]
+}

@@ -1,0 +1,160 @@
+// Lease Deck SaaS - Postgres schema (source of truth)
+// Run: npx prisma generate (optional; Python backend uses SQLAlchemy mirror)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  owner
+  admin
+  member
+}
+
+enum JobType {
+  pdf_export
+  lease_extraction
+}
+
+enum JobStatus {
+  pending
+  running
+  completed
+  failed
+}
+
+model Organization {
+  id            String   @id @default(cuid())
+  clerkOrgId    String   @unique(map: "Organization_clerkOrgId_key")
+  name          String
+  stripeCustomerId String? @map("stripe_customer_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  members   OrganizationMember[]
+  deals     Deal[]
+  auditLogs AuditLog[]
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  userId         String   @map("user_id")
+  role           Role     @default(member)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("organization_members")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique(map: "User_clerkId_key")
+  email     String?
+  name      String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships OrganizationMember[]
+}
+
+model Deal {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  metadata       Json?    @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scenarios    Scenario[]
+
+  @@map("deals")
+}
+
+model Scenario {
+  id        String   @id @default(cuid())
+  dealId    String   @map("deal_id")
+  name      String
+  payload   Json     // full ScenarioInput-like JSON
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  deal Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  runs Run[]
+
+  @@map("scenarios")
+}
+
+model Run {
+  id          String   @id @default(cuid())
+  scenarioId  String   @map("scenario_id")
+  result      Json     // CashflowResult-like JSON
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  scenario Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@map("runs")
+}
+
+model Report {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  payload        Json     // scenarios + results + branding
+  s3Key          String?  @map("s3_key")   // PDF in S3 when job completes
+  jobId          String?  @map("job_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("reports")
+}
+
+model File {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  filename       String
+  s3Key          String   @map("s3_key")
+  contentType    String   @map("content_type")
+  jobId          String?  @map("job_id")  // extraction job if applicable
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("files")
+}
+
+model Job {
+  id             String    @id @default(cuid())
+  organizationId String    @map("organization_id")
+  type           JobType
+  status         JobStatus @default(pending)
+  payload        Json?     // type-specific (e.g. reportId, fileId)
+  resultS3Key    String?   @map("result_s3_key")
+  error          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  completedAt    DateTime? @map("completed_at")
+
+  @@map("jobs")
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  actorId        String   @map("actor_id")   // clerk user id
+  action         String
+  resourceType   String   @map("resource_type")
+  resourceId     String?  @map("resource_id")
+  details        Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("audit_log")
+}

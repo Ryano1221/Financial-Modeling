@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>__REPORT_TITLE__</title>
+  <style>
+    :root {
+      --primary: __PRIMARY_COLOR__;
+      --secondary: __SECONDARY_COLOR__;
+      --font: __FONT_FAMILY_CSS__;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: var(--font); font-size: 11pt; line-height: 1.4; color: #333; margin: 0; }
+    .header-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 10; background: var(--primary); color: #fff; padding: 8px 24px; font-size: 10pt; display: flex; justify-content: space-between; align-items: center; }
+    .header-bar .company { font-weight: 600; }
+    .header-bar .report-title { font-size: 9pt; opacity: 0.9; }
+    .cover { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 48px; text-align: center; }
+    .cover .logo-wrap { margin-bottom: 24px; }
+    .cover .logo-wrap img { max-height: 64px; max-width: 240px; }
+    .cover .logo-wrap .company-text { font-size: 24pt; font-weight: 600; color: var(--primary); }
+    .cover h1 { font-size: 22pt; margin: 0 0 32px; color: #1a1a1a; }
+    .cover .meta { font-size: 11pt; color: #555; margin: 8px 0; }
+    .cover .meta strong { color: #333; }
+    .content-wrap { padding-top: 42px; }
+    .report-section { padding: 20px 48px 28px; break-inside: avoid; }
+    .report-section.page-break-before { page-break-before: always; }
+    .report-section h2 { font-size: 14pt; color: var(--primary); border-bottom: 2px solid var(--secondary); padding-bottom: 6px; margin: 0 0 16px; }
+    .executive-summary p { margin: 0 0 16px; }
+    table.data { width: 100%; border-collapse: collapse; font-size: 10pt; }
+    table.data th, table.data td { border: 1px solid #ddd; text-align: left; }
+    table.data th { background: #f5f5f5; font-weight: 600; }
+    table.data td.num { text-align: right; }
+    body.density-compact table.data th, body.density-compact table.data td { padding: 4px 8px; font-size: 9pt; }
+    body.density-standard table.data th, body.density-standard table.data td { padding: 8px 12px; }
+    body.density-spacious table.data th, body.density-spacious table.data td { padding: 12px 16px; font-size: 11pt; }
+    ul.assumptions, ul.risks, ul.notes { margin: 0; padding-left: 20px; }
+    ul.assumptions li, ul.risks li, ul.notes li { margin: 4px 0; }
+    .disclaimer { font-size: 9pt; color: #666; margin-top: 24px; padding: 12px; background: #f9f9f9; border-left: 4px solid var(--secondary); }
+    .methodology { font-size: 10pt; color: #444; }
+    .methodology p { margin: 0 0 12px; }
+    .footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 8px 24px; font-size: 9pt; color: #666; border-top: 1px solid #eee; display: flex; justify-content: space-between; background: #fff; z-index: 10; }
+    .watermark { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-30deg); font-size: 72pt; color: rgba(0,0,0,0.06); pointer-events: none; z-index: 0; }
+    @media print { .header-bar, .footer { position: fixed; } .content-wrap { padding-top: 36px; } }
+  </style>
+</head>
+<body class="__TABLE_DENSITY_CLASS__">
+  __WATERMARK_HTML__
+  <div class="header-bar">
+    <span class="company">__COMPANY_NAME__</span>__HEADER_TEXT__
+    <span class="report-title">__REPORT_TITLE__</span>
+  </div>
+
+  __COVER_HTML__
+
+  <div class="content-wrap">
+  <section class="report-section page-break-before">
+    <h2>Executive Summary</h2>
+    <div class="executive-summary">
+      <p>__EXECUTIVE_SUMMARY_PARAGRAPH__</p>
+    </div>
+    <table class="data">
+      <thead><tr><th>Term</th><th>Value</th></tr></thead>
+      <tbody>__KEY_TERMS_ROWS__</tbody>
+    </table>
+  </section>
+
+  <section class="report-section page-break-before">
+    <h2>Financial Summary</h2>
+    <table class="data">
+      <tbody>__FINANCIAL_SUMMARY_ROWS__</tbody>
+    </table>
+  </section>
+
+  <section class="report-section page-break-before">
+    <h2>Rent Schedule (by lease year)</h2>
+    <table class="data">
+      <thead><tr><th>Lease year</th><th>Rent (nominal)</th></tr></thead>
+      <tbody>__RENT_SCHEDULE_ROWS__</tbody>
+    </table>
+  </section>
+
+  <section class="report-section page-break-before">
+    <h2>Assumptions</h2>
+    <ul class="assumptions">__ASSUMPTIONS_LIST__</ul>
+  </section>
+
+  <section class="report-section">
+    <h2>Risk &amp; Observations</h2>
+    <ul class="risks">__RISK_OBSERVATIONS_LIST__</ul>
+  </section>
+
+  <section class="report-section">
+    <h2>Notes &amp; Limitations</h2>
+    <ul class="notes">__NOTES_LIMITATIONS_LIST__</ul>
+  </section>
+
+  __CONFIDENCE_SECTION_HTML__
+
+  __METHODOLOGY_SECTION_HTML__
+
+  <section class="report-section">
+    <h2>Disclaimers</h2>
+    <div class="disclaimer">__DISCLAIMER_TEXT__</div>
+  </section>
+  </div>
+
+  <div class="footer">
+    <span>__FOOTER_LEFT__</span>
+    <span>Page <span class="page-number"></span></span>
+  </div>
+</body>
+</html>

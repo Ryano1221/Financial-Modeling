@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-base: #0a0a0b;
+    --bg-elevated: #111113;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --text-muted: #71717a;
+    --accent: #3b82f6;
+    --accent-glow: rgba(59, 130, 246, 0.35);
+  }
+  body {
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  }
+  ::selection {
+    background: rgba(59, 130, 246, 0.35);
+    color: #fff;
+  }
+}
+
+/* Subtle noise overlay - CSS only, low opacity */
+.premium-noise::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@media print {
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
