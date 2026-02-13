@@ -97,6 +97,25 @@ If you see `ENOENT .next/server/pages/_document.js`, the build cache is stale (t
 
 The `./dev.sh` script sets `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8010` in `frontend/.env.local` automatically. If you run frontend manually, set it there when the backend is on 8010.
 
+### Vercel (production)
+
+This repo is a **monorepo** (`/frontend` = Next.js, `/backend` = API). Vercel must deploy **only** the Next.js app. Set these in the Vercel project **Settings**:
+
+| Setting | Value |
+|--------|--------|
+| **Root Directory** | `frontend` |
+| **Framework Preset** | Next.js |
+| **Build Command** | `npm run build` |
+| **Install Command** | `npm install` |
+| **Output Directory** | *(leave blank)* |
+
+- **Root Directory** is required: Project Settings → General → Root Directory → set to `frontend` (do not leave blank or use repo root).
+- Root `vercel.json` provides fallback install/build commands that run from `frontend/` when present.
+
+**If domain shows NOT_FOUND (404):** Check that (1) **Root Directory** = `frontend` in Vercel, and (2) deployments are succeeding (build logs show "Build Completed"). Then save and redeploy.
+
+**CI check** (optional): from repo root run `npm run check:frontend` to ensure `frontend/app/page.tsx` and `frontend/app/layout.tsx` exist before deploy.
+
 **Worker (optional, for async PDF and extraction)**
 
 ```bash
