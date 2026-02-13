@@ -73,7 +73,7 @@ export OPENAI_API_KEY=your_openai_key_here
 uvicorn main:app --reload --host 127.0.0.1 --port 8010
 ```
 
-**Render (backend)** — Set Render **Root Directory** to `backend`. Build: `pip install -r requirements.txt`. Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`. All dependencies are in `backend/requirements.txt`. For PDF generation (POST /report) you may need a build step that runs `playwright install chromium` after pip install.
+**Render (backend)** — Set Render **Root Directory** to `backend`. Build: `pip install -r requirements.txt`. Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`. All dependencies are in `backend/requirements.txt`. For PDF generation (POST /report) you may need a build step that runs `playwright install chromium` after pip install. **Pin Python version** (Render may default to 3.14): Option A — set Render env var `PYTHON_VERSION` to a fully qualified version (e.g. `3.12.8`); Option B — add `.python-version` in repo root with `3.12`.
 
 **Backend deps sanity check** — From repo root: `bash backend/scripts/check-deps.sh` (installs deps and runs `python -c "import fastapi, uvicorn"`). CI runs the same check on push/PR when `backend/` changes (see `.github/workflows/backend-deps.yml`).
 
