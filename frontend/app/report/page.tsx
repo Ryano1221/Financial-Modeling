@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { formatCurrency, formatNumber } from "@/lib/format";
-import { baseUrl } from "@/lib/api";
+import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import type { ReportData } from "@/lib/types";
 
 function ReportContent() {
@@ -20,24 +20,37 @@ function ReportContent() {
   const [data, setData] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadReport = useCallback(async () => {
     if (!reportId) {
-      setError("Missing reportId");
+      setError("Missing report ID. Open a report from the main page.");
       return;
     }
-    fetch(`${baseUrl}/reports/${reportId}`)
-      .then((r) => {
-        if (!r.ok) throw new Error("Report not found");
-        return r.json();
-      })
-      .then(setData)
-      .catch((e) => setError(e.message));
+    setError(null);
+    try {
+      const r = await fetchApi(`/reports/${reportId}`, { method: "GET" });
+      if (!r.ok) throw new Error("Report not found");
+      const json = await r.json();
+      setData(json);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : CONNECTION_MESSAGE);
+    }
   }, [reportId]);
+
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-100 p-8">
-        <p className="text-red-700">{error}</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-stone-100 p-8 gap-4">
+        <p className="text-stone-700 text-center max-w-md">{error}</p>
+        <button
+          type="button"
+          onClick={loadReport}
+          className="min-h-[44px] px-6 py-2.5 rounded-lg bg-stone-800 text-white font-medium hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-2"
+        >
+          Retry
+        </button>
       </div>
     );
   }

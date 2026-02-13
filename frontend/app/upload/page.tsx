@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useCallback } from "react";
-import { baseUrl } from "@/lib/api";
+import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import type { LeaseExtraction, ScenarioInput, RentStep } from "@/lib/types";
 
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
@@ -71,10 +71,7 @@ export default function UploadPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(`${baseUrl}/upload_lease`, {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetchApi("/upload_lease", { method: "POST", body: formData });
       if (!res.ok) {
         const t = await res.text();
         throw new Error(t || `HTTP ${res.status}`);
@@ -82,7 +79,7 @@ export default function UploadPage() {
       const data: LeaseExtraction = await res.json();
       setExtraction(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      setError(e instanceof Error ? e.message : CONNECTION_MESSAGE);
     } finally {
       setLoading(false);
     }
@@ -133,7 +130,19 @@ export default function UploadPage() {
             {loading ? "Extracting…" : "Extract"}
           </button>
         </div>
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+        {error && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <p className="text-sm text-red-600 flex-1">{error}</p>
+            <button
+              type="button"
+              onClick={upload}
+              disabled={!file || loading}
+              className="min-h-[44px] px-4 py-2 rounded bg-stone-800 text-white text-sm font-medium hover:bg-stone-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-2"
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </section>
 
       {extraction && (

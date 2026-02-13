@@ -1,14 +1,26 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
 import { ComparisonTable, type ComparisonRow, type SortKey, type SortDir } from "@/components/ComparisonTable";
 import { Charts, type ChartRow } from "@/components/Charts";
-import { baseUrl, getAuthHeaders } from "@/lib/api";
+import { getApiUrl, fetchApi, getAuthHeaders, CONNECTION_MESSAGE } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
-import { Diagnostics } from "@/components/Diagnostics";
 import { FeatureTiles } from "@/components/FeatureTiles";
+
+const showDiagnostics =
+  typeof process !== "undefined" &&
+  process.env.NEXT_PUBLIC_SHOW_DIAGNOSTICS === "true" &&
+  process.env.NODE_ENV !== "production";
+
+const Diagnostics = showDiagnostics
+  ? dynamic(
+      () => import("@/components/Diagnostics").then((m) => ({ default: m.Diagnostics })),
+      { ssr: false }
+    )
+  : () => null;
 import { UploadExtractCard } from "@/components/UploadExtractCard";
 import { ResultsActionsCard } from "@/components/ResultsActionsCard";
 import { Footer } from "@/components/Footer";
@@ -83,7 +95,7 @@ export default function Home() {
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
 
   useEffect(() => {
-    fetch(`${baseUrl}/brands`)
+    fetchApi("/brands", { method: "GET" })
       .then((r) => (r.ok ? r.json() : []))
       .then((data: BrandConfig[]) => setBrands(Array.isArray(data) ? data : []))
       .catch(() => setBrands([]));
@@ -202,7 +214,7 @@ export default function Home() {
     const headers = getAuthHeaders();
     const settled = await Promise.allSettled(
       payloads.map(async ({ id, payload }) => {
-        const res = await fetch(`${baseUrl}/compute`, {
+        const res = await fetchApi("/compute", {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
@@ -222,7 +234,7 @@ export default function Home() {
         nextResults[id] = outcome.value.data;
       } else {
         nextResults[id] = {
-          error: outcome.reason?.message ?? "Request failed",
+          error: outcome.reason?.message === CONNECTION_MESSAGE ? CONNECTION_MESSAGE : "Request failed",
         };
       }
     });
@@ -243,7 +255,7 @@ export default function Home() {
     setExportPdfError(null);
     try {
       const headers = getAuthHeaders();
-      const res = await fetch(`${baseUrl}/reports`, {
+      const res = await fetchApi("/reports", {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -259,9 +271,9 @@ export default function Home() {
         throw new Error(text || `HTTP ${res.status}`);
       }
       const data: { report_id: string } = await res.json();
-      window.open(`${baseUrl}/reports/${data.report_id}/pdf`, "_blank", "noopener,noreferrer");
+      window.open(getApiUrl(`/reports/${data.report_id}/pdf`), "_blank", "noopener,noreferrer");
     } catch (err) {
-      setExportPdfError(err instanceof Error ? err.message : "Export failed");
+      setExportPdfError(err instanceof Error ? err.message : CONNECTION_MESSAGE);
     } finally {
       setExportPdfLoading(false);
     }
@@ -284,7 +296,7 @@ export default function Home() {
     setReportLoading(true);
     setReportError(null);
     try {
-      const res = await fetch(`${baseUrl}/report`, {
+      const res = await fetchApi("/report", {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
@@ -308,7 +320,7 @@ export default function Home() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setReportError({ statusCode: 0, message: err instanceof Error ? err.message : "Report generation failed" });
+      setReportError({ statusCode: 0, message: err instanceof Error ? err.message : CONNECTION_MESSAGE });
     } finally {
       setReportLoading(false);
     }
@@ -322,7 +334,7 @@ export default function Home() {
     setPreviewLoading(true);
     setPreviewError(null);
     try {
-      const res = await fetch(`${baseUrl}/report/preview`, {
+      const res = await fetchApi("/report/preview", {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
@@ -345,7 +357,7 @@ export default function Home() {
         w.document.close();
       }
     } catch (err) {
-      setPreviewError({ statusCode: 0, message: err instanceof Error ? err.message : "Preview failed" });
+      setPreviewError({ statusCode: 0, message: err instanceof Error ? err.message : CONNECTION_MESSAGE });
     } finally {
       setPreviewLoading(false);
     }
@@ -393,7 +405,7 @@ export default function Home() {
     };
     try {
       const headers = getAuthHeaders();
-      const res = await fetch(`${baseUrl}/generate_scenarios`, {
+      const res = await fetchApi("/generate_scenarios", {
         method: "POST",
         headers,
         body: JSON.stringify(req),
@@ -409,7 +421,7 @@ export default function Home() {
       setSelectedId(renewalWithId.id);
       setResults({});
     } catch (err) {
-      setGenerateError(err instanceof Error ? err.message : "Request failed");
+      setGenerateError(err instanceof Error ? err.message : CONNECTION_MESSAGE);
     } finally {
       setGenerateLoading(false);
     }
@@ -571,15 +583,21 @@ export default function Home() {
                     ))}
                   </select>
                 </div>
-                <ExtractUpload onSuccess={handleExtractSuccess} onError={handleExtractError} />
+                <ExtractUpload
+                  showAdvancedOptions={showDiagnostics}
+                  onSuccess={handleExtractSuccess}
+                  onError={handleExtractError}
+                />
                 {extractError && (
                   <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300">
                     {extractError}
                   </div>
                 )}
-                <div className="mt-4">
-                  <Diagnostics />
-                </div>
+                {showDiagnostics && (
+                  <div className="mt-4">
+                    <Diagnostics />
+                  </div>
+                )}
                 {lastExtractWarnings && lastExtractWarnings.length > 0 && (
                   <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm">
                     <p className="font-medium text-amber-300 mb-1">Warnings from extraction</p>

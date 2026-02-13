@@ -1,16 +1,16 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { baseUrl } from "@/lib/api";
+import { getApiUrl, getBaseUrl, CONNECTION_MESSAGE } from "@/lib/api";
 
 const HEALTH_RETRIES = 3;
 const HEALTH_RETRY_DELAY_MS = 500;
 
-async function fetchHealthWithRetry(url: string): Promise<Response> {
+async function fetchHealthWithRetry(healthUrl: string): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= HEALTH_RETRIES; attempt++) {
     try {
-      const res = await fetch(`${url}/health`, { method: "GET" });
+      const res = await fetch(healthUrl, { method: "GET" });
       return res;
     } catch (e) {
       lastError = e;
@@ -29,9 +29,9 @@ export function Diagnostics() {
   const testConnection = useCallback(async () => {
     setStatus("checking");
     setErrorText(null);
-    const url = baseUrl;
+    const healthUrl = getApiUrl("/health");
     try {
-      const res = await fetchHealthWithRetry(url);
+      const res = await fetchHealthWithRetry(healthUrl);
       if (res.ok) {
         setStatus("connected");
         return;
@@ -47,18 +47,16 @@ export function Diagnostics() {
       }
     } catch (e) {
       setStatus("error");
-      const message = e instanceof Error ? e.message : String(e);
-      setErrorText(
-        `${message} (attempted ${url}). Is backend running? Start with: cd backend && uvicorn main:app --reload --port 8010`
-      );
+      setErrorText(CONNECTION_MESSAGE);
     }
   }, []);
 
+  const base = getBaseUrl();
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
       <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Diagnostics</p>
       <p className="text-xs text-zinc-500 mb-2 font-mono break-all">
-        Backend URL: {baseUrl}
+        Backend: {base || "same-origin /api"}
       </p>
       <div className="flex items-center gap-3 flex-wrap">
         <button

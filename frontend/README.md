@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Runs at [http://localhost:3000](http://localhost:3000) (or 3001 if using `npm run dev:report`).
+Runs at port 3000 (or 3001 if using `npm run dev:report`).
 
 ### If you see ENOENT `.next/server/pages/_document.js`
 
@@ -21,23 +21,11 @@ cd frontend && npm run clean && npm run dev
 
 Or use the combined script: `npm run dev:clean`.
 
-## Backend URL
+## Backend URL (no localhost default)
 
-The frontend calls the Lease Deck backend for `/extract`, `/compute`, `/reports`, and `/health`. By default it uses:
+The frontend **never** defaults to localhost. Backend base URL comes only from **`NEXT_PUBLIC_BACKEND_URL`** (trimmed, no trailing slash). When unset, the app uses **same-origin `/api`** (see Vercel proxy below).
 
-- **`http://127.0.0.1:8010`** (or the value of `NEXT_PUBLIC_BACKEND_URL`)
+- **Production (Vercel):** Set **`BACKEND_URL`** (server-side) to your backend (e.g. `https://your-backend.onrender.com`). Next.js rewrites `/api/:path*` to `BACKEND_URL/:path*`, so the browser only talks to your domain; no CORS, no public backend URL in the client.
+- **Local dev:** In `frontend/.env.local` set **`BACKEND_URL`** so the dev server can proxy `/api` to your local backend (e.g. `http://127.0.0.1:8010`). Optionally set `NEXT_PUBLIC_BACKEND_URL` to the same value if you want the client to call the backend directly during dev; otherwise the client uses `/api` and the dev server proxies.
 
-To override (e.g. for a different host or port), set:
-
-```bash
-# .env.local
-NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8010
-```
-
-Example for a remote API:
-
-```bash
-NEXT_PUBLIC_BACKEND_URL=https://api.example.com
-```
-
-Restart the dev server after changing env vars. Use the **Diagnostics** section on the home page to test the backend connection and see the current backend URL.
+Connection errors show a friendly message and Retry button only (no URLs, no CLI commands). Diagnostics and "Show advanced options" are **off** unless `NEXT_PUBLIC_SHOW_DIAGNOSTICS=true` and `NODE_ENV !== "production"`.

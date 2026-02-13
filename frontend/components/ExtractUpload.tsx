@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { baseUrl } from "@/lib/api";
+import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import type { ExtractionResponse } from "@/lib/types";
 
 interface ExtractUploadProps {
+  showAdvancedOptions?: boolean;
   onSuccess: (data: ExtractionResponse) => void;
   onError: (message: string) => void;
 }
@@ -15,7 +16,7 @@ function formatExtractError(res: Response, body: unknown): string {
   return `Backend error: ${res.status} ${res.statusText}`;
 }
 
-export function ExtractUpload({ onSuccess, onError }: ExtractUploadProps) {
+export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError }: ExtractUploadProps) {
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -33,10 +34,10 @@ export function ExtractUpload({ onSuccess, onError }: ExtractUploadProps) {
       try {
         const form = new FormData();
         form.append("file", file);
-        if (showAdvanced) {
+        if (showAdvancedOptions && showAdvanced) {
           form.append("force_ocr", forceOcr ? "true" : "false");
         }
-        const res = await fetch(`${baseUrl}/extract`, {
+        const res = await fetchApi("/extract", {
           method: "POST",
           body: form,
         });
@@ -49,17 +50,12 @@ export function ExtractUpload({ onSuccess, onError }: ExtractUploadProps) {
         const data: ExtractionResponse = await res.json();
         onSuccess(data);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Extraction failed";
-        if (msg === "Failed to fetch" || (e instanceof TypeError && (e as TypeError).message?.includes("fetch"))) {
-          onError(`Cannot reach backend at ${baseUrl}. Is it running? Check the Diagnostics section below.`);
-        } else {
-          onError(msg);
-        }
+        onError(e instanceof Error && e.message ? e.message : CONNECTION_MESSAGE);
       } finally {
         setLoading(false);
       }
     },
-    [showAdvanced, forceOcr, onSuccess, onError]
+    [showAdvancedOptions, showAdvanced, forceOcr, onSuccess, onError]
   );
 
   const onDrop = useCallback(
@@ -121,27 +117,29 @@ export function ExtractUpload({ onSuccess, onError }: ExtractUploadProps) {
           {loading ? "Extracting…" : "Choose file"}
         </label>
       </div>
-      <div className="space-y-2">
-        <button
-          type="button"
-          onClick={() => setShowAdvanced((a) => !a)}
-          className="text-sm text-zinc-500 hover:text-zinc-400 focus:outline-none"
-        >
-          {showAdvanced ? "Hide" : "Show"} advanced options
-        </button>
-        {showAdvanced && (
-          <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={forceOcr}
-              onChange={(e) => setForceOcr(e.target.checked)}
-              disabled={loading}
-              className="rounded border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6] focus:ring-offset-0"
-            />
-            Force OCR (override auto; use for scanned PDFs when text extraction is poor)
-          </label>
-        )}
-      </div>
+      {showAdvancedOptions && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((a) => !a)}
+            className="text-sm text-zinc-500 hover:text-zinc-400 focus:outline-none"
+          >
+            {showAdvanced ? "Hide" : "Show"} advanced options
+          </button>
+          {showAdvanced && (
+            <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={forceOcr}
+                onChange={(e) => setForceOcr(e.target.checked)}
+                disabled={loading}
+                className="rounded border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6] focus:ring-offset-0"
+              />
+              Force OCR (override auto; use for scanned PDFs when text extraction is poor)
+            </label>
+          )}
+        </div>
+      )}
     </div>
   );
 }
