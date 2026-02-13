@@ -1,6 +1,7 @@
 # Backend
 backend/reports/
-backend/cache/
+backend/cache/extraction/
+backend/cache/reports/
 backend/.venv/
 backend/__pycache__/
 *.pyc
