@@ -1,6 +1,6 @@
-# Lease Deck
+# The Commercial Real Estate Model
 
-Tenant office lease financial analysis: scenario comparison, PDF reports, and AI lease extraction.
+**TheCREmodel** — Advanced commercial real estate financial modeling and lease analysis: scenario comparison, PDF reports, and AI lease extraction.
 
 ## SaaS setup (multi-tenant)
 
@@ -73,7 +73,9 @@ export OPENAI_API_KEY=your_openai_key_here
 uvicorn main:app --reload --host 127.0.0.1 --port 8010
 ```
 
-**Render (backend)** — Set Render **Root Directory** to `backend`. Build: `pip install -r requirements.txt`. Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`. All dependencies are in `backend/requirements.txt`. For PDF generation (POST /report) you may need a build step that runs `playwright install chromium` after pip install. **Pin Python version** (Render may default to 3.14): Option A — set Render env var `PYTHON_VERSION` to a fully qualified version (e.g. `3.12.8`); Option B — add `.python-version` in repo root with `3.12`.
+**Render (backend)** — Set Render **Root Directory** to `backend`. Build: `pip install -r requirements.txt`. Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`. All dependencies are in `backend/requirements.txt`. Set **OPENAI_API_KEY** in Render env for lease extraction and `/normalize` (PDF/Word/pasted text). For PDF generation (POST /report) you may need a build step that runs `playwright install chromium` after pip install. **Pin Python version** (Render may default to 3.14): Option A — set Render env var `PYTHON_VERSION` to a fully qualified version (e.g. `3.12.8`); Option B — add `.python-version` in repo root with `3.12`.
+
+**Vercel (frontend)** — Set **NEXT_PUBLIC_BACKEND_URL** in Vercel project env to your backend URL (e.g. `https://your-backend.onrender.com`). Production builds fail if this is missing or contains localhost/127.0.0.1.
 
 **Backend deps sanity check** — From repo root: `bash backend/scripts/check-deps.sh` (installs deps and runs `python -c "import fastapi, uvicorn"`). CI runs the same check on push/PR when `backend/` changes (see `.github/workflows/backend-deps.yml`).
 

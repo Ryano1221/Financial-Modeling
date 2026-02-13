@@ -23,6 +23,8 @@ from engine.compute import compute_cashflows
 from generate_scenarios import generate_scenarios
 from lease_extract import extract_lease
 from models import (
+    CanonicalComputeResponse,
+    CanonicalLease,
     CashflowResult,
     CreateReportRequest,
     CreateReportResponse,
@@ -30,9 +32,11 @@ from models import (
     GenerateScenariosRequest,
     GenerateScenariosResponse,
     LeaseExtraction,
+    NormalizerResponse,
     ReportRequest,
     Scenario,
 )
+from engine.canonical_compute import compute_canonical, normalize_canonical_lease
 from scenario_extract import (
     extract_text_from_pdf,
     extract_text_from_pdf_with_ocr,
@@ -44,6 +48,12 @@ from reports_store import load_report, save_report
 from routes.api import router as api_router
 from routes.webhooks import router as webhooks_router
 from brands import get_brand, list_brands
+from services.input_normalizer import (
+    InputSource,
+    _scenario_to_canonical,
+    _dict_to_canonical,
+    _compute_confidence_and_missing,
+)
 from cache.disk_cache import (
     get_cached_extraction,
     set_cached_extraction,
@@ -54,8 +64,20 @@ from cache.disk_cache import (
 REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
 
 app = FastAPI(title="Lease Deck Backend", version="0.1.0")
+
+# Production origins for frontend; dev regex for localhost
+_cors_origins = [
+    "https://thecremodel.com",
+    "https://www.thecremodel.com",
+]
+# Add Vercel preview/production if set
+_vercel_url = os.environ.get("VERCEL_URL")
+if _vercel_url:
+    _cors_origins.append(f"https://{_vercel_url}")
+    _cors_origins.append(f"https://www.{_vercel_url}")
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=_cors_origins,
     allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
     allow_credentials=True,
     allow_methods=["*"],
@@ -228,6 +250,175 @@ def compute_scenario(scenario: Scenario) -> CashflowResult:
     """
     _, result = compute_cashflows(scenario)
     return result
+
+
+@app.post("/compute-canonical", response_model=CanonicalComputeResponse)
+def compute_canonical_endpoint(lease: CanonicalLease) -> CanonicalComputeResponse:
+    """
+    Canonical compute: normalize CanonicalLease, run engine, return monthly/annual rows and metrics.
+    Single source of truth for calculations and exports.
+    """
+    return compute_canonical(lease)
+
+
+def _extraction_confidence_to_field_confidence(extraction_confidence: dict) -> dict:
+    """Map ExtractionResponse confidence keys to canonical field names."""
+    key_map = {
+        "rsf": "rsf",
+        "commencement": "commencement_date",
+        "expiration": "expiration_date",
+        "rent_steps": "rent_schedule",
+        "free_rent_months": "free_rent_months",
+        "name": "premises_name",
+    }
+    out = {}
+    for k, v in (extraction_confidence or {}).items():
+        canonical_key = key_map.get(k, k)
+        try:
+            out[canonical_key] = float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            out[canonical_key] = 0.0
+    return out
+
+
+@app.post("/normalize", response_model=NormalizerResponse)
+def normalize_endpoint(
+    source: str = Form(..., description="MANUAL, PASTED_TEXT, PDF, WORD, or JSON"),
+    payload: Optional[str] = Form(None, description="JSON string for MANUAL/JSON"),
+    pasted_text: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+) -> NormalizerResponse:
+    """
+    Universal input normalizer. Returns CanonicalLease + confidence_score, field_confidence,
+    missing_fields, clarification_questions, warnings. Frontend must enforce Review and Confirm
+    when confidence_score < 0.85 or missing_fields not empty.
+    """
+    source_upper = (source or "").strip().upper()
+    if source_upper not in ("MANUAL", "PASTED_TEXT", "PDF", "WORD", "JSON"):
+        raise HTTPException(status_code=400, detail="source must be one of: MANUAL, PASTED_TEXT, PDF, WORD, JSON")
+
+    warnings: list = []
+    canonical: Optional[CanonicalLease] = None
+    field_confidence: dict = {}
+    confidence_score = 0.5
+    missing: list = []
+    questions: list = []
+
+    if source_upper in ("PDF", "WORD"):
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="File required for PDF/WORD")
+        fn = file.filename.lower()
+        if source_upper == "PDF" and not fn.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="File must be PDF")
+        if source_upper == "WORD" and not fn.endswith(".docx"):
+            raise HTTPException(status_code=400, detail="File must be DOCX")
+        try:
+            contents = file.file.read()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read file: {e}") from e
+        if len(contents) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+        buf = BytesIO(contents)
+        text = ""
+        ocr_used = False
+        try:
+            if fn.endswith(".pdf"):
+                text = extract_text_from_pdf(buf)
+                if text_quality_requires_ocr(text):
+                    buf.seek(0)
+                    pages = max(1, min(50, 5))
+                    text, _ = extract_text_from_pdf_with_ocr(buf, force_ocr=True, ocr_pages=pages)
+                    ocr_used = True
+                    warnings.append("OCR was used because extracted text was short or low quality.")
+                if not text.strip():
+                    raise HTTPException(status_code=422, detail="No text could be extracted from the PDF")
+            else:
+                text = extract_text_from_docx(buf)
+                if not text.strip():
+                    raise HTTPException(status_code=422, detail="No text could be extracted from the document")
+            extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
+            if extraction and extraction.scenario:
+                canonical = _scenario_to_canonical(extraction.scenario, "", "")
+                field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
+                confidence_score = min(field_confidence.values()) if field_confidence else 0.78
+            else:
+                canonical = _dict_to_canonical({}, "", "")
+                confidence_score = 0.4
+            if ocr_used:
+                warnings.append("OCR was used for this document.")
+        except HTTPException:
+            raise
+        except ValueError as e:
+            if "OPENAI_API_KEY" in str(e):
+                raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured.") from e
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Normalization failed: {e!s}") from e
+        canonical, norm_warnings = normalize_canonical_lease(canonical)
+        warnings.extend(norm_warnings)
+        conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
+        confidence_score = max(confidence_score, conf_from_missing)
+        return NormalizerResponse(
+            canonical_lease=canonical,
+            confidence_score=min(1.0, confidence_score),
+            field_confidence=field_confidence,
+            missing_fields=missing,
+            clarification_questions=questions,
+            warnings=warnings,
+        )
+
+    if source_upper == "PASTED_TEXT":
+        raw = (pasted_text or payload or "").strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="pasted_text or payload required for PASTED_TEXT")
+        try:
+            extraction = extract_scenario_from_text(raw, "pasted_text")
+            if extraction and extraction.scenario:
+                canonical = _scenario_to_canonical(extraction.scenario, "", "")
+                field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
+                confidence_score = min(field_confidence.values()) if field_confidence else 0.78
+                warnings.extend(extraction.warnings or [])
+            else:
+                canonical = _dict_to_canonical({}, "", "")
+                confidence_score = 0.5
+            canonical, norm_warnings = normalize_canonical_lease(canonical)
+            warnings.extend(norm_warnings)
+            conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
+            confidence_score = max(confidence_score, conf_from_missing)
+        except Exception as e:
+            canonical = _dict_to_canonical({}, "", "")
+            confidence_score = 0.4
+            missing = ["lease_details"]
+            questions = ["We could not parse the pasted text. Please check and try again or enter manually."]
+        return NormalizerResponse(
+            canonical_lease=canonical,
+            confidence_score=min(1.0, confidence_score),
+            field_confidence=field_confidence,
+            missing_fields=missing,
+            clarification_questions=questions,
+            warnings=warnings,
+        )
+
+    # MANUAL or JSON
+    raw_payload = (payload or "").strip()
+    if not raw_payload:
+        raise HTTPException(status_code=400, detail="payload (JSON string) required for MANUAL/JSON")
+    try:
+        data = json.loads(raw_payload)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {e}") from e
+    canonical = _dict_to_canonical(data if isinstance(data, dict) else {}, "", "")
+    canonical, norm_warnings = normalize_canonical_lease(canonical)
+    warnings.extend(norm_warnings)
+    confidence_score, missing, questions = _compute_confidence_and_missing(canonical)
+    return NormalizerResponse(
+        canonical_lease=canonical,
+        confidence_score=min(1.0, confidence_score),
+        field_confidence=field_confidence,
+        missing_fields=missing,
+        clarification_questions=questions,
+        warnings=warnings,
+    )
 
 
 @app.post("/generate_scenarios", response_model=GenerateScenariosResponse)

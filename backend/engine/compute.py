@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import pow
 from typing import List, Tuple
 
 from models import CashflowResult, OpexMode, Scenario
+
+
+@dataclass
+class CashflowDetails:
+    """Per-month breakdown for canonical export."""
+    rent: List[float]
+    opex: List[float]
+    parking: List[float]
+    one_time: List[float]
+    sublease: List[float]
+    ti_at_0: float
+    cashflows: List[float]
+    total_months: int
 
 
 def _monthly_discount_rate(annual_rate: float) -> float:
@@ -96,13 +110,11 @@ def _monthly_sublease_income(scenario: Scenario, total_months: int) -> List[floa
     return arr
 
 
-def compute_cashflows(scenario: Scenario) -> Tuple[List[float], CashflowResult]:
+def compute_cashflows_detailed(
+    scenario: Scenario,
+) -> Tuple[List[float], CashflowResult, CashflowDetails]:
     """
-    Compute monthly total cashflows and aggregated metrics.
-
-    Includes: base rent, opex, TI at month 0, parking, one-time costs,
-    broker fee at 0, security deposit out at 0 / in at end, sublease income,
-    holdover period, optional termination expected cost.
+    Compute monthly cashflows and return per-month breakdown for canonical export.
     """
     term_months = scenario.term_months
     holdover = scenario.holdover_months or 0
@@ -117,6 +129,9 @@ def compute_cashflows(scenario: Scenario) -> Tuple[List[float], CashflowResult]:
             npv_cost=0.0,
             avg_cost_year=0.0,
             avg_cost_psf_year=0.0,
+        ), CashflowDetails(
+            rent=[], opex=[], parking=[], one_time=[], sublease=[],
+            ti_at_0=0.0, cashflows=[], total_months=0,
         )
 
     rent_schedule = _build_rent_schedule_monthly(scenario, total_months)
@@ -229,4 +244,23 @@ def compute_cashflows(scenario: Scenario) -> Tuple[List[float], CashflowResult]:
         npv_total=npv_total,
     )
 
+    details = CashflowDetails(
+        rent=rent_schedule,
+        opex=opex_schedule,
+        parking=parking_schedule,
+        one_time=one_time_schedule,
+        sublease=sublease_schedule,
+        ti_at_0=ti_at_0,
+        cashflows=cashflows,
+        total_months=total_months,
+    )
+    return cashflows, result, details
+
+
+def compute_cashflows(scenario: Scenario) -> Tuple[List[float], CashflowResult]:
+    """
+    Compute monthly total cashflows and aggregated metrics.
+    Returns (cashflows, result). For full breakdown use compute_cashflows_detailed.
+    """
+    cashflows, result, _ = compute_cashflows_detailed(scenario)
     return cashflows, result
