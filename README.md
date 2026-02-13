@@ -51,7 +51,7 @@ alembic upgrade head
 ./dev.sh
 ```
 
-This script: frees ports 8010 and 3000 if in use, ensures `frontend/.env.local` has `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8010`, starts the backend (with venv if present), waits for `GET http://127.0.0.1:8010/health` to return 200, then starts the frontend. Backend runs on **8010**; frontend reads the backend URL from `NEXT_PUBLIC_BACKEND_URL` (default `http://127.0.0.1:8010`). Requires bash and `lsof` (macOS/Linux). First time: `cd backend && python3 -m venv venv && pip install -r ../requirements.txt uvicorn` and `cd frontend && npm install`.
+This script: frees ports 8010 and 3000 if in use, ensures `frontend/.env.local` has `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8010`, starts the backend (with venv if present), waits for `GET http://127.0.0.1:8010/health` to return 200, then starts the frontend. Backend runs on **8010**; frontend reads the backend URL from `NEXT_PUBLIC_BACKEND_URL` (default `http://127.0.0.1:8010`). Requires bash and `lsof` (macOS/Linux). First time: `cd backend && python3 -m venv venv && pip install -r requirements.txt` and `cd frontend && npm install`.
 
 ---
 
@@ -63,9 +63,8 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 
-# Install dependencies (use repo root requirements.txt or backend deps)
-pip install -r ../requirements.txt
-pip install fastapi uvicorn python-multipart python-dotenv pydantic  # if not in requirements
+# Install dependencies (from backend root)
+pip install -r requirements.txt
 
 # Set OpenAI for lease extraction (required for POST /extract)
 export OPENAI_API_KEY=your_openai_key_here
@@ -73,6 +72,10 @@ export OPENAI_API_KEY=your_openai_key_here
 # Run API (port 8010)
 uvicorn main:app --reload --host 127.0.0.1 --port 8010
 ```
+
+**Render (backend)** — Set Render **Root Directory** to `backend`. Build: `pip install -r requirements.txt`. Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`. All dependencies are in `backend/requirements.txt`. For PDF generation (POST /report) you may need a build step that runs `playwright install chromium` after pip install.
+
+**Backend deps sanity check** — From repo root: `bash backend/scripts/check-deps.sh` (installs deps and runs `python -c "import fastapi, uvicorn"`). CI runs the same check on push/PR when `backend/` changes (see `.github/workflows/backend-deps.yml`).
 
 **Optional: Playwright for PDF report generation**
 
