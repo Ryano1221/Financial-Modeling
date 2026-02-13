@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "check:app": "bash scripts/check-app-router.sh",
     "clean": "rm -rf .next",
     "dev": "next dev",
     "dev:clean": "rm -rf .next && next dev",
     "dev:report": "next dev -p 3001",
     "generate:example-report": "python3 scripts/generate_example_report_pdf.py",
-    "build": "next build",
+    "build": "npm run check:app && next build",
     "start": "next start",
     "lint": "next lint"
   },

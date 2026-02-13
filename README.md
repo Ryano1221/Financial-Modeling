@@ -99,22 +99,32 @@ The `./dev.sh` script sets `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8010` in `f
 
 ### Vercel (production)
 
-This repo is a **monorepo** (`/frontend` = Next.js, `/backend` = API). Vercel must deploy **only** the Next.js app. Set these in the Vercel project **Settings**:
+This repo is a **monorepo** (`/frontend` = Next.js, `/backend` = API). Vercel must deploy **only** the Next.js app so the custom domain always serves the correct app.
 
-| Setting | Value |
-|--------|--------|
-| **Root Directory** | `frontend` |
-| **Framework Preset** | Next.js |
-| **Build Command** | `npm run build` |
-| **Install Command** | `npm install` |
-| **Output Directory** | *(leave blank)* |
+#### Exact Vercel UI settings (required)
 
-- **Root Directory** is required: Project Settings → General → Root Directory → set to `frontend` (do not leave blank or use repo root).
-- Root `vercel.json` provides fallback install/build commands that run from `frontend/` when present.
+In the Vercel project go to **Settings → General** and set:
 
-**If domain shows NOT_FOUND (404):** Check that (1) **Root Directory** = `frontend` in Vercel, and (2) deployments are succeeding (build logs show "Build Completed"). Then save and redeploy.
+| Setting | Value | Do not override |
+|--------|--------|------------------|
+| **Root Directory** | `frontend` | Must be `frontend` (not blank, not repo root). |
+| **Framework Preset** | Next.js | Leave as Next.js. |
+| **Build Command** | *(leave blank)* | Use framework default. |
+| **Install Command** | *(leave blank)* | Use framework default. |
+| **Output Directory** | *(leave blank)* | Use framework default. |
 
-**CI check** (optional): from repo root run `npm run check:frontend` to ensure `frontend/app/page.tsx` and `frontend/app/layout.tsx` exist before deploy.
+- **Root Directory** is required: Edit → set to `frontend` → Save. All other build fields should be empty so Vercel uses defaults for the selected framework.
+- Root `vercel.json` in the repo provides fallback install/build commands that run from `frontend/` if the project is ever built from repo root.
+
+#### Promote to Production and domain alias
+
+- **Production** is the deployment Vercel serves on your production domain(s). It is usually the latest deployment from your production branch (e.g. `main`).
+- To **Promote to Production**: Deployments → open the deployment you want → **Promote to Production** (or merge to production branch to auto-deploy).
+- To confirm the **custom domain points to the latest production deployment**: Settings → Domains → your domain should list **Production** as the target. The production deployment is the one marked with the production badge in the Deployments list; your domain alias serves that deployment.
+
+**If domain shows NOT_FOUND (404):** (1) **Root Directory** = `frontend`, (2) Build completed successfully, (3) Domain is assigned to **Production**. Then redeploy and promote to Production if needed.
+
+**Build guard:** The frontend build runs `check:app` before `next build`; it fails if `frontend/app/page.tsx` or `frontend/app/layout.tsx` are missing.
 
 **Worker (optional, for async PDF and extraction)**
 
