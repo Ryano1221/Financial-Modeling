@@ -140,7 +140,7 @@ export function canonicalResponseToEngineResult(
   const m = res.metrics;
   const termMonths = m.term_months ?? 0;
   const metrics: OptionMetrics = {
-    premisesName: formatBuildingSuiteAddress({ building_name: m.building_name, suite: m.suite, address: m.address }) || m.premises_name || "",
+    premisesName: (m.premises_name ?? "").trim() || "",
     rsf: m.rsf ?? 0,
     leaseType: m.lease_type ?? "",
     termMonths,

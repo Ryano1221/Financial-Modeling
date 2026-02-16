@@ -12,6 +12,15 @@ import type { EngineResult, MonthlyRow, AnnualRow } from "@/lib/lease-engine/mon
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
+import {
+  formatCurrency,
+  formatCurrencyPerSF,
+  formatDateISO,
+  formatMonths,
+  formatNumber,
+  formatPercent,
+  formatRSF,
+} from "@/lib/format";
 
 /** Locked for regression tests: do not change order or labels. */
 export const SUMMARY_MATRIX_ROW_LABELS = [
@@ -38,16 +47,6 @@ export const TEMPLATE_VERSION = "1.0";
 const CURRENCY_FORMAT = '"$"#,##0.00';
 const PERCENT_FORMAT = "0.00%";
 const NUMBER_FORMAT = "0.00";
-
-function fmtCurrency(val: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
-}
-function fmtPercent(val: number): string {
-  return new Intl.NumberFormat("en-US", { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
-}
-function fmtNumber(val: number): string {
-  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
-}
 
 /**
  * Build professional underwriting workbook from canonical scenarios.
@@ -83,15 +82,15 @@ export async function buildBrokerWorkbook(
     ["Term (months)", (m) => m.termMonths],
     ["Commencement", (m) => m.commencementDate],
     ["Expiration", (m) => m.expirationDate],
-    ["Base rent ($/RSF/yr)", (m) => fmtNumber(m.baseRentPsfYr)],
-    ["Avg gross rent/month", (m) => fmtCurrency(m.avgGrossRentPerMonth)],
-    ["Avg all-in cost/month", (m) => fmtCurrency(m.avgAllInCostPerMonth)],
-    ["Avg all-in cost/year", (m) => fmtCurrency(m.avgAllInCostPerYear)],
-    ["Avg cost/RSF/year", (m) => fmtNumber(m.avgCostPsfYr)],
-    ["NPV @ discount rate", (m) => fmtCurrency(m.npvAtDiscount)],
-    ["Total obligation", (m) => fmtCurrency(m.totalObligation)],
-    ["Equalized avg cost/RSF/yr", (m) => fmtNumber(m.equalizedAvgCostPsfYr)],
-    ["Discount rate used", (m) => fmtPercent(m.discountRateUsed)],
+    ["Base rent ($/RSF/yr)", (m) => formatCurrencyPerSF(m.baseRentPsfYr)],
+    ["Avg gross rent/month", (m) => formatCurrency(m.avgGrossRentPerMonth, { decimals: 2 })],
+    ["Avg all-in cost/month", (m) => formatCurrency(m.avgAllInCostPerMonth, { decimals: 2 })],
+    ["Avg all-in cost/year", (m) => formatCurrency(m.avgAllInCostPerYear, { decimals: 2 })],
+    ["Avg cost/RSF/year", (m) => formatCurrencyPerSF(m.avgCostPsfYr)],
+    ["NPV @ discount rate", (m) => formatCurrency(m.npvAtDiscount, { decimals: 2 })],
+    ["Total obligation", (m) => formatCurrency(m.totalObligation, { decimals: 2 })],
+    ["Equalized avg cost/RSF/yr", (m) => formatCurrencyPerSF(m.equalizedAvgCostPsfYr)],
+    ["Discount rate used", (m) => formatPercent(m.discountRateUsed)],
     ["Notes", (m) => m.notes],
   ];
   metricRows.forEach(([label, fn], rowIndex) => {
@@ -125,10 +124,10 @@ export async function buildBrokerWorkbook(
       ["Commencement date", scenario.datesAndTerm?.commencementDate ?? ""],
       ["Expiration date", scenario.datesAndTerm?.expirationDate ?? ""],
       ["Base rent ($/RSF/yr)", scenario.rentSchedule?.steps?.[0]?.ratePsfYr ?? ""],
-      ["Annual base rent escalation %", ((scenario.rentSchedule?.annualEscalationPercent ?? 0) * 100).toFixed(2) + "%"],
+      ["Annual base rent escalation %", formatPercent(scenario.rentSchedule?.annualEscalationPercent ?? 0)],
       ["Rent abatement months", scenario.rentSchedule?.abatement?.months ?? 0],
       ["Base OpEx ($/RSF/yr)", scenario.expenseSchedule?.baseOpexPsfYr ?? 0],
-      ["Annual OpEx escalation %", ((scenario.expenseSchedule?.annualEscalationPercent ?? 0) * 100).toFixed(2) + "%"],
+      ["Annual OpEx escalation %", formatPercent(scenario.expenseSchedule?.annualEscalationPercent ?? 0)],
       ["TI budget", scenario.tiSchedule?.budgetTotal ?? 0],
       ["TI allowance", scenario.tiSchedule?.allowanceFromLandlord ?? 0],
       ["TI out of pocket", scenario.tiSchedule?.outOfPocket ?? 0],
@@ -271,7 +270,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
   const metricLabels = SUMMARY_MATRIX_ROW_LABELS;
   const getMetricVal = (m: CanonicalMetrics, rowIndex: number): string | number => {
     switch (rowIndex) {
-      case 0: return m.premises_name ?? "";
+      case 0: return (m.premises_name ?? "").trim() || "";
       case 1: return m.rsf ?? 0;
       case 2: return m.lease_type ?? "";
       case 3: return m.term_months ?? 0;
@@ -297,8 +296,8 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     items.forEach((item, colIndex) => {
       const val = getMetricVal(item.response.metrics, rowIndex);
       const out = typeof val === "number"
-        ? (rowIndex === 14 ? fmtPercent(val) : [1, 3, 6, 10, 13].includes(rowIndex) ? fmtNumber(val) : fmtCurrency(val))
-        : String(val);
+        ? (rowIndex === 1 ? formatRSF(val) : rowIndex === 3 ? formatMonths(val) : rowIndex === 14 ? formatPercent(val) : [6, 10, 13].includes(rowIndex) ? formatCurrencyPerSF(val) : [7, 8, 9, 11, 12].includes(rowIndex) ? formatCurrency(val, { decimals: 2 }) : formatCurrency(val, { decimals: 2 }))
+        : rowIndex === 4 || rowIndex === 5 ? formatDateISO(String(val)) : String(val);
       summarySheet.getCell(row, colIndex + 2).value = out;
     });
   });
@@ -314,7 +313,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     sheet.getCell(row, 1).font = { bold: true, size: 12 };
     row += 2;
     const inputRows: [string, string | number][] = [
-      ["Premises name", m.premises_name ?? ""],
+      ["Premises name", (m.premises_name ?? "").trim() || ""],
       ["Rentable square footage", m.rsf ?? 0],
       ["Lease type", m.lease_type ?? ""],
       ["Lease term (months)", m.term_months ?? 0],
