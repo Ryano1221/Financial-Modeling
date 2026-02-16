@@ -87,6 +87,8 @@ except ModuleNotFoundError:
         def set_cached_report(*args, **kwargs) -> None:
             return None
 
+print("BOOT_VERSION", "health_v_2026_02_16_2055", flush=True)
+
 REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
 
 # Version for /health and BOOT log (Render sets RENDER_GIT_COMMIT)
