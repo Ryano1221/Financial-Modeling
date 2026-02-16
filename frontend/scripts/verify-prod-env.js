@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
  * Production environment guard. Run before `next build` when NODE_ENV=production.
- * - Requires BACKEND_URL to be set (app/api/[...path]/route.ts proxies /api/* to this URL).
- * - Forbids BACKEND_URL containing localhost or 127.0.0.1.
- * - NEXT_PUBLIC_BACKEND_URL is ignored in production (same-origin /api).
- * Fails the build only for invalid/missing BACKEND_URL.
+ * - Requires NEXT_PUBLIC_BACKEND_URL (browser calls Render directly; no Vercel proxy).
+ * - Forbids NEXT_PUBLIC_BACKEND_URL containing localhost or 127.0.0.1.
+ * BACKEND_URL is no longer used by the frontend.
  */
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -23,24 +22,18 @@ function check(name, value) {
   const lower = String(value).toLowerCase();
   for (const f of FORBIDDEN) {
     if (lower.includes(f)) {
-      errors.push(`Production build forbids ${name} containing "${f}". Set ${name} to your production API URL (e.g. https://api.thecremodel.com).`);
+      errors.push(`Production build forbids ${name} containing "${f}". Set ${name} to your production backend URL (e.g. https://financial-modeling-docker.onrender.com).`);
       break;
     }
   }
 }
 
-check("BACKEND_URL", process.env.BACKEND_URL);
-const publicBackend = (process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
-if (publicBackend) {
-  console.warn(
-    "⚠️ NEXT_PUBLIC_BACKEND_URL is set in Production. It is ignored because production is forced to same-origin /api."
-  );
-}
+check("NEXT_PUBLIC_BACKEND_URL", process.env.NEXT_PUBLIC_BACKEND_URL);
 
 if (errors.length > 0) {
   console.error("\n❌ Production environment check failed:\n");
   errors.forEach((e) => console.error("  •", e));
-  console.error("\nAdd and set these variables in Vercel → Project → Settings → Environment Variables for Production.\n");
+  console.error("\nAdd NEXT_PUBLIC_BACKEND_URL in Vercel → Project → Settings → Environment Variables for Production (no trailing slash).\n");
   process.exit(1);
 }
 

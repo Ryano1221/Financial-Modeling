@@ -1,11 +1,12 @@
 /**
- * Single source of truth for backend base URL.
- * Production always uses same-origin /api so traffic flows through the website domain.
- * Development may use NEXT_PUBLIC_BACKEND_URL when provided.
+ * Backend base URL: NEXT_PUBLIC_BACKEND_URL (no trailing slash).
+ * Required for all environments; browser calls Render directly (no Vercel proxy).
  */
 export function getBackendBaseUrl(): string {
-  if (process.env.NODE_ENV === "production") return "";
-  const v = process.env.NEXT_PUBLIC_BACKEND_URL?.trim();
-  if (!v) return ""; // same origin relative calls
-  return v.endsWith("/") ? v.slice(0, -1) : v;
+  const v = process.env.NEXT_PUBLIC_BACKEND_URL?.trim() ?? "";
+  const url = v.endsWith("/") ? v.slice(0, -1) : v;
+  if (!url) {
+    throw new Error("NEXT_PUBLIC_BACKEND_URL is not set. Set it in Vercel (or .env.local) to your Render backend URL.");
+  }
+  return url;
 }

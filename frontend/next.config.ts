@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // /api/* is handled by app/api/[...path]/route.ts (proxy to BACKEND_URL at request time).
+  // Browser calls Render directly via NEXT_PUBLIC_BACKEND_URL; no /api proxy.
   // No rewrites: the route forwards method, headers, and body so multipart/form-data (lease upload) works.
 };
 

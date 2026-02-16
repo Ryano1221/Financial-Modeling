@@ -44,7 +44,7 @@ function classifyFailureReason(raw: unknown): string | null {
     return "Website could not reach the backend service.";
   }
   if (msg.includes("backend_url") || msg.includes("backEND") || msg.includes("not configured") || msg.includes("set backend")) {
-    return "Backend URL not set. Add BACKEND_URL in Vercel (Settings → Environment Variables) to your Render backend URL.";
+    return "Backend URL not set. Add NEXT_PUBLIC_BACKEND_URL in Vercel (Settings → Environment Variables) to your Render backend URL.";
   }
   if (msg.includes("cold start") || msg.includes("too long to respond")) {
     return "Backend was starting up. Try again in a few seconds.";

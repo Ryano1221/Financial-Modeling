@@ -1,26 +1,25 @@
 /**
- * API helpers: URL from getBackendBaseUrl (no localhost default), 60s timeout, friendly errors.
- * Browser always calls same-origin /api when NEXT_PUBLIC_BACKEND_URL is unset (Vercel proxy).
+ * API helpers: call Render backend directly via NEXT_PUBLIC_BACKEND_URL.
+ * No Vercel proxy; avoids 60s Hobby timeout on lease uploads.
  */
 import { getBackendBaseUrl } from "./backend";
 
-const DEFAULT_TIMEOUT_MS = 60000; // Render cold start
+const DEFAULT_TIMEOUT_MS = 300000; // 5 min for Render cold start + extraction
 const FRIENDLY_MESSAGE = "We're having trouble connecting right now. Please try again.";
 
 /** Single user-facing error for all lease/processing failures. Never show backend URLs, CLI, or stack traces. */
 export const USER_FACING_ERROR_MESSAGE =
   "We're having trouble processing this lease. Please review inputs or try again.";
 
-/** Base URL for backend. Empty string = same-origin /api (no localhost). */
-export function getBaseUrl(): string {
-  return getBackendBaseUrl();
-}
-
-/** Full URL for a backend path. Uses /api when base is unset (proxy). */
+/** Full URL for a backend path. Uses NEXT_PUBLIC_BACKEND_URL (throws if unset). */
 export function getApiUrl(path: string): string {
   const base = getBackendBaseUrl();
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return base ? `${base}${p}` : `/api${p}`;
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/** Base URL for backend. */
+export function getBaseUrl(): string {
+  return getBackendBaseUrl();
 }
 
 export const CONNECTION_MESSAGE = FRIENDLY_MESSAGE;
@@ -54,14 +53,6 @@ export function getAuthHeaders(): ApiHeaders {
   return { "Content-Type": "application/json" };
 }
 
-const GATEWAY_STATUSES = new Set([502, 503, 504]);
-const DEV_BACKEND_FALLBACKS = [
-  "http://127.0.0.1:8010",
-  "http://localhost:8010",
-  "http://127.0.0.1:8000",
-  "http://localhost:8000",
-];
-
 function withTimeoutSignal(timeoutMs: number): { signal: AbortSignal; clear: () => void } {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -71,47 +62,20 @@ function withTimeoutSignal(timeoutMs: number): { signal: AbortSignal; clear: () 
   };
 }
 
-function buildCandidateUrls(path: string): string[] {
-  const primary = getApiUrl(path);
-  if (process.env.NODE_ENV === "production") return [primary];
-  const p = path.startsWith("/") ? path : `/${path}`;
-  const urls = [primary];
-  if (!primary.startsWith("/api")) urls.push(`/api${p}`);
-  for (const base of DEV_BACKEND_FALLBACKS) {
-    urls.push(`${base}${p}`);
-  }
-  return Array.from(new Set(urls));
-}
-
-/** Fetch with timeout; throws with friendly message on network error (no "Failed to fetch", no URLs). */
+/** Fetch backend directly; long timeout for cold start. Throws friendly message on network error. */
 export async function fetchApi(
   path: string,
   init: RequestInit,
   timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): Promise<Response> {
-  const candidates = buildCandidateUrls(path);
-
-  for (let i = 0; i < candidates.length; i++) {
-    const url = candidates[i];
-    const isLast = i === candidates.length - 1;
-    const timeout = withTimeoutSignal(timeoutMs);
-
-    try {
-      const res = await fetch(url, { ...init, signal: timeout.signal });
-      timeout.clear();
-
-      // In local dev, fail over from proxy/gateway errors to direct backend targets.
-      if (process.env.NODE_ENV !== "production" && !isLast && GATEWAY_STATUSES.has(res.status)) {
-        continue;
-      }
-      return res;
-    } catch (e) {
-      timeout.clear();
-      if (isLast) {
-        throw new Error(FRIENDLY_MESSAGE);
-      }
-    }
+  const url = getApiUrl(path);
+  const timeout = withTimeoutSignal(timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, signal: timeout.signal });
+    timeout.clear();
+    return res;
+  } catch (e) {
+    timeout.clear();
+    throw new Error(FRIENDLY_MESSAGE);
   }
-
-  throw new Error(FRIENDLY_MESSAGE);
 }

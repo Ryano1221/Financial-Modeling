@@ -21,27 +21,11 @@ cd frontend && npm run clean && npm run dev
 
 Or use the combined script: `npm run dev:clean`.
 
-## Backend URL (Render through website domain)
+## Backend URL (direct to Render)
 
-The frontend **never** defaults to localhost in production.
-In **production**, browser requests go to **same-origin `/api`**; the API route (`app/api/[...path]/route.ts`) proxies to your backend using **`BACKEND_URL`**.
+The browser calls the Render backend **directly** (no Vercel proxy), so lease uploads are not limited by Vercel’s 60s function timeout.
 
-- **Production (Vercel):** You **must** set **`BACKEND_URL`** in Vercel (Project → Settings → Environment Variables) to your Render backend URL (e.g. `https://financial-modeling.onrender.com`). If this is missing, lease extraction will show "Website could not reach the backend service."
-- **Local dev:** The proxy defaults to `http://127.0.0.1:8010` when `BACKEND_URL` is unset. Override in `frontend/.env.local` if your backend runs on another port.
+- **Production (Vercel):** Set **`NEXT_PUBLIC_BACKEND_URL`** in Vercel (Project → Settings → Environment Variables) to your Render backend URL, e.g. `https://financial-modeling-docker.onrender.com` (no trailing slash). The backend must allow CORS from `https://thecremodel.com` and `https://www.thecremodel.com`.
+- **Local dev:** Set **`NEXT_PUBLIC_BACKEND_URL`** in `frontend/.env.local` (e.g. `http://127.0.0.1:8010` or your Render URL). Backend CORS allows `http://localhost:3000` and `http://127.0.0.1:3000`.
 
-### Local reliability hardening
-
-- `fetchApi` now automatically retries common local backend targets in development if the primary URL/proxy is unavailable:
-  - `/api/...`
-  - `http://127.0.0.1:8010/...`
-  - `http://localhost:8010/...`
-  - `http://127.0.0.1:8000/...`
-  - `http://localhost:8000/...`
-- To avoid port mismatch, start backend explicitly on `8010`:
-
-```bash
-cd backend
-uvicorn main:app --reload --host 127.0.0.1 --port 8010
-```
-
-Connection errors show a friendly message and Retry button only (no URLs, no CLI commands). Diagnostics and "Show advanced options" are **off** unless `NEXT_PUBLIC_SHOW_DIAGNOSTICS=true` and `NODE_ENV !== "production"`.
+**`BACKEND_URL`** is no longer used by the frontend.

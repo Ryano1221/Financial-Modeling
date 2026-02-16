@@ -87,20 +87,15 @@ REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
 
 app = FastAPI(title="Lease Deck Backend", version="0.1.0")
 
-# Production origins for frontend; dev regex for localhost
-_cors_origins = [
+ALLOWED_ORIGINS = [
     "https://thecremodel.com",
     "https://www.thecremodel.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
-# Add Vercel preview/production if set
-_vercel_url = os.environ.get("VERCEL_URL")
-if _vercel_url:
-    _cors_origins.append(f"https://{_vercel_url}")
-    _cors_origins.append(f"https://www.{_vercel_url}")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

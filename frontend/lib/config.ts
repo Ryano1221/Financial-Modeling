@@ -1,6 +1,6 @@
 /**
- * Backend URL for API calls. Re-exports from single source of truth (lib/backend.ts).
- * No localhost default: when unset, use same-origin /api (see getApiUrl in lib/api.ts).
+ * Backend URL for API calls. Re-exports from lib/backend.ts (NEXT_PUBLIC_BACKEND_URL).
+ * Required; throws if unset.
  */
 import { getBackendBaseUrl } from "./backend";
 
