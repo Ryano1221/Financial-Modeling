@@ -20,7 +20,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, HTMLResponse
+from fastapi.responses import Response, HTMLResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from engine.compute import compute_cashflows
@@ -89,6 +89,15 @@ except ModuleNotFoundError:
 
 REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
 
+# Version for /health and BOOT log (Render sets RENDER_GIT_COMMIT)
+VERSION = (os.environ.get("RENDER_GIT_COMMIT") or "").strip() or "unknown"
+
+
+def _ai_enabled() -> bool:
+    key = os.getenv("OPENAI_API_KEY", "")
+    return bool(key and key.strip())
+
+
 app = FastAPI(title="Lease Deck Backend", version="0.1.0")
 
 # CORS: use ALLOWED_ORIGINS env (comma-separated) if set, else default
@@ -136,15 +145,26 @@ app.include_router(webhooks_router)
 
 
 @app.on_event("startup")
+async def _startup_log():
+    print("BOOT", {
+        "health_v": "v3_2026_02_16_1900",
+        "source_file": str(Path(__file__).resolve()),
+        "render_git_commit": os.getenv("RENDER_GIT_COMMIT", ""),
+        "render_service_name": os.getenv("RENDER_SERVICE_NAME", ""),
+    }, flush=True)
+
+
+@app.on_event("startup")
 def startup_log() -> None:
     import logging
+    ai_enabled = _ai_enabled()
     port = os.environ.get("PORT", "8010")
     host = os.environ.get("HOST", "127.0.0.1")
-    has_openai = bool(os.environ.get("OPENAI_API_KEY", "").strip())
     logging.getLogger("uvicorn.error").info(
-        f"Backend starting on http://{host}:{port} (OPENAI_API_KEY configured: {has_openai})"
+        "Backend starting on http://%s:%s (OPENAI_API_KEY configured: %s) version=%s",
+        host, port, ai_enabled, VERSION,
     )
-    if not has_openai:
+    if not ai_enabled:
         logging.getLogger("uvicorn.error").warning(
             "OPENAI_API_KEY is not set. Extraction and AI features will not work."
         )
@@ -156,9 +176,24 @@ def startup_log() -> None:
 
 
 @app.get("/health")
-def health() -> dict:
-    """Fast health check; returns immediately."""
-    return {"status": "ok"}
+def health():
+    return {
+        "status": "ok",
+        "health_v": "v3_2026_02_16_1900",
+        "ts": int(time.time()),
+        "ai_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
+        "source_file": str(Path(__file__).resolve()),
+    }
+
+
+@app.get("/version")
+def version():
+    return {
+        "version_v": "v3_2026_02_16_1900",
+        "source_file": str(Path(__file__).resolve()),
+        "render_git_commit": os.getenv("RENDER_GIT_COMMIT", ""),
+        "render_service_name": os.getenv("RENDER_SERVICE_NAME", ""),
+    }
 
 
 @app.post("/extract", response_model=ExtractionResponse)
@@ -449,6 +484,9 @@ def normalize_endpoint(
             e,
             traceback.format_exc(),
         )
+        err_msg = str(e).lower()
+        if "openai_api_key" in err_msg or ("invalid" in err_msg and "key" in err_msg) or "not configured" in err_msg:
+            return JSONResponse(status_code=503, content={"error": "OPENAI_API_KEY missing or invalid on backend"})
         raise
 
 
