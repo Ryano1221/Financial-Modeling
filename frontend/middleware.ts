@@ -2,16 +2,21 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PRODUCTION_APEX = "thecremodel.com";
-const PRODUCTION_HTTPS = "https://thecremodel.com";
+const ENABLE_APEX_REDIRECT = process.env.ENABLE_APEX_REDIRECT === "true";
 
 /**
- * Force domain consistency: redirect www to apex so production is always served at https://thecremodel.com.
+ * Domain redirects are disabled by default to avoid redirect loops with Vercel domain settings.
+ * If needed, enable explicitly with ENABLE_APEX_REDIRECT=true.
  */
 export function middleware(request: NextRequest) {
+  if (!ENABLE_APEX_REDIRECT || process.env.NODE_ENV !== "production") {
+    return NextResponse.next();
+  }
+
   const host = request.headers.get("host") ?? "";
   const url = request.nextUrl.clone();
 
-  if (host.toLowerCase().startsWith("www.")) {
+  if (host.toLowerCase() === `www.${PRODUCTION_APEX}`) {
     url.host = PRODUCTION_APEX;
     url.protocol = "https:";
     return NextResponse.redirect(url, 308);
