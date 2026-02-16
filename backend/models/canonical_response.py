@@ -8,7 +8,7 @@ from typing import Dict, List
 
 from pydantic import BaseModel, Field
 
-from models.canonical_lease import CanonicalLease
+from .canonical_lease import CanonicalLease
 
 
 class MonthlyRow(BaseModel):

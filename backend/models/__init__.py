@@ -3,7 +3,7 @@ Backend models package.
 Re-exports legacy (Scenario, CashflowResult, etc.) and canonical lease schema.
 """
 
-from models.legacy import (
+from .legacy import (
     OpexMode,
     OneTimeCost,
     TerminationOption,
@@ -25,7 +25,7 @@ from models.legacy import (
     ReportMeta,
     ReportRequest,
 )
-from models.canonical_lease import (
+from .canonical_lease import (
     CanonicalLease,
     RentScheduleStep,
     FreeRentPeriod,
@@ -36,7 +36,7 @@ from models.canonical_lease import (
     EscalationType,
     ExpenseStructureType,
 )
-from models.canonical_response import (
+from .canonical_response import (
     CanonicalComputeResponse,
     CanonicalMetrics,
     MonthlyRow,

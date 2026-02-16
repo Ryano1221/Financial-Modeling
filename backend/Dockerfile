@@ -18,4 +18,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY . .
 
+# Fail the build if legacy.py is missing (avoids runtime ModuleNotFoundError on Render)
+RUN ls -la /app/models && test -f /app/models/legacy.py
+
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
