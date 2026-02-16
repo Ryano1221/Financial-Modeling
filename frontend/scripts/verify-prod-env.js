@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * Production environment guard. Run before `next build` when NODE_ENV=production.
- * - Requires BACKEND_URL to be set (server-side /api rewrites to Render/backend).
+ * - Requires BACKEND_URL to be set (app/api/[...path]/route.ts proxies /api/* to this URL).
  * - Forbids BACKEND_URL containing localhost or 127.0.0.1.
- * - Requires NEXT_PUBLIC_BACKEND_URL to be empty in production so browser always uses same-origin /api.
- * Fails the build with a clear message so production always routes via website domain.
+ * - NEXT_PUBLIC_BACKEND_URL is ignored in production (same-origin /api).
+ * Fails the build only for invalid/missing BACKEND_URL.
  */
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -32,8 +32,8 @@ function check(name, value) {
 check("BACKEND_URL", process.env.BACKEND_URL);
 const publicBackend = (process.env.NEXT_PUBLIC_BACKEND_URL || "").trim();
 if (publicBackend) {
-  errors.push(
-    "Production requires NEXT_PUBLIC_BACKEND_URL to be unset/empty so browser traffic always goes through same-origin /api."
+  console.warn(
+    "⚠️ NEXT_PUBLIC_BACKEND_URL is set in Production. It is ignored because production is forced to same-origin /api."
   );
 }
 
