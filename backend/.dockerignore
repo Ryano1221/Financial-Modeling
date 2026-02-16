@@ -7,7 +7,9 @@ __pycache__/
 .venv/
 venv/
 .env
-cache/extraction/
-cache/reports/
+# Exclude cache data dirs but keep the cache Python package (__init__.py, disk_cache.py)
+cache/*
+!cache/__init__.py
+!cache/disk_cache.py
 reports/
 .DS_Store
