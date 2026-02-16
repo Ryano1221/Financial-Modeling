@@ -1,122 +1,91 @@
-/**
- * Proxy all /api/* requests to the backend (BACKEND_URL).
- * Ensures lease extraction and normalize calls reach the Render backend even when
- * BACKEND_URL is only set at runtime (e.g. Vercel env).
- */
+import { NextRequest } from "next/server";
 
-function getBackendBase(): string {
-  const url = process.env.BACKEND_URL?.trim().replace(/\/$/, "");
-  if (url) return url;
-  if (process.env.NODE_ENV !== "production") return "http://127.0.0.1:8010";
-  return "";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const BACKEND_TIMEOUT_MS = 120000;
+
+function getBackendBaseUrl() {
+  const v = process.env.BACKEND_URL?.trim() || "";
+  return v.endsWith("/") ? v.slice(0, -1) : v;
 }
 
-function getBackendPath(pathSegments: string[]): string {
-  return pathSegments.join("/");
-}
-
-function copyForwardHeaders(request: Request): Headers {
-  const out = new Headers();
-  const skip = new Set(["host", "connection", "content-length"]);
-  request.headers.forEach((value, key) => {
-    if (skip.has(key.toLowerCase())) return;
-    out.set(key, value);
-  });
-  return out;
-}
-
-async function proxy(request: Request, pathSegments: string[]): Promise<Response> {
-  const BACKEND_URL = getBackendBase();
-  if (!BACKEND_URL) {
-    return Response.json(
-      {
-        detail:
-          "Backend is not configured. Set BACKEND_URL (e.g. https://your-backend.onrender.com) in your hosting environment (Vercel → Settings → Environment Variables).",
-      },
-      { status: 503, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
-  const path = getBackendPath(pathSegments);
-  const url = `${BACKEND_URL}/${path}`;
-  const headers = copyForwardHeaders(request);
-
-  // Long timeout so Render cold start (30–60s+) can complete
-  const BACKEND_TIMEOUT_MS = 120000;
+async function proxyOnce(req: NextRequest, upstreamUrl: string) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
 
   try {
-    const res = await fetch(url, {
-      method: request.method,
-      headers,
-      body: request.body,
+    const contentType = req.headers.get("content-type") || "application/octet-stream";
+
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: req.method,
+      headers: {
+        "content-type": contentType,
+        ...(req.headers.get("accept") ? { accept: req.headers.get("accept")! } : {}),
+      },
+      body: req.body,
+      // Required for streaming body in Node fetch
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      duplex: "half" as any,
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
 
-    const responseHeaders = new Headers();
-    res.headers.forEach((value, key) => {
-      if (key.toLowerCase() === "transfer-encoding") return;
-      responseHeaders.set(key, value);
-    });
+    const text = await upstreamRes.text();
+    const resContentType = upstreamRes.headers.get("content-type") || "application/json";
 
-    return new Response(res.body, {
-      status: res.status,
-      statusText: res.statusText,
-      headers: responseHeaders,
+    return new Response(text, {
+      status: upstreamRes.status,
+      headers: { "content-type": resContentType },
     });
-  } catch (e) {
+  } finally {
     clearTimeout(timeoutId);
-    const message = e instanceof Error ? e.message : String(e);
-    const isTimeout = message.toLowerCase().includes("abort") || message.toLowerCase().includes("timeout");
-    return Response.json(
-      {
-        detail: isTimeout
-          ? "Backend took too long to respond (e.g. cold start). Please try again in a moment."
-          : `Backend request failed: ${message}`,
-      },
-      { status: 502, headers: { "Content-Type": "application/json" } }
-    );
   }
 }
 
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await context.params;
-  return proxy(request, path);
+type RouteContext = { params: Promise<{ path: string[] }> };
+
+export async function GET(req: NextRequest, ctx: RouteContext) {
+  return handle(req, ctx);
+}
+export async function POST(req: NextRequest, ctx: RouteContext) {
+  return handle(req, ctx);
+}
+export async function PUT(req: NextRequest, ctx: RouteContext) {
+  return handle(req, ctx);
+}
+export async function PATCH(req: NextRequest, ctx: RouteContext) {
+  return handle(req, ctx);
+}
+export async function DELETE(req: NextRequest, ctx: RouteContext) {
+  return handle(req, ctx);
 }
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await context.params;
-  return proxy(request, path);
-}
+async function handle(req: NextRequest, ctx: RouteContext) {
+  const base = getBackendBaseUrl();
+  if (!base) {
+    return Response.json({ error: "BACKEND_URL not set" }, { status: 503 });
+  }
 
-export async function PUT(
-  request: Request,
-  context: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await context.params;
-  return proxy(request, path);
-}
+  const { path: pathSegments } = await ctx.params;
+  const path = "/" + (pathSegments || []).join("/");
+  const upstreamUrl = base + path;
 
-export async function PATCH(
-  request: Request,
-  context: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await context.params;
-  return proxy(request, path);
-}
+  try {
+    const first = await proxyOnce(req, upstreamUrl);
 
-export async function DELETE(
-  request: Request,
-  context: { params: Promise<{ path: string[] }> }
-) {
-  const { path } = await context.params;
-  return proxy(request, path);
+    if ([502, 503, 504].includes(first.status)) {
+      await new Promise((r) => setTimeout(r, 2000));
+      return await proxyOnce(req, upstreamUrl);
+    }
+
+    return first;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("Proxy error", { path, upstreamUrl, msg });
+    const isTimeout = msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout");
+    return Response.json(
+      { error: isTimeout ? "Upstream timeout" : "Upstream connection failed" },
+      { status: 502 }
+    );
+  }
 }
