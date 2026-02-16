@@ -177,15 +177,16 @@ def startup_log() -> None:
 
 @app.get("/health")
 def health():
-    payload = {
+    version = "health_v_2026_02_16_2100"
+    ai_enabled = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    commit = os.getenv("RENDER_GIT_COMMIT") or None
+    print("HEALTH", {"version": version, "ai_enabled": ai_enabled, "has_key": bool(os.getenv("OPENAI_API_KEY"))}, flush=True)
+    return {
         "status": "ok",
-        "health_v": "v4_2026_02_16_2045",
-        "ts": int(time.time()),
-        "ai_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
-        "source_file": str(Path(__file__).resolve()),
+        "ai_enabled": ai_enabled,
+        "version": version,
+        "commit": commit,
     }
-    print("HEALTH", payload, flush=True)
-    return payload
 
 
 @app.get("/version")
