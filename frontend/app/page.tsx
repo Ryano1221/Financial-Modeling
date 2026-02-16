@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
-import { ComparisonTable, type ComparisonRow, type SortKey, type SortDir } from "@/components/ComparisonTable";
 import { Charts, type ChartRow } from "@/components/Charts";
-import { getApiUrl, fetchApi, getAuthHeaders, CONNECTION_MESSAGE } from "@/lib/api";
+import { getApiUrl, fetchApi, getAuthHeaders, CONNECTION_MESSAGE, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
 
@@ -27,14 +26,26 @@ import { Footer } from "@/components/Footer";
 import type {
   ScenarioWithId,
   CashflowResult,
-  ExtractionResponse,
+  NormalizerResponse,
   GenerateScenariosRequest,
   GenerateScenariosResponse,
   ScenarioInput,
   BrandConfig,
+  BackendCanonicalLease,
 } from "@/lib/types";
+import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
+import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
+import { SummaryMatrix } from "@/components/SummaryMatrix";
+import {
+  backendCanonicalToScenarioInput,
+  scenarioInputToBackendCanonical,
+  canonicalResponseToEngineResult,
+} from "@/lib/canonical-api";
+import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
+import type { CanonicalComputeResponse } from "@/lib/types";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
+const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
 
 type ReportErrorState = { statusCode: number; message: string; reportId?: string } | null;
 
@@ -62,8 +73,6 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
   const [loading, setLoading] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("avg_cost_psf_year");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [renewalRelocateExpanded, setRenewalRelocateExpanded] = useState(false);
   const [generateLoading, setGenerateLoading] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -71,7 +80,7 @@ export default function Home() {
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
-  const [lastExtractSource, setLastExtractSource] = useState<string | null>(null);
+  const [pendingNormalize, setPendingNormalize] = useState<NormalizerResponse | null>(null);
   const [brands, setBrands] = useState<BrandConfig[]>([]);
   const [brandId, setBrandId] = useState<string>(() => {
     if (typeof window !== "undefined") {
@@ -91,8 +100,72 @@ export default function Home() {
     property_name: "",
     confidential: true,
   });
+  const [globalDiscountRate, setGlobalDiscountRate] = useState(0.08);
+  const [exportExcelLoading, setExportExcelLoading] = useState(false);
+  const [exportExcelError, setExportExcelError] = useState<string | null>(null);
+  const [baselineId, setBaselineId] = useState<string | null>(null);
+  const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
+  const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
+  const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
+
+  const [hasRestored, setHasRestored] = useState(false);
+  useEffect(() => {
+    if (hasRestored || typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(SCENARIOS_STATE_KEY);
+      if (!raw) {
+        setHasRestored(true);
+        return;
+      }
+      const data = JSON.parse(raw) as { scenarios?: ScenarioWithId[]; baselineId?: string | null; includedInSummary?: Record<string, boolean> };
+      if (Array.isArray(data.scenarios) && data.scenarios.length > 0) {
+        setScenarios(data.scenarios);
+        if (data.scenarios[0]) setSelectedId(data.scenarios[0].id);
+      }
+      if (data.baselineId != null) setBaselineId(data.baselineId);
+      if (data.includedInSummary && typeof data.includedInSummary === "object") setIncludedInSummary(data.includedInSummary);
+      setHasRestored(true);
+    } catch {
+      setHasRestored(true);
+    }
+  }, [hasRestored]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !hasRestored) return;
+    const included: Record<string, boolean> = {};
+    scenarios.forEach((s) => {
+      included[s.id] = includedInSummary[s.id] !== false;
+    });
+    try {
+      localStorage.setItem(
+        SCENARIOS_STATE_KEY,
+        JSON.stringify({ scenarios, baselineId, includedInSummary: included })
+      );
+    } catch {
+      // ignore
+    }
+  }, [scenarios, baselineId, includedInSummary, hasRestored]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isProduction || scenarios.length === 0) return;
+    const missing = scenarios.filter((s) => !canonicalComputeCache[s.id]);
+    if (missing.length === 0) return;
+    const headers = getAuthHeaders();
+    missing.forEach((s) => {
+      const canonical = scenarioInputToBackendCanonical(s, s.id, s.name);
+      fetchApi("/compute-canonical", { method: "POST", headers, body: JSON.stringify(canonical) })
+        .then((res) => {
+          if (!res.ok) return;
+          return res.json() as Promise<CanonicalComputeResponse>;
+        })
+        .then((data) => {
+          if (data) setCanonicalComputeCache((prev) => ({ ...prev, [s.id]: data }));
+        })
+        .catch(() => {});
+    });
+  }, [scenarios, isProduction, canonicalComputeCache]);
 
   useEffect(() => {
     fetchApi("/brands", { method: "GET" })
@@ -107,8 +180,9 @@ export default function Home() {
     }
   }, [brandId]);
 
-  const handleExtractSuccess = useCallback((data: ExtractionResponse) => {
-    const scenarioWithId: ScenarioWithId = { id: nextId(), ...data.scenario };
+  const addScenarioFromCanonical = useCallback((canonical: BackendCanonicalLease) => {
+    const scenarioInput = backendCanonicalToScenarioInput(canonical);
+    const scenarioWithId: ScenarioWithId = { id: nextId(), ...scenarioInput };
     setScenarios((prev) => [...prev, scenarioWithId]);
     setSelectedId(scenarioWithId.id);
     setResults((prev) => {
@@ -116,15 +190,30 @@ export default function Home() {
       delete next[scenarioWithId.id];
       return next;
     });
-    setLastExtractWarnings(data.warnings.length ? data.warnings : null);
-    setLastExtractSource(data.source);
+    setPendingNormalize(null);
     setExtractError(null);
   }, []);
+
+  const handleNormalizeSuccess = useCallback((data: NormalizerResponse) => {
+    setLastExtractWarnings(data.warnings.length ? data.warnings : null);
+    const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
+    if (needsReview) {
+      setPendingNormalize(data);
+      setExtractError(null);
+    } else {
+      addScenarioFromCanonical(data.canonical_lease);
+    }
+  }, [addScenarioFromCanonical]);
+
+  const handleNormalizeConfirm = useCallback((canonical: BackendCanonicalLease) => {
+    addScenarioFromCanonical(canonical);
+    setLastExtractWarnings(null);
+  }, [addScenarioFromCanonical]);
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message);
     setLastExtractWarnings(null);
-    setLastExtractSource(null);
+    setPendingNormalize(null);
   }, []);
 
   useEffect(() => {
@@ -145,6 +234,7 @@ export default function Home() {
     const newScenario: ScenarioWithId = {
       id: nextId(),
       ...defaultScenarioInput,
+      discount_rate_annual: globalDiscountRate,
     };
     setScenarios((prev) => [...prev, newScenario]);
     setSelectedId(newScenario.id);
@@ -153,7 +243,7 @@ export default function Home() {
       delete next[newScenario.id];
       return next;
     });
-  }, []);
+  }, [globalDiscountRate]);
 
   const duplicateScenario = useCallback(() => {
     if (!selectedScenario) return;
@@ -204,43 +294,109 @@ export default function Home() {
     );
   }, []);
 
+  const renameScenario = useCallback((id: string, newName: string) => {
+    setScenarios((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, name: newName.trim() || s.name } : s))
+    );
+  }, []);
+
+  const moveScenario = useCallback((id: string, direction: "up" | "down") => {
+    setScenarios((prev) => {
+      const i = prev.findIndex((s) => s.id === id);
+      if (i < 0) return prev;
+      const j = direction === "up" ? i - 1 : i + 1;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  }, []);
+
+  const toggleIncludeInSummary = useCallback((id: string) => {
+    setIncludedInSummary((prev) => ({ ...prev, [id]: !(prev[id] !== false) }));
+  }, []);
+
+  const setLockBaseline = useCallback((id: string) => {
+    setBaselineId((prev) => (prev === id ? null : id));
+  }, []);
+
   const runAnalysis = useCallback(async () => {
     if (scenarios.length === 0) return;
     setLoading(true);
     setResults({});
 
-    const payloads = scenarios.map((s) => ({ id: s.id, payload: scenarioToPayload(s) }));
-
     const headers = getAuthHeaders();
-    const settled = await Promise.allSettled(
-      payloads.map(async ({ id, payload }) => {
-        const res = await fetchApi("/compute", {
-          method: "POST",
-          headers,
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || `HTTP ${res.status}`);
-        }
-        return { id, data: (await res.json()) as CashflowResult };
-      })
-    );
 
-    const nextResults: Record<string, CashflowResult | { error: string }> = {};
-    settled.forEach((outcome, i) => {
-      const { id } = payloads[i];
-      if (outcome.status === "fulfilled") {
-        nextResults[id] = outcome.value.data;
-      } else {
-        nextResults[id] = {
-          error: outcome.reason?.message === CONNECTION_MESSAGE ? CONNECTION_MESSAGE : "Request failed",
-        };
-      }
-    });
-    setResults(nextResults);
+    if (isProduction) {
+      const canonicalPayloads = scenarios.map((s) => ({
+        id: s.id,
+        name: s.name,
+        canonical: scenarioInputToBackendCanonical(s, s.id, s.name),
+      }));
+      const settled = await Promise.allSettled(
+        canonicalPayloads.map(async ({ id, name, canonical }) => {
+          const res = await fetchApi("/compute-canonical", {
+            method: "POST",
+            headers,
+            body: JSON.stringify(canonical),
+          });
+          if (!res.ok) throw new Error("Compute failed");
+          const data: CanonicalComputeResponse = await res.json();
+          return { id, name, data };
+        })
+      );
+      const nextCache: Record<string, CanonicalComputeResponse> = {};
+      const nextResults: Record<string, CashflowResult | { error: string }> = {};
+      settled.forEach((outcome, i) => {
+        const { id, name } = canonicalPayloads[i];
+        if (outcome.status === "fulfilled") {
+          nextCache[id] = outcome.value.data;
+          nextResults[id] = {
+            term_months: outcome.value.data.metrics.term_months,
+            rent_nominal: outcome.value.data.metrics.base_rent_total,
+            opex_nominal: outcome.value.data.metrics.opex_total,
+            total_cost_nominal: outcome.value.data.metrics.total_obligation_nominal,
+            npv_cost: outcome.value.data.metrics.npv_cost,
+            avg_cost_year: outcome.value.data.metrics.total_obligation_nominal / (outcome.value.data.metrics.term_months / 12 || 1),
+            avg_cost_psf_year: outcome.value.data.metrics.avg_all_in_cost_psf_year,
+          };
+        } else {
+          nextResults[id] = { error: getDisplayErrorMessage(outcome.reason) };
+        }
+      });
+      setCanonicalComputeCache(nextCache);
+      setResults(nextResults);
+    } else {
+      const payloads = scenarios.map((s) => ({ id: s.id, payload: scenarioToPayload(s) }));
+      const settled = await Promise.allSettled(
+        payloads.map(async ({ id, payload }) => {
+          const res = await fetchApi("/compute", {
+            method: "POST",
+            headers,
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          return { id, data: (await res.json()) as CashflowResult };
+        })
+      );
+      const nextResults: Record<string, CashflowResult | { error: string }> = {};
+      settled.forEach((outcome, i) => {
+        const { id } = payloads[i];
+        if (outcome.status === "fulfilled") {
+          nextResults[id] = outcome.value.data;
+        } else {
+          nextResults[id] = {
+            error: outcome.reason?.message === CONNECTION_MESSAGE ? CONNECTION_MESSAGE : "Request failed",
+          };
+        }
+      });
+      setResults(nextResults);
+    }
     setLoading(false);
-  }, [scenarios]);
+  }, [scenarios, isProduction]);
 
   const exportPdfDeck = useCallback(async () => {
     const withResults = scenarios.filter((s) => {
@@ -273,7 +429,7 @@ export default function Home() {
       const data: { report_id: string } = await res.json();
       window.open(getApiUrl(`/reports/${data.report_id}/pdf`), "_blank", "noopener,noreferrer");
     } catch (err) {
-      setExportPdfError(err instanceof Error ? err.message : CONNECTION_MESSAGE);
+      setExportPdfError(getDisplayErrorMessage(err));
     } finally {
       setExportPdfLoading(false);
     }
@@ -320,7 +476,7 @@ export default function Home() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setReportError({ statusCode: 0, message: err instanceof Error ? err.message : CONNECTION_MESSAGE });
+      setReportError({ statusCode: 0, message: getDisplayErrorMessage(err) });
     } finally {
       setReportLoading(false);
     }
@@ -357,7 +513,7 @@ export default function Home() {
         w.document.close();
       }
     } catch (err) {
-      setPreviewError({ statusCode: 0, message: err instanceof Error ? err.message : CONNECTION_MESSAGE });
+      setPreviewError({ statusCode: 0, message: getDisplayErrorMessage(err) });
     } finally {
       setPreviewLoading(false);
     }
@@ -421,39 +577,70 @@ export default function Home() {
       setSelectedId(renewalWithId.id);
       setResults({});
     } catch (err) {
-      setGenerateError(err instanceof Error ? err.message : CONNECTION_MESSAGE);
+      setGenerateError(getDisplayErrorMessage(err));
     } finally {
       setGenerateLoading(false);
     }
   }, []);
 
-  const handleSort = useCallback((key: SortKey) => {
-    setSortKey(key);
-    setSortDir((d) => (key === sortKey ? (d === "asc" ? "desc" : "asc") : "asc"));
-  }, [sortKey]);
+  const exportExcelDeck = useCallback(async () => {
+    if (scenarios.length === 0) {
+      setExportExcelError("Add at least one scenario.");
+      return;
+    }
+    setExportExcelLoading(true);
+    setExportExcelError(null);
+    try {
+      if (isProduction && scenarios.every((s) => canonicalComputeCache[s.id])) {
+        const items = scenarios.map((s) => ({
+          response: canonicalComputeCache[s.id]!,
+          scenarioName: s.name,
+        }));
+        const buffer = await buildBrokerWorkbookFromCanonicalResponses(items);
+        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "lease-comparison.xlsx";
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const canonical = scenarios.map(scenarioToCanonical);
+        const buffer = await buildBrokerWorkbook(canonical, globalDiscountRate);
+        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "lease-comparison.xlsx";
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      setExportExcelError(getDisplayErrorMessage(err));
+    } finally {
+      setExportExcelLoading(false);
+    }
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache]);
 
-  const comparisonRows: ComparisonRow[] = scenarios
-    .filter((s) => {
-      const r = results[s.id];
-      return r && "term_months" in r;
-    })
-    .map((s) => ({
-      id: s.id,
-      name: s.name,
-      result: results[s.id] as CashflowResult,
-    }))
-    .sort((a, b) => {
-      const aVal = a.result[sortKey];
-      const bVal = b.result[sortKey];
-      const mult = sortDir === "asc" ? 1 : -1;
-      return mult * (aVal - bVal);
-    });
+  const engineResults = useMemo(() => {
+    const included = scenarios.filter((s) => includedInSummary[s.id] !== false);
+    if (isProduction) {
+      return included
+        .map((s) => {
+          const cached = canonicalComputeCache[s.id];
+          if (cached) return canonicalResponseToEngineResult(cached, s.id, s.name);
+          return null;
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+    }
+    return included.map((s) => runMonthlyEngine(scenarioToCanonical(s), globalDiscountRate));
+  }, [scenarios, globalDiscountRate, includedInSummary, isProduction, canonicalComputeCache]);
 
-  const chartData: ChartRow[] = comparisonRows.map((row) => ({
-    name: row.name,
-    avg_cost_psf_year: row.result.avg_cost_psf_year,
-    npv_cost: row.result.npv_cost,
-    avg_cost_year: row.result.avg_cost_year,
+  const chartData: ChartRow[] = engineResults.map((r) => ({
+    name: r.scenarioName,
+    avg_cost_psf_year: r.metrics.avgCostPsfYr,
+    npv_cost: r.metrics.npvAtDiscount,
+    avg_cost_year: r.metrics.avgAllInCostPerYear,
   }));
 
   const resultErrors = scenarios
@@ -466,21 +653,9 @@ export default function Home() {
 
   return (
     <>
-      <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-end gap-6 px-6 py-4 bg-black/80 backdrop-blur-sm border-b border-white/10">
-        <a href="#extract" className="text-sm font-medium text-zinc-300 hover:text-white transition-colors">
-          Upload lease
-        </a>
-        <a href="/example" className="text-sm font-medium text-zinc-300 hover:text-white transition-colors">
-          Example report
-        </a>
-      </nav>
-
       <div className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex flex-col justify-center items-center text-center px-6 pt-24">
-        <h1 className="text-6xl md:text-7xl font-extrabold tracking-tight leading-tight">
-          Institutional-Grade
-          <span className="block text-transparent bg-clip-text bg-gradient-to-r from-white to-zinc-400">
-            Lease Intelligence
-          </span>
+        <h1 className="text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-tight">
+          The Commercial Real Estate Model
         </h1>
 
         <p className="text-zinc-400 text-lg mt-6 max-w-2xl">
@@ -550,18 +725,11 @@ export default function Home() {
             <div id="upload-section">
               <UploadExtractCard>
                 <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Extract from document</p>
-                <div className="flex items-center gap-2 mb-3">
-                  <h2 className="text-lg font-semibold text-white">
-                    Upload & extract
-                  </h2>
-                  {lastExtractSource && (lastExtractSource === "ocr" || lastExtractSource === "pdf_text+ocr") && (
-                    <span className="inline-flex items-center rounded bg-amber-500/20 text-amber-300 px-2 py-0.5 text-xs font-medium">
-                      OCR
-                    </span>
-                  )}
-                </div>
+                <h2 className="text-lg font-semibold text-white mb-4">
+                  Upload & extract
+                </h2>
                 <p className="text-sm text-zinc-400 mb-4">
-                  Upload a PDF or DOCX lease; we extract text (and run OCR for scanned PDFs if needed), then AI fills a scenario for review. Always review before running analysis.
+                  Upload a PDF or DOCX lease. We extract text (OCR runs automatically for scanned PDFs), then normalize to a lease option. If confidence is low or fields are missing, you’ll review and confirm before adding.
                 </p>
                 <div className="mb-4 flex flex-wrap items-center gap-2">
                   <label htmlFor="brand-select" className="text-sm font-medium text-zinc-400">
@@ -585,9 +753,18 @@ export default function Home() {
                 </div>
                 <ExtractUpload
                   showAdvancedOptions={showDiagnostics}
-                  onSuccess={handleExtractSuccess}
+                  onSuccess={handleNormalizeSuccess}
                   onError={handleExtractError}
                 />
+                {pendingNormalize && (
+                  <div className="mt-4">
+                    <NormalizeReviewCard
+                      data={pendingNormalize}
+                      onConfirm={handleNormalizeConfirm}
+                      onCancel={() => setPendingNormalize(null)}
+                    />
+                  </div>
+                )}
                 {extractError && (
                   <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300">
                     {extractError}
@@ -621,6 +798,12 @@ export default function Home() {
           onSelect={setSelectedId}
           onDuplicate={duplicateFromList}
           onDelete={deleteScenario}
+          onRename={renameScenario}
+          onMove={moveScenario}
+          onToggleIncludeInSummary={toggleIncludeInSummary}
+          onLockBaseline={setLockBaseline}
+          baselineId={baselineId}
+          includedInSummary={includedInSummary}
         />
 
         <ScenarioForm
@@ -636,6 +819,19 @@ export default function Home() {
           <p className="text-sm text-zinc-400 mb-4">
             Compute all scenarios and compare results. One API call per scenario; failed scenarios are reported below.
           </p>
+          <label className="flex items-center gap-2 text-sm text-zinc-400 mb-3">
+            <span>Discount rate (default 8%):</span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.25}
+              value={globalDiscountRate * 100}
+              onChange={(e) => setGlobalDiscountRate(Number(e.target.value) / 100)}
+              className="w-20 rounded-lg border border-white/20 bg-white/5 text-white px-2 py-1 text-sm"
+            />
+            <span>%</span>
+          </label>
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
@@ -644,6 +840,14 @@ export default function Home() {
               className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
             >
               {loading ? "Running…" : "Run analysis"}
+            </button>
+            <button
+              type="button"
+              onClick={exportExcelDeck}
+              disabled={exportExcelLoading || scenarios.length === 0}
+              className="rounded-full bg-emerald-600/90 text-white px-5 py-2.5 text-sm font-medium hover:bg-emerald-600 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+            >
+              {exportExcelLoading ? "Exporting…" : "Export Excel"}
             </button>
             <button
               type="button"
@@ -724,8 +928,8 @@ export default function Home() {
               </label>
             </div>
           </div>
-          {exportPdfError && (
-            <p className="mt-2 text-sm text-red-300">{exportPdfError}</p>
+          {(exportPdfError || exportExcelError) && (
+            <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError}</p>
           )}
           {(reportError || previewError) && (
             <div className="mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300">
@@ -754,14 +958,9 @@ export default function Home() {
               </div>
             )}
 
-            {comparisonRows.length > 0 && (
+            {engineResults.length > 0 && (
               <>
-                <ComparisonTable
-                  rows={comparisonRows}
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSort={handleSort}
-                />
+                <SummaryMatrix results={engineResults} />
                 <Charts data={chartData} />
               </>
             )}

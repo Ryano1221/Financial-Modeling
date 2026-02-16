@@ -21,7 +21,7 @@ const defaultScenarioInput: ScenarioInput = {
   base_opex_psf_yr: 10,
   base_year_opex_psf_yr: 10,
   opex_growth: 0.03,
-  discount_rate_annual: 0.06,
+  discount_rate_annual: 0.08,
 };
 
 export function ScenarioForm({
@@ -193,10 +193,11 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Discount rate (annual)</span>
+          <span className="text-sm text-zinc-400">Discount rate (annual; override for this option, e.g. 0.08 = 8%)</span>
           <input
             type="number"
             min={0}
+            max={1}
             step={0.01}
             value={scenario.discount_rate_annual}
             onChange={(e) =>

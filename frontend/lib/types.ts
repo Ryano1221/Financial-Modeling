@@ -200,3 +200,105 @@ export interface LeaseExtraction {
   options: ExtractedField<string>;
   termination_clauses: ExtractedField<string>;
 }
+
+/** Backend canonical lease (POST /normalize, POST /compute-canonical). Single source of truth. */
+export interface BackendRentScheduleStep {
+  start_month: number;
+  end_month: number;
+  rent_psf_annual: number;
+}
+
+export interface BackendCanonicalLease {
+  scenario_id?: string;
+  scenario_name?: string;
+  premises_name?: string;
+  address?: string;
+  building_name?: string;
+  suite?: string;
+  rsf: number;
+  lease_type?: string;
+  commencement_date: string;
+  expiration_date: string;
+  term_months: number;
+  free_rent_months: number;
+  discount_rate_annual: number;
+  rent_schedule: BackendRentScheduleStep[];
+  opex_psf_year_1?: number;
+  opex_growth_rate?: number;
+  expense_stop_psf?: number;
+  expense_structure_type?: string;
+  parking_count?: number;
+  parking_rate_monthly?: number;
+  ti_allowance_psf?: number;
+  notes?: string;
+  [key: string]: unknown;
+}
+
+/** Response from POST /normalize. Enforce Review when confidence_score < 0.85 or missing_fields.length > 0. */
+export interface NormalizerResponse {
+  canonical_lease: BackendCanonicalLease;
+  confidence_score: number;
+  field_confidence: Record<string, number>;
+  missing_fields: string[];
+  clarification_questions: string[];
+  warnings: string[];
+}
+
+/** One month from POST /compute-canonical monthly_rows. */
+export interface CanonicalMonthlyRow {
+  month_index: number;
+  date: string;
+  base_rent: number;
+  opex: number;
+  parking: number;
+  ti_amort: number;
+  concessions: number;
+  total_cost: number;
+  cumulative_cost: number;
+  discounted_value: number;
+}
+
+/** One year from POST /compute-canonical annual_rows. */
+export interface CanonicalAnnualRow {
+  year_index: number;
+  year_start_date: string;
+  total_cost: number;
+  avg_cost_psf_year: number;
+  cumulative_cost: number;
+  discounted_value: number;
+}
+
+/** Metrics from POST /compute-canonical (Summary Matrix + Broker Metrics). */
+export interface CanonicalMetrics {
+  premises_name: string;
+  address: string;
+  rsf: number;
+  lease_type: string;
+  term_months: number;
+  commencement_date: string;
+  expiration_date: string;
+  base_rent_total: number;
+  base_rent_avg_psf_year: number;
+  opex_total: number;
+  opex_avg_psf_year: number;
+  parking_total: number;
+  parking_avg_psf_year: number;
+  ti_value_total: number;
+  free_rent_value_total: number;
+  total_obligation_nominal: number;
+  npv_cost: number;
+  equalized_avg_cost_psf_year: number;
+  avg_all_in_cost_psf_year: number;
+  discount_rate_annual: number;
+  notes: string;
+}
+
+/** Response from POST /compute-canonical. */
+export interface CanonicalComputeResponse {
+  normalized_canonical_lease: BackendCanonicalLease;
+  monthly_rows: CanonicalMonthlyRow[];
+  annual_rows: CanonicalAnnualRow[];
+  metrics: CanonicalMetrics;
+  warnings: string[];
+  assumptions: string[];
+}

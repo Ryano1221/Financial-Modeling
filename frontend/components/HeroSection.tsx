@@ -22,7 +22,7 @@ export function HeroSection() {
 
       {/* Minimal top nav */}
       <nav className="relative z-10 flex items-center justify-between px-6 py-5 max-w-6xl mx-auto w-full">
-        <span className="text-lg font-semibold tracking-tight text-white">Lease Deck</span>
+        <span className="text-lg font-semibold tracking-tight text-white">TheCREmodel</span>
         <div className="flex items-center gap-6 text-sm">
           <a href="#" className="text-zinc-400 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] rounded">Docs</a>
           <a href="#" className="text-zinc-400 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] rounded">Security</a>
@@ -38,7 +38,7 @@ export function HeroSection() {
           transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight text-white max-w-4xl leading-[1.1]"
         >
-          Lease financial analysis in minutes
+          The Commercial Real Estate Model
         </motion.h1>
         <motion.p
           initial={{ opacity: 0, y: 16 }}

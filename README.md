@@ -73,7 +73,31 @@ export OPENAI_API_KEY=your_openai_key_here
 uvicorn main:app --reload --host 127.0.0.1 --port 8010
 ```
 
-**Render (backend)** — Set Render **Root Directory** to `backend`. Build: `pip install -r requirements.txt`. Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`. All dependencies are in `backend/requirements.txt`. Set **OPENAI_API_KEY** in Render env for lease extraction and `/normalize` (PDF/Word/pasted text). For PDF generation (POST /report) you may need a build step that runs `playwright install chromium` after pip install. **Pin Python version** (Render may default to 3.14): Option A — set Render env var `PYTHON_VERSION` to a fully qualified version (e.g. `3.12.8`); Option B — add `.python-version` in repo root with `3.12`.
+**Render (backend, OCR-ready Docker setup)** — use Docker runtime so scanned PDF OCR works (`tesseract` + `poppler` are system packages and are not reliably installable on native Python runtime).
+
+1. In Render, create/update backend as a **Docker Web Service** from this repo.
+2. Use:
+   - **Dockerfile path**: `backend/Dockerfile`
+   - **Docker context**: `backend`
+3. Set backend env vars in Render:
+   - `OPENAI_API_KEY` (required for AI extraction)
+   - your existing backend env vars (`DATABASE_URL`, `REDIS_URL`, Stripe/Clerk/S3 vars, etc.)
+4. Deploy.
+
+This repo now includes:
+
+- `backend/Dockerfile` (installs `tesseract-ocr`, `tesseract-ocr-eng`, `poppler-utils`)
+- `backend/.dockerignore`
+- `render.yaml` blueprint for the Docker backend service
+
+After deploy, verify OCR dependencies in Render shell/logs:
+
+```bash
+tesseract --version
+pdftoppm -v
+```
+
+If both commands succeed, scanned PDF OCR extraction is available.
 
 **Vercel (frontend)** — Set **NEXT_PUBLIC_BACKEND_URL** in Vercel project env to your backend URL (e.g. `https://your-backend.onrender.com`). Production builds fail if this is missing or contains localhost/127.0.0.1.
 

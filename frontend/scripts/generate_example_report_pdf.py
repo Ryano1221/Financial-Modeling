@@ -106,7 +106,7 @@ def page_cover() -> list[tuple[str, int]]:
         ("", 20),
         ("Class-A Office Tower | 725 Market Street, San Francisco, CA", 14),
         ("Prepared for: Northbridge Capital Advisors", 13),
-        ("Prepared by: Lease Deck Analytics", 13),
+        ("Prepared by: TheCREmodel Analytics", 13),
         ("Report date: February 12, 2026", 13),
         ("", 20),
         ("CONFIDENTIAL - For investment committee use only", 12),
@@ -235,7 +235,7 @@ def page_actions() -> list[tuple[str, int]]:
             "This sample report is intentionally data-rich to demonstrate the production output format used by",
             11,
         ),
-        ("Lease Deck for institutional client deliverables.", 11),
+        ("TheCREmodel for institutional client deliverables.", 11),
     ]
 
 
