@@ -112,15 +112,9 @@ export function backendCanonicalToScenarioInput(
     rate_psf_yr: step.rent_psf_annual,
   }));
   const opexMode = c.expense_structure_type === "base_year" ? "base_year" : "nnn";
-  const buildingName = (c.building_name ?? "").trim();
-  const suite = (c.suite ?? "").trim();
-  const combinedName = buildPremisesName(buildingName || undefined, suite || undefined) || c.premises_name || c.scenario_name;
+  const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
   return {
-    name: name ?? c.scenario_name ?? (combinedName || "Option"),
-    building_name: buildingName || undefined,
-    suite: suite || undefined,
-    floor: (c.floor ?? "").trim() || undefined,
-    address: (c.address ?? "").trim() || undefined,
+    name: displayName,
     rsf: c.rsf,
     commencement: c.commencement_date,
     expiration: c.expiration_date,
