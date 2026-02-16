@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
 import { Charts, type ChartRow } from "@/components/Charts";
-import { getApiUrl, fetchApi, getAuthHeaders, CONNECTION_MESSAGE, getDisplayErrorMessage } from "@/lib/api";
+import { getApiUrl, getBaseUrl, fetchApi, getAuthHeaders, CONNECTION_MESSAGE, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
 
@@ -40,6 +40,7 @@ import {
   backendCanonicalToScenarioInput,
   scenarioInputToBackendCanonical,
   canonicalResponseToEngineResult,
+  normalizeLeaseType,
 } from "@/lib/canonical-api";
 import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
 import type { CanonicalComputeResponse } from "@/lib/types";
@@ -51,6 +52,47 @@ type ReportErrorState = { statusCode: number; message: string; reportId?: string
 
 function nextId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** POST /compute-canonical with request id, lease_type normalization, and lifecycle logs. */
+async function fetchComputeCanonical(
+  scenarioId: string,
+  canonical: BackendCanonicalLease,
+  init?: RequestInit
+): Promise<Response> {
+  const url = getApiUrl("/compute-canonical");
+  console.log("[compute] outgoing canonical.lease_type=%s url=%s", (canonical as { lease_type?: string })?.lease_type, url);
+  const payload = {
+    ...canonical,
+    lease_type: normalizeLeaseType(canonical?.lease_type),
+  };
+  const rid = crypto.randomUUID();
+  const body = JSON.stringify(payload);
+  const leaseTypeSent = (payload as { lease_type?: string }).lease_type;
+  console.log("[compute] lease_type being sent (after normalizeLeaseType):", leaseTypeSent);
+  console.log("[compute] fetchComputeCanonical", { url, lease_type: leaseTypeSent, rid });
+  console.log("[compute] POST", { url, lease_type: leaseTypeSent, rid });
+  console.log("[compute] start", { rid, url, scenario_id: scenarioId });
+  console.log("[compute] body keys", { rid, keys: Object.keys(payload), scenario_id: scenarioId });
+  console.log("[compute] about to POST", url, (canonical as { lease_type?: string })?.lease_type);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { ...getAuthHeaders(), "x-request-id": rid },
+      body,
+      ...(init ?? {}),
+    });
+    const responseText = await res.clone().text();
+    const first200 = responseText.slice(0, 200);
+    console.log("[compute] after POST status=%s responsePreview=%s", res.status, first200);
+    console.log("[compute] RESP", { status: res.status, text: first200 });
+    console.log("[compute] response", { rid, status: res.status });
+    return res;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[compute] error", { rid, msg });
+    throw e;
+  }
 }
 
 /** Normalize scenario for API: ensure free_rent_months is int (backend accepts int or list; we always send int). */
@@ -152,10 +194,9 @@ export default function Home() {
     if (typeof window === "undefined" || !isProduction || scenarios.length === 0) return;
     const missing = scenarios.filter((s) => !canonicalComputeCache[s.id]);
     if (missing.length === 0) return;
-    const headers = getAuthHeaders();
     missing.forEach((s) => {
       const canonical = scenarioInputToBackendCanonical(s, s.id, s.name);
-      fetchApi("/compute-canonical", { method: "POST", headers, body: JSON.stringify(canonical) })
+      fetchComputeCanonical(s.id, canonical)
         .then((res) => {
           if (!res.ok) return;
           return res.json() as Promise<CanonicalComputeResponse>;
@@ -180,35 +221,120 @@ export default function Home() {
     }
   }, [brandId]);
 
-  const addScenarioFromCanonical = useCallback((canonical: BackendCanonicalLease) => {
-    const scenarioInput = backendCanonicalToScenarioInput(canonical);
-    const scenarioWithId: ScenarioWithId = { id: nextId(), ...scenarioInput };
-    setScenarios((prev) => [...prev, scenarioWithId]);
-    setSelectedId(scenarioWithId.id);
-    setResults((prev) => {
-      const next = { ...prev };
-      delete next[scenarioWithId.id];
-      return next;
-    });
-    setPendingNormalize(null);
-    setExtractError(null);
-  }, []);
+  const runComputeForScenario = useCallback(
+    async (scenario: ScenarioWithId) => {
+      const canonical = scenarioInputToBackendCanonical(scenario, scenario.id, scenario.name);
+      try {
+        const res = await fetchComputeCanonical(scenario.id, canonical);
+        if (!res.ok) return;
+        const data = (await res.json()) as CanonicalComputeResponse;
+        setCanonicalComputeCache((prev) => ({ ...prev, [scenario.id]: data }));
+        setResults((prev) => ({
+          ...prev,
+          [scenario.id]: {
+            term_months: data.metrics.term_months,
+            rent_nominal: data.metrics.base_rent_total,
+            opex_nominal: data.metrics.opex_total,
+            total_cost_nominal: data.metrics.total_obligation_nominal,
+            npv_cost: data.metrics.npv_cost,
+            avg_cost_year: data.metrics.total_obligation_nominal / (data.metrics.term_months / 12 || 1),
+            avg_cost_psf_year: data.metrics.avg_all_in_cost_psf_year,
+          },
+        }));
+      } catch {
+        // log already in fetchComputeCanonical
+      }
+    },
+    []
+  );
 
-  const handleNormalizeSuccess = useCallback((data: NormalizerResponse) => {
-    setLastExtractWarnings(data.warnings.length ? data.warnings : null);
-    const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
-    if (needsReview) {
-      setPendingNormalize(data);
+  const addScenarioFromCanonical = useCallback(
+    (canonical: BackendCanonicalLease, onAdded?: (s: ScenarioWithId) => void) => {
+      const scenarioInput = backendCanonicalToScenarioInput(canonical);
+      const scenarioWithId: ScenarioWithId = { id: nextId(), ...scenarioInput };
+      setScenarios((prev) => [...prev, scenarioWithId]);
+      setSelectedId(scenarioWithId.id);
+      setResults((prev) => {
+        const next = { ...prev };
+        delete next[scenarioWithId.id];
+        return next;
+      });
+      setPendingNormalize(null);
       setExtractError(null);
-    } else {
-      addScenarioFromCanonical(data.canonical_lease);
-    }
-  }, [addScenarioFromCanonical]);
+      onAdded?.(scenarioWithId);
+    },
+    []
+  );
 
-  const handleNormalizeConfirm = useCallback((canonical: BackendCanonicalLease) => {
-    addScenarioFromCanonical(canonical);
-    setLastExtractWarnings(null);
-  }, [addScenarioFromCanonical]);
+  const handleNormalizeSuccess = useCallback(
+    (data: NormalizerResponse) => {
+      const hasCanonical = !!data?.canonical_lease;
+      console.log("[compute] about to call", { hasCanonical });
+      setLastExtractWarnings(data.warnings?.length ? data.warnings : null);
+      setExtractError(null);
+      const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
+      if (needsReview) setPendingNormalize(data);
+      else setPendingNormalize(null);
+
+      if (!data.canonical_lease) {
+        console.log("[compute] skip: no canonical_lease");
+        return;
+      }
+
+      const canonical = data.canonical_lease;
+      const scenarioInput = backendCanonicalToScenarioInput(canonical);
+      const scenarioWithId: ScenarioWithId = { id: nextId(), ...scenarioInput };
+      setScenarios((prev) => [...prev, scenarioWithId]);
+      setSelectedId(scenarioWithId.id);
+      setResults((prev) => {
+        const next = { ...prev };
+        delete next[scenarioWithId.id];
+        return next;
+      });
+      setPendingNormalize(null);
+      setExtractError(null);
+
+      const computeUrl = getApiUrl("/compute-canonical");
+      const outgoingLeaseType = (canonical as { lease_type?: string })?.lease_type;
+      console.log("[compute] outgoing canonical.lease_type=%s url=%s", outgoingLeaseType, computeUrl);
+      fetchComputeCanonical(scenarioWithId.id, canonical)
+        .then((res) => {
+          console.log("[compute] response status", res.status);
+          if (!res.ok) return null;
+          return res.json() as Promise<CanonicalComputeResponse>;
+        })
+        .then((computeData) => {
+          if (computeData) {
+            setCanonicalComputeCache((prev) => ({ ...prev, [scenarioWithId.id]: computeData }));
+            setResults((prev) => ({
+              ...prev,
+              [scenarioWithId.id]: {
+                term_months: computeData.metrics.term_months,
+                rent_nominal: computeData.metrics.base_rent_total,
+                opex_nominal: computeData.metrics.opex_total,
+                total_cost_nominal: computeData.metrics.total_obligation_nominal,
+                npv_cost: computeData.metrics.npv_cost,
+                avg_cost_year: computeData.metrics.total_obligation_nominal / (computeData.metrics.term_months / 12 || 1),
+                avg_cost_psf_year: computeData.metrics.avg_all_in_cost_psf_year,
+              },
+            }));
+          }
+        })
+        .catch((e) => console.error("[compute] failed", e));
+    },
+    []
+  );
+
+  const handleNormalizeConfirm = useCallback(
+    (canonical: BackendCanonicalLease) => {
+      addScenarioFromCanonical(canonical, (newScenario) => {
+        console.log("[compute] about to run (confirm)", { scenarioId: newScenario.id, lease_type: (canonical as { lease_type?: string })?.lease_type ?? "NNN" });
+        runComputeForScenario(newScenario);
+      });
+      setLastExtractWarnings(null);
+    },
+    [addScenarioFromCanonical, runComputeForScenario]
+  );
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message);
@@ -335,11 +461,7 @@ export default function Home() {
       }));
       const settled = await Promise.allSettled(
         canonicalPayloads.map(async ({ id, name, canonical }) => {
-          const res = await fetchApi("/compute-canonical", {
-            method: "POST",
-            headers,
-            body: JSON.stringify(canonical),
-          });
+          const res = await fetchComputeCanonical(id, canonical);
           if (!res.ok) throw new Error("Compute failed");
           const data: CanonicalComputeResponse = await res.json();
           return { id, name, data };

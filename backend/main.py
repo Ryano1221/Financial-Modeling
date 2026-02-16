@@ -8,6 +8,7 @@ import re
 import time
 import traceback
 import uuid
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 
@@ -146,14 +147,20 @@ app.include_router(api_router)
 app.include_router(webhooks_router)
 
 
+# Deploy marker: change this string after each deploy so Render logs prove new code is running
+DEPLOY_MARKER = "v4_2026_02_16_2215"
+
+
 @app.on_event("startup")
 async def _startup_log():
+    commit = (os.getenv("RENDER_GIT_COMMIT") or "").strip() or "not-set"
     print("BOOT", {
         "health_v": "v3_2026_02_16_1900",
         "source_file": str(Path(__file__).resolve()),
-        "render_git_commit": os.getenv("RENDER_GIT_COMMIT", ""),
+        "render_git_commit": commit,
         "render_service_name": os.getenv("RENDER_SERVICE_NAME", ""),
     }, flush=True)
+    _LOG.info("DEPLOY_MARKER %s commit=%s", DEPLOY_MARKER, commit)
 
 
 @app.on_event("startup")
@@ -179,11 +186,19 @@ def startup_log() -> None:
 
 @app.get("/health")
 def health():
-    key = os.getenv("OPENAI_API_KEY")
-    ai_enabled = bool(key and key.strip() != "")
+    key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    ai_enabled = bool(key)
+    openai_configured = bool(key)
+    openai_key_prefix = (key[:7] if key else "") or None
     version = "health_v_2026_02_16_2055"
     print("HEALTH", {"version": version, "ai_enabled": ai_enabled}, flush=True)
-    return {"status": "ok", "ai_enabled": ai_enabled, "version": version}
+    return {
+        "status": "ok",
+        "ai_enabled": ai_enabled,
+        "openai_configured": openai_configured,
+        "openai_key_prefix": openai_key_prefix,
+        "version": version,
+    }
 
 
 @app.get("/version")
@@ -342,13 +357,90 @@ def compute_scenario(scenario: Scenario) -> CashflowResult:
     return result
 
 
+COMPUTE_CANONICAL_EXPECTED = (
+    "CanonicalLease JSON: scenario_id?, scenario_name?, premises_name?, address?, rsf, "
+    "commencement_date (YYYY-MM-DD), expiration_date (YYYY-MM-DD), term_months, "
+    "rent_schedule: [{start_month, end_month, rent_psf_annual}], lease_type (e.g. NNN), "
+    "expense_structure_type (nnn|base_year), free_rent_months?, discount_rate_annual?, etc."
+)
+
+# Same logger as middleware / normalize so Render shows all lines
+_LOG = logging.getLogger("uvicorn.error")
+
+# Map lowercase/variants to CanonicalLease.lease_type enum values (NNN, Gross, etc.)
+_LEASE_TYPE_MAP = {
+    "nnn": "NNN",
+    "gross": "Gross",
+    "modified gross": "Modified Gross",
+    "modified_gross": "Modified Gross",
+    "absolute nnn": "Absolute NNN",
+    "absolute_nnn": "Absolute NNN",
+    "full service": "Full Service",
+    "full_service": "Full Service",
+    "fs": "Full Service",
+}
+
+
+def _normalize_lease_type_body(value: str | None) -> str:
+    """Accept lowercase and map to enum value so /compute-canonical never 422s on casing."""
+    if value is None or not str(value).strip():
+        return "NNN"
+    s = str(value).strip()
+    key = s.lower().replace("-", " ").replace("_", " ")
+    if key in _LEASE_TYPE_MAP:
+        return _LEASE_TYPE_MAP[key]
+    if s in ("NNN", "Gross", "Modified Gross", "Absolute NNN", "Full Service"):
+        return s
+    return "NNN"
+
+
 @app.post("/compute-canonical", response_model=CanonicalComputeResponse)
-def compute_canonical_endpoint(lease: CanonicalLease) -> CanonicalComputeResponse:
+async def compute_canonical_endpoint(request: Request) -> CanonicalComputeResponse | JSONResponse:
     """
     Canonical compute: normalize CanonicalLease, run engine, return monthly/annual rows and metrics.
-    Single source of truth for calculations and exports.
+    Body: single JSON object (CanonicalLease), NOT wrapped in {"canonical_lease": ...}.
     """
-    return compute_canonical(lease)
+    rid = (request.headers.get("x-request-id") or "").strip() or "no-rid"
+    try:
+        body = await request.json()
+    except Exception as e:
+        err = str(e)[:400]
+        _LOG.info("CANONICAL_ERR rid=%s lease_type=parse_failed err=%s", rid, err)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "compute_validation_failed",
+                "rid": rid,
+                "details": err,
+                "expected": "JSON body (CanonicalLease object)",
+            },
+        )
+    # Shim: accept lowercase lease_type before Pydantic validation
+    received_lease_type = body.get("lease_type") if isinstance(body, dict) else None
+    if isinstance(body, dict) and "lease_type" in body:
+        body["lease_type"] = _normalize_lease_type_body(body.get("lease_type"))
+    _LOG.info("CANONICAL_START rid=%s lease_type=%s", rid, received_lease_type)
+    try:
+        lease = CanonicalLease.model_validate(body)
+    except Exception as e:
+        err = str(e)[:400]
+        _LOG.info("CANONICAL_ERR rid=%s lease_type=%s err=%s", rid, received_lease_type, err)
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "compute_validation_failed",
+                "rid": rid,
+                "details": err,
+                "expected": COMPUTE_CANONICAL_EXPECTED,
+            },
+        )
+    try:
+        result = compute_canonical(lease)
+        _LOG.info("CANONICAL_DONE rid=%s status=200", rid)
+        return result
+    except Exception as e:
+        _LOG.info("CANONICAL_ERR rid=%s lease_type=%s err=%s", rid, getattr(lease, "lease_type", None), str(e)[:400])
+        raise
 
 
 def _extraction_confidence_to_field_confidence(extraction_confidence: dict) -> dict:
@@ -378,34 +470,159 @@ def _parse_number_token(raw: str) -> Optional[float]:
         return None
 
 
-def _extract_fallback_lease_hints(text: str, filename: str) -> dict:
+def _parse_lease_date(s: str) -> Optional[date]:
+    """Parse date from strings like 'June 1 2026', 'May 31, 2036', '2026-06-01'."""
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()[:64]
+    if not s:
+        return None
+    # ISO
+    m = re.match(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
+    if m:
+        try:
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            return date(y, mo, d)
+        except ValueError:
+            pass
+    # Month name + day + year (June 1 2026, May 31, 2036)
+    months = {
+        "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+        "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+        "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+        "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+    }
+    parts = re.split(r"[\s,]+", s, maxsplit=3)
+    if len(parts) >= 3:
+        try:
+            mon_str = parts[0].lower()
+            day = int(parts[1].strip(","))
+            year = int(parts[2].strip(","))
+            if mon_str in months and 1 <= day <= 31 and 1900 <= year <= 2100:
+                return date(year, months[mon_str], min(day, 28 if months[mon_str] == 2 else 31))
+        except (ValueError, IndexError):
+            pass
+    return None
+
+
+def _month_diff(commencement: date, expiration: date) -> int:
+    """Lease term in full calendar months (e.g. June 1 2026 to May 31 2036 = 120)."""
+    delta = (expiration - commencement).days
+    if delta <= 0:
+        return 0
+    # Use average days per month so "10 years" June->May = 120
+    return max(1, round(delta / 30.4375))
+
+
+def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     """
-    Best-effort hints for fallback review mode. Keeps extraction resilient when AI/OCR fails.
-    Returns: rsf (float|None), building_name (str), suite (str).
+    Heuristic extraction: RSF (prefer premises/suite, downrank center/total), term dates
+    from 'commencing'/'expiring', term_months from dates, suite, address.
+    Logs rsf_candidates and term_candidates with rid. Returns dict for merging into canonical.
     """
-    hints = {"rsf": None, "building_name": "", "suite": ""}
+    hints = {
+        "rsf": None,
+        "commencement_date": None,
+        "expiration_date": None,
+        "term_months": None,
+        "suite": "",
+        "building_name": "",
+        "lease_type": None,
+    }
     if not text:
         return hints
 
-    # RSF is usually explicit in leases. Prefer values near RSF/SF keywords.
+    # ---- RSF: collect all candidates with snippet and score ----
     rsf_patterns = [
         r"(?i)\b(?:rsf|rentable\s+square\s+feet|rentable\s+area)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
         r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|square\s*feet|sf)\b",
     ]
+    rsf_candidates: list[dict] = []
     for pat in rsf_patterns:
-        m = re.search(pat, text)
-        if not m:
-            continue
-        value = _parse_number_token(m.group(1))
-        if value is not None and 100 <= value <= 2_000_000:
-            hints["rsf"] = value
-            break
+        for m in re.finditer(pat, text):
+            value = _parse_number_token(m.group(1))
+            if value is None or not (100 <= value <= 2_000_000):
+                continue
+            start = max(0, m.start() - 120)
+            end = min(len(text), m.end() + 120)
+            snippet = text[start:end].replace("\n", " ").strip()
+            score = 0
+            low = snippet.lower()
+            if any(k in low for k in ("premises", "suite", "rentable square feet", "rentable area", " at ")):
+                score += 2
+            if any(k in low for k in ("shopping center", "center contains", "total rsf", "entire center", "total square feet", "whole center")):
+                score -= 2
+            rsf_candidates.append({"value": value, "snippet": snippet[:200], "score": score})
 
+    chosen_rsf = None
+    if rsf_candidates:
+        # Dedupe by value, keep max score per value
+        by_val: dict[float, dict] = {}
+        for c in rsf_candidates:
+            v = c["value"]
+            if v not in by_val or c["score"] > by_val[v]["score"]:
+                by_val[v] = c
+        candidates_sorted = sorted(by_val.values(), key=lambda x: (-x["score"], x["value"]))
+        chosen_rsf = candidates_sorted[0]["value"]
+        hints["rsf"] = chosen_rsf
+        _LOG.info(
+            "NORMALIZE_RSF_CANDIDATES rid=%s count=%s candidates=%s",
+            rid,
+            len(candidates_sorted),
+            [(c["value"], c["score"], c["snippet"][:80]) for c in candidates_sorted],
+        )
+        _LOG.info("NORMALIZE_RSF_CHOSEN rid=%s value=%s", rid, chosen_rsf)
+
+    # ---- Term: commencing / expiring (do not use lease "as of" as commencement) ----
+    term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
+    # Commencing June 1 2026 / commencing 2026-06-01
+    comm_pats = [
+        r"(?i)\bcommenc(?:e|ing)?\s+(\w+\s+\d{1,2},?\s+\d{4})",
+        r"(?i)\bcommenc(?:e|ing)?\s+(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
+        r"(?i)\bterm\s+[^.]*?commenc(?:e|ing)?\s+(\w+\s+\d{1,2},?\s+\d{4})",
+    ]
+    for pat in comm_pats:
+        m = re.search(pat, text)
+        if m:
+            d = _parse_lease_date(m.group(1))
+            if d:
+                term_candidates["commencement"] = d
+                break
+    exp_pats = [
+        r"(?i)\bexpir(?:e|ing)?\s+(\w+\s+\d{1,2},?\s+\d{4})",
+        r"(?i)\bexpir(?:e|ing)?\s+(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
+        r"(?i)\bexpir(?:e|ing)?\s+(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
+    ]
+    for pat in exp_pats:
+        m = re.search(pat, text)
+        if m:
+            d = _parse_lease_date(m.group(1))
+            if d:
+                term_candidates["expiration"] = d
+                break
+
+    if term_candidates["commencement"]:
+        hints["commencement_date"] = term_candidates["commencement"]
+    if term_candidates["expiration"]:
+        hints["expiration_date"] = term_candidates["expiration"]
+    if hints["commencement_date"] and hints["expiration_date"]:
+        hints["term_months"] = _month_diff(hints["commencement_date"], hints["expiration_date"])
+
+    _LOG.info(
+        "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
+        rid,
+        term_candidates["commencement"],
+        term_candidates["expiration"],
+        hints.get("term_months"),
+    )
+
+    # ---- Suite ----
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     head = lines[:80]
-
     suite_patterns = [
-        r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
+        r"(?i)\b(?:suite|ste\.?|unit|space)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
+        r"(?i)premises[^.]*?(?:suite|ste\.?)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
+        r"(?i)at\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
     ]
     for ln in head:
         for pat in suite_patterns:
@@ -416,23 +633,35 @@ def _extract_fallback_lease_hints(text: str, filename: str) -> dict:
         if hints["suite"]:
             break
 
+    # ---- Address / building (Barton Creek Plaza Austin Texas style) ----
     building_patterns = [
         r"(?i)\b(?:building|property|tower|project)\s*(?:name)?\s*[:#-]\s*([^,;\n]{3,80})",
+        r"(?i)(?:premises|located at)\s+[^.]*?([A-Za-z0-9][A-Za-z0-9\s,\.\-]{10,80}(?:Texas|TX|California|CA)[^.]*)",
+        r"(?i)at\s+suite\s+[A-Za-z0-9\-]+\s*,?\s*([^.\n]{5,80})",
     ]
     for ln in head:
         for pat in building_patterns:
             m = re.search(pat, ln)
             if m:
-                hints["building_name"] = m.group(1).strip(" ,.-")
-                break
+                candidate = m.group(1).strip(" ,.-")
+                if len(candidate) >= 5:
+                    hints["building_name"] = candidate
+                    break
         if hints["building_name"]:
             break
-
-    # If a labeled building line wasn't found, fallback to filename stem as a practical default.
     if not hints["building_name"]:
         stem = Path(filename or "").stem.strip()
         if stem:
             hints["building_name"] = re.sub(r"[_\-]+", " ", stem)
+
+    # Lease type: "lease type is NNN" / "lease type: Gross"
+    lease_type_pat = re.compile(
+        r"(?i)\blease\s+type\s*[:\s]+(NNN|Gross|Modified\s+Gross|Absolute\s+NNN|Full\s+Service)\b",
+        re.I,
+    )
+    m = lease_type_pat.search(text)
+    if m:
+        hints["lease_type"] = re.sub(r"\s+", " ", m.group(1).strip())
 
     return hints
 
@@ -470,34 +699,46 @@ def normalize_endpoint(
     missing_fields, clarification_questions, warnings. Frontend must enforce Review and Confirm
     when confidence_score < 0.85 or missing_fields not empty.
     """
-    request_id = getattr(request.state, "request_id", "?")
-    _log = logging.getLogger("uvicorn.error")
-    _log.info("normalize started request_id=%s", request_id)
+    rid = (request.headers.get("x-request-id") or "").strip() or "no-rid"
+    _LOG.info(
+        "NORMALIZE_START rid=%s content_type=%s len=%s",
+        rid,
+        request.headers.get("content-type"),
+        request.headers.get("content-length"),
+    )
     start = time.perf_counter()
     try:
-        result = _normalize_impl(source, payload, pasted_text, file)
+        result, used_ai = _normalize_impl(rid, source, payload, pasted_text, file)
         duration_ms = (time.perf_counter() - start) * 1000
-        _log.info("normalize finished request_id=%s duration_ms=%.0f", request_id, duration_ms)
-        return result
-    except Exception as e:
-        _log.error(
-            "normalize exception request_id=%s: %s\n%s",
-            request_id,
-            e,
-            traceback.format_exc(),
+        c = result.canonical_lease
+        _LOG.info(
+            "NORMALIZE_DONE rid=%s lease_type=%s rsf=%s commencement=%s expiration=%s",
+            rid,
+            getattr(c, "lease_type", None),
+            getattr(c, "rsf", None),
+            getattr(c, "commencement_date", None),
+            getattr(c, "expiration_date", None),
         )
-        err_msg = str(e).lower()
-        if "openai_api_key" in err_msg or ("invalid" in err_msg and "key" in err_msg) or "not configured" in err_msg:
-            return JSONResponse(status_code=503, content={"error": "OPENAI_API_KEY missing or invalid on backend"})
+        _LOG.info("normalize finished rid=%s duration_ms=%.0f", rid, duration_ms)
+        return result
+    except HTTPException:
         raise
+    except Exception as e:
+        err_msg = str(e)[:400]
+        _LOG.info("NORMALIZE_ERR rid=%s err=%s", rid, err_msg)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "normalize_failed", "rid": rid, "details": err_msg},
+        )
 
 
 def _normalize_impl(
+    rid: str,
     source: str,
     payload: Optional[str],
     pasted_text: Optional[str],
     file: Optional[UploadFile],
-) -> NormalizerResponse:
+) -> tuple[NormalizerResponse, bool]:
     source_upper = (source or "").strip().upper()
     if source_upper not in ("MANUAL", "PASTED_TEXT", "PDF", "WORD", "JSON"):
         raise HTTPException(status_code=400, detail="source must be one of: MANUAL, PASTED_TEXT, PDF, WORD, JSON")
@@ -521,6 +762,7 @@ def _normalize_impl(
             contents = file.file.read()
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to read file: {e}") from e
+        _LOG.info("NORMALIZE_FILE rid=%s filename=%s size=%s", rid, file.filename or "", len(contents))
         if len(contents) == 0:
             raise HTTPException(status_code=400, detail="Empty file")
         buf = BytesIO(contents)
@@ -546,29 +788,23 @@ def _normalize_impl(
             text = ""
             warnings.append(_safe_extraction_warning(e))
 
-        extracted_hints = _extract_fallback_lease_hints(text, file.filename or "")
+        extracted_hints = _extract_lease_hints(text, file.filename or "", rid)
 
         if text.strip():
-            try:
-                extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
-                if extraction and extraction.scenario:
-                    canonical = _scenario_to_canonical(extraction.scenario, "", "")
-                    field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
-                    confidence_score = min(field_confidence.values()) if field_confidence else 0.78
-                    warnings.extend(extraction.warnings or [])
-                else:
-                    canonical = _dict_to_canonical({}, "", "")
-                    confidence_score = 0.4
-                    used_fallback = True
-                    warnings.append("We could not confidently parse this lease. Please review extracted fields.")
-                if ocr_used:
-                    warnings.append("OCR was used for this document.")
-            except Exception as e:
+            # No try/except: let AI extraction failures propagate (503 from endpoint).
+            extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
+            if extraction and extraction.scenario:
+                canonical = _scenario_to_canonical(extraction.scenario, "", "")
+                field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
+                confidence_score = min(field_confidence.values()) if field_confidence else 0.78
+                warnings.extend(extraction.warnings or [])
+            else:
                 canonical = _dict_to_canonical({}, "", "")
                 confidence_score = 0.4
                 used_fallback = True
-                warnings.append("Automatic extraction failed. We loaded a review template so you can continue.")
-                warnings.append(_safe_extraction_warning(e))
+                warnings.append("We could not confidently parse this lease. Please review extracted fields.")
+            if ocr_used:
+                warnings.append("OCR was used for this document.")
         else:
             canonical = _dict_to_canonical({}, "", "")
             confidence_score = 0.35
@@ -581,15 +817,27 @@ def _normalize_impl(
             used_fallback = True
             warnings.append("We could not process this file automatically. Please review and fill required fields.")
 
-        # Enrich fallback/manual review with deterministic hints that are usually present in leases.
+        # Apply heuristic overrides: prefer premises-scoped RSF and term dates from commencing/expiring.
         if canonical and isinstance(canonical, CanonicalLease):
             updates: dict = {}
-            if (canonical.rsf or 0) <= 0 and extracted_hints.get("rsf"):
-                updates["rsf"] = extracted_hints["rsf"]
-            if extracted_hints.get("building_name") and not (canonical.address or "").strip():
-                updates["address"] = str(extracted_hints["building_name"])
-            if extracted_hints.get("suite") and not (canonical.premises_name or "").strip():
-                updates["premises_name"] = str(extracted_hints["suite"])
+            # RSF: use heuristic when missing or when heuristic found premises-scoped value (we logged chosen).
+            if extracted_hints.get("rsf") is not None:
+                if (canonical.rsf or 0) <= 0 or extracted_hints["rsf"] < (canonical.rsf or 0):
+                    updates["rsf"] = extracted_hints["rsf"]
+            if extracted_hints.get("commencement_date"):
+                updates["commencement_date"] = extracted_hints["commencement_date"]
+            if extracted_hints.get("expiration_date"):
+                updates["expiration_date"] = extracted_hints["expiration_date"]
+            if extracted_hints.get("term_months") is not None:
+                updates["term_months"] = extracted_hints["term_months"]
+            if extracted_hints.get("building_name"):
+                if not (canonical.address or "").strip():
+                    updates["address"] = str(extracted_hints["building_name"])
+            if extracted_hints.get("suite"):
+                if not (canonical.premises_name or "").strip():
+                    updates["premises_name"] = str(extracted_hints["suite"])
+            if extracted_hints.get("lease_type"):
+                updates["lease_type"] = str(extracted_hints["lease_type"])
             if updates:
                 canonical = canonical.model_copy(update=updates)
 
@@ -610,45 +858,46 @@ def _normalize_impl(
                 ]
         else:
             confidence_score = max(confidence_score, conf_from_missing)
-        return NormalizerResponse(
-            canonical_lease=canonical,
-            confidence_score=min(1.0, confidence_score),
-            field_confidence=field_confidence,
-            missing_fields=missing,
-            clarification_questions=questions,
-            warnings=warnings,
+        return (
+            NormalizerResponse(
+                canonical_lease=canonical,
+                confidence_score=min(1.0, confidence_score),
+                field_confidence=field_confidence,
+                missing_fields=missing,
+                clarification_questions=questions,
+                warnings=warnings,
+            ),
+            not used_fallback,
         )
 
     if source_upper == "PASTED_TEXT":
         raw = (pasted_text or payload or "").strip()
         if not raw:
             raise HTTPException(status_code=400, detail="pasted_text or payload required for PASTED_TEXT")
-        try:
-            extraction = extract_scenario_from_text(raw, "pasted_text")
-            if extraction and extraction.scenario:
-                canonical = _scenario_to_canonical(extraction.scenario, "", "")
-                field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
-                confidence_score = min(field_confidence.values()) if field_confidence else 0.78
-                warnings.extend(extraction.warnings or [])
-            else:
-                canonical = _dict_to_canonical({}, "", "")
-                confidence_score = 0.5
-            canonical, norm_warnings = normalize_canonical_lease(canonical)
-            warnings.extend(norm_warnings)
-            conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
-            confidence_score = max(confidence_score, conf_from_missing)
-        except Exception as e:
+        # No try/except: let AI extraction failures propagate (503 from endpoint).
+        extraction = extract_scenario_from_text(raw, "pasted_text")
+        if extraction and extraction.scenario:
+            canonical = _scenario_to_canonical(extraction.scenario, "", "")
+            field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
+            confidence_score = min(field_confidence.values()) if field_confidence else 0.78
+            warnings.extend(extraction.warnings or [])
+        else:
             canonical = _dict_to_canonical({}, "", "")
-            confidence_score = 0.4
-            missing = ["lease_details"]
-            questions = ["We could not parse the pasted text. Please check and try again or enter manually."]
-        return NormalizerResponse(
-            canonical_lease=canonical,
-            confidence_score=min(1.0, confidence_score),
-            field_confidence=field_confidence,
-            missing_fields=missing,
-            clarification_questions=questions,
-            warnings=warnings,
+            confidence_score = 0.5
+        canonical, norm_warnings = normalize_canonical_lease(canonical)
+        warnings.extend(norm_warnings)
+        conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
+        confidence_score = max(confidence_score, conf_from_missing)
+        return (
+            NormalizerResponse(
+                canonical_lease=canonical,
+                confidence_score=min(1.0, confidence_score),
+                field_confidence=field_confidence,
+                missing_fields=missing,
+                clarification_questions=questions,
+                warnings=warnings,
+            ),
+            True,  # used_ai
         )
 
     # MANUAL or JSON
@@ -663,13 +912,16 @@ def _normalize_impl(
     canonical, norm_warnings = normalize_canonical_lease(canonical)
     warnings.extend(norm_warnings)
     confidence_score, missing, questions = _compute_confidence_and_missing(canonical)
-    return NormalizerResponse(
-        canonical_lease=canonical,
-        confidence_score=min(1.0, confidence_score),
-        field_confidence=field_confidence,
-        missing_fields=missing,
-        clarification_questions=questions,
-        warnings=warnings,
+    return (
+        NormalizerResponse(
+            canonical_lease=canonical,
+            confidence_score=min(1.0, confidence_score),
+            field_confidence=field_confidence,
+            missing_fields=missing,
+            clarification_questions=questions,
+            warnings=warnings,
+        ),
+        False,  # used_ai: MANUAL/JSON does not use AI
     )
 
 
@@ -713,6 +965,12 @@ def get_report(report_id: str):
     if data is None:
         raise HTTPException(status_code=404, detail="Report not found")
     return data
+
+
+@app.options("/brands")
+def brands_options():
+    """CORS preflight; ensure OPTIONS /brands returns 200."""
+    return Response(status_code=200)
 
 
 @app.get("/brands")

@@ -22,6 +22,30 @@ class LeaseType(str, Enum):
     FULL_SERVICE = "Full Service"
 
 
+def _coerce_lease_type(value: Any) -> "LeaseType":
+    """Coerce casing so nnn/gross/etc never 422. Used by validator and endpoint shim."""
+    if value is None:
+        return LeaseType.NNN
+    if isinstance(value, LeaseType):
+        return value
+    s = (str(value).strip() or "nnn").lower().replace("-", " ").replace("_", " ")
+    if s == "nnn":
+        return LeaseType.NNN
+    if s == "gross":
+        return LeaseType.GROSS
+    if s in ("modified gross", "modified_gross"):
+        return LeaseType.MODIFIED_GROSS
+    if s in ("absolute nnn", "absolute_nnn"):
+        return LeaseType.ABSOLUTE_NNN
+    if s in ("full service", "full_service", "fs"):
+        return LeaseType.FULL_SERVICE
+    # Already correct
+    for lt in LeaseType:
+        if lt.value == value or lt.value.lower() == s:
+            return lt
+    return LeaseType.NNN
+
+
 class EscalationType(str, Enum):
     FIXED = "fixed"
     PERCENT = "percent"
@@ -165,6 +189,11 @@ class CanonicalLease(BaseModel):
 
     # --- Renewal / Options ---
     renewal_options: List[RenewalOption] = Field(default_factory=list)
+
+    @field_validator("lease_type", mode="before")
+    @classmethod
+    def coerce_lease_type(cls, v: Any) -> LeaseType:
+        return _coerce_lease_type(v)
 
     @field_validator("rent_schedule")
     @classmethod
