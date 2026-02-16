@@ -462,6 +462,7 @@ def normalize_endpoint(
                     canonical = _scenario_to_canonical(extraction.scenario, "", "")
                     field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
                     confidence_score = min(field_confidence.values()) if field_confidence else 0.78
+                    warnings.extend(extraction.warnings or [])
                 else:
                     canonical = _dict_to_canonical({}, "", "")
                     confidence_score = 0.4

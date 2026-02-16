@@ -229,7 +229,7 @@ def _prepare_text_for_llm(text: str) -> tuple[str, list[str]]:
 
 # ---- Regex pre-extraction ----
 _RE_RSF = re.compile(
-    r"\b(?:rsf|rentable\s+square\s+feet?|sq\.?\s*ft\.?)\s*[:\s]*[\d,]+\.?\d*|[\d,]+\.?\d*\s*(?:rsf|sf|sq\.?\s*ft\.?)",
+    r"\b(?:rsf|rentable\s+square\s+feet?|sq\.?\s*ft\.?)\b[ \t:]*[\d,]+\.?\d*|[\d,]+\.?\d*[ \t]*(?:rsf|sf|sq\.?\s*ft\.?)\b",
     re.I,
 )
 _RE_NUM = re.compile(r"[\d,]+\.?\d*")
@@ -244,6 +244,10 @@ _RE_FREE_RENT = re.compile(
 )
 _RE_BASE_OPEX = re.compile(
     r"\b(?:base\s+year\s+)?(?:opex|operating\s+expenses?|cam|nnn)\s*[:\s]*\$?\s*[\d,]+\.?\d*\s*(?:/?\s*sf|psf)?",
+    re.I,
+)
+_RE_BASE_RENT = re.compile(
+    r"\b(?:base\s+rent|rental\s+rate|annual\s+rent)\b[^\n$]{0,40}\$?\s*([\d,]+\.?\d*)",
     re.I,
 )
 
@@ -293,6 +297,16 @@ def _regex_prefill(text: str) -> dict:
                 prefill["base_opex_psf_yr"] = float(nums[0].replace(",", ""))
             except ValueError:
                 pass
+    # Base rent ($/sf/yr)
+    m = _RE_BASE_RENT.search(text)
+    if m:
+        try:
+            v = float(m.group(1).replace(",", ""))
+            # Keep plausible psf/year range
+            if 5 <= v <= 500:
+                prefill["rate_psf_yr"] = v
+        except ValueError:
+            pass
     return prefill
 
 
@@ -355,6 +369,72 @@ JSON:"""
             scenario[k] = v
     out["scenario"] = scenario
     return out
+
+
+def _infer_scenario_name(text: str) -> str:
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for ln in lines[:40]:
+        if len(ln) > 90:
+            continue
+        # Skip headings that are usually generic
+        low = ln.lower()
+        if any(k in low for k in ("lease", "agreement", "exhibit", "table of contents", "page ")):
+            continue
+        if re.search(r"[A-Za-z]", ln):
+            return ln
+    return "Extracted lease"
+
+
+def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception | None = None) -> tuple[dict, dict[str, float], list[str]]:
+    """
+    Deterministic fallback when LLM extraction is unavailable.
+    Returns scenario dict compatible with Scenario model + confidence + warnings.
+    """
+    low = text.lower()
+    opex_mode = "base_year" if "base year" in low else "nnn"
+    rsf = float(prefill.get("rsf", 10000.0) or 10000.0)
+    rate = float(prefill.get("rate_psf_yr", 30.0) or 30.0)
+    commencement = str(prefill.get("commencement") or "2026-01-01")
+    expiration = str(prefill.get("expiration") or "2031-01-31")
+
+    scenario = {
+        "name": _infer_scenario_name(text),
+        "rsf": rsf,
+        "commencement": commencement,
+        "expiration": expiration,
+        "rent_steps": [{"start": 0, "end": 59, "rate_psf_yr": rate}],
+        "free_rent_months": int(prefill.get("free_rent_months", 0) or 0),
+        "ti_allowance_psf": float(prefill.get("ti_allowance_psf", 0.0) or 0.0),
+        "opex_mode": opex_mode,
+        "base_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 10.0) or 10.0),
+        "base_year_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 10.0) or 10.0),
+        "opex_growth": 0.03,
+        "discount_rate_annual": 0.06,
+        "parking_spaces": 0,
+        "parking_cost_monthly_per_space": 0.0,
+    }
+
+    confidence = {
+        "rsf": 0.7 if "rsf" in prefill else 0.0,
+        "commencement": 0.6 if "commencement" in prefill else 0.0,
+        "expiration": 0.6 if "expiration" in prefill else 0.0,
+        "rent_steps": 0.5 if "rate_psf_yr" in prefill else 0.2,
+        "ti_allowance_psf": 0.6 if "ti_allowance_psf" in prefill else 0.0,
+        "free_rent_months": 0.6 if "free_rent_months" in prefill else 0.0,
+    }
+    warnings = [
+        "AI extraction was unavailable; used deterministic fallback extraction.",
+        "Please review lease terms before running analysis.",
+    ]
+    if llm_error:
+        msg = str(llm_error).lower()
+        if "openai_api_key" in msg:
+            warnings.append("OPENAI_API_KEY is not configured on backend.")
+        elif "rate" in msg or "quota" in msg or "429" in msg:
+            warnings.append("AI provider rate limit/quota reached.")
+        elif "timeout" in msg:
+            warnings.append("AI extraction timed out.")
+    return scenario, confidence, warnings
 
 
 def _apply_safe_defaults(raw: dict) -> tuple[dict, dict[str, float], list[str]]:
@@ -478,10 +558,12 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
     text_for_llm, extra_warnings = _prepare_text_for_llm(text)
     try:
         raw = _llm_extract_scenario(text_for_llm, prefill=prefill)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"LLM returned invalid JSON: {e}") from e
-    scenario_dict, confidence, warnings = _apply_safe_defaults(raw)
-    warnings = extra_warnings + warnings
+        scenario_dict, confidence, warnings = _apply_safe_defaults(raw)
+        warnings = extra_warnings + warnings
+    except Exception as e:
+        # Never block extraction on LLM availability; return heuristic scenario instead.
+        scenario_dict, confidence, warnings = _heuristic_extract_scenario(text, prefill, llm_error=e)
+        warnings = extra_warnings + warnings
     scenario = Scenario.model_validate(scenario_dict)
     return ExtractionResponse(
         scenario=scenario,
