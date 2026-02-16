@@ -68,16 +68,14 @@ export function scenarioInputToBackendCanonical(
   scenarioName?: string
 ): BackendCanonicalLease {
   const termMonths = monthDiff(s.commencement, s.expiration);
-  const buildingName = (s.building_name ?? "").trim();
-  const suite = (s.suite ?? "").trim();
-  const premisesName = buildPremisesName(buildingName || undefined, suite || undefined) || s.name;
+  const premisesName = s.name;
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
     premises_name: premisesName,
     address: (s.address ?? "").trim(),
-    building_name: buildingName,
-    suite,
+    building_name: "",
+    suite: "",
     floor: (s.floor ?? "").trim(),
     rsf: s.rsf,
     lease_type: "NNN",
