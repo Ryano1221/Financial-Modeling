@@ -18,4 +18,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 COPY backend/ ./
 
+# Fail build early if import-critical modules are missing from image
+RUN test -f /app/cache/disk_cache.py && test -f /app/services/input_normalizer.py
+
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]

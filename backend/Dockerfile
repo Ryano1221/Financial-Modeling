@@ -23,5 +23,6 @@ COPY . .
 # Fail the build if required packages are missing (avoids runtime ModuleNotFoundError on Render)
 RUN ls -la /app && ls -la /app/services && test -f /app/services/input_normalizer.py
 RUN ls -la /app/models && test -f /app/models/legacy.py
+RUN test -f /app/cache/disk_cache.py
 
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]

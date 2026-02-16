@@ -54,12 +54,34 @@ from services.input_normalizer import (
     _dict_to_canonical,
     _compute_confidence_and_missing,
 )
-from cache.disk_cache import (
-    get_cached_extraction,
-    set_cached_extraction,
-    get_cached_report,
-    set_cached_report,
-)
+try:
+    from cache.disk_cache import (
+        get_cached_extraction,
+        set_cached_extraction,
+        get_cached_report,
+        set_cached_report,
+    )
+except ModuleNotFoundError:
+    try:
+        from backend.cache.disk_cache import (
+            get_cached_extraction,
+            set_cached_extraction,
+            get_cached_report,
+            set_cached_report,
+        )
+    except ModuleNotFoundError:
+        # Last-resort fallback so container startup is never blocked by optional cache packaging.
+        def get_cached_extraction(*args, **kwargs):
+            return None
+
+        def set_cached_extraction(*args, **kwargs) -> None:
+            return None
+
+        def get_cached_report(*args, **kwargs):
+            return None
+
+        def set_cached_report(*args, **kwargs) -> None:
+            return None
 
 REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
 
@@ -101,6 +123,10 @@ def startup_log() -> None:
             "OPENAI_API_KEY is not set. Extraction and AI features will not work."
         )
     print("Backend ready on http://127.0.0.1:8010", flush=True)
+    if get_cached_extraction.__module__ == __name__:
+        logging.getLogger("uvicorn.error").warning(
+            "cache.disk_cache module not importable in runtime image; running with in-memory/no-op cache."
+        )
 
 
 @app.get("/health")
@@ -281,6 +307,92 @@ def _extraction_confidence_to_field_confidence(extraction_confidence: dict) -> d
     return out
 
 
+def _parse_number_token(raw: str) -> Optional[float]:
+    try:
+        return float(raw.replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_fallback_lease_hints(text: str, filename: str) -> dict:
+    """
+    Best-effort hints for fallback review mode. Keeps extraction resilient when AI/OCR fails.
+    Returns: rsf (float|None), building_name (str), suite (str).
+    """
+    hints = {"rsf": None, "building_name": "", "suite": ""}
+    if not text:
+        return hints
+
+    # RSF is usually explicit in leases. Prefer values near RSF/SF keywords.
+    rsf_patterns = [
+        r"(?i)\b(?:rsf|rentable\s+square\s+feet|rentable\s+area)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
+        r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|square\s*feet|sf)\b",
+    ]
+    for pat in rsf_patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        value = _parse_number_token(m.group(1))
+        if value is not None and 100 <= value <= 2_000_000:
+            hints["rsf"] = value
+            break
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    head = lines[:80]
+
+    suite_patterns = [
+        r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
+    ]
+    for ln in head:
+        for pat in suite_patterns:
+            m = re.search(pat, ln)
+            if m:
+                hints["suite"] = m.group(1).strip(" ,.-")
+                break
+        if hints["suite"]:
+            break
+
+    building_patterns = [
+        r"(?i)\b(?:building|property|tower|project)\s*(?:name)?\s*[:#-]\s*([^,;\n]{3,80})",
+    ]
+    for ln in head:
+        for pat in building_patterns:
+            m = re.search(pat, ln)
+            if m:
+                hints["building_name"] = m.group(1).strip(" ,.-")
+                break
+        if hints["building_name"]:
+            break
+
+    # If a labeled building line wasn't found, fallback to filename stem as a practical default.
+    if not hints["building_name"]:
+        stem = Path(filename or "").stem.strip()
+        if stem:
+            hints["building_name"] = re.sub(r"[_\-]+", " ", stem)
+
+    return hints
+
+
+def _safe_extraction_warning(err: Exception | str) -> str:
+    """
+    Map low-level extraction errors to safe, actionable messages for UI warnings.
+    """
+    msg = str(err or "").lower()
+    if not msg:
+        return "Automatic extraction failed due to a backend processing issue."
+    if "openai_api_key" in msg or ("api key" in msg and "openai" in msg):
+        return "AI extraction is not configured on backend (OPENAI_API_KEY missing)."
+    if "quota" in msg or "rate limit" in msg or "429" in msg:
+        return "AI extraction is temporarily limited (rate limit/quota)."
+    if "tesseract" in msg or "poppler" in msg or "pdf2image" in msg or "pytesseract" in msg:
+        return "OCR dependencies are missing on backend (poppler/tesseract)."
+    if "timeout" in msg or "timed out" in msg:
+        return "AI extraction timed out. Please retry in a moment."
+    if "connection" in msg or "network" in msg:
+        return "Backend could not reach the extraction provider."
+    return "Automatic extraction failed due to a backend processing issue."
+
+
 @app.post("/normalize", response_model=NormalizerResponse)
 def normalize_endpoint(
     source: str = Form(..., description="MANUAL, PASTED_TEXT, PDF, WORD, or JSON"),
@@ -321,43 +433,89 @@ def normalize_endpoint(
         buf = BytesIO(contents)
         text = ""
         ocr_used = False
+        used_fallback = False
         try:
             if fn.endswith(".pdf"):
                 text = extract_text_from_pdf(buf)
                 if text_quality_requires_ocr(text):
                     buf.seek(0)
                     pages = max(1, min(50, 5))
-                    text, _ = extract_text_from_pdf_with_ocr(buf, force_ocr=True, ocr_pages=pages)
-                    ocr_used = True
-                    warnings.append("OCR was used because extracted text was short or low quality.")
-                if not text.strip():
-                    raise HTTPException(status_code=422, detail="No text could be extracted from the PDF")
+                    try:
+                        text, _ = extract_text_from_pdf_with_ocr(buf, force_ocr=True, ocr_pages=pages)
+                        ocr_used = True
+                        warnings.append("OCR was used because extracted text was short or low quality.")
+                    except Exception:
+                        # OCR dependencies may be unavailable in local/dev; continue with text extraction fallback.
+                        warnings.append("OCR was unavailable; continued with standard PDF text extraction.")
             else:
                 text = extract_text_from_docx(buf)
-                if not text.strip():
-                    raise HTTPException(status_code=422, detail="No text could be extracted from the document")
-            extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
-            if extraction and extraction.scenario:
-                canonical = _scenario_to_canonical(extraction.scenario, "", "")
-                field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
-                confidence_score = min(field_confidence.values()) if field_confidence else 0.78
-            else:
+        except Exception as e:
+            text = ""
+            warnings.append(_safe_extraction_warning(e))
+
+        extracted_hints = _extract_fallback_lease_hints(text, file.filename or "")
+
+        if text.strip():
+            try:
+                extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
+                if extraction and extraction.scenario:
+                    canonical = _scenario_to_canonical(extraction.scenario, "", "")
+                    field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
+                    confidence_score = min(field_confidence.values()) if field_confidence else 0.78
+                else:
+                    canonical = _dict_to_canonical({}, "", "")
+                    confidence_score = 0.4
+                    used_fallback = True
+                    warnings.append("We could not confidently parse this lease. Please review extracted fields.")
+                if ocr_used:
+                    warnings.append("OCR was used for this document.")
+            except Exception as e:
                 canonical = _dict_to_canonical({}, "", "")
                 confidence_score = 0.4
-            if ocr_used:
-                warnings.append("OCR was used for this document.")
-        except HTTPException:
-            raise
-        except ValueError as e:
-            if "OPENAI_API_KEY" in str(e):
-                raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured.") from e
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Normalization failed: {e!s}") from e
-        canonical, norm_warnings = normalize_canonical_lease(canonical)
-        warnings.extend(norm_warnings)
+                used_fallback = True
+                warnings.append("Automatic extraction failed. We loaded a review template so you can continue.")
+                warnings.append(_safe_extraction_warning(e))
+        else:
+            canonical = _dict_to_canonical({}, "", "")
+            confidence_score = 0.35
+            used_fallback = True
+            warnings.append("No text could be extracted from this file. Please review and fill required fields.")
+
+        if canonical is None:
+            canonical = _dict_to_canonical({}, "", "")
+            confidence_score = 0.35
+            used_fallback = True
+            warnings.append("We could not process this file automatically. Please review and fill required fields.")
+
+        # Enrich fallback/manual review with deterministic hints that are usually present in leases.
+        if canonical and isinstance(canonical, CanonicalLease):
+            updates: dict = {}
+            if (canonical.rsf or 0) <= 0 and extracted_hints.get("rsf"):
+                updates["rsf"] = extracted_hints["rsf"]
+            if extracted_hints.get("building_name") and not (canonical.address or "").strip():
+                updates["address"] = str(extracted_hints["building_name"])
+            if extracted_hints.get("suite") and not (canonical.premises_name or "").strip():
+                updates["premises_name"] = str(extracted_hints["suite"])
+            if updates:
+                canonical = canonical.model_copy(update=updates)
+
+        try:
+            canonical, norm_warnings = normalize_canonical_lease(canonical)
+            warnings.extend(norm_warnings)
+        except Exception:
+            canonical = _dict_to_canonical({}, "", "")
+            confidence_score = 0.3
+            used_fallback = True
+            warnings.append("Lease normalization failed. A review template was loaded so you can continue.")
         conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
-        confidence_score = max(confidence_score, conf_from_missing)
+        if used_fallback:
+            confidence_score = min(confidence_score, conf_from_missing)
+            if not questions:
+                questions = [
+                    "Please confirm lease name, RSF, commencement, expiration, and base rent schedule.",
+                ]
+        else:
+            confidence_score = max(confidence_score, conf_from_missing)
         return NormalizerResponse(
             canonical_lease=canonical,
             confidence_score=min(1.0, confidence_score),
