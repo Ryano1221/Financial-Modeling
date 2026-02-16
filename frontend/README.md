@@ -23,11 +23,11 @@ Or use the combined script: `npm run dev:clean`.
 
 ## Backend URL (Render through website domain)
 
-The frontend **never** defaults to localhost.
-In **production**, browser requests are forced to **same-origin `/api`** so traffic always flows through `https://thecremodel.com` and then to Render via Vercel rewrite.
+The frontend **never** defaults to localhost in production.
+In **production**, browser requests go to **same-origin `/api`**; the API route (`app/api/[...path]/route.ts`) proxies to your backend using **`BACKEND_URL`**.
 
-- **Production (Vercel):** Set **`BACKEND_URL`** (server-side) to your Render backend (e.g. `https://your-backend.onrender.com`). Keep `NEXT_PUBLIC_BACKEND_URL` unset in production.
-- **Local dev:** In `frontend/.env.local` set **`BACKEND_URL`** so the dev server can proxy `/api` to local backend (e.g. `http://127.0.0.1:8010`). Optionally set `NEXT_PUBLIC_BACKEND_URL` in dev only if you want direct browser calls.
+- **Production (Vercel):** You **must** set **`BACKEND_URL`** in Vercel (Project → Settings → Environment Variables) to your Render backend URL (e.g. `https://financial-modeling.onrender.com`). If this is missing, lease extraction will show "Website could not reach the backend service."
+- **Local dev:** The proxy defaults to `http://127.0.0.1:8010` when `BACKEND_URL` is unset. Override in `frontend/.env.local` if your backend runs on another port.
 
 ### Local reliability hardening
 

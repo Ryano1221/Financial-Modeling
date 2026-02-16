@@ -43,6 +43,12 @@ function classifyFailureReason(raw: unknown): string | null {
   if (msg.includes("network") || msg.includes("failed to fetch") || msg.includes("trouble connecting")) {
     return "Website could not reach the backend service.";
   }
+  if (msg.includes("backend_url") || msg.includes("backEND") || msg.includes("not configured") || msg.includes("set backend")) {
+    return "Backend URL not set. Add BACKEND_URL in Vercel (Settings → Environment Variables) to your Render backend URL.";
+  }
+  if (msg.includes("cold start") || msg.includes("too long to respond")) {
+    return "Backend was starting up. Try again in a few seconds.";
+  }
   return null;
 }
 
@@ -101,28 +107,58 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
       }
       setLoading(true);
       onError("");
-      try {
+      const buildForm = () => {
         const form = new FormData();
         form.append("source", fn.endsWith(".pdf") ? "PDF" : "WORD");
         form.append("file", file);
-        const res = await fetchApi("/normalize", {
-          method: "POST",
-          body: form,
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
+        return form;
+      };
+      const maxTries = 3;
+      const retryDelayMs = 6000;
+      let lastRes: Response | null = null;
+      try {
+        for (let attempt = 1; attempt <= maxTries; attempt++) {
+          try {
+            const res = await fetchApi("/normalize", {
+              method: "POST",
+              body: buildForm(),
+            });
+            lastRes = res;
+            if (res.ok) {
+              const data: NormalizerResponse = await res.json();
+              onSuccess(data);
+              return;
+            }
+            const body = await res.json().catch(() => null);
+            const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
+            const reason = classifyFailureReason(detail);
+            const isRetryable = [502, 503, 504].includes(res.status) && attempt < maxTries;
+            if (isRetryable) {
+              await new Promise((r) => setTimeout(r, retryDelayMs));
+              continue;
+            }
+            if (res.status >= 500 || res.status === 503 || res.status === 429) {
+              onError("");
+              onSuccess(buildFallbackNormalizerResponse(file.name, reason));
+              return;
+            }
+            onError(formatNormalizeError(res, body));
+            return;
+          } catch (e) {
+            if (attempt < maxTries) {
+              await new Promise((r) => setTimeout(r, retryDelayMs));
+            } else {
+              throw e;
+            }
+          }
+        }
+        if (lastRes && !lastRes.ok) {
+          const body = await lastRes.json().catch(() => null);
           const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
           const reason = classifyFailureReason(detail);
-          if (res.status >= 500 || res.status === 503 || res.status === 429) {
-            onError("");
-            onSuccess(buildFallbackNormalizerResponse(file.name, reason));
-            return;
-          }
-          onError(formatNormalizeError(res, body));
-          return;
+          onError("");
+          onSuccess(buildFallbackNormalizerResponse(file.name, reason));
         }
-        const data: NormalizerResponse = await res.json();
-        onSuccess(data);
       } catch (e) {
         const reason = classifyFailureReason(e instanceof Error ? e.message : String(e));
         onError("");

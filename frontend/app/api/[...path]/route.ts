@@ -41,12 +41,19 @@ async function proxy(request: Request, pathSegments: string[]): Promise<Response
   const url = `${BACKEND_URL}/${path}`;
   const headers = copyForwardHeaders(request);
 
+  // Long timeout so Render cold start (30–60s+) can complete
+  const BACKEND_TIMEOUT_MS = 120000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+
   try {
     const res = await fetch(url, {
       method: request.method,
       headers,
       body: request.body,
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     const responseHeaders = new Headers();
     res.headers.forEach((value, key) => {
@@ -60,9 +67,15 @@ async function proxy(request: Request, pathSegments: string[]): Promise<Response
       headers: responseHeaders,
     });
   } catch (e) {
+    clearTimeout(timeoutId);
     const message = e instanceof Error ? e.message : String(e);
+    const isTimeout = message.toLowerCase().includes("abort") || message.toLowerCase().includes("timeout");
     return Response.json(
-      { detail: `Backend request failed: ${message}` },
+      {
+        detail: isTimeout
+          ? "Backend took too long to respond (e.g. cold start). Please try again in a moment."
+          : `Backend request failed: ${message}`,
+      },
       { status: 502, headers: { "Content-Type": "application/json" } }
     );
   }
