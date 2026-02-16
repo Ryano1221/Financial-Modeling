@@ -348,27 +348,39 @@ Text:
 
 JSON:"""
 
-    t0 = time.perf_counter()
-    response = client.chat.completions.create(
-        model=os.environ.get("OPENAI_LEASE_MODEL", "gpt-4o-mini"),
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1,
-    )
-    elapsed = time.perf_counter() - t0
-    logger.info("[extract] LLM call duration=%.2fs", elapsed)
+    configured = (os.environ.get("OPENAI_LEASE_MODEL") or "").strip()
+    models = [m.strip() for m in configured.split(",") if m.strip()] if configured else ["gpt-4o-mini", "gpt-4.1-mini"]
+    last_error: Exception | None = None
+    for model in models:
+        try:
+            t0 = time.perf_counter()
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info("[extract] LLM call duration=%.2fs model=%s", elapsed, model)
 
-    raw = response.choices[0].message.content.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```\w*\n?", "", raw)
-        raw = re.sub(r"\n?```\s*$", "", raw)
-    out = json.loads(raw)
-    # Merge prefill into scenario so LLM doesn't have to repeat
-    scenario = out.get("scenario") or {}
-    for k, v in prefill.items():
-        if v is not None and (scenario.get(k) is None or scenario.get(k) == ""):
-            scenario[k] = v
-    out["scenario"] = scenario
-    return out
+            raw = response.choices[0].message.content.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```\w*\n?", "", raw)
+                raw = re.sub(r"\n?```\s*$", "", raw)
+            out = json.loads(raw)
+            # Merge prefill into scenario so LLM doesn't have to repeat
+            scenario = out.get("scenario") or {}
+            for k, v in prefill.items():
+                if v is not None and (scenario.get(k) is None or scenario.get(k) == ""):
+                    scenario[k] = v
+            out["scenario"] = scenario
+            return out
+        except Exception as e:
+            last_error = e
+            logger.warning("[extract] model failed model=%s error=%s", model, e)
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No OpenAI model candidates configured")
 
 
 def _infer_scenario_name(text: str) -> str:
@@ -430,10 +442,17 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         msg = str(llm_error).lower()
         if "openai_api_key" in msg:
             warnings.append("OPENAI_API_KEY is not configured on backend.")
+        elif "invalid api key" in msg or "incorrect api key" in msg or "unauthorized" in msg or "authentication" in msg:
+            warnings.append("OPENAI_API_KEY is invalid for this backend service.")
+        elif "model" in msg and ("not found" in msg or "does not exist" in msg or "not have access" in msg):
+            warnings.append("Configured OpenAI model is unavailable for this API key.")
         elif "rate" in msg or "quota" in msg or "429" in msg:
             warnings.append("AI provider rate limit/quota reached.")
         elif "timeout" in msg:
             warnings.append("AI extraction timed out.")
+        elif "connection" in msg or "network" in msg or "api connection" in msg:
+            warnings.append("Backend could not connect to OpenAI API.")
+        warnings.append(f"Extractor detail: {str(llm_error)[:160]}")
     return scenario, confidence, warnings
 
 
