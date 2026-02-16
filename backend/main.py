@@ -177,23 +177,27 @@ def startup_log() -> None:
 
 @app.get("/health")
 def health():
-    return {
+    payload = {
         "status": "ok",
-        "health_v": "v3_2026_02_16_1900",
+        "health_v": "v4_2026_02_16_2045",
         "ts": int(time.time()),
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY", "").strip()),
         "source_file": str(Path(__file__).resolve()),
     }
+    print("HEALTH", payload, flush=True)
+    return payload
 
 
 @app.get("/version")
 def version():
-    return {
-        "version_v": "v3_2026_02_16_1900",
+    payload = {
+        "version_v": "v4_2026_02_16_2045",
         "source_file": str(Path(__file__).resolve()),
         "render_git_commit": os.getenv("RENDER_GIT_COMMIT", ""),
         "render_service_name": os.getenv("RENDER_SERVICE_NAME", ""),
     }
+    print("VERSION", payload, flush=True)
+    return payload
 
 
 @app.post("/extract", response_model=ExtractionResponse)
