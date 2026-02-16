@@ -3,7 +3,7 @@
  * Run from frontend: node scripts/generate-brand-assets.mjs
  */
 import sharp from "sharp";
-import toIco from "to-ico";
+import sharpIco from "sharp-ico";
 import { readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -36,7 +36,7 @@ async function main() {
     .resize(16, 16, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toBuffer();
-  const ico = await toIco([size16, size32]);
+  const ico = sharpIco.encode([size16, size32]);
   writeFileSync(path.join(brandDir, "favicon.ico"), ico);
 
   const apple180 = await sharp(logoPath)

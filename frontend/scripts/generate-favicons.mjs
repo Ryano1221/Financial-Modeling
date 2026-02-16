@@ -3,8 +3,8 @@
  * Run from frontend: node scripts/generate-favicons.mjs
  */
 import sharp from "sharp";
-import toIco from "to-ico";
-import { readFileSync, writeFileSync } from "fs";
+import sharpIco from "sharp-ico";
+import { writeFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -33,7 +33,7 @@ async function main() {
   writeFileSync(path.join(publicDir, "favicon-32x32.png"), size32);
   writeFileSync(path.join(publicDir, "favicon-16x16.png"), size16);
 
-  const ico = await toIco([size16, size32]);
+  const ico = sharpIco.encode([size16, size32]);
   writeFileSync(path.join(publicDir, "favicon.ico"), ico);
 
   console.log("Favicons written: favicon.ico, favicon-16x16.png, favicon-32x32.png");
