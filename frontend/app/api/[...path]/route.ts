@@ -17,18 +17,17 @@ async function proxyOnce(req: NextRequest, upstreamUrl: string) {
   try {
     const contentType = req.headers.get("content-type") || "application/octet-stream";
 
-    const upstreamRes = await fetch(upstreamUrl, {
+    const fetchInit: RequestInit & { duplex?: "half" } = {
       method: req.method,
       headers: {
         "content-type": contentType,
-        ...(req.headers.get("accept") ? { accept: req.headers.get("accept")! } : {}),
+        ...(req.headers.get("accept") ? { accept: req.headers.get("accept") ?? "" } : {}),
       },
       body: req.body,
-      // Required for streaming body in Node fetch
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      duplex: "half" as any,
+      duplex: "half",
       signal: controller.signal,
-    });
+    };
+    const upstreamRes = await fetch(upstreamUrl, fetchInit);
 
     const text = await upstreamRes.text();
     const resContentType = upstreamRes.headers.get("content-type") || "application/json";
@@ -79,7 +78,7 @@ async function handle(req: NextRequest, ctx: RouteContext) {
     }
 
     return first;
-  } catch (e) {
+  } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("Proxy error", { path, upstreamUrl, msg });
     const isTimeout = msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout");
