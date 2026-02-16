@@ -15,6 +15,52 @@ function monthDiff(comm: string, exp: string): number {
   return Math.max(0, m);
 }
 
+export const LEASE_TYPE_ENUM = [
+  "NNN",
+  "Gross",
+  "Modified Gross",
+  "Absolute NNN",
+  "Full Service",
+] as const;
+
+export type LeaseTypeEnum = (typeof LEASE_TYPE_ENUM)[number];
+
+export function normalizeLeaseType(
+  input?: string | null
+): "NNN" | "Gross" | "Modified Gross" | "Absolute NNN" | "Full Service" {
+  const s = (input ?? "").trim().toLowerCase();
+  if (!s) return "NNN";
+  if (s === "nnn") return "NNN";
+  if (s === "gross") return "Gross";
+  if (s === "modified gross" || s === "modified_gross" || s === "mod gross" || s === "modified") return "Modified Gross";
+  if (s === "absolute nnn" || s === "absolute_nnn" || s === "abs nnn") return "Absolute NNN";
+  if (s === "full service" || s === "full_service" || s === "fs") return "Full Service";
+  if (s === "full-service") return "Full Service";
+  if (s === "absolute-nnn") return "Absolute NNN";
+  return "NNN";
+}
+
+/** Build display premises_name from building_name + suite when both exist. */
+export function buildPremisesName(buildingName?: string | null, suite?: string | null): string {
+  const b = (buildingName ?? "").trim();
+  const su = (suite ?? "").trim();
+  if (b && su) return `${b} Suite ${su}`;
+  return su || b || "";
+}
+
+/** Display order: Building name, Suite, Street address (for any Address or Premises display). */
+export function formatBuildingSuiteAddress(c: {
+  building_name?: string | null;
+  suite?: string | null;
+  address?: string | null;
+}): string {
+  const b = (c.building_name ?? "").trim();
+  const su = (c.suite ?? "").trim();
+  const a = (c.address ?? "").trim();
+  const parts = [b, su, a].filter(Boolean);
+  return parts.join(" · ") || "";
+}
+
 /** Convert form scenario to backend CanonicalLease for POST /compute-canonical. */
 export function scenarioInputToBackendCanonical(
   s: ScenarioInput,
@@ -22,13 +68,19 @@ export function scenarioInputToBackendCanonical(
   scenarioName?: string
 ): BackendCanonicalLease {
   const termMonths = monthDiff(s.commencement, s.expiration);
+  const buildingName = (s.building_name ?? "").trim();
+  const suite = (s.suite ?? "").trim();
+  const premisesName = buildPremisesName(buildingName || undefined, suite || undefined) || s.name;
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
-    premises_name: s.name,
-    address: "",
+    premises_name: premisesName,
+    address: (s.address ?? "").trim(),
+    building_name: buildingName,
+    suite,
+    floor: (s.floor ?? "").trim(),
     rsf: s.rsf,
-    lease_type: s.opex_mode === "base_year" ? "base_year" : "nnn",
+    lease_type: "NNN",
     commencement_date: s.commencement,
     expiration_date: s.expiration,
     term_months: termMonths,
@@ -42,7 +94,7 @@ export function scenarioInputToBackendCanonical(
     opex_psf_year_1: s.base_opex_psf_yr ?? 0,
     opex_growth_rate: s.opex_growth ?? 0,
     expense_stop_psf: s.base_year_opex_psf_yr ?? 0,
-    expense_structure_type: s.opex_mode === "base_year" ? "base_year" : "nnn",
+    expense_structure_type: s.opex_mode === "base_year" ? "base_year" : "nnn" as const,
     parking_count: s.parking_spaces ?? 0,
     parking_rate_monthly: s.parking_cost_monthly_per_space ?? 0,
     ti_allowance_psf: s.ti_allowance_psf ?? 0,
@@ -63,11 +115,15 @@ export function backendCanonicalToScenarioInput(
     rate_psf_yr: step.rent_psf_annual,
   }));
   const opexMode = c.expense_structure_type === "base_year" ? "base_year" : "nnn";
-  const suite = (c.premises_name ?? c.suite ?? "").trim();
-  const building = (c.address ?? c.building_name ?? "").trim();
-  const combinedName = suite && building ? `${building} - ${suite}` : suite || building;
+  const buildingName = (c.building_name ?? "").trim();
+  const suite = (c.suite ?? "").trim();
+  const combinedName = buildPremisesName(buildingName || undefined, suite || undefined) || c.premises_name || c.scenario_name;
   return {
     name: name ?? c.scenario_name ?? (combinedName || "Option"),
+    building_name: buildingName || undefined,
+    suite: suite || undefined,
+    floor: (c.floor ?? "").trim() || undefined,
+    address: (c.address ?? "").trim() || undefined,
     rsf: c.rsf,
     commencement: c.commencement_date,
     expiration: c.expiration_date,
@@ -93,7 +149,7 @@ export function canonicalResponseToEngineResult(
   const m = res.metrics;
   const termMonths = m.term_months ?? 0;
   const metrics: OptionMetrics = {
-    premisesName: m.premises_name ?? "",
+    premisesName: formatBuildingSuiteAddress({ building_name: m.building_name, suite: m.suite, address: m.address }) || m.premises_name ?? "",
     rsf: m.rsf ?? 0,
     leaseType: m.lease_type ?? "",
     termMonths,
