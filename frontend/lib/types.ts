@@ -18,6 +18,10 @@ export interface OneTimeCost {
 /** Backend Scenario schema (no id). */
 export interface ScenarioInput {
   name: string;
+  building_name?: string;
+  suite?: string;
+  floor?: string;
+  address?: string;
   rsf: number;
   commencement: string; // YYYY-MM-DD
   expiration: string;   // YYYY-MM-DD
@@ -215,6 +219,7 @@ export interface BackendCanonicalLease {
   address?: string;
   building_name?: string;
   suite?: string;
+  floor?: string;
   rsf: number;
   lease_type?: string;
   commencement_date: string;
@@ -271,7 +276,10 @@ export interface CanonicalAnnualRow {
 /** Metrics from POST /compute-canonical (Summary Matrix + Broker Metrics). */
 export interface CanonicalMetrics {
   premises_name: string;
-  address: string;
+  address?: string;
+  building_name?: string;
+  suite?: string;
+  floor?: string;
   rsf: number;
   lease_type: string;
   term_months: number;

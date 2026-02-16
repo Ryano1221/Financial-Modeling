@@ -12,6 +12,7 @@ import type { EngineResult, MonthlyRow, AnnualRow } from "@/lib/lease-engine/mon
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
+import { formatBuildingSuiteAddress } from "@/lib/canonical-api";
 import {
   formatCurrency,
   formatCurrencyPerSF,
@@ -270,7 +271,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
   const metricLabels = SUMMARY_MATRIX_ROW_LABELS;
   const getMetricVal = (m: CanonicalMetrics, rowIndex: number): string | number => {
     switch (rowIndex) {
-      case 0: return (m.premises_name ?? "").trim() || "";
+      case 0: return formatBuildingSuiteAddress({ building_name: m.building_name, suite: m.suite, address: m.address }) || m.premises_name || "";
       case 1: return m.rsf ?? 0;
       case 2: return m.lease_type ?? "";
       case 3: return m.term_months ?? 0;
@@ -313,7 +314,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     sheet.getCell(row, 1).font = { bold: true, size: 12 };
     row += 2;
     const inputRows: [string, string | number][] = [
-      ["Premises name", (m.premises_name ?? "").trim() || ""],
+      ["Premises name", formatBuildingSuiteAddress({ building_name: m.building_name, suite: m.suite, address: m.address }) || m.premises_name || ""],
       ["Rentable square footage", m.rsf ?? 0],
       ["Lease type", m.lease_type ?? ""],
       ["Lease term (months)", m.term_months ?? 0],
