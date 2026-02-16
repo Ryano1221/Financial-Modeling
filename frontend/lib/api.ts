@@ -5,6 +5,8 @@
 import { getBackendBaseUrl } from "./backend";
 
 const DEFAULT_TIMEOUT_MS = 300000; // 5 min for Render cold start + extraction
+const NORMALIZE_TIMEOUT_MS = 180000; // 3 min for /normalize only
+const NORMALIZE_TIMEOUT_MESSAGE = "Backend took too long. Check Render logs for normalize request id.";
 const FRIENDLY_MESSAGE = "We're having trouble connecting right now. Please try again.";
 
 /** Single user-facing error for all lease/processing failures. Never show backend URLs, CLI, or stack traces. */
@@ -68,14 +70,19 @@ export async function fetchApi(
   init: RequestInit,
   timeoutMs: number = DEFAULT_TIMEOUT_MS
 ): Promise<Response> {
+  const isNormalize = path === "/normalize" || path.endsWith("/normalize");
+  const timeout = isNormalize ? NORMALIZE_TIMEOUT_MS : timeoutMs;
   const url = getApiUrl(path);
-  const timeout = withTimeoutSignal(timeoutMs);
+  const { signal, clear } = withTimeoutSignal(timeout);
   try {
-    const res = await fetch(url, { ...init, signal: timeout.signal });
-    timeout.clear();
+    const res = await fetch(url, { ...init, signal });
+    clear();
     return res;
   } catch (e) {
-    timeout.clear();
+    clear();
+    if (isNormalize && e instanceof Error && (e.name === "AbortError" || e.message.toLowerCase().includes("abort"))) {
+      throw new Error(NORMALIZE_TIMEOUT_MESSAGE);
+    }
     throw new Error(FRIENDLY_MESSAGE);
   }
 }

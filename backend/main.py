@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
+import traceback
+import uuid
 from io import BytesIO
 from pathlib import Path
 
@@ -15,9 +18,10 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from engine.compute import compute_cashflows
 from generate_scenarios import generate_scenarios
@@ -87,12 +91,17 @@ REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
 
 app = FastAPI(title="Lease Deck Backend", version="0.1.0")
 
-ALLOWED_ORIGINS = [
-    "https://thecremodel.com",
-    "https://www.thecremodel.com",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+# CORS: use ALLOWED_ORIGINS env (comma-separated) if set, else default
+_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _origins_env:
+    ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()]
+else:
+    ALLOWED_ORIGINS = [
+        "https://thecremodel.com",
+        "https://www.thecremodel.com",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -100,6 +109,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class RequestLogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = str(uuid.uuid4())[:8]
+        request.state.request_id = request_id
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration_ms = (time.perf_counter() - start) * 1000
+        logging.getLogger("uvicorn.error").info(
+            "request_id=%s method=%s path=%s status=%s duration_ms=%.0f",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+        response.headers["X-Request-Id"] = request_id
+        return response
+
+
+app.add_middleware(RequestLogMiddleware)
 app.include_router(api_router)
 app.include_router(webhooks_router)
 
@@ -126,6 +157,7 @@ def startup_log() -> None:
 
 @app.get("/health")
 def health() -> dict:
+    """Fast health check; returns immediately."""
     return {"status": "ok"}
 
 
@@ -390,6 +422,7 @@ def _safe_extraction_warning(err: Exception | str) -> str:
 
 @app.post("/normalize", response_model=NormalizerResponse)
 def normalize_endpoint(
+    request: Request,
     source: str = Form(..., description="MANUAL, PASTED_TEXT, PDF, WORD, or JSON"),
     payload: Optional[str] = Form(None, description="JSON string for MANUAL/JSON"),
     pasted_text: Optional[str] = Form(None),
@@ -400,6 +433,31 @@ def normalize_endpoint(
     missing_fields, clarification_questions, warnings. Frontend must enforce Review and Confirm
     when confidence_score < 0.85 or missing_fields not empty.
     """
+    request_id = getattr(request.state, "request_id", "?")
+    _log = logging.getLogger("uvicorn.error")
+    _log.info("normalize started request_id=%s", request_id)
+    start = time.perf_counter()
+    try:
+        result = _normalize_impl(source, payload, pasted_text, file)
+        duration_ms = (time.perf_counter() - start) * 1000
+        _log.info("normalize finished request_id=%s duration_ms=%.0f", request_id, duration_ms)
+        return result
+    except Exception as e:
+        _log.error(
+            "normalize exception request_id=%s: %s\n%s",
+            request_id,
+            e,
+            traceback.format_exc(),
+        )
+        raise
+
+
+def _normalize_impl(
+    source: str,
+    payload: Optional[str],
+    pasted_text: Optional[str],
+    file: Optional[UploadFile],
+) -> NormalizerResponse:
     source_upper = (source or "").strip().upper()
     if source_upper not in ("MANUAL", "PASTED_TEXT", "PDF", "WORD", "JSON"):
         raise HTTPException(status_code=400, detail="source must be one of: MANUAL, PASTED_TEXT, PDF, WORD, JSON")

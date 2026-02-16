@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { fetchApi } from "@/lib/api";
+import { fetchApi, getApiUrl } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
 
 interface ExtractUploadProps {
@@ -48,6 +48,9 @@ function classifyFailureReason(raw: unknown): string | null {
   }
   if (msg.includes("cold start") || msg.includes("too long to respond")) {
     return "Backend was starting up. Try again in a few seconds.";
+  }
+  if (msg.includes("backend took too long") || msg.includes("render logs for normalize")) {
+    return "Backend took too long. Check Render logs for normalize request id.";
   }
   return null;
 }
@@ -116,7 +119,11 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
       const maxTries = 3;
       const retryDelayMs = 6000;
       let lastRes: Response | null = null;
+      let lastBody: unknown = null;
       try {
+        const requestUrl = getApiUrl("/normalize");
+        console.log("[ExtractUpload] start upload");
+        console.log("[ExtractUpload] request url:", requestUrl);
         for (let attempt = 1; attempt <= maxTries; attempt++) {
           try {
             const res = await fetchApi("/normalize", {
@@ -124,12 +131,16 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
               body: buildForm(),
             });
             lastRes = res;
+            console.log("[ExtractUpload] response status:", res.status);
+            const rawText = await res.text();
+            console.log("[ExtractUpload] response text (first 200 chars):", rawText.slice(0, 200));
             if (res.ok) {
-              const data: NormalizerResponse = await res.json();
+              const data: NormalizerResponse = JSON.parse(rawText) as NormalizerResponse;
               onSuccess(data);
               return;
             }
-            const body = await res.json().catch(() => null);
+            const body = JSON.parse(rawText || "{}") as unknown;
+            lastBody = body;
             const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
             const reason = classifyFailureReason(detail);
             const isRetryable = [502, 503, 504].includes(res.status) && attempt < maxTries;
@@ -152,9 +163,8 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
             }
           }
         }
-        if (lastRes && !lastRes.ok) {
-          const body = await lastRes.json().catch(() => null);
-          const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
+        if (lastRes && !lastRes.ok && lastBody !== null) {
+          const detail = lastBody && typeof lastBody === "object" && "detail" in lastBody ? (lastBody as { detail: unknown }).detail : null;
           const reason = classifyFailureReason(detail);
           onError("");
           onSuccess(buildFallbackNormalizerResponse(file.name, reason));

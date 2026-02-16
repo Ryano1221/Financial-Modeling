@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { TopNav } from "@/components/TopNav";
+import { DebugBackendUrl } from "@/components/DebugBackendUrl";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -48,6 +49,7 @@ export default function RootLayout({
       <body className="font-sans antialiased min-h-screen bg-[#0a0a0b] text-white premium-noise">
         <TopNav />
         {children}
+        <DebugBackendUrl />
       </body>
     </html>
   );
