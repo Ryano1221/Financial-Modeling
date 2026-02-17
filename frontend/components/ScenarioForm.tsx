@@ -347,7 +347,7 @@ export function ScenarioForm({
             </ul>
           </div>
         )}
-        <div className="hidden md:grid grid-cols-[64px_1fr_1fr_1fr_120px_80px] gap-3 px-1 pb-1">
+        <div className="hidden lg:grid grid-cols-[56px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.25fr)_84px] gap-3 px-1 pb-1">
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Step</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
@@ -356,58 +356,60 @@ export function ScenarioForm({
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Action</span>
         </div>
         {scenario.rent_steps.map((step, i) => (
-          <div key={i} className="grid grid-cols-1 md:grid-cols-[64px_1fr_1fr_1fr_120px_80px] gap-3 items-end mb-3">
-            <div className="text-xs text-zinc-400 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
-              #{i + 1}
+          <div key={i} className="rounded-lg border border-white/10 bg-white/[0.015] p-3 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-6 lg:grid-cols-[56px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.25fr)_84px] gap-2 items-end">
+              <div className="text-xs text-zinc-400 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] col-span-2 sm:col-span-1">
+                #{i + 1}
+              </div>
+              <label className="col-span-1">
+                <span className="text-[11px] text-zinc-500 mb-1 block lg:hidden">Start</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={step.start}
+                  onChange={(e) =>
+                    updateRentStep(i, "start", Number(e.target.value))
+                  }
+                  className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                />
+              </label>
+              <label className="col-span-1">
+                <span className="text-[11px] text-zinc-500 mb-1 block lg:hidden">End</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={step.end}
+                  onChange={(e) =>
+                    updateRentStep(i, "end", Number(e.target.value))
+                  }
+                  className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                />
+              </label>
+              <label className="col-span-2 sm:col-span-2 lg:col-span-1">
+                <span className="text-[11px] text-zinc-500 mb-1 block lg:hidden">Rate ($/SF/yr)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={step.rate_psf_yr}
+                  onChange={(e) =>
+                    updateRentStep(i, "rate_psf_yr", Number(e.target.value))
+                  }
+                  className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                />
+              </label>
+              <div className="text-xs text-zinc-300 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] col-span-2 sm:col-span-1">
+                Y{Math.floor(step.start / 12) + 1} - Y{Math.floor(step.end / 12) + 1}
+              </div>
+              <button
+                type="button"
+                onClick={() => removeRentStep(i)}
+                disabled={scenario.rent_steps.length <= 1}
+                className="h-9 rounded-lg border border-red-500/40 text-red-300 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed col-span-2 sm:col-span-1"
+              >
+                Remove
+              </button>
             </div>
-            <label>
-              <span className="text-xs text-zinc-500 mb-1 block">Start month</span>
-              <input
-                type="number"
-                min={0}
-                value={step.start}
-                onChange={(e) =>
-                  updateRentStep(i, "start", Number(e.target.value))
-                }
-                className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
-              />
-            </label>
-            <label>
-              <span className="text-xs text-zinc-500 mb-1 block">End month</span>
-              <input
-                type="number"
-                min={0}
-                value={step.end}
-                onChange={(e) =>
-                  updateRentStep(i, "end", Number(e.target.value))
-                }
-                className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
-              />
-            </label>
-            <label>
-              <span className="text-xs text-zinc-500 mb-1 block">Rate ($/SF/yr)</span>
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                value={step.rate_psf_yr}
-                onChange={(e) =>
-                  updateRentStep(i, "rate_psf_yr", Number(e.target.value))
-                }
-                className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
-              />
-            </label>
-            <div className="text-xs text-zinc-300 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
-              Y{Math.floor(step.start / 12) + 1} - Y{Math.floor(step.end / 12) + 1}
-            </div>
-            <button
-              type="button"
-              onClick={() => removeRentStep(i)}
-              disabled={scenario.rent_steps.length <= 1}
-              className="h-9 rounded-lg border border-red-500/40 text-red-300 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Remove
-            </button>
           </div>
         ))}
       </div>
