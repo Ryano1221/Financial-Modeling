@@ -940,9 +940,9 @@ export default function Home() {
 
       <FeatureTiles />
 
-      <main className="relative z-10 max-w-6xl mx-auto px-6 py-12 md:py-16">
+      <main className="relative z-10 max-w-[96rem] mx-auto px-6 py-12 md:py-16">
         <section id="extract" className="scroll-mt-24">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-10">
+        <div className="grid grid-cols-1 lg:grid-cols-[0.85fr_1.15fr] xl:grid-cols-[0.8fr_1.2fr] gap-8 lg:gap-10">
           {/* Left column: renewal/relocate + upload & extract */}
           <div className="space-y-6">
             <section className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-5 shadow-xl">
