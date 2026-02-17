@@ -1544,9 +1544,10 @@ def get_report_pdf(report_id: str):
             page = browser.new_page()
             page.goto(url, wait_until="networkidle", timeout=30000)
             page.emulate_media(media="print")
-            page.wait_for_timeout(1500)  # allow charts to render
+            page.wait_for_timeout(2800)  # allow charts and tables to render before PDF snapshot
             pdf_bytes = page.pdf(
                 format="A4",
+                landscape=True,
                 print_background=True,
                 margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
             )
@@ -1563,6 +1564,7 @@ def get_report_pdf(report_id: str):
                 page.wait_for_timeout(400)
                 pdf_bytes = page.pdf(
                     format="A4",
+                    landscape=True,
                     print_background=True,
                     margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
                 )
