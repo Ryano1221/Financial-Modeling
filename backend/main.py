@@ -535,6 +535,12 @@ def _normalize_suite_candidate(raw: str) -> str:
         }:
             return ""
         # Suites are typically numeric/alphanumeric short tokens; reject long words without digits.
+        if len(token) == 1 and not token.isdigit():
+            return ""
+        if not re.search(r"\d", token):
+            # Accept very short alpha suite codes (e.g. PH) but reject words like "PER".
+            if not re.fullmatch(r"(?i)[A-Z]{1,2}", token):
+                return ""
         if not re.search(r"\d", token) and len(token) > 6:
             return ""
         if re.fullmatch(r"(?i)\d+", token):
@@ -547,7 +553,8 @@ def _extract_suite_from_text(text: str) -> str:
     if not text:
         return ""
     suite_patterns = [
-        r"(?i)\b(?:suite|ste\.?|unit|space)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
+        r"(?i)\b(?:suite|ste\.?|unit)\b\s*[:#-]?\s*(?:no\.?|#)?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
+        r"(?i)\bspace\b\s*(?:no\.?|#)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
         r"(?i)\bpremises\s*(?:known as|is|:)?\s*(?:suite|ste\.?)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
         r"(?i)\bat\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
         r"(?i)\bfloor\s+([A-Za-z0-9][A-Za-z0-9\-]{0,8})\s+suite\s+([A-Za-z0-9][A-Za-z0-9\-]{0,14})",
@@ -564,6 +571,49 @@ def _extract_suite_from_text(text: str) -> str:
             if candidate:
                 return candidate
     return ""
+
+
+def _extract_address_from_text(text: str) -> str:
+    if not text:
+        return ""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    segments: list[str] = []
+    upper = min(len(lines), 260)
+    for i in range(upper):
+        segments.append(lines[i])
+        if i + 1 < upper:
+            segments.append(f"{lines[i]} {lines[i+1]}")
+        if i + 2 < upper:
+            segments.append(f"{lines[i]} {lines[i+1]} {lines[i+2]}")
+
+    street_suffix = r"(?:Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|Lane|Ln\.?|Way|Plaza|Parkway|Pkwy\.?)"
+    core_addr = rf"(\d{{1,6}}\s+[A-Za-z0-9\.\- ]{{3,90}}{street_suffix}(?:,\s*[A-Za-z .'-]{{2,40}}){{1,3}})"
+    addr_patterns = [
+        rf"(?i)\blocated\s+(?:on\s+the\s+\d+(?:st|nd|rd|th)\s+floor\s+of|at)\s+{core_addr}",
+        rf"(?i)\b(?:premises|leased premises)\s+(?:located\s+at|at)\s+{core_addr}",
+        rf"(?i)\bfloor\s+of\s+{core_addr}",
+        rf"(?i)\b{core_addr}",
+    ]
+    best = ""
+    best_score = -1
+    for seg in segments:
+        low = seg.lower()
+        for pat in addr_patterns:
+            m = re.search(pat, seg)
+            if not m:
+                continue
+            candidate = " ".join(m.group(1).split()).strip(" ,.;:-")
+            if not _looks_like_address(candidate):
+                continue
+            score = 1
+            if any(k in low for k in ("located", "premises", "floor of", "leased")):
+                score += 2
+            if score > best_score:
+                best_score = score
+                best = candidate
+    return best
 
 
 def _looks_like_address(value: str) -> bool:
@@ -589,6 +639,22 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
         v = re.sub(rf"(?i)\b{re.escape(suite_hint)}\b", "", v).strip(" ,.;:-")
     # Remove weak lead-ins.
     v = re.sub(r"(?i)^(?:at|located at|known as)\s+", "", v).strip(" ,.;:-")
+    low = v.lower()
+    # Reject legal-clause text that is not a building identifier.
+    if any(
+        bad in low
+        for bad in (
+            "hereby leases",
+            "landlord",
+            "tenant",
+            "this lease",
+            "agreement",
+            "commencement",
+            "expiration",
+            "term of",
+        )
+    ):
+        return ""
     # Keep values that are at least somewhat informative.
     if len(v) < 4:
         return ""
@@ -635,6 +701,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "term_months": None,
         "suite": "",
         "building_name": "",
+        "address": "",
         "lease_type": None,
     }
     if not text:
@@ -728,6 +795,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     head = lines[:120]
     hints["suite"] = _extract_suite_from_text(text)
+    hints["address"] = _extract_address_from_text(text)
 
     # ---- Address / building (includes premises labels and located-at lines) ----
     building_patterns = [
@@ -747,6 +815,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                     break
         if hints["building_name"]:
             break
+    if not hints["building_name"] and hints.get("address"):
+        hints["building_name"] = str(hints["address"])
 
     # Lease type: "lease type is NNN" / "lease type: Gross"
     lease_type_pat = re.compile(
@@ -1021,11 +1091,14 @@ def _normalize_impl(
             suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
             if not suite_val:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
+            address_val = str(extracted_hints.get("address") or canonical.address or "").strip()
+            if address_val and not (canonical.address or "").strip():
+                updates["address"] = address_val
             building_val = str(extracted_hints.get("building_name") or "").strip()
             if not building_val:
                 building_val = _derive_building_name_from_premises_or_address(
                     premises_name=str(canonical.premises_name or ""),
-                    address=str(canonical.address or ""),
+                    address=address_val,
                     suite_hint=suite_val,
                 )
             if not building_val:
