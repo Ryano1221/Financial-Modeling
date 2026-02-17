@@ -234,6 +234,19 @@ _RE_RSF = re.compile(
 )
 _RE_NUM = re.compile(r"[\d,]+\.?\d*")
 _RE_ISO_DATE = re.compile(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b")
+_RE_US_DATE = re.compile(r"\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\d|3[01])[/-](20\d{2})\b")
+_RE_MONTH_DATE = re.compile(
+    r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2}),?\s+(20\d{2})\b"
+)
+_RE_COMM_LABEL = re.compile(
+    r"(?i)\b(?:commencement(?:\s+date)?|commencing|lease\s+commencement)\b[^A-Za-z0-9]{0,10}([^\n]{0,40})"
+)
+_RE_EXP_LABEL = re.compile(
+    r"(?i)\b(?:expiration(?:\s+date)?|expires?|expiring|lease\s+expiration)\b[^A-Za-z0-9]{0,10}([^\n]{0,40})"
+)
+_RE_BUILDING = re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,80})")
+_RE_SUITE = re.compile(r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,30})")
 _RE_TI = re.compile(
     r"\b(?:ti\s+allowance|tenant\s+improvement|improvement\s+allowance)\s*[:\s]*\$?\s*[\d,]+\.?\d*",
     re.I,
@@ -252,6 +265,33 @@ _RE_BASE_RENT = re.compile(
 )
 
 
+def _parse_text_date_token(s: str) -> str | None:
+    token = (s or "").strip()
+    if not token:
+        return None
+    m = _RE_ISO_DATE.search(token)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    m = _RE_US_DATE.search(token)
+    if m:
+        mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    m = _RE_MONTH_DATE.search(token)
+    if m:
+        mon = m.group(1).lower()[:3]
+        months = {
+            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+        }
+        mo = months.get(mon)
+        if mo:
+            d = int(m.group(2))
+            y = int(m.group(3))
+            return f"{y:04d}-{mo:02d}-{d:02d}"
+    return None
+
+
 def _regex_prefill(text: str) -> dict:
     """Fast regex pass to prefill scenario fields. Returns dict of field -> value (or None)."""
     prefill = {}
@@ -264,14 +304,45 @@ def _regex_prefill(text: str) -> dict:
                 prefill["rsf"] = float(nums[0].replace(",", ""))
             except ValueError:
                 pass
-    # Dates: first two ISO-like dates often commencement / expiration
-    dates = _RE_ISO_DATE.findall(text)
-    if len(dates) >= 1:
-        y, mo, d = dates[0]
-        prefill["commencement"] = f"{y}-{int(mo):02d}-{int(d):02d}"
-    if len(dates) >= 2:
-        y, mo, d = dates[1]
-        prefill["expiration"] = f"{y}-{int(mo):02d}-{int(d):02d}"
+    # Dates: prefer labeled commencement/expiration first, then generic first-two date fallback.
+    comm = None
+    exp = None
+    m = _RE_COMM_LABEL.search(text)
+    if m:
+        comm = _parse_text_date_token(m.group(1))
+    m = _RE_EXP_LABEL.search(text)
+    if m:
+        exp = _parse_text_date_token(m.group(1))
+    if not comm or not exp:
+        generic_dates: list[str] = []
+        for hit in _RE_ISO_DATE.finditer(text):
+            iso = _parse_text_date_token(hit.group(0))
+            if iso:
+                generic_dates.append(iso)
+        for hit in _RE_US_DATE.finditer(text):
+            iso = _parse_text_date_token(hit.group(0))
+            if iso:
+                generic_dates.append(iso)
+        for hit in _RE_MONTH_DATE.finditer(text):
+            iso = _parse_text_date_token(hit.group(0))
+            if iso:
+                generic_dates.append(iso)
+        # de-duplicate while preserving order
+        seen = set()
+        ordered = []
+        for d in generic_dates:
+            if d in seen:
+                continue
+            seen.add(d)
+            ordered.append(d)
+        if not comm and len(ordered) >= 1:
+            comm = ordered[0]
+        if not exp and len(ordered) >= 2:
+            exp = ordered[1]
+    if comm:
+        prefill["commencement"] = comm
+    if exp:
+        prefill["expiration"] = exp
     # TI allowance ($/sf)
     m = _RE_TI.search(text)
     if m:
@@ -307,6 +378,27 @@ def _regex_prefill(text: str) -> dict:
                 prefill["rate_psf_yr"] = v
         except ValueError:
             pass
+    # Opex mode
+    low = text.lower()
+    if "base year" in low or "expense stop" in low:
+        prefill["opex_mode"] = "base_year"
+    elif " nnn" in f" {low}" or "triple net" in low:
+        prefill["opex_mode"] = "nnn"
+    # Scenario name from building/suite if possible
+    building = None
+    suite = None
+    m = _RE_BUILDING.search(text)
+    if m:
+        building = m.group(1).strip(" ,.-")
+    m = _RE_SUITE.search(text)
+    if m:
+        suite = m.group(1).strip(" ,.-")
+    if building and suite:
+        prefill["name"] = f"{building} Suite {suite}"
+    elif building:
+        prefill["name"] = building
+    elif suite:
+        prefill["name"] = f"Suite {suite}"
     return prefill
 
 
