@@ -115,7 +115,7 @@ export function scenarioInputToBackendCanonical(
     parking_count: s.parking_spaces ?? 0,
     parking_rate_monthly: s.parking_cost_monthly_per_space ?? 0,
     ti_allowance_psf: s.ti_allowance_psf ?? 0,
-    notes: "",
+    notes: s.notes ?? "",
   };
 }
 
@@ -139,6 +139,7 @@ export function backendCanonicalToScenarioInput(
     suite: c.suite ?? "",
     floor: c.floor ?? "",
     address: c.address ?? "",
+    notes: c.notes ?? "",
     rsf: c.rsf,
     commencement: c.commencement_date,
     expiration: c.expiration_date,

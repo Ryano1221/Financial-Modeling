@@ -87,7 +87,7 @@ function buildFallbackNormalizerResponse(fileName: string, reason?: string | nul
       parking_count: 0,
       parking_rate_monthly: 0,
       ti_allowance_psf: 0,
-      notes: "",
+      notes: "Clause highlights unavailable from auto-extraction. Review ROFR/ROFO, renewal/extension rights, termination rights, and OpEx exclusions manually.",
     },
     confidence_score: 0.2,
     field_confidence: {},

@@ -670,6 +670,99 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     return hints
 
 
+def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
+    """
+    Build concise lease-clause notes from raw lease text.
+    Focuses on rights/options and OpEx language used by broker reviews.
+    """
+    if not text:
+        return []
+
+    chunks: list[str] = []
+    for line in text.splitlines():
+        cleaned = " ".join(line.split()).strip()
+        if len(cleaned) < 18:
+            continue
+        chunks.append(cleaned)
+
+    # OCR text can be sparse; include sentence-like chunks as a fallback.
+    if len(chunks) < 40:
+        for sent in re.split(r"(?<=[\.;])\s+", text):
+            cleaned = " ".join(sent.split()).strip()
+            if len(cleaned) >= 24:
+                chunks.append(cleaned)
+
+    # Keep scan bounded for predictable latency.
+    chunks = chunks[:900]
+
+    clause_patterns: list[tuple[str, list[re.Pattern[str]]]] = [
+        ("ROFR", [re.compile(r"\b(rofr|right of first refusal)\b", re.I)]),
+        ("ROFO", [re.compile(r"\b(rofo|right of first offer)\b", re.I)]),
+        (
+            "Renewal option",
+            [
+                re.compile(r"\b(option to renew|option to extend|renewal option|extension option)\b", re.I),
+                re.compile(r"\brenew(?:al|)\b.{0,40}\b(option|term|period)\b", re.I),
+            ],
+        ),
+        (
+            "Expansion option",
+            [
+                re.compile(r"\b(option to expand|expansion option|right to expand|additional premises)\b", re.I),
+            ],
+        ),
+        (
+            "Termination option",
+            [
+                re.compile(r"\b(termination option|early termination|right to terminate|cancel(?:lation)?)\b", re.I),
+            ],
+        ),
+        (
+            "OpEx exclusions",
+            [
+                re.compile(
+                    r"\b(operating expenses?|opex|cam|common area maintenance)\b.{0,120}\b(exclude|excluding|exclusion|excluded|not include|shall not include)\b",
+                    re.I,
+                ),
+                re.compile(r"\bexcluded from\b.{0,90}\b(operating expenses?|opex|cam)\b", re.I),
+            ],
+        ),
+        (
+            "OpEx cap",
+            [
+                re.compile(r"\b(cap|capped|ceiling)\b.{0,60}\b(cam|opex|operating expenses?)\b", re.I),
+                re.compile(r"\bcontrollable\b.{0,50}\b(cam|opex|operating expenses?)\b", re.I),
+            ],
+        ),
+        (
+            "Audit rights",
+            [
+                re.compile(r"\b(audit|inspect)\b.{0,70}\b(records|books|operating expenses?|cam)\b", re.I),
+            ],
+        ),
+    ]
+
+    notes: list[str] = []
+    seen: set[str] = set()
+    for label, patterns in clause_patterns:
+        match_chunk = None
+        for chunk in chunks:
+            if any(p.search(chunk) for p in patterns):
+                match_chunk = chunk
+                break
+        if not match_chunk:
+            continue
+        snippet = match_chunk[:220].rstrip(" ,;.")
+        note = f"{label}: {snippet}"
+        if note in seen:
+            continue
+        seen.add(note)
+        notes.append(note)
+        if len(notes) >= max_items:
+            break
+    return notes
+
+
 def _safe_extraction_warning(err: Exception | str) -> str:
     """
     Map low-level extraction errors to safe, actionable messages for UI warnings.
@@ -793,6 +886,7 @@ def _normalize_impl(
             warnings.append(_safe_extraction_warning(e))
 
         extracted_hints = _extract_lease_hints(text, file.filename or "", rid)
+        note_highlights = _extract_lease_note_highlights(text)
 
         if text.strip():
             # No try/except: let AI extraction failures propagate (503 from endpoint).
@@ -846,6 +940,13 @@ def _normalize_impl(
                 updates["premises_name"] = str(extracted_hints["suite"])
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
+            if note_highlights:
+                updates["notes"] = " | ".join(note_highlights)[:1600]
+            elif text.strip() and not (canonical.notes or "").strip():
+                updates["notes"] = (
+                    "No ROFR/ROFO/renewal/OpEx-exclusion clauses were confidently detected. "
+                    "Review lease clauses manually."
+                )
             if updates:
                 canonical = canonical.model_copy(update=updates)
 

@@ -419,6 +419,19 @@ export default function Home() {
     setScenarios((prev) =>
       prev.map((s) => (s.id === updated.id ? updated : s))
     );
+    // Invalidate stale compute outputs so summaries/charts reflect latest edits.
+    setResults((prev) => {
+      if (!(updated.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[updated.id];
+      return next;
+    });
+    setCanonicalComputeCache((prev) => {
+      if (!(updated.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[updated.id];
+      return next;
+    });
   }, []);
 
   const renameScenario = useCallback((id: string, newName: string) => {
@@ -754,31 +767,37 @@ export default function Home() {
   const engineResults = useMemo(() => {
     const included = scenarios.filter((s) => includedInSummary[s.id] !== false);
     if (isProduction) {
-      return included
-        .map((s) => {
-          const cached = canonicalComputeCache[s.id];
-          if (cached) {
-            const displayName = getPremisesDisplayName({
-              building_name: cached.metrics.building_name,
-              suite: cached.metrics.suite,
-              premises_name: cached.metrics.premises_name,
-              scenario_name: s.name,
-            });
-            return canonicalResponseToEngineResult(cached, s.id, displayName);
-          }
-          return null;
-        })
-        .filter((r): r is NonNullable<typeof r> => r !== null);
+      return included.map((s) => {
+        const cached = canonicalComputeCache[s.id];
+        if (cached) {
+          const displayName = getPremisesDisplayName({
+            building_name: cached.metrics.building_name,
+            suite: cached.metrics.suite,
+            premises_name: cached.metrics.premises_name,
+            scenario_name: s.name,
+          });
+          return canonicalResponseToEngineResult(cached, s.id, displayName);
+        }
+        // Fallback to local engine while canonical compute is loading/recomputing.
+        return runMonthlyEngine(scenarioToCanonical(s), globalDiscountRate);
+      });
     }
     return included.map((s) => runMonthlyEngine(scenarioToCanonical(s), globalDiscountRate));
   }, [scenarios, globalDiscountRate, includedInSummary, isProduction, canonicalComputeCache]);
 
-  const chartData: ChartRow[] = engineResults.map((r) => ({
-    name: r.scenarioName,
-    avg_cost_psf_year: r.metrics.avgCostPsfYr,
-    npv_cost: r.metrics.npvAtDiscount,
-    avg_cost_year: r.metrics.avgAllInCostPerYear,
-  }));
+  const chartData: ChartRow[] = engineResults
+    .map((r) => ({
+      name: r.scenarioName,
+      avg_cost_psf_year: Number(r.metrics.avgCostPsfYr),
+      npv_cost: Number(r.metrics.npvAtDiscount),
+      avg_cost_year: Number(r.metrics.avgAllInCostPerYear),
+    }))
+    .filter(
+      (row) =>
+        Number.isFinite(row.avg_cost_psf_year) &&
+        Number.isFinite(row.npv_cost) &&
+        Number.isFinite(row.avg_cost_year)
+    );
 
   const resultErrors = scenarios
     .map((s) => {

@@ -22,6 +22,7 @@ export interface ScenarioInput {
   suite?: string;
   floor?: string;
   address?: string;
+  notes?: string;
   rsf: number;
   commencement: string; // YYYY-MM-DD
   expiration: string;   // YYYY-MM-DD

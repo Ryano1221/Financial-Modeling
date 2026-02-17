@@ -81,5 +81,6 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       brokerFee: s.broker_fee ?? 0,
       securityDepositMonths: s.security_deposit_months ?? 0,
     },
+    notes: s.notes ?? "",
   };
 }

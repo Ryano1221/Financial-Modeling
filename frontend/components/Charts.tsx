@@ -30,9 +30,19 @@ export function Charts({ data }: ChartsProps) {
   const chartHeight = 280;
   const gridStroke = "rgba(255,255,255,0.08)";
   const barFill = "#3b82f6";
+  const xDomain: [number, (max: number) => number] = [0, (max) => (Number.isFinite(max) && max > 0 ? max * 1.1 : 1)];
+  const allZero =
+    data.every((d) => d.avg_cost_psf_year === 0) &&
+    data.every((d) => d.npv_cost === 0) &&
+    data.every((d) => d.avg_cost_year === 0);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {allZero && (
+        <div className="lg:col-span-3 text-xs text-amber-300/90 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          Charts are zero because all computed costs are currently 0. Confirm rent steps, RSF, dates, and OpEx values.
+        </div>
+      )}
       <div className={chartClass}>
         <h3 className="text-sm font-medium text-white mb-3">
           Avg cost $/SF/year by scenario
@@ -41,10 +51,10 @@ export function Charts({ data }: ChartsProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrencyPerSF(v)} />
+              <XAxis type="number" domain={xDomain} tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrencyPerSF(v)} />
               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
               <Tooltip formatter={(v: number) => formatCurrencyPerSF(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
-              <Bar dataKey="avg_cost_psf_year" fill={barFill} radius={[0, 4, 4, 0]} name="Avg $/SF/yr" />
+              <Bar dataKey="avg_cost_psf_year" fill={barFill} radius={[0, 4, 4, 0]} name="Avg $/SF/yr" minPointSize={3} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -58,10 +68,10 @@ export function Charts({ data }: ChartsProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrency(v)} />
+              <XAxis type="number" domain={xDomain} tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrency(v)} />
               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
               <Tooltip formatter={(v: number) => formatCurrency(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
-              <Bar dataKey="npv_cost" fill={barFill} radius={[0, 4, 4, 0]} name="NPV cost" />
+              <Bar dataKey="npv_cost" fill={barFill} radius={[0, 4, 4, 0]} name="NPV cost" minPointSize={3} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -75,10 +85,10 @@ export function Charts({ data }: ChartsProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrency(v)} />
+              <XAxis type="number" domain={xDomain} tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrency(v)} />
               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
               <Tooltip formatter={(v: number) => formatCurrency(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
-              <Bar dataKey="avg_cost_year" fill={barFill} radius={[0, 4, 4, 0]} name="Avg cost/yr" />
+              <Bar dataKey="avg_cost_year" fill={barFill} radius={[0, 4, 4, 0]} name="Avg cost/yr" minPointSize={3} />
             </BarChart>
           </ResponsiveContainer>
         </div>
