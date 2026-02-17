@@ -543,27 +543,43 @@ export default function Home() {
     confidential: reportMeta.confidential,
   }), [reportMeta]);
 
+  const getScenarioResultForExport = useCallback((scenario: ScenarioWithId): CashflowResult => {
+    const existing = results[scenario.id];
+    if (existing && "term_months" in existing) return existing;
+
+    const computed = runMonthlyEngine(scenarioToCanonical(scenario), globalDiscountRate);
+    const rentNominal = computed.monthly.reduce((sum, row) => sum + row.baseRent, 0);
+    const opexNominal = computed.monthly.reduce((sum, row) => sum + row.opex, 0);
+
+    return {
+      term_months: computed.termMonths,
+      rent_nominal: rentNominal,
+      opex_nominal: opexNominal,
+      total_cost_nominal: computed.metrics.totalObligation,
+      npv_cost: computed.metrics.npvAtDiscount,
+      avg_cost_year: computed.metrics.avgAllInCostPerYear,
+      avg_cost_psf_year: computed.metrics.avgCostPsfYr,
+    };
+  }, [results, globalDiscountRate]);
+
   const exportPdfDeck = useCallback(async () => {
-    const withResults = scenarios.filter((s) => {
-      const r = results[s.id];
-      return r && "term_months" in r;
-    });
-    if (withResults.length === 0) {
-      setExportPdfError("Run analysis first and ensure at least one scenario has results.");
+    if (scenarios.length === 0) {
+      setExportPdfError("Add at least one scenario.");
       return;
     }
     setExportPdfLoading(true);
     setExportPdfError(null);
     try {
+      const scenariosForDeck = scenarios.map((s) => ({
+        scenario: scenarioToPayload(s),
+        result: getScenarioResultForExport(s),
+      }));
       const headers = getAuthHeaders();
       const res = await fetchApi("/reports", {
         method: "POST",
         headers,
         body: JSON.stringify({
-          scenarios: withResults.map((s) => ({
-            scenario: scenarioToPayload(s),
-            result: results[s.id] as CashflowResult,
-          })),
+          scenarios: scenariosForDeck,
           branding: {},
         }),
       });
@@ -618,7 +634,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, results, selectedScenario, brandId, buildReportMeta]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport]);
 
   const generateReport = useCallback(async () => {
     if (!selectedScenario) {
@@ -1031,10 +1047,10 @@ export default function Home() {
         />
 
         <section className="pt-6 border-t border-white/10">
-          <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Run analysis</p>
+          <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Exports</p>
           <h2 className="text-lg font-semibold text-white mb-2">Compute & report</h2>
           <p className="text-sm text-zinc-400 mb-4">
-            Compute all scenarios and compare results. One API call per scenario; failed scenarios are reported below.
+            Export Excel or PDF directly from your current scenarios. Analysis refresh is optional.
           </p>
           <label className="flex items-center gap-2 text-sm text-zinc-400 mb-3">
             <span>Discount rate (default 8%):</span>
@@ -1052,14 +1068,6 @@ export default function Home() {
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={runAnalysis}
-              disabled={loading || scenarios.length === 0}
-              className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
-            >
-              {loading ? "Running…" : "Run analysis"}
-            </button>
-            <button
-              type="button"
               onClick={exportExcelDeck}
               disabled={exportExcelLoading || scenarios.length === 0}
               className="rounded-full bg-emerald-600/90 text-white px-5 py-2.5 text-sm font-medium hover:bg-emerald-600 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
@@ -1074,23 +1082,36 @@ export default function Home() {
             >
               {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
             </button>
-            <button
-              type="button"
-              onClick={generateReport}
-              disabled={reportLoading || !selectedScenario}
-              className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
-            >
-              {reportLoading ? "Generating…" : "Generate Report"}
-            </button>
-            <button
-              type="button"
-              onClick={previewReport}
-              disabled={previewLoading || !selectedScenario}
-              className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
-            >
-              {previewLoading ? "Opening…" : "Preview Report"}
-            </button>
           </div>
+          <details className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
+            <summary className="cursor-pointer text-sm text-zinc-300">Advanced report actions</summary>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={runAnalysis}
+                disabled={loading || scenarios.length === 0}
+                className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+              >
+                {loading ? "Running…" : "Run analysis"}
+              </button>
+              <button
+                type="button"
+                onClick={generateReport}
+                disabled={reportLoading || !selectedScenario}
+                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+              >
+                {reportLoading ? "Generating…" : "Generate Report"}
+              </button>
+              <button
+                type="button"
+                onClick={previewReport}
+                disabled={previewLoading || !selectedScenario}
+                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+              >
+                {previewLoading ? "Opening…" : "Preview Report"}
+              </button>
+            </div>
+          </details>
           <div className="mt-6 pt-4 border-t border-white/10">
             <h3 className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-3">Report meta (for PDF cover)</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
