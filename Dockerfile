@@ -40,7 +40,7 @@ WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
-RUN python -m playwright install chromium
+RUN python -m playwright install --with-deps chromium
 
 COPY backend/ ./
 

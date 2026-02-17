@@ -43,7 +43,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 # Ensure Playwright browser binary exists at runtime for /report and /reports/{id}/pdf
-RUN python -m playwright install chromium
+RUN python -m playwright install --with-deps chromium
 
 COPY . .
 

@@ -205,6 +205,35 @@ def health():
     }
 
 
+@app.get("/health/pdf")
+def health_pdf():
+    """
+    Runtime check for Playwright PDF dependencies.
+    Returns 200 only when Chromium can launch successfully.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        raise HTTPException(status_code=503, detail="Playwright is not installed.")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=["--no-sandbox"])
+            page = browser.new_page()
+            page.set_content("<html><body>ok</body></html>")
+            browser.close()
+    except Exception as e:
+        msg = str(e)
+        if len(msg) > 500:
+            msg = msg[:500]
+        raise HTTPException(
+            status_code=503,
+            detail=f"Playwright runtime unavailable: {msg}",
+        ) from e
+
+    return {"status": "ok", "pdf_runtime": "ready"}
+
+
 @app.get("/version")
 def version():
     payload = {

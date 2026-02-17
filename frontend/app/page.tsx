@@ -587,7 +587,6 @@ export default function Home() {
         result: getScenarioResultForExport(s),
       }));
       const headers = getAuthHeaders();
-      let reportId: string | null = null;
       try {
         const res = await fetchApi("/reports", {
           method: "POST",
@@ -602,8 +601,7 @@ export default function Home() {
           throw new Error(text || `HTTP ${res.status}`);
         }
         const data: { report_id: string } = await res.json();
-        reportId = data.report_id;
-        const pdfRes = await fetchApi(`/reports/${reportId}/pdf`, { method: "GET" });
+        const pdfRes = await fetchApi(`/reports/${data.report_id}/pdf`, { method: "GET" });
         if (!pdfRes.ok) {
           const body = await pdfRes.json().catch(() => null);
           const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : `HTTP ${pdfRes.status}`;
@@ -615,21 +613,6 @@ export default function Home() {
       } catch (deckErr) {
         const msg = deckErr instanceof Error ? deckErr.message : String(deckErr);
         console.error("[exportPdfDeck] deck route failed:", msg.slice(0, 600));
-      }
-
-      if (reportId) {
-        try {
-          const preview = await fetchApi(`/reports/${reportId}/preview`, { method: "GET" });
-          if (preview.ok) {
-            const html = await preview.text();
-            downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), "lease-deck-preview.html");
-            setExportPdfError("Deck PDF service failed; downloaded full multi-scenario deck preview HTML (open and Print to PDF).");
-            return;
-          }
-        } catch (previewErr) {
-          const msg = previewErr instanceof Error ? previewErr.message : String(previewErr);
-          console.error("[exportPdfDeck] /reports/{id}/preview fallback failed:", msg.slice(0, 600));
-        }
       }
 
       // Last-resort fallback only when there is a single scenario.
@@ -662,7 +645,7 @@ export default function Home() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[exportPdfDeck] fatal export error:", msg.slice(0, 600));
-      setExportPdfError(getDisplayErrorMessage(err));
+      setExportPdfError("PDF export failed on backend. Please retry after backend redeploy is complete.");
     } finally {
       setExportPdfLoading(false);
     }
