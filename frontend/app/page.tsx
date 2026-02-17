@@ -587,6 +587,7 @@ export default function Home() {
         result: getScenarioResultForExport(s),
       }));
       const headers = getAuthHeaders();
+      let reportId: string | null = null;
       try {
         const res = await fetchApi("/reports", {
           method: "POST",
@@ -601,7 +602,8 @@ export default function Home() {
           throw new Error(text || `HTTP ${res.status}`);
         }
         const data: { report_id: string } = await res.json();
-        const pdfRes = await fetchApi(`/reports/${data.report_id}/pdf`, { method: "GET" });
+        reportId = data.report_id;
+        const pdfRes = await fetchApi(`/reports/${reportId}/pdf`, { method: "GET" });
         if (!pdfRes.ok) {
           const body = await pdfRes.json().catch(() => null);
           const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : `HTTP ${pdfRes.status}`;
@@ -614,47 +616,45 @@ export default function Home() {
         console.error("[exportPdfDeck] deck route failed", deckErr);
       }
 
-      const fallbackScenario = selectedScenario ?? scenarios[0] ?? null;
-      if (!fallbackScenario) throw new Error("No scenario available for PDF fallback.");
-      try {
-        const direct = await fetchApi("/report", {
-          method: "POST",
-          headers: getAuthHeaders(),
-          body: JSON.stringify({
-            brand_id: brandId,
-            scenario: scenarioToPayload(fallbackScenario),
-            meta: buildReportMeta(),
-          }),
-        });
-        if (direct.ok) {
-          const blob = await direct.blob();
-          downloadBlob(blob, "lease-financial-analysis.pdf");
-          setExportPdfError("Deck PDF route failed; downloaded single-scenario PDF instead.");
-          return;
+      if (reportId) {
+        try {
+          const preview = await fetchApi(`/reports/${reportId}/preview`, { method: "GET" });
+          if (preview.ok) {
+            const html = await preview.text();
+            downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), "lease-deck-preview.html");
+            setExportPdfError("Deck PDF service failed; downloaded full multi-scenario deck preview HTML (open and Print to PDF).");
+            return;
+          }
+        } catch (previewErr) {
+          console.error("[exportPdfDeck] /reports/{id}/preview fallback failed", previewErr);
         }
-      } catch (directErr) {
-        console.error("[exportPdfDeck] direct /report fallback failed", directErr);
       }
 
-      try {
-        const preview = await fetchApi("/report/preview", {
-          method: "POST",
-          headers: getAuthHeaders(),
-          body: JSON.stringify({
-            brand_id: brandId,
-            scenario: scenarioToPayload(fallbackScenario),
-            meta: buildReportMeta(),
-          }),
-        });
-        if (preview.ok) {
-          const html = await preview.text();
-          downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), "lease-report-preview.html");
-          setExportPdfError("PDF service unavailable; downloaded HTML preview (open and Print to PDF).");
-          return;
+      // Last-resort fallback only when there is a single scenario.
+      if (scenarios.length === 1) {
+        const fallbackScenario = selectedScenario ?? scenarios[0] ?? null;
+        if (!fallbackScenario) throw new Error("No scenario available for PDF fallback.");
+        try {
+          const direct = await fetchApi("/report", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              brand_id: brandId,
+              scenario: scenarioToPayload(fallbackScenario),
+              meta: buildReportMeta(),
+            }),
+          });
+          if (direct.ok) {
+            const blob = await direct.blob();
+            downloadBlob(blob, "lease-financial-analysis.pdf");
+            setExportPdfError("Deck routes failed; downloaded single-scenario PDF fallback.");
+            return;
+          }
+        } catch (directErr) {
+          console.error("[exportPdfDeck] single-scenario /report fallback failed", directErr);
         }
-      } catch (previewErr) {
-        console.error("[exportPdfDeck] /report/preview fallback failed", previewErr);
       }
+
       throw new Error("All PDF export routes failed.");
     } catch (err) {
       console.error("[exportPdfDeck] fatal export error", err);

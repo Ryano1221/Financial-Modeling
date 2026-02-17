@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 import os
@@ -1256,6 +1257,148 @@ def get_report(report_id: str):
     return data
 
 
+@app.get("/reports/{report_id}/preview", response_class=HTMLResponse)
+def get_report_preview(report_id: str):
+    """
+    Return a print-friendly multi-scenario deck HTML from stored report payload.
+    Useful as a fallback when PDF rendering is unavailable.
+    """
+    data = load_report(report_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return HTMLResponse(_build_report_deck_preview_html(data))
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+        if out != out:  # NaN guard
+            return default
+        return out
+    except (TypeError, ValueError):
+        return default
+
+
+def _fmt_money(value) -> str:
+    v = _safe_float(value, 0.0)
+    return f"${v:,.0f}"
+
+
+def _fmt_money_2(value) -> str:
+    v = _safe_float(value, 0.0)
+    return f"${v:,.2f}"
+
+
+def _fmt_psf(value) -> str:
+    v = _safe_float(value, 0.0)
+    return f"${v:,.2f}/SF"
+
+
+def _build_report_deck_preview_html(data: dict) -> str:
+    """
+    Build a print-friendly multi-scenario deck HTML from stored /reports payload.
+    This does not depend on frontend runtime JS, so Playwright can render it reliably.
+    """
+    entries = data.get("scenarios") if isinstance(data, dict) else []
+    if not isinstance(entries, list):
+        entries = []
+    if not entries:
+        return """<!doctype html><html><body><h1>No scenarios found</h1></body></html>"""
+
+    scenario_names: list[str] = []
+    scenario_rows: list[dict] = []
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        scenario = entry.get("scenario") if isinstance(entry.get("scenario"), dict) else {}
+        result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
+        name = str(scenario.get("name") or f"Scenario {i + 1}")
+        scenario_names.append(name)
+        scenario_rows.append({"scenario": scenario, "result": result})
+
+    def metric_row(label: str, key: str, formatter) -> str:
+        tds = []
+        for row in scenario_rows:
+            value = row["result"].get(key)
+            tds.append(f"<td>{html.escape(formatter(value))}</td>")
+        return f"<tr><th>{html.escape(label)}</th>{''.join(tds)}</tr>"
+
+    def scenario_row(label: str, key: str) -> str:
+        tds = []
+        for row in scenario_rows:
+            value = row["scenario"].get(key, "")
+            tds.append(f"<td>{html.escape(str(value or ''))}</td>")
+        return f"<tr><th>{html.escape(label)}</th>{''.join(tds)}</tr>"
+
+    header_cells = "".join(f"<th>{html.escape(name)}</th>" for name in scenario_names)
+
+    summary_table = f"""
+      <table>
+        <thead>
+          <tr><th>Metric</th>{header_cells}</tr>
+        </thead>
+        <tbody>
+          {scenario_row("Building name", "building_name")}
+          {scenario_row("Suite", "suite")}
+          {scenario_row("RSF", "rsf")}
+          {scenario_row("Commencement", "commencement")}
+          {scenario_row("Expiration", "expiration")}
+          {metric_row("Term (months)", "term_months", lambda v: f"{int(_safe_float(v, 0))}")}
+          {metric_row("Rent (nominal)", "rent_nominal", _fmt_money)}
+          {metric_row("Opex (nominal)", "opex_nominal", _fmt_money)}
+          {metric_row("Total obligation", "total_cost_nominal", _fmt_money)}
+          {metric_row("NPV cost", "npv_cost", _fmt_money)}
+          {metric_row("Avg cost/year", "avg_cost_year", _fmt_money_2)}
+          {metric_row("Avg cost/SF/year", "avg_cost_psf_year", _fmt_psf)}
+        </tbody>
+      </table>
+    """
+
+    assumptions = []
+    for i, row in enumerate(scenario_rows):
+        scenario = row["scenario"]
+        assumptions.append(
+            "<li><strong>{}</strong>: {} SF, {} to {}, opex mode {}</li>".format(
+                html.escape(str(scenario.get("name") or f"Scenario {i + 1}")),
+                html.escape(str(scenario.get("rsf") or "")),
+                html.escape(str(scenario.get("commencement") or "")),
+                html.escape(str(scenario.get("expiration") or "")),
+                html.escape(str(scenario.get("opex_mode") or "")),
+            )
+        )
+
+    return f"""
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Lease Deck Comparison</title>
+  <style>
+    @page {{ size: A4; margin: 16mm; }}
+    body {{ font-family: Arial, Helvetica, sans-serif; color: #111827; font-size: 12px; }}
+    h1 {{ font-size: 24px; margin: 0 0 6px 0; }}
+    h2 {{ font-size: 16px; margin: 22px 0 8px 0; }}
+    p {{ color: #4b5563; margin: 0 0 10px 0; }}
+    table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+    th, td {{ border: 1px solid #d1d5db; padding: 6px; vertical-align: top; word-wrap: break-word; }}
+    th {{ background: #f3f4f6; text-align: left; }}
+    ul {{ margin: 6px 0 0 16px; padding: 0; }}
+  </style>
+</head>
+<body>
+  <h1>Lease Economics Comparison</h1>
+  <p>Multi-scenario report generated from stored report payload.</p>
+  <h2>Comparison Matrix</h2>
+  {summary_table}
+  <h2>Key Assumptions</h2>
+  <ul>
+    {''.join(assumptions)}
+  </ul>
+</body>
+</html>
+    """.strip()
+
+
 @app.options("/brands")
 def brands_options():
     """CORS preflight; ensure OPTIONS /brands returns 200."""
@@ -1409,27 +1552,25 @@ def get_report_pdf(report_id: str):
             )
             browser.close()
     except Exception as e:
-        # Fallback: generate report PDF directly from stored first scenario.
+        # Fallback: render multi-scenario deck from stored payload HTML (still side-by-side).
         try:
-            entries = data.get("scenarios") if isinstance(data, dict) else None
-            if not isinstance(entries, list) or not entries:
-                raise ValueError("No scenarios in stored report payload.")
-            first = entries[0] if isinstance(entries[0], dict) else {}
-            scenario_raw = first.get("scenario")
-            result_raw = first.get("result")
-            if not isinstance(scenario_raw, dict) or not isinstance(result_raw, dict):
-                raise ValueError("Invalid stored report payload shape.")
-            scenario = Scenario.model_validate(scenario_raw)
-            compute_result = CashflowResult.model_validate(result_raw)
-            brand = get_brand("default")
-            if brand is None:
-                raise ValueError("Default brand not found.")
-            from reporting.report_builder import build_report_pdf
-            pdf_bytes = build_report_pdf(scenario, compute_result, brand, meta={})
+            html_str = _build_report_deck_preview_html(data)
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                page = browser.new_page()
+                page.set_content(html_str, wait_until="load", timeout=30000)
+                page.emulate_media(media="print")
+                page.wait_for_timeout(400)
+                pdf_bytes = page.pdf(
+                    format="A4",
+                    print_background=True,
+                    margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
+                )
+                browser.close()
         except Exception as fallback_err:
             raise HTTPException(
                 status_code=500,
-                detail=f"Deck PDF failed via URL ({e!s}) and direct fallback ({fallback_err!s}).",
+                detail=f"Deck PDF failed via URL ({e!s}) and multi-scenario HTML fallback ({fallback_err!s}).",
             ) from fallback_err
 
     return Response(
