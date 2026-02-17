@@ -18,6 +18,32 @@ import type { EngineResult, OptionMetrics } from "./monthly-engine";
 import { runMonthlyEngine } from "./monthly-engine";
 
 const SUMMARY_SHEET = "Summary";
+
+function sanitizeSheetName(name: string, fallback: string): string {
+  const cleaned = (name || fallback).replace(/[/\\?*\[\]]/g, "").trim();
+  const base = cleaned || fallback;
+  return base.slice(0, 31).trim() || fallback.slice(0, 31);
+}
+
+function makeUniqueSheetName(name: string, fallback: string, used: Set<string>): string {
+  const base = sanitizeSheetName(name, fallback);
+  let attempt = 1;
+  while (attempt <= 9999) {
+    const suffix = attempt === 1 ? "" : ` (${attempt})`;
+    const trimmedBase = base.slice(0, Math.max(1, 31 - suffix.length)).trim();
+    const candidate = `${trimmedBase}${suffix}`;
+    const key = candidate.toLowerCase();
+    if (!used.has(key)) {
+      used.add(key);
+      return candidate;
+    }
+    attempt += 1;
+  }
+  const emergency = `${Date.now()}`.slice(-6);
+  const fallbackName = sanitizeSheetName(`${fallback}-${emergency}`, fallback);
+  used.add(fallbackName.toLowerCase());
+  return fallbackName;
+}
 export const METRIC_LABELS: (keyof OptionMetrics)[] = [
   "buildingName",
   "suiteName",
@@ -101,11 +127,15 @@ export async function buildWorkbook(
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TheCREmodel";
   workbook.created = new Date();
+  const usedSheetNames = new Set<string>();
 
   const results: EngineResult[] = scenarios.map((s) => runMonthlyEngine(s, globalDiscountRate));
 
   // ---- Summary sheet: matrix ----
-  const summarySheet = workbook.addWorksheet(SUMMARY_SHEET, { views: [{ state: "frozen", ySplit: 1 }] });
+  const summarySheet = workbook.addWorksheet(
+    makeUniqueSheetName(SUMMARY_SHEET, SUMMARY_SHEET, usedSheetNames),
+    { views: [{ state: "frozen", ySplit: 1 }] }
+  );
   summarySheet.getColumn(1).width = 32;
   const headerFont = { bold: true };
   summarySheet.getCell(1, 1).value = "Metric";
@@ -129,7 +159,7 @@ export async function buildWorkbook(
   for (let idx = 0; idx < scenarios.length; idx++) {
     const scenario = scenarios[idx];
     const result = results[idx];
-    const sheetName = scenario.name.replace(/[/\\?*\[\]]/g, "").slice(0, 31) || `Option ${idx + 1}`;
+    const sheetName = makeUniqueSheetName(scenario.name, `Option ${idx + 1}`, usedSheetNames);
     const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 2 }] });
 
     let row = 1;
@@ -254,7 +284,7 @@ export async function buildWorkbook(
     });
 
     // Hidden monthly sheet (as separate sheet, hidden)
-    const monthlySheetName = `${sheetName}_Monthly`;
+    const monthlySheetName = makeUniqueSheetName(`${sheetName}_Monthly`, `Option ${idx + 1}_Monthly`, usedSheetNames);
     const monthlySheet = workbook.addWorksheet(monthlySheetName, { state: "hidden" });
     const monthlyHeaders = ["Month", "Period start", "Period end", "Base rent", "OpEx", "Parking", "TI amort", "Misc", "Total", "Effective $/RSF/yr"];
     monthlyHeaders.forEach((h, c) => {

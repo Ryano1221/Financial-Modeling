@@ -86,7 +86,29 @@ function safeDiv(numerator: number, denominator: number): number {
 }
 
 function sanitizeSheetName(name: string, fallback: string): string {
-  return (name || fallback).replace(/[/\\?*\[\]]/g, "").slice(0, 31) || fallback;
+  const cleaned = (name || fallback).replace(/[/\\?*\[\]]/g, "").trim();
+  const base = cleaned || fallback;
+  return base.slice(0, 31).trim() || fallback.slice(0, 31);
+}
+
+function makeUniqueSheetName(name: string, fallback: string, used: Set<string>): string {
+  const base = sanitizeSheetName(name, fallback);
+  let attempt = 1;
+  while (attempt <= 9999) {
+    const suffix = attempt === 1 ? "" : ` (${attempt})`;
+    const trimmedBase = base.slice(0, Math.max(1, 31 - suffix.length)).trim();
+    const candidate = `${trimmedBase}${suffix}`;
+    const key = candidate.toLowerCase();
+    if (!used.has(key)) {
+      used.add(key);
+      return candidate;
+    }
+    attempt += 1;
+  }
+  const emergency = `${Date.now()}`.slice(-6);
+  const fallbackName = sanitizeSheetName(`${fallback}-${emergency}`, fallback);
+  used.add(fallbackName.toLowerCase());
+  return fallbackName;
 }
 
 function applyValueFormat(cell: ExcelJS.Cell, format: ValueFormat): void {
@@ -160,10 +182,12 @@ function styleSummaryMatrixGrid(sheet: ExcelJS.Worksheet, rows: number, cols: nu
 
 function addMonthlyComparisonSheet(
   workbook: ExcelJS.Workbook,
+  usedSheetNames: Set<string>,
   rowsByScenario: Array<{ name: string; rows: Array<{ monthIndex: number; date: string; totalCost: number }> }>
 ): void {
   if (rowsByScenario.length === 0) return;
-  const sheet = workbook.addWorksheet("Monthly Comparison", { views: [{ state: "frozen", ySplit: 2, xSplit: 2 }] });
+  const sheetName = makeUniqueSheetName("Monthly Comparison", "Monthly Comparison", usedSheetNames);
+  const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 2, xSplit: 2 }] });
   sheet.getColumn(1).width = 10;
   sheet.getColumn(2).width = 14;
   sheet.mergeCells(1, 1, 2, 1);
@@ -223,9 +247,11 @@ function addMonthlyComparisonSheet(
 
 function addNotesAndClausesSheet(
   workbook: ExcelJS.Workbook,
+  usedSheetNames: Set<string>,
   rows: Array<{ scenario: string; sourceLabel: string; text: string }>
 ): void {
-  const sheet = workbook.addWorksheet("Notes & Clauses", { views: [{ state: "frozen", ySplit: 1 }] });
+  const sheetName = makeUniqueSheetName("Notes & Clauses", "Notes & Clauses", usedSheetNames);
+  const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 1 }] });
   sheet.columns = [
     { header: "Scenario", key: "scenario", width: 28 },
     { header: "Category", key: "category", width: 22 },
@@ -280,11 +306,15 @@ export async function buildBrokerWorkbook(
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TheCREmodel";
   workbook.created = new Date();
+  const usedSheetNames = new Set<string>();
 
   const results: EngineResult[] = scenarios.map((s) => runMonthlyEngine(s, globalDiscountRate));
 
   // ---- Sheet 1: Summary Matrix ----
-  const summarySheet = workbook.addWorksheet("Summary Matrix", { views: [{ state: "frozen", ySplit: 2 }] });
+  const summarySheet = workbook.addWorksheet(
+    makeUniqueSheetName("Summary Matrix", "Summary Matrix", usedSheetNames),
+    { views: [{ state: "frozen", ySplit: 2 }] }
+  );
   summarySheet.getColumn(1).width = 32;
   summarySheet.getCell(1, 1).value = "Template Version";
   summarySheet.getCell(1, 2).value = TEMPLATE_VERSION;
@@ -395,7 +425,7 @@ export async function buildBrokerWorkbook(
   for (let idx = 0; idx < scenarios.length; idx++) {
     const scenario = scenarios[idx];
     const result = results[idx];
-    const sheetName = sanitizeSheetName(scenario.name || `Option ${idx + 1}`, `Option ${idx + 1}`);
+    const sheetName = makeUniqueSheetName(scenario.name || `Option ${idx + 1}`, `Option ${idx + 1}`, usedSheetNames);
     const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 4 }] });
     sheet.getColumn(1).width = 34;
     sheet.getColumn(2).width = 26;
@@ -561,7 +591,7 @@ export async function buildBrokerWorkbook(
     });
 
     // Hidden monthly sheet (source of truth)
-    const monthlySheetName = `${sheetName}_Monthly`;
+    const monthlySheetName = makeUniqueSheetName(`${sheetName}_Monthly`, `Option ${idx + 1}_Monthly`, usedSheetNames);
     const monthlySheet = workbook.addWorksheet(monthlySheetName, { state: "hidden" });
     ["Month", "Date", "Base Rent", "Opex", "Parking", "TI Amort", "Concessions", "Total Cost", "Cumulative", "Discounted"].forEach((h, c) => {
       monthlySheet.getCell(1, c + 1).value = h;
@@ -616,6 +646,7 @@ export async function buildBrokerWorkbook(
 
   addMonthlyComparisonSheet(
     workbook,
+    usedSheetNames,
     results.map((result) => ({
       name: result.scenarioName,
       rows: result.monthly.map((row) => ({
@@ -627,6 +658,7 @@ export async function buildBrokerWorkbook(
   );
   addNotesAndClausesSheet(
     workbook,
+    usedSheetNames,
     scenarios.map((scenario, i) => ({
       scenario: results[i].scenarioName,
       sourceLabel: "Scenario notes",
@@ -648,8 +680,12 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TheCREmodel";
   workbook.created = new Date();
+  const usedSheetNames = new Set<string>();
 
-  const summarySheet = workbook.addWorksheet("Summary Matrix", { views: [{ state: "frozen", ySplit: 2 }] });
+  const summarySheet = workbook.addWorksheet(
+    makeUniqueSheetName("Summary Matrix", "Summary Matrix", usedSheetNames),
+    { views: [{ state: "frozen", ySplit: 2 }] }
+  );
   summarySheet.getColumn(1).width = 32;
   summarySheet.getCell(1, 1).value = "Template Version";
   summarySheet.getCell(1, 2).value = TEMPLATE_VERSION;
@@ -754,7 +790,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     const { response, scenarioName } = items[idx];
     const c = response.normalized_canonical_lease;
     const m = response.metrics;
-    const sheetName = sanitizeSheetName(scenarioName || `Option ${idx + 1}`, `Option ${idx + 1}`);
+    const sheetName = makeUniqueSheetName(scenarioName || `Option ${idx + 1}`, `Option ${idx + 1}`, usedSheetNames);
     const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 4 }] });
     sheet.getColumn(1).width = 34;
     sheet.getColumn(2).width = 26;
@@ -884,7 +920,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
       if (typeof val === "number") applyValueFormat(sheet.getCell(row, 2), "currency");
       row++;
     });
-    const monthlySheetName = `${sheetName}_Monthly`;
+    const monthlySheetName = makeUniqueSheetName(`${sheetName}_Monthly`, `Option ${idx + 1}_Monthly`, usedSheetNames);
     const monthlySheet = workbook.addWorksheet(monthlySheetName, { state: "hidden" });
     ["Month", "Date", "Base Rent", "Opex", "Parking", "TI Amort", "Concessions", "Total Cost", "Cumulative", "Discounted"].forEach((h, c) => {
       monthlySheet.getCell(1, c + 1).value = h;
@@ -936,6 +972,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
 
   addMonthlyComparisonSheet(
     workbook,
+    usedSheetNames,
     items.map((item) => ({
       name: item.scenarioName,
       rows: item.response.monthly_rows.map((row) => ({
@@ -947,6 +984,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
   );
   addNotesAndClausesSheet(
     workbook,
+    usedSheetNames,
     items.flatMap((item) => [
       {
         scenario: item.scenarioName,
