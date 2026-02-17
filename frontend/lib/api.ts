@@ -19,6 +19,11 @@ export function getApiUrl(path: string): string {
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+/** Same-origin proxy URL for backend path (avoids CORS in browser). */
+export function getProxyApiUrl(path: string): string {
+  return `/api${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 /** Base URL for backend. */
 export function getBaseUrl(): string {
   return getBackendBaseUrl();
@@ -73,6 +78,29 @@ export async function fetchApi(
   const isNormalize = path === "/normalize" || path.endsWith("/normalize");
   const timeout = isNormalize ? NORMALIZE_TIMEOUT_MS : timeoutMs;
   const url = getApiUrl(path);
+  const { signal, clear } = withTimeoutSignal(timeout);
+  try {
+    const res = await fetch(url, { ...init, signal });
+    clear();
+    return res;
+  } catch (e) {
+    clear();
+    if (isNormalize && e instanceof Error && (e.name === "AbortError" || e.message.toLowerCase().includes("abort"))) {
+      throw new Error(NORMALIZE_TIMEOUT_MESSAGE);
+    }
+    throw new Error(FRIENDLY_MESSAGE);
+  }
+}
+
+/** Fetch via same-origin /api proxy route (useful for browser CORS-sensitive flows like PDF downloads). */
+export async function fetchApiProxy(
+  path: string,
+  init: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const isNormalize = path === "/normalize" || path.endsWith("/normalize");
+  const timeout = isNormalize ? NORMALIZE_TIMEOUT_MS : timeoutMs;
+  const url = getProxyApiUrl(path);
   const { signal, clear } = withTimeoutSignal(timeout);
   try {
     const res = await fetch(url, { ...init, signal });

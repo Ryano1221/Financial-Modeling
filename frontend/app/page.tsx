@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
 import { Charts, type ChartRow } from "@/components/Charts";
-import { getApiUrl, getBaseUrl, fetchApi, getAuthHeaders, CONNECTION_MESSAGE, getDisplayErrorMessage } from "@/lib/api";
+import { getApiUrl, getBaseUrl, fetchApi, fetchApiProxy, getAuthHeaders, CONNECTION_MESSAGE, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
 
@@ -588,7 +588,7 @@ export default function Home() {
       }));
       const headers = getAuthHeaders();
       try {
-        const res = await fetchApi("/reports", {
+        const res = await fetchApiProxy("/reports", {
           method: "POST",
           headers,
           body: JSON.stringify({
@@ -601,7 +601,7 @@ export default function Home() {
           throw new Error(text || `HTTP ${res.status}`);
         }
         const data: { report_id: string } = await res.json();
-        const pdfRes = await fetchApi(`/reports/${data.report_id}/pdf`, { method: "GET" });
+        const pdfRes = await fetchApiProxy(`/reports/${data.report_id}/pdf`, { method: "GET" });
         if (!pdfRes.ok) {
           const body = await pdfRes.json().catch(() => null);
           const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : `HTTP ${pdfRes.status}`;
@@ -620,7 +620,7 @@ export default function Home() {
         const fallbackScenario = selectedScenario ?? scenarios[0] ?? null;
         if (!fallbackScenario) throw new Error("No scenario available for PDF fallback.");
         try {
-          const direct = await fetchApi("/report", {
+          const direct = await fetchApiProxy("/report", {
             method: "POST",
             headers: getAuthHeaders(),
             body: JSON.stringify({

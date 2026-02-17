@@ -3,10 +3,14 @@ import { NextRequest } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const BACKEND_TIMEOUT_MS = 120000;
+const BACKEND_TIMEOUT_MS = 300000;
 
 function getBackendBaseUrl() {
-  const v = process.env.BACKEND_URL?.trim() || "";
+  const v =
+    process.env.BACKEND_URL?.trim() ||
+    process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_BACKEND_URL?.trim() ||
+    "";
   return v.endsWith("/") ? v.slice(0, -1) : v;
 }
 
@@ -15,12 +19,12 @@ async function proxyOnce(req: NextRequest, upstreamUrl: string) {
   const timeoutId = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
 
   try {
-    const contentType = req.headers.get("content-type") || "application/octet-stream";
+    const contentType = req.headers.get("content-type");
 
     const fetchInit: RequestInit & { duplex?: "half" } = {
       method: req.method,
       headers: {
-        "content-type": contentType,
+        ...(contentType ? { "content-type": contentType } : {}),
         ...(req.headers.get("accept") ? { accept: req.headers.get("accept") ?? "" } : {}),
       },
       body: req.body,
@@ -29,12 +33,21 @@ async function proxyOnce(req: NextRequest, upstreamUrl: string) {
     };
     const upstreamRes = await fetch(upstreamUrl, fetchInit);
 
-    const text = await upstreamRes.text();
-    const resContentType = upstreamRes.headers.get("content-type") || "application/json";
+    const bytes = await upstreamRes.arrayBuffer();
+    const resHeaders = new Headers();
+    const upstreamContentType = upstreamRes.headers.get("content-type");
+    const upstreamContentDisposition = upstreamRes.headers.get("content-disposition");
+    const upstreamCacheControl = upstreamRes.headers.get("cache-control");
+    const upstreamRequestId = upstreamRes.headers.get("x-request-id");
 
-    return new Response(text, {
+    if (upstreamContentType) resHeaders.set("content-type", upstreamContentType);
+    if (upstreamContentDisposition) resHeaders.set("content-disposition", upstreamContentDisposition);
+    if (upstreamCacheControl) resHeaders.set("cache-control", upstreamCacheControl);
+    if (upstreamRequestId) resHeaders.set("x-request-id", upstreamRequestId);
+
+    return new Response(bytes, {
       status: upstreamRes.status,
-      headers: { "content-type": resContentType },
+      headers: resHeaders,
     });
   } finally {
     clearTimeout(timeoutId);
@@ -67,7 +80,7 @@ async function handle(req: NextRequest, ctx: RouteContext) {
 
   const { path: pathSegments } = await ctx.params;
   const path = "/" + (pathSegments || []).join("/");
-  const upstreamUrl = base + path;
+  const upstreamUrl = base + path + req.nextUrl.search;
 
   try {
     const first = await proxyOnce(req, upstreamUrl);
