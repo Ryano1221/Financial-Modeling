@@ -34,7 +34,7 @@ import type {
   BackendCanonicalLease,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
-import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
+import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
 import { SummaryMatrix } from "@/components/SummaryMatrix";
 import {
   backendCanonicalToScenarioInput,
@@ -543,6 +543,17 @@ export default function Home() {
     confidential: reportMeta.confidential,
   }), [reportMeta]);
 
+  const downloadBlob = useCallback((blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }, []);
+
   const getScenarioResultForExport = useCallback((scenario: ScenarioWithId): CashflowResult => {
     const existing = results[scenario.id];
     if (existing && "term_months" in existing) return existing;
@@ -551,14 +562,15 @@ export default function Home() {
     const rentNominal = computed.monthly.reduce((sum, row) => sum + row.baseRent, 0);
     const opexNominal = computed.monthly.reduce((sum, row) => sum + row.opex, 0);
 
+    const safe = (value: number, fallback = 0) => (Number.isFinite(value) ? value : fallback);
     return {
-      term_months: computed.termMonths,
-      rent_nominal: rentNominal,
-      opex_nominal: opexNominal,
-      total_cost_nominal: computed.metrics.totalObligation,
-      npv_cost: computed.metrics.npvAtDiscount,
-      avg_cost_year: computed.metrics.avgAllInCostPerYear,
-      avg_cost_psf_year: computed.metrics.avgCostPsfYr,
+      term_months: Math.max(0, Math.round(safe(computed.termMonths, 0))),
+      rent_nominal: safe(rentNominal, 0),
+      opex_nominal: safe(opexNominal, 0),
+      total_cost_nominal: safe(computed.metrics.totalObligation, 0),
+      npv_cost: safe(computed.metrics.npvAtDiscount, 0),
+      avg_cost_year: safe(computed.metrics.avgAllInCostPerYear, 0),
+      avg_cost_psf_year: safe(computed.metrics.avgCostPsfYr, 0),
     };
   }, [results, globalDiscountRate]);
 
@@ -575,66 +587,82 @@ export default function Home() {
         result: getScenarioResultForExport(s),
       }));
       const headers = getAuthHeaders();
-      const res = await fetchApi("/reports", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          scenarios: scenariosForDeck,
-          branding: {},
-        }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
-      }
-      const data: { report_id: string } = await res.json();
-      const pdfRes = await fetchApi(`/reports/${data.report_id}/pdf`, { method: "GET" });
-      if (!pdfRes.ok) {
-        const body = await pdfRes.json().catch(() => null);
-        const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : `HTTP ${pdfRes.status}`;
-        throw new Error(detail);
-      }
-      const blob = await pdfRes.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "lease-deck.pdf";
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      const fallbackErr = getDisplayErrorMessage(err);
-      // Fallback: if deck PDF fails, generate selected scenario report PDF directly.
-      if (selectedScenario) {
-        try {
-          const direct = await fetchApi("/report", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({
-              brand_id: brandId,
-              scenario: scenarioToPayload(selectedScenario),
-              meta: buildReportMeta(),
-            }),
-          });
-          if (direct.ok) {
-            const blob = await direct.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = "lease-financial-analysis.pdf";
-            a.click();
-            URL.revokeObjectURL(url);
-            setExportPdfError("Deck PDF failed; downloaded selected scenario report PDF instead.");
-            return;
-          }
-        } catch {
-          // fall through to original error
+      try {
+        const res = await fetchApi("/reports", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            scenarios: scenariosForDeck,
+            branding: {},
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
         }
+        const data: { report_id: string } = await res.json();
+        const pdfRes = await fetchApi(`/reports/${data.report_id}/pdf`, { method: "GET" });
+        if (!pdfRes.ok) {
+          const body = await pdfRes.json().catch(() => null);
+          const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : `HTTP ${pdfRes.status}`;
+          throw new Error(detail);
+        }
+        const blob = await pdfRes.blob();
+        downloadBlob(blob, "lease-deck.pdf");
+        return;
+      } catch (deckErr) {
+        console.error("[exportPdfDeck] deck route failed", deckErr);
       }
-      setExportPdfError(fallbackErr);
+
+      const fallbackScenario = selectedScenario ?? scenarios[0] ?? null;
+      if (!fallbackScenario) throw new Error("No scenario available for PDF fallback.");
+      try {
+        const direct = await fetchApi("/report", {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            brand_id: brandId,
+            scenario: scenarioToPayload(fallbackScenario),
+            meta: buildReportMeta(),
+          }),
+        });
+        if (direct.ok) {
+          const blob = await direct.blob();
+          downloadBlob(blob, "lease-financial-analysis.pdf");
+          setExportPdfError("Deck PDF route failed; downloaded single-scenario PDF instead.");
+          return;
+        }
+      } catch (directErr) {
+        console.error("[exportPdfDeck] direct /report fallback failed", directErr);
+      }
+
+      try {
+        const preview = await fetchApi("/report/preview", {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            brand_id: brandId,
+            scenario: scenarioToPayload(fallbackScenario),
+            meta: buildReportMeta(),
+          }),
+        });
+        if (preview.ok) {
+          const html = await preview.text();
+          downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), "lease-report-preview.html");
+          setExportPdfError("PDF service unavailable; downloaded HTML preview (open and Print to PDF).");
+          return;
+        }
+      } catch (previewErr) {
+        console.error("[exportPdfDeck] /report/preview fallback failed", previewErr);
+      }
+      throw new Error("All PDF export routes failed.");
+    } catch (err) {
+      console.error("[exportPdfDeck] fatal export error", err);
+      setExportPdfError(getDisplayErrorMessage(err));
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob]);
 
   const generateReport = useCallback(async () => {
     if (!selectedScenario) {
@@ -804,42 +832,44 @@ export default function Home() {
     setExportExcelLoading(true);
     setExportExcelError(null);
     try {
-      if (isProduction && scenarios.every((s) => canonicalComputeCache[s.id])) {
-        const items = scenarios.map((s) => {
-          const res = canonicalComputeCache[s.id]!;
-          const scenarioName = getPremisesDisplayName({
-            building_name: res.metrics.building_name,
-            suite: res.metrics.suite,
-            premises_name: res.metrics.premises_name,
-            scenario_name: s.name,
+      const canonical = scenarios.map(scenarioToCanonical);
+      let buffer: ArrayBuffer | null = null;
+      let usedFallback = false;
+      try {
+        if (isProduction && scenarios.every((s) => canonicalComputeCache[s.id])) {
+          const items = scenarios.map((s) => {
+            const res = canonicalComputeCache[s.id]!;
+            const scenarioName = getPremisesDisplayName({
+              building_name: res.metrics.building_name,
+              suite: res.metrics.suite,
+              premises_name: res.metrics.premises_name,
+              scenario_name: s.name,
+            });
+            return { response: res, scenarioName };
           });
-          return { response: res, scenarioName };
-        });
-        const buffer = await buildBrokerWorkbookFromCanonicalResponses(items);
-        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "lease-comparison.xlsx";
-        a.click();
-        URL.revokeObjectURL(url);
-      } else {
-        const canonical = scenarios.map(scenarioToCanonical);
-        const buffer = await buildBrokerWorkbook(canonical, globalDiscountRate);
-        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "lease-comparison.xlsx";
-        a.click();
-        URL.revokeObjectURL(url);
+          buffer = await buildBrokerWorkbookFromCanonicalResponses(items);
+        } else {
+          buffer = await buildBrokerWorkbook(canonical, globalDiscountRate);
+        }
+      } catch (primaryErr) {
+        console.error("[exportExcelDeck] broker workbook failed; falling back to legacy workbook", primaryErr);
+        buffer = await buildWorkbookLegacy(canonical, globalDiscountRate);
+        usedFallback = true;
+      }
+      downloadBlob(
+        new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+        "lease-comparison.xlsx"
+      );
+      if (usedFallback) {
+        setExportExcelError("Downloaded Excel using fallback format because the primary format failed.");
       }
     } catch (err) {
+      console.error("[exportExcelDeck] fatal export error", err);
       setExportExcelError(getDisplayErrorMessage(err));
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob]);
 
   const engineResults = useMemo(() => {
     const included = scenarios.filter((s) => includedInSummary[s.id] !== false);
