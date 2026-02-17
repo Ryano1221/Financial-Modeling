@@ -125,13 +125,7 @@ export default function Home() {
   const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
   const [pendingNormalize, setPendingNormalize] = useState<NormalizerResponse | null>(null);
   const [brands, setBrands] = useState<BrandConfig[]>([]);
-  const [brandId, setBrandId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const s = localStorage.getItem(BRAND_ID_STORAGE_KEY);
-      if (s) return s;
-    }
-    return "default";
-  });
+  const [brandId, setBrandId] = useState<string>("default");
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<ReportErrorState>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -214,6 +208,16 @@ export default function Home() {
       .then((r) => (r.ok ? r.json() : []))
       .then((data: BrandConfig[]) => setBrands(Array.isArray(data) ? data : []))
       .catch(() => setBrands([]));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const s = localStorage.getItem(BRAND_ID_STORAGE_KEY);
+      if (s) setBrandId(s);
+    } catch {
+      // ignore localStorage failures
+    }
   }, []);
 
   useEffect(() => {
