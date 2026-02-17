@@ -57,6 +57,8 @@ export interface AnnualRow {
 
 /** Key metrics for comparison matrix and option sheet */
 export interface OptionMetrics {
+  buildingName: string;
+  suiteName: string;
   premisesName: string;
   rsf: number;
   leaseType: string;
@@ -348,7 +350,11 @@ export function runMonthlyEngine(
   const equalizedAvgPsfYr = rsf > 0 ? totalObligation / years / rsf : 0;
 
   const firstStep = scenario.rentSchedule.steps[0];
+  const buildingName = (scenario.partyAndPremises.premisesLabel ?? "").trim();
+  const suiteName = (scenario.partyAndPremises.floorsOrSuite ?? "").trim();
   const metrics: OptionMetrics = {
+    buildingName,
+    suiteName,
     premisesName: scenario.partyAndPremises.premisesName || scenario.name,
     rsf,
     leaseType: scenario.expenseSchedule.leaseType,

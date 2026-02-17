@@ -12,7 +12,6 @@ import type { EngineResult, MonthlyRow, AnnualRow } from "@/lib/lease-engine/mon
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
-import { getPremisesDisplayName } from "@/lib/canonical-api";
 import {
   formatCurrency,
   formatCurrencyPerSF,
@@ -25,7 +24,8 @@ import {
 
 /** Locked for regression tests: do not change order or labels. */
 export const SUMMARY_MATRIX_ROW_LABELS = [
-  "Premises name",
+  "Building name",
+  "Suite name",
   "RSF",
   "Lease type",
   "Term (months)",
@@ -77,7 +77,8 @@ export async function buildBrokerWorkbook(
     summarySheet.getCell(2, col).font = { bold: true };
   });
   const metricRows: [string, (m: EngineResult["metrics"]) => string | number][] = [
-    ["Premises name", (m) => m.premisesName],
+    ["Building name", (m) => m.buildingName],
+    ["Suite name", (m) => m.suiteName],
     ["RSF", (m) => m.rsf],
     ["Lease type", (m) => m.leaseType],
     ["Term (months)", (m) => m.termMonths],
@@ -118,7 +119,8 @@ export async function buildBrokerWorkbook(
     sheet.getCell(row, 1).font = { bold: true, size: 12 };
     row += 2;
     const inputRows: [string, string | number][] = [
-      ["Premises name", scenario.partyAndPremises?.premisesName ?? ""],
+      ["Building name", scenario.partyAndPremises?.premisesLabel ?? ""],
+      ["Suite name", scenario.partyAndPremises?.floorsOrSuite ?? ""],
       ["Rentable square footage", scenario.partyAndPremises?.rentableSqFt ?? 0],
       ["Lease type", scenario.expenseSchedule?.leaseType ?? ""],
       ["Lease term (months)", scenario.datesAndTerm?.leaseTermMonths ?? 0],
@@ -269,24 +271,25 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     summarySheet.getCell(2, col).font = { bold: true };
   });
   const metricLabels = SUMMARY_MATRIX_ROW_LABELS;
-  const getMetricVal = (m: CanonicalMetrics, rowIndex: number, scenarioName?: string): string | number => {
+  const getMetricVal = (m: CanonicalMetrics, rowIndex: number): string | number => {
     switch (rowIndex) {
-      case 0: return getPremisesDisplayName({ building_name: m.building_name, suite: m.suite, premises_name: m.premises_name, scenario_name: scenarioName });
-      case 1: return m.rsf ?? 0;
-      case 2: return m.lease_type ?? "";
-      case 3: return m.term_months ?? 0;
-      case 4: return m.commencement_date ?? "";
-      case 5: return m.expiration_date ?? "";
-      case 6: return m.base_rent_avg_psf_year ?? 0;
-      case 7: return (m.base_rent_total ?? 0) / 12;
-      case 8: return (m.total_obligation_nominal ?? 0) / Math.max(1, m.term_months ?? 1);
-      case 9: return (m.total_obligation_nominal ?? 0) / (Math.max(1, m.term_months ?? 1) / 12);
-      case 10: return m.avg_all_in_cost_psf_year ?? 0;
-      case 11: return m.npv_cost ?? 0;
-      case 12: return m.total_obligation_nominal ?? 0;
-      case 13: return m.equalized_avg_cost_psf_year ?? 0;
-      case 14: return m.discount_rate_annual ?? 0.08;
-      case 15: return m.notes ?? "";
+      case 0: return m.building_name ?? "";
+      case 1: return m.suite ?? "";
+      case 2: return m.rsf ?? 0;
+      case 3: return m.lease_type ?? "";
+      case 4: return m.term_months ?? 0;
+      case 5: return m.commencement_date ?? "";
+      case 6: return m.expiration_date ?? "";
+      case 7: return m.base_rent_avg_psf_year ?? 0;
+      case 8: return (m.base_rent_total ?? 0) / 12;
+      case 9: return (m.total_obligation_nominal ?? 0) / Math.max(1, m.term_months ?? 1);
+      case 10: return (m.total_obligation_nominal ?? 0) / (Math.max(1, m.term_months ?? 1) / 12);
+      case 11: return m.avg_all_in_cost_psf_year ?? 0;
+      case 12: return m.npv_cost ?? 0;
+      case 13: return m.total_obligation_nominal ?? 0;
+      case 14: return m.equalized_avg_cost_psf_year ?? 0;
+      case 15: return m.discount_rate_annual ?? 0.08;
+      case 16: return m.notes ?? "";
       default: return "";
     }
   };
@@ -295,10 +298,10 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     summarySheet.getCell(row, 1).value = label;
     summarySheet.getCell(row, 1).font = { bold: true };
     items.forEach((item, colIndex) => {
-      const val = getMetricVal(item.response.metrics, rowIndex, item.scenarioName);
+      const val = getMetricVal(item.response.metrics, rowIndex);
       const out = typeof val === "number"
-        ? (rowIndex === 1 ? formatRSF(val) : rowIndex === 3 ? formatMonths(val) : rowIndex === 14 ? formatPercent(val) : [6, 10, 13].includes(rowIndex) ? formatCurrencyPerSF(val) : [7, 8, 9, 11, 12].includes(rowIndex) ? formatCurrency(val, { decimals: 2 }) : formatCurrency(val, { decimals: 2 }))
-        : rowIndex === 4 || rowIndex === 5 ? formatDateISO(String(val)) : String(val);
+        ? (rowIndex === 2 ? formatRSF(val) : rowIndex === 4 ? formatMonths(val) : rowIndex === 15 ? formatPercent(val) : [7, 11, 14].includes(rowIndex) ? formatCurrencyPerSF(val) : [8, 9, 10, 12, 13].includes(rowIndex) ? formatCurrency(val, { decimals: 2 }) : formatCurrency(val, { decimals: 2 }))
+        : rowIndex === 5 || rowIndex === 6 ? formatDateISO(String(val)) : String(val);
       summarySheet.getCell(row, colIndex + 2).value = out;
     });
   });
@@ -314,7 +317,8 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     sheet.getCell(row, 1).font = { bold: true, size: 12 };
     row += 2;
     const inputRows: [string, string | number][] = [
-      ["Premises name", getPremisesDisplayName({ building_name: m.building_name, suite: m.suite, premises_name: m.premises_name, scenario_name: scenarioName })],
+      ["Building name", m.building_name ?? ""],
+      ["Suite name", m.suite ?? ""],
       ["Rentable square footage", m.rsf ?? 0],
       ["Lease type", m.lease_type ?? ""],
       ["Lease term (months)", m.term_months ?? 0],

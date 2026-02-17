@@ -12,7 +12,8 @@ import {
 import type { LeaseScenarioCanonical } from "./lease-engine/canonical-schema";
 
 const EXPECTED_ROW_LABELS = [
-  "Premises name",
+  "Building name",
+  "Suite name",
   "RSF",
   "Lease type",
   "Term (months)",

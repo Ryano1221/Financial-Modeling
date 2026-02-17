@@ -17,6 +17,9 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const termMonths = monthDiff(s.commencement, s.expiration);
   const rsf = s.rsf;
   const leaseType = s.opex_mode === "base_year" ? "base_year" : "nnn";
+  const buildingName = (s.building_name ?? "").trim();
+  const suiteName = (s.suite ?? "").trim();
+  const premisesName = buildingName && suiteName ? `${buildingName} Suite ${suiteName}` : (buildingName || suiteName || s.name);
   const parkingSpaces = s.parking_spaces ?? 0;
   const parkingCost = s.parking_cost_monthly_per_space ?? 0;
   const tiAllowanceTotal = s.ti_allowance_psf * rsf;
@@ -26,7 +29,9 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
     name: s.name,
     discountRateAnnual: s.discount_rate_annual,
     partyAndPremises: {
-      premisesName: s.name,
+      premisesName,
+      premisesLabel: buildingName,
+      floorsOrSuite: suiteName,
       rentableSqFt: rsf,
       leaseType,
     },

@@ -91,11 +91,11 @@ export function scenarioInputToBackendCanonical(
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
-    premises_name: s.name,
-    address: "",
-    building_name: "",
-    suite: "",
-    floor: "",
+    premises_name: buildPremisesName(s.building_name, s.suite) || s.name,
+    address: s.address ?? "",
+    building_name: s.building_name ?? "",
+    suite: s.suite ?? "",
+    floor: s.floor ?? "",
     rsf: s.rsf,
     lease_type: "NNN",
     commencement_date: s.commencement,
@@ -135,6 +135,10 @@ export function backendCanonicalToScenarioInput(
   const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
   return {
     name: displayName,
+    building_name: c.building_name ?? "",
+    suite: c.suite ?? "",
+    floor: c.floor ?? "",
+    address: c.address ?? "",
     rsf: c.rsf,
     commencement: c.commencement_date,
     expiration: c.expiration_date,
@@ -160,6 +164,8 @@ export function canonicalResponseToEngineResult(
   const m = res.metrics;
   const termMonths = m.term_months ?? 0;
   const metrics: OptionMetrics = {
+    buildingName: m.building_name ?? "",
+    suiteName: m.suite ?? "",
     premisesName: getPremisesDisplayName({ building_name: m.building_name, suite: m.suite, premises_name: m.premises_name, scenario_name: scenarioName }),
     rsf: m.rsf ?? 0,
     leaseType: m.lease_type ?? "",

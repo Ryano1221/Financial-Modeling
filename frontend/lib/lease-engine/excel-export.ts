@@ -19,7 +19,8 @@ import { runMonthlyEngine } from "./monthly-engine";
 
 const SUMMARY_SHEET = "Summary";
 export const METRIC_LABELS: (keyof OptionMetrics)[] = [
-  "premisesName",
+  "buildingName",
+  "suiteName",
   "rsf",
   "leaseType",
   "termMonths",
@@ -47,7 +48,9 @@ export const METRIC_LABELS: (keyof OptionMetrics)[] = [
 ];
 
 export const METRIC_DISPLAY_NAMES: Record<string, string> = {
-  premisesName: "Premises name",
+  buildingName: "Building name",
+  suiteName: "Suite name",
+  premisesName: "Building + suite",
   rsf: "Rentable square footage",
   leaseType: "Lease type",
   termMonths: "Lease term (months)",
@@ -142,8 +145,8 @@ export async function buildWorkbook(
     row++;
     const generalRows = [
       ["Rentable square footage", scenario.partyAndPremises.rentableSqFt],
-      ["Premises label", scenario.partyAndPremises.premisesLabel ?? ""],
-      ["Floors/suite", scenario.partyAndPremises.floorsOrSuite ?? ""],
+      ["Building name", scenario.partyAndPremises.premisesLabel ?? ""],
+      ["Suite name", scenario.partyAndPremises.floorsOrSuite ?? ""],
       ["Lease type", scenario.expenseSchedule.leaseType],
       ["Lease term (months)", scenario.datesAndTerm.leaseTermMonths],
       ["Commencement date", scenario.datesAndTerm.commencementDate],
