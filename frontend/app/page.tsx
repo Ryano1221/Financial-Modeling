@@ -534,6 +534,15 @@ export default function Home() {
     setLoading(false);
   }, [scenarios, isProduction]);
 
+  const buildReportMeta = useCallback(() => ({
+    prepared_for: reportMeta.prepared_for || undefined,
+    prepared_by: reportMeta.prepared_by || undefined,
+    proposal_name: reportMeta.proposal_name || undefined,
+    property_name: reportMeta.property_name || undefined,
+    report_date: new Date().toISOString().slice(0, 10),
+    confidential: reportMeta.confidential,
+  }), [reportMeta]);
+
   const exportPdfDeck = useCallback(async () => {
     const withResults = scenarios.filter((s) => {
       const r = results[s.id];
@@ -610,15 +619,6 @@ export default function Home() {
       setExportPdfLoading(false);
     }
   }, [scenarios, results, selectedScenario, brandId, buildReportMeta]);
-
-  const buildReportMeta = useCallback(() => ({
-    prepared_for: reportMeta.prepared_for || undefined,
-    prepared_by: reportMeta.prepared_by || undefined,
-    proposal_name: reportMeta.proposal_name || undefined,
-    property_name: reportMeta.property_name || undefined,
-    report_date: new Date().toISOString().slice(0, 10),
-    confidential: reportMeta.confidential,
-  }), [reportMeta]);
 
   const generateReport = useCallback(async () => {
     if (!selectedScenario) {
