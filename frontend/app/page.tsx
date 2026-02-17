@@ -613,7 +613,8 @@ export default function Home() {
         downloadBlob(blob, "lease-deck.pdf");
         return;
       } catch (deckErr) {
-        console.error("[exportPdfDeck] deck route failed", deckErr);
+        const msg = deckErr instanceof Error ? deckErr.message : String(deckErr);
+        console.error("[exportPdfDeck] deck route failed:", msg.slice(0, 600));
       }
 
       if (reportId) {
@@ -626,7 +627,8 @@ export default function Home() {
             return;
           }
         } catch (previewErr) {
-          console.error("[exportPdfDeck] /reports/{id}/preview fallback failed", previewErr);
+          const msg = previewErr instanceof Error ? previewErr.message : String(previewErr);
+          console.error("[exportPdfDeck] /reports/{id}/preview fallback failed:", msg.slice(0, 600));
         }
       }
 
@@ -651,13 +653,15 @@ export default function Home() {
             return;
           }
         } catch (directErr) {
-          console.error("[exportPdfDeck] single-scenario /report fallback failed", directErr);
+          const msg = directErr instanceof Error ? directErr.message : String(directErr);
+          console.error("[exportPdfDeck] single-scenario /report fallback failed:", msg.slice(0, 600));
         }
       }
 
       throw new Error("All PDF export routes failed.");
     } catch (err) {
-      console.error("[exportPdfDeck] fatal export error", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[exportPdfDeck] fatal export error:", msg.slice(0, 600));
       setExportPdfError(getDisplayErrorMessage(err));
     } finally {
       setExportPdfLoading(false);

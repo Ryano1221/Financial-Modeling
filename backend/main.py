@@ -1553,6 +1553,27 @@ def get_report_pdf(report_id: str):
             )
             browser.close()
     except Exception as e:
+        launch_msg = str(e).lower()
+        missing_runtime_libs = any(
+            token in launch_msg
+            for token in (
+                "error while loading shared libraries",
+                "libatk",
+                "libgtk",
+                "libx11",
+                "libnss",
+                "exitcode=127",
+            )
+        )
+        if missing_runtime_libs:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "PDF runtime dependencies are missing on backend. "
+                    "Install Playwright system libraries in Docker image, "
+                    "or use /reports/{report_id}/preview as fallback."
+                ),
+            )
         # Fallback: render multi-scenario deck from stored payload HTML (still side-by-side).
         try:
             html_str = _build_report_deck_preview_html(data)
@@ -1569,11 +1590,14 @@ def get_report_pdf(report_id: str):
                     margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
                 )
                 browser.close()
-        except Exception as fallback_err:
+        except Exception:
             raise HTTPException(
                 status_code=500,
-                detail=f"Deck PDF failed via URL ({e!s}) and multi-scenario HTML fallback ({fallback_err!s}).",
-            ) from fallback_err
+                detail=(
+                    "Deck PDF generation failed in both URL render and HTML render paths. "
+                    "Use /reports/{report_id}/preview to download HTML and print to PDF."
+                ),
+            )
 
     return Response(
         content=pdf_bytes,
