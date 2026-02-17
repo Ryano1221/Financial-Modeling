@@ -514,6 +514,62 @@ def _month_diff(commencement: date, expiration: date) -> int:
     return max(1, round(delta / 30.4375))
 
 
+def _looks_like_address(value: str) -> bool:
+    v = " ".join((value or "").split()).strip()
+    if not v:
+        return False
+    if re.search(r"\b\d{1,6}\s+[A-Za-z0-9].*\b(?:st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|ln|lane|way|plaza|pkwy|parkway)\b", v, re.I):
+        return True
+    if "," in v and re.search(r"\b[A-Z]{2}\b|\b(?:Texas|California|New York|Florida|Illinois)\b", v, re.I):
+        return True
+    return False
+
+
+def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
+    v = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not v:
+        return ""
+    # Remove common leading labels.
+    v = re.sub(r"(?i)^(?:premises|premises name|building|building name|property|property name|address)\s*[:#-]\s*", "", v).strip(" ,.;:-")
+    # Remove suite tokens from candidate building names.
+    v = re.sub(r"(?i)\b(?:suite|ste\.?|unit|space|floor)\s*#?\s*[A-Za-z0-9\-]+\b", "", v).strip(" ,.;:-")
+    if suite_hint:
+        v = re.sub(rf"(?i)\b{re.escape(suite_hint)}\b", "", v).strip(" ,.;:-")
+    # Remove weak lead-ins.
+    v = re.sub(r"(?i)^(?:at|located at|known as)\s+", "", v).strip(" ,.;:-")
+    # Keep values that are at least somewhat informative.
+    if len(v) < 4:
+        return ""
+    return v
+
+
+def _derive_building_name_from_premises_or_address(premises_name: str, address: str, suite_hint: str = "") -> str:
+    premise = _clean_building_candidate(premises_name, suite_hint)
+    if premise and not re.fullmatch(r"(?i)suite\s*[A-Za-z0-9\-]+", premise):
+        return premise
+    addr = " ".join((address or "").split()).strip()
+    if _looks_like_address(addr):
+        return addr
+    return ""
+
+
+def _fallback_building_from_filename(filename: str) -> str:
+    stem = re.sub(r"[_\-]+", " ", Path(filename or "").stem).strip()
+    if not stem:
+        return ""
+    low = stem.lower()
+    generic = {
+        "lease", "leases", "agreement", "document", "doc", "scan", "scanned",
+        "sample", "analysis", "report", "draft", "final", "copy", "pdf", "docx",
+    }
+    tokens = [t for t in re.split(r"\s+", low) if t]
+    informative = [t for t in tokens if t not in generic and not re.fullmatch(r"\d+", t)]
+    # Require at least two informative tokens to avoid weak names like "Lease 2".
+    if len(informative) < 2:
+        return ""
+    return _clean_building_candidate(stem)
+
+
 def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     """
     Heuristic extraction: RSF (prefer premises/suite, downrank center/total), term dates
@@ -637,26 +693,24 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         if hints["suite"]:
             break
 
-    # ---- Address / building (Barton Creek Plaza Austin Texas style) ----
+    # ---- Address / building (includes premises labels and located-at lines) ----
     building_patterns = [
         r"(?i)\b(?:building|property|tower|project)\s*(?:name)?\s*[:#-]\s*([^,;\n]{3,80})",
+        r"(?i)\bpremises(?:\s+name)?\s*[:#-]\s*([^\n]{5,120})",
         r"(?i)(?:premises|located at)\s+[^.]*?([A-Za-z0-9][A-Za-z0-9\s,\.\-]{10,80}(?:Texas|TX|California|CA)[^.]*)",
         r"(?i)at\s+suite\s+[A-Za-z0-9\-]+\s*,?\s*([^.\n]{5,80})",
+        r"(?i)\bleased\s+premises\s+(?:is|are|shall be)\s*[:#-]?\s*([^\n]{8,120})",
     ]
     for ln in head:
         for pat in building_patterns:
             m = re.search(pat, ln)
             if m:
-                candidate = m.group(1).strip(" ,.-")
+                candidate = _clean_building_candidate(m.group(1), hints.get("suite", ""))
                 if len(candidate) >= 5:
                     hints["building_name"] = candidate
                     break
         if hints["building_name"]:
             break
-    if not hints["building_name"]:
-        stem = Path(filename or "").stem.strip()
-        if stem:
-            hints["building_name"] = re.sub(r"[_\-]+", " ", stem)
 
     # Lease type: "lease type is NNN" / "lease type: Gross"
     lease_type_pat = re.compile(
@@ -928,14 +982,29 @@ def _normalize_impl(
                 updates["expiration_date"] = extracted_hints["expiration_date"]
             if extracted_hints.get("term_months") is not None:
                 updates["term_months"] = extracted_hints["term_months"]
-            if extracted_hints.get("building_name"):
-                updates["building_name"] = str(extracted_hints["building_name"])
-                if not (canonical.address or "").strip():
-                    updates["address"] = str(extracted_hints["building_name"])
+            suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
+            building_val = str(extracted_hints.get("building_name") or "").strip()
+            if not building_val:
+                building_val = _derive_building_name_from_premises_or_address(
+                    premises_name=str(canonical.premises_name or ""),
+                    address=str(canonical.address or ""),
+                    suite_hint=suite_val,
+                )
+            if not building_val:
+                building_val = _fallback_building_from_filename(file.filename or "")
+            if not building_val:
+                building_val = _clean_building_candidate(re.sub(r"[_\-]+", " ", Path(file.filename or "").stem))
+            if not building_val:
+                building_val = "Extracted premises"
+            if building_val:
+                updates["building_name"] = building_val
+                # If this is actually an address and address is blank, keep both populated.
+                if not (canonical.address or "").strip() and _looks_like_address(building_val):
+                    updates["address"] = building_val
             if extracted_hints.get("suite"):
                 updates["suite"] = str(extracted_hints["suite"])
-            if extracted_hints.get("building_name") and extracted_hints.get("suite"):
-                updates["premises_name"] = f"{extracted_hints['building_name']} Suite {extracted_hints['suite']}"
+            if building_val and extracted_hints.get("suite"):
+                updates["premises_name"] = f"{building_val} Suite {extracted_hints['suite']}"
             elif extracted_hints.get("suite") and not (canonical.premises_name or "").strip():
                 updates["premises_name"] = str(extracted_hints["suite"])
             if extracted_hints.get("lease_type"):
