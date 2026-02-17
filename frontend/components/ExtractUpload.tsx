@@ -104,6 +104,7 @@ function buildFallbackNormalizerResponse(fileName: string, reason?: string | nul
 export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError }: ExtractUploadProps) {
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
 
   const sendFile = useCallback(
     async (file: File) => {
@@ -112,8 +113,6 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         onError("Only .pdf and .docx files are accepted.");
         return;
       }
-      setLoading(true);
-      onError("");
       const rid = crypto.randomUUID();
       const form = new FormData();
       form.append("source", fn.endsWith(".pdf") ? "PDF" : "WORD");
@@ -182,20 +181,57 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         onError(msg || "Request failed.");
         onSuccess(buildFallbackNormalizerResponse(file.name, reason));
       } finally {
-        setLoading(false);
+        // batch processor manages loading state
       }
     },
     [onSuccess, onError]
+  );
+
+  const processFiles = useCallback(
+    async (incoming: FileList | File[] | null | undefined) => {
+      const files = Array.from(incoming ?? []);
+      if (files.length === 0) return;
+
+      const accepted = files.filter((f) => {
+        const fn = f.name.toLowerCase();
+        return fn.endsWith(".pdf") || fn.endsWith(".docx");
+      });
+      const rejectedCount = files.length - accepted.length;
+
+      if (accepted.length === 0) {
+        onError("Only .pdf and .docx files are accepted.");
+        return;
+      }
+
+      if (rejectedCount > 0) {
+        onError(`Ignored ${rejectedCount} unsupported file${rejectedCount === 1 ? "" : "s"}. Only .pdf and .docx are accepted.`);
+      } else {
+        onError("");
+      }
+
+      setLoading(true);
+      try {
+        for (let i = 0; i < accepted.length; i += 1) {
+          const file = accepted[i];
+          setBatchStatus(`Processing ${i + 1}/${accepted.length}: ${file.name}`);
+          await sendFile(file);
+        }
+        setBatchStatus(`Finished ${accepted.length} proposal${accepted.length === 1 ? "" : "s"}.`);
+      } finally {
+        setLoading(false);
+        setTimeout(() => setBatchStatus(null), 2500);
+      }
+    },
+    [onError, sendFile]
   );
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      const file = e.dataTransfer.files?.[0];
-      if (file) sendFile(file);
+      void processFiles(e.dataTransfer.files);
     },
-    [sendFile]
+    [processFiles]
   );
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -210,11 +246,10 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
 
   const onFileInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) sendFile(file);
+      void processFiles(e.target.files);
       e.target.value = "";
     },
-    [sendFile]
+    [processFiles]
   );
 
   return (
@@ -230,11 +265,12 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         `}
       >
         <p className="text-sm text-zinc-400 mb-2">
-          Drag and drop a <strong className="text-zinc-300">.pdf</strong> or <strong className="text-zinc-300">.docx</strong> lease document here, or click to choose.
+          Drag and drop one or more <strong className="text-zinc-300">.pdf</strong> or <strong className="text-zinc-300">.docx</strong> lease documents here, or click to choose.
         </p>
         <input
           type="file"
           accept=".pdf,.docx"
+          multiple
           onChange={onFileInput}
           disabled={loading}
           className="hidden"
@@ -244,8 +280,9 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
           htmlFor="extract-file-input"
           className="inline-block rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all cursor-pointer focus-within:ring-2 focus-within:ring-[#3b82f6] focus-within:ring-offset-2 focus-within:ring-offset-[#0a0a0b] active:scale-[0.98]"
         >
-          {loading ? "Extracting…" : "Choose file"}
+          {loading ? "Extracting…" : "Choose files"}
         </label>
+        {batchStatus && <p className="mt-3 text-xs text-zinc-400">{batchStatus}</p>}
       </div>
     </div>
   );

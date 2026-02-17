@@ -1334,65 +1334,177 @@ def _build_report_deck_preview_html(data: dict) -> str:
     if not entries:
         return """<!doctype html><html><body><h1>No scenarios found</h1></body></html>"""
 
-    scenario_names: list[str] = []
     scenario_rows: list[dict] = []
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
         scenario = entry.get("scenario") if isinstance(entry.get("scenario"), dict) else {}
         result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
-        name = str(scenario.get("name") or f"Scenario {i + 1}")
-        scenario_names.append(name)
-        scenario_rows.append({"scenario": scenario, "result": result})
+        scenario_rows.append({"scenario": scenario, "result": result, "name": str(scenario.get("name") or f"Scenario {i + 1}")})
 
-    def metric_row(label: str, key: str, formatter) -> str:
-        tds = []
-        for row in scenario_rows:
-            value = row["result"].get(key)
-            tds.append(f"<td>{html.escape(formatter(value))}</td>")
-        return f"<tr><th>{html.escape(label)}</th>{''.join(tds)}</tr>"
+    def _fmt_int(value) -> str:
+        return f"{int(round(_safe_float(value, 0))):,}"
 
-    def scenario_row(label: str, key: str) -> str:
-        tds = []
-        for row in scenario_rows:
-            value = row["scenario"].get(key, "")
-            tds.append(f"<td>{html.escape(str(value or ''))}</td>")
-        return f"<tr><th>{html.escape(label)}</th>{''.join(tds)}</tr>"
+    def _fmt_percent(value) -> str:
+        return f"{_safe_float(value, 0) * 100:.2f}%"
 
-    header_cells = "".join(f"<th>{html.escape(name)}</th>" for name in scenario_names)
+    def _chunk(items: list, size: int) -> list[list]:
+        if size <= 0:
+            return [items]
+        return [items[i:i + size] for i in range(0, len(items), size)]
 
-    summary_table = f"""
-      <table>
-        <thead>
-          <tr><th>Metric</th>{header_cells}</tr>
-        </thead>
-        <tbody>
-          {scenario_row("Building name", "building_name")}
-          {scenario_row("Suite", "suite")}
-          {scenario_row("RSF", "rsf")}
-          {scenario_row("Commencement", "commencement")}
-          {scenario_row("Expiration", "expiration")}
-          {metric_row("Term (months)", "term_months", lambda v: f"{int(_safe_float(v, 0))}")}
-          {metric_row("Rent (nominal)", "rent_nominal", _fmt_money)}
-          {metric_row("Opex (nominal)", "opex_nominal", _fmt_money)}
-          {metric_row("Total obligation", "total_cost_nominal", _fmt_money)}
-          {metric_row("NPV cost", "npv_cost", _fmt_money)}
-          {metric_row("Avg cost/year", "avg_cost_year", _fmt_money_2)}
-          {metric_row("Avg cost/SF/year", "avg_cost_psf_year", _fmt_psf)}
-        </tbody>
-      </table>
-    """
+    clause_patterns: list[tuple[str, re.Pattern[str]]] = [
+        ("Renewal options", re.compile(r"\brenew(al)?\b|\bextend\b", re.I)),
+        ("ROFR", re.compile(r"\brofr\b|right of first refusal", re.I)),
+        ("ROFO", re.compile(r"\brofo\b|right of first offer", re.I)),
+        ("Termination rights", re.compile(r"\btermination\b|early termination", re.I)),
+        ("Assignment/sublease", re.compile(r"\bassignment\b|\bsublease\b", re.I)),
+        ("OpEx exclusions", re.compile(r"\bopex exclusion\b|excluded from opex|operating expense exclusion", re.I)),
+        ("Expense caps", re.compile(r"\bexpense cap\b|cap on controllable|controllable expenses", re.I)),
+    ]
 
-    assumptions = []
-    for i, row in enumerate(scenario_rows):
-        scenario = row["scenario"]
-        assumptions.append(
-            "<li><strong>{}</strong>: {} SF, {} to {}, opex mode {}</li>".format(
-                html.escape(str(scenario.get("name") or f"Scenario {i + 1}")),
-                html.escape(str(scenario.get("rsf") or "")),
-                html.escape(str(scenario.get("commencement") or "")),
-                html.escape(str(scenario.get("expiration") or "")),
-                html.escape(str(scenario.get("opex_mode") or "")),
+    def _extract_clause_bullets(text: str) -> list[str]:
+        raw = (text or "").strip()
+        if not raw:
+            return []
+        parts = [p.strip() for p in re.split(r"\n+|;\s+|\.\s+", raw) if p.strip()]
+        out: list[str] = []
+        for part in parts:
+            for category, pattern in clause_patterns:
+                if pattern.search(part):
+                    out.append(f"{category}: {part}")
+                    break
+        if out:
+            return out[:12]
+        return parts[:8]
+
+    metric_defs: list[tuple[str, str, str]] = [
+        ("Building", "scenario.building_name", "text"),
+        ("Suite", "scenario.suite", "text"),
+        ("Premises", "scenario.name", "text"),
+        ("RSF", "scenario.rsf", "int"),
+        ("Commencement", "scenario.commencement", "text"),
+        ("Expiration", "scenario.expiration", "text"),
+        ("Lease type", "scenario.opex_mode", "text"),
+        ("Term (months)", "result.term_months", "int"),
+        ("Rent (nominal)", "result.rent_nominal", "money"),
+        ("OpEx (nominal)", "result.opex_nominal", "money"),
+        ("Total obligation", "result.total_cost_nominal", "money"),
+        ("NPV cost", "result.npv_cost", "money"),
+        ("Avg cost/year", "result.avg_cost_year", "money2"),
+        ("Avg cost/SF/year", "result.avg_cost_psf_year", "psf"),
+        ("Discount rate", "scenario.discount_rate_annual", "percent"),
+    ]
+
+    def _resolve(row: dict, key_path: str):
+        node = row
+        for k in key_path.split("."):
+            if not isinstance(node, dict):
+                return None
+            node = node.get(k)
+        return node
+
+    def _format(value, style: str) -> str:
+        if style == "money":
+            return _fmt_money(value)
+        if style == "money2":
+            return _fmt_money_2(value)
+        if style == "psf":
+            return _fmt_psf(value)
+        if style == "int":
+            return _fmt_int(value)
+        if style == "percent":
+            return _fmt_percent(value)
+        return str(value or "")
+
+    scenario_chunks = _chunk(scenario_rows, 3)
+    metric_chunks = _chunk(metric_defs, 11)
+
+    matrix_sections: list[str] = []
+    for s_idx, s_chunk in enumerate(scenario_chunks):
+        for m_idx, m_chunk in enumerate(metric_chunks):
+            start_opt = s_idx * 3 + 1
+            end_opt = start_opt + len(s_chunk) - 1
+            start_metric = m_idx * 11 + 1
+            end_metric = start_metric + len(m_chunk) - 1
+            header_cells = "".join(f"<th>{html.escape(str(r['name']))}</th>" for r in s_chunk)
+            body_rows = []
+            for label, key_path, style in m_chunk:
+                tds = []
+                for row in s_chunk:
+                    val = _resolve(row, key_path)
+                    tds.append(f"<td>{html.escape(_format(val, style))}</td>")
+                body_rows.append(f"<tr><th>{html.escape(label)}</th>{''.join(tds)}</tr>")
+            matrix_sections.append(
+                """
+                <section class="page">
+                  <h2>Comparison Matrix</h2>
+                  <p class="subhead">Options {start_opt}-{end_opt} of {total_opts} | Metrics {start_metric}-{end_metric} of {total_metrics}</p>
+                  <table>
+                    <thead><tr><th class="metric-col">Metric</th>{header_cells}</tr></thead>
+                    <tbody>{body_rows}</tbody>
+                  </table>
+                </section>
+                """.format(
+                    start_opt=start_opt,
+                    end_opt=end_opt,
+                    total_opts=len(scenario_rows),
+                    start_metric=start_metric,
+                    end_metric=end_metric,
+                    total_metrics=len(metric_defs),
+                    header_cells=header_cells,
+                    body_rows="".join(body_rows),
+                )
+            )
+
+    ranking = sorted(
+        scenario_rows,
+        key=lambda r: _safe_float(((r.get("result") or {}).get("npv_cost")), 0),
+    )
+    ranking_rows = "".join(
+        "<li><strong>{name}</strong>: {npv} NPV, {avg_psf} average cost/SF/year, {total} total obligation.</li>".format(
+            name=html.escape(str(r.get("name") or "")),
+            npv=html.escape(_fmt_money((r.get("result") or {}).get("npv_cost"))),
+            avg_psf=html.escape(_fmt_psf((r.get("result") or {}).get("avg_cost_psf_year"))),
+            total=html.escape(_fmt_money((r.get("result") or {}).get("total_cost_nominal"))),
+        )
+        for r in ranking[:8]
+    )
+
+    abstract_cards = []
+    for idx, row in enumerate(scenario_rows):
+        scenario = row.get("scenario") if isinstance(row.get("scenario"), dict) else {}
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
+        notes = str(scenario.get("notes") or "")
+        bullets = [
+            "{}: {} RSF, {} to {}, {} lease.".format(
+                row.get("name") or f"Scenario {idx + 1}",
+                _fmt_int(scenario.get("rsf")),
+                scenario.get("commencement") or "",
+                scenario.get("expiration") or "",
+                str(scenario.get("opex_mode") or "NNN").upper(),
+            ),
+            "Financial profile: {} NPV, {} average cost/SF/year, {} total obligation.".format(
+                _fmt_money(result.get("npv_cost")),
+                _fmt_psf(result.get("avg_cost_psf_year")),
+                _fmt_money(result.get("total_cost_nominal")),
+            ),
+        ]
+        free_rent = int(round(_safe_float(scenario.get("free_rent_months"), 0)))
+        if free_rent > 0:
+            bullets.append(f"Free rent: {free_rent} month(s).")
+        ti = _safe_float(scenario.get("ti_allowance_psf"), 0)
+        if ti > 0:
+            bullets.append(f"TI allowance: {_fmt_money_2(ti)}/SF.")
+        clause_bullets = _extract_clause_bullets(notes)
+        if clause_bullets:
+            bullets.extend(clause_bullets)
+        else:
+            bullets.append("No clause notes extracted. Manually verify ROFR/ROFO, renewal rights, termination language, and OpEx exclusions.")
+        abstract_cards.append(
+            "<article class='card'><h3>{name}</h3><ul>{items}</ul></article>".format(
+                name=html.escape(str(row.get("name") or f"Scenario {idx + 1}")),
+                items="".join(f"<li>{html.escape(b)}</li>" for b in bullets[:14]),
             )
         )
 
@@ -1401,28 +1513,82 @@ def _build_report_deck_preview_html(data: dict) -> str:
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Lease Deck Comparison</title>
+  <title>Lease Economics Comparison Deck</title>
   <style>
-    @page {{ size: A4; margin: 16mm; }}
-    body {{ font-family: Arial, Helvetica, sans-serif; color: #111827; font-size: 12px; }}
-    h1 {{ font-size: 24px; margin: 0 0 6px 0; }}
-    h2 {{ font-size: 16px; margin: 22px 0 8px 0; }}
-    p {{ color: #4b5563; margin: 0 0 10px 0; }}
-    table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
-    th, td {{ border: 1px solid #d1d5db; padding: 6px; vertical-align: top; word-wrap: break-word; }}
-    th {{ background: #f3f4f6; text-align: left; }}
-    ul {{ margin: 6px 0 0 16px; padding: 0; }}
+    @page {{ size: A4 landscape; margin: 12mm; }}
+    body {{ font-family: Inter, Arial, Helvetica, sans-serif; color: #111827; font-size: 11px; margin: 0; background: #f8fafc; }}
+    .page {{ break-after: page; page-break-after: always; padding: 8mm 9mm; }}
+    .cover {{ background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); }}
+    h1 {{ font-size: 34px; margin: 0 0 8px 0; line-height: 1.1; }}
+    h2 {{ font-size: 24px; margin: 0 0 6px 0; }}
+    h3 {{ font-size: 15px; margin: 0 0 5px 0; }}
+    p {{ color: #374151; margin: 0 0 10px 0; }}
+    .kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }}
+    .kpi {{ border: 1px solid #d1d5db; border-radius: 8px; background: #fff; padding: 8px; }}
+    .kpi-label {{ color: #6b7280; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 4px 0; }}
+    .kpi-value {{ color: #111827; font-size: 13px; font-weight: 700; margin: 0; }}
+    .winner {{ border: 1px solid #a7f3d0; background: #ecfdf5; border-radius: 10px; padding: 10px; margin-top: 10px; }}
+    .subhead {{ color: #6b7280; margin: 2px 0 8px 0; font-size: 10px; }}
+    table {{ width: 100%; border-collapse: collapse; table-layout: fixed; background: #fff; }}
+    th, td {{ border: 1px solid #d1d5db; padding: 6px; vertical-align: top; word-break: break-word; }}
+    thead th {{ background: #f3f4f6; text-align: left; }}
+    .metric-col {{ width: 190px; }}
+    ul {{ margin: 6px 0 0 14px; padding: 0; }}
+    li {{ margin: 0 0 4px 0; }}
+    .grid-2 {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+    .panel {{ border: 1px solid #d1d5db; border-radius: 8px; background: #fff; padding: 10px; }}
+    .card {{ border: 1px solid #d1d5db; border-radius: 8px; background: #fff; padding: 10px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }}
   </style>
 </head>
 <body>
-  <h1>Lease Economics Comparison</h1>
-  <p>Multi-scenario report generated from stored report payload.</p>
-  <h2>Comparison Matrix</h2>
-  {summary_table}
-  <h2>Key Assumptions</h2>
-  <ul>
-    {''.join(assumptions)}
-  </ul>
+  <section class="page cover">
+    <p style="text-transform:uppercase; letter-spacing:0.25em; color:#6b7280; margin-bottom:10px;">Investor Financial Analysis</p>
+    <h1>Lease Economics Comparison Deck</h1>
+    <p>Institutional-grade side-by-side comparison across {len(scenario_rows)} scenario{"s" if len(scenario_rows) != 1 else ""}, designed for client presentation and investment committee review.</p>
+    <div class="kpis">
+      <div class="kpi"><p class="kpi-label">Prepared for</p><p class="kpi-value">Client</p></div>
+      <div class="kpi"><p class="kpi-label">Prepared by</p><p class="kpi-value">The CRE Model</p></div>
+      <div class="kpi"><p class="kpi-label">Report date</p><p class="kpi-value">{date.today().isoformat()}</p></div>
+      <div class="kpi"><p class="kpi-label">Scenarios</p><p class="kpi-value">{len(scenario_rows)}</p></div>
+    </div>
+    <div class="winner">
+      <p style="margin:0; color:#065f46; text-transform:uppercase; letter-spacing:0.1em; font-size:10px;">Best financial outcome by NPV</p>
+      <p style="margin:3px 0 0 0; font-size:20px; font-weight:700; color:#064e3b;">{html.escape(str((ranking[0].get("name") if ranking else "N/A") or "N/A"))}</p>
+      <p style="margin:4px 0 0 0; color:#064e3b;">{html.escape(_fmt_money((ranking[0].get("result") or {}).get("npv_cost")) if ranking else "$0")} NPV</p>
+    </div>
+  </section>
+
+  <section class="page">
+    <h2>Executive Summary</h2>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>Ranking by NPV</h3>
+        <ul>{ranking_rows}</ul>
+      </div>
+      <div class="panel">
+        <h3>Key decision points</h3>
+        <ul>
+          <li>Validate legal rights and options: ROFR, ROFO, renewal/extension, termination, and assignment/sublease terms.</li>
+          <li>Confirm OpEx treatment: exclusions, controllable caps, and base-year or NNN definitions.</li>
+          <li>Reconcile TI, free-rent economics, and capex timing against occupancy and cashflow priorities.</li>
+          <li>Review parking and non-rent charges that can materially affect blended occupancy cost.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  {''.join(matrix_sections)}
+
+  <section class="page">
+    <h2>Lease Abstract Highlights</h2>
+    <p>Bullet-point lease abstract for each scenario. Verify all legal terms against final lease language.</p>
+    {''.join(abstract_cards)}
+  </section>
+
+  <section style="padding: 8mm 9mm;">
+    <h2>Disclaimer</h2>
+    <p>This analysis is for discussion purposes only. Figures are based on provided assumptions and do not constitute legal, accounting, or investment advice.</p>
+  </section>
 </body>
 </html>
     """.strip()

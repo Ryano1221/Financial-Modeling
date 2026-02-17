@@ -398,6 +398,10 @@ export default function Home() {
     });
   }, []);
 
+  const acceptScenarioChanges = useCallback(() => {
+    setSelectedId(null);
+  }, []);
+
   const duplicateFromList = useCallback((id: string) => {
     const source = scenarios.find((s) => s.id === id);
     if (!source) return;
@@ -1061,6 +1065,8 @@ export default function Home() {
           onUpdate={updateScenario}
           onAddScenario={addScenario}
           onDuplicateScenario={duplicateScenario}
+          onDeleteScenario={deleteScenario}
+          onAcceptChanges={acceptScenarioChanges}
         />
 
         <section className="pt-6 border-t border-white/10">

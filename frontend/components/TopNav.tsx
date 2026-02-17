@@ -2,10 +2,15 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 
 export function TopNav() {
+  const pathname = usePathname();
+  // Keep exported report routes presentation-only (no app chrome).
+  if (pathname?.startsWith("/report")) return null;
+
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-black/80 backdrop-blur-sm">
+    <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-black/80 backdrop-blur-sm print:hidden">
       <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between gap-4 min-w-0">
         <Link
           href="/"

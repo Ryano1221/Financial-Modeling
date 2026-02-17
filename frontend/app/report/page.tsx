@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -10,7 +10,6 @@ import {
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
-  Legend,
 } from "recharts";
 import {
   formatCurrency,
@@ -67,6 +66,8 @@ type DerivedScenario = {
   clauses: ClauseHit[];
 };
 
+type MatrixRow = { label: string; value: (d: DerivedScenario) => string };
+
 const CLAUSE_PATTERNS: Array<{ category: string; regex: RegExp }> = [
   { category: "Renewal options", regex: /\brenew(al)?\b|\bextend\b/i },
   { category: "ROFR", regex: /\brofr\b|right of first refusal/i },
@@ -87,6 +88,19 @@ function toNumber(value: unknown, fallback = 0): number {
 function safeDiv(a: number, b: number): number {
   if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return 0;
   return a / b;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+function shortenLabel(name: string, max = 26): string {
+  const clean = (name || "").trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max - 1)}...`;
 }
 
 function rentEscalationFromSteps(steps: Array<{ start: number; end: number; rate_psf_yr: number }> | undefined): number {
@@ -121,6 +135,36 @@ function extractClauses(notes: string): ClauseHit[] {
   if (hits.length > 0) return hits;
   if (text.length > 0) return [{ category: "General note", detail: text }];
   return [];
+}
+
+function buildLeaseAbstractBullets(d: DerivedScenario): string[] {
+  const bullets: string[] = [];
+  bullets.push(
+    `${d.premises || d.name}: ${formatRSF(d.rsf)}, ${formatMonths(d.termMonths)} term (${formatDateISO(d.commencement)} to ${formatDateISO(d.expiration)}), ${d.leaseType.toUpperCase()} structure.`
+  );
+  bullets.push(
+    `Financial profile: ${formatCurrency(d.npvCost)} NPV, ${formatCurrencyPerSF(d.avgCostPsfYear)} average cost/SF/year, ${formatCurrency(d.totalObligation)} total nominal obligation.`
+  );
+
+  if (d.rentSteps.length > 0) {
+    const first = d.rentSteps[0];
+    const last = d.rentSteps[d.rentSteps.length - 1];
+    bullets.push(
+      `Base rent schedule runs ${d.rentSteps.length} step(s), from ${formatCurrencyPerSF(first.rate)} to ${formatCurrencyPerSF(last.rate)}.`
+    );
+  }
+  if (d.freeRentMonths > 0) bullets.push(`Free rent: ${formatNumber(d.freeRentMonths)} month(s).`);
+  if (d.tiAllowancePsf > 0) bullets.push(`TI allowance: ${formatCurrencyPerSF(d.tiAllowancePsf)} (${formatCurrency(d.tiAllowanceGross)} gross).`);
+  if (d.parkingSpaces > 0) bullets.push(`Parking: ${formatNumber(d.parkingSpaces)} spaces at ${formatCurrency(d.parkingMonthly)} per month total.`);
+
+  const clauseLines = d.clauses.slice(0, 10).map((c) => `${c.category}: ${c.detail}`);
+  bullets.push(...clauseLines);
+
+  if (clauseLines.length === 0) {
+    bullets.push("No specific clause notes were extracted. Manually confirm ROFR/ROFO, renewal rights, termination language, and OpEx exclusions in the source lease.");
+  }
+
+  return bullets;
 }
 
 function deriveScenario(entry: ScenarioEntry): DerivedScenario {
@@ -191,9 +235,6 @@ function ReportContent() {
   const reportId = searchParams.get("reportId");
   const [data, setData] = useState<ReportData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const scenarios = data?.scenarios || [];
-  const branding = data?.branding;
-  const derived = scenarios.map(deriveScenario);
 
   const loadReport = useCallback(async () => {
     if (!reportId) {
@@ -214,6 +255,9 @@ function ReportContent() {
   useEffect(() => {
     loadReport();
   }, [loadReport]);
+
+  const branding = data?.branding;
+  const derived = useMemo(() => (data?.scenarios ?? []).map(deriveScenario), [data?.scenarios]);
 
   if (error) {
     return (
@@ -240,14 +284,18 @@ function ReportContent() {
 
   const chartRows = derived.map((d) => ({
     name: d.name,
+    shortName: shortenLabel(d.name, 22),
     avg_cost_psf_year: d.avgCostPsfYear,
     npv_cost: d.npvCost,
     avg_cost_year: d.avgCostYear,
   }));
+
   const sortedByNpv = [...derived].sort((a, b) => a.npvCost - b.npvCost);
   const best = sortedByNpv[0];
 
-  const matrixRows: Array<{ label: string; value: (d: DerivedScenario) => string }> = [
+  const matrixRows: MatrixRow[] = [
+    { label: "Building", value: (d) => d.buildingName || "-" },
+    { label: "Suite", value: (d) => d.suite || "-" },
     { label: "Premises", value: (d) => d.premises },
     { label: "Rentable square footage", value: (d) => formatRSF(d.rsf) },
     { label: "Lease term", value: (d) => `${d.termYears.toFixed(2)} years` },
@@ -276,197 +324,253 @@ function ReportContent() {
     { label: "Discount rate", value: (d) => formatPercent(d.discountRate) },
   ];
 
-  const pageBreak = "break-after-page print:break-after-page";
+  const scenarioChunks = chunkArray(derived, 3);
+  const metricChunks = chunkArray(matrixRows, 11);
+  const chartChunks = chunkArray(chartRows, 8);
+
+  const reportDate = branding?.date || new Date().toISOString().slice(0, 10);
+  const pageBreak = "page-break";
 
   return (
-    <div className="bg-white text-stone-900 print:bg-white">
-      <section className={`min-h-screen p-10 md:p-14 flex flex-col justify-center ${pageBreak}`}>
-        <p className="text-sm uppercase tracking-[0.25em] text-stone-500">Financial Analysis</p>
-        <h1 className="text-4xl md:text-5xl font-bold mt-2">Lease Economics Comparison</h1>
-        <p className="text-stone-600 mt-3 max-w-3xl">
-          Side-by-side financial comparison across {derived.length} scenario{derived.length !== 1 ? "s" : ""}.
-          Built for executive review and decision support.
-        </p>
-        <div className="mt-8 grid grid-cols-2 gap-4 max-w-2xl text-sm">
-          <div>
-            <p className="text-stone-500">Prepared for</p>
-            <p className="font-medium">{branding?.client_name || "Client"}</p>
-          </div>
-          <div>
-            <p className="text-stone-500">Report date</p>
-            <p className="font-medium">{branding?.date || new Date().toISOString().slice(0, 10)}</p>
-          </div>
-          <div>
-            <p className="text-stone-500">Market</p>
-            <p className="font-medium">{branding?.market || "N/A"}</p>
-          </div>
-          <div>
-            <p className="text-stone-500">Prepared by</p>
-            <p className="font-medium">{branding?.broker_name || "The CRE Model"}</p>
-          </div>
-        </div>
-      </section>
+    <div className="report-page bg-[#f8fafc] text-stone-900 print:bg-white print:text-black">
+      <main className="mx-auto max-w-[1400px] print:max-w-none">
+        <section className={`px-10 py-12 md:px-14 md:py-16 ${pageBreak}`}>
+          <p className="text-xs uppercase tracking-[0.32em] text-stone-500">Investor Financial Analysis</p>
+          <h1 className="text-4xl md:text-5xl font-bold mt-3 leading-tight">Lease Economics Comparison Deck</h1>
+          <p className="text-stone-600 mt-4 max-w-4xl text-sm md:text-base">
+            Institutional-grade side-by-side comparison across {derived.length} proposal{derived.length !== 1 ? "s" : ""},
+            with risk-focused lease abstract notes and valuation metrics optimized for client decision-making.
+          </p>
 
-      <section className={`p-8 md:p-10 ${pageBreak}`}>
-        <h2 className="text-2xl font-semibold mb-4">Executive Summary</h2>
-        {best ? (
-          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 mb-4">
-            <p className="text-sm text-stone-600">Lowest NPV scenario</p>
-            <p className="text-lg font-semibold text-stone-900">{best.name}</p>
-            <p className="text-sm text-stone-700 mt-1">
-              {formatCurrency(best.npvCost)} NPV, {formatCurrencyPerSF(best.avgCostPsfYear)} average cost/SF/year, {formatCurrency(best.totalObligation)} total obligation.
-            </p>
+          <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="rounded-xl border border-stone-200 bg-white p-3">
+              <p className="text-stone-500">Prepared for</p>
+              <p className="font-semibold mt-0.5">{branding?.client_name || "Client"}</p>
+            </div>
+            <div className="rounded-xl border border-stone-200 bg-white p-3">
+              <p className="text-stone-500">Prepared by</p>
+              <p className="font-semibold mt-0.5">{branding?.broker_name || "The CRE Model"}</p>
+            </div>
+            <div className="rounded-xl border border-stone-200 bg-white p-3">
+              <p className="text-stone-500">Report date</p>
+              <p className="font-semibold mt-0.5">{reportDate}</p>
+            </div>
+            <div className="rounded-xl border border-stone-200 bg-white p-3">
+              <p className="text-stone-500">Market</p>
+              <p className="font-semibold mt-0.5">{branding?.market || "N/A"}</p>
+            </div>
           </div>
-        ) : null}
-        <ul className="list-disc list-inside text-stone-700 space-y-1">
-          {sortedByNpv.slice(0, 3).map((d, i) => (
-            <li key={`${d.name}-${i}`}>
-              Rank {i + 1}: <strong>{d.name}</strong> at {formatCurrency(d.npvCost)} NPV and {formatCurrencyPerSF(d.avgCostPsfYear)} average cost/SF/year.
-            </li>
-          ))}
-        </ul>
-      </section>
 
-      <section className={`p-6 md:p-8 ${pageBreak}`}>
-        <h2 className="text-2xl font-semibold mb-4">Comparison Matrix</h2>
-        <div className="overflow-x-auto border border-stone-300 rounded-lg">
-          <table className="w-full text-[10px] md:text-[11px] border-collapse">
-            <thead>
-              <tr className="bg-stone-100">
-                <th className="text-left p-2 border border-stone-300 sticky left-0 bg-stone-100 min-w-[220px]">Analysis</th>
-                {derived.map((d, i) => (
-                  <th key={`${d.name}-head-${i}`} className="text-left p-2 border border-stone-300 min-w-[160px]">{d.name}</th>
+          {best ? (
+            <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 avoid-break">
+              <p className="text-xs uppercase tracking-[0.2em] text-emerald-700">Best financial outcome by NPV</p>
+              <h2 className="text-2xl font-semibold mt-1 text-emerald-900">{best.name}</h2>
+              <p className="text-emerald-900/90 mt-2 text-sm md:text-base">
+                {formatCurrency(best.npvCost)} NPV, {formatCurrencyPerSF(best.avgCostPsfYear)} average cost/SF/year,
+                and {formatCurrency(best.totalObligation)} total nominal obligation.
+              </p>
+            </div>
+          ) : null}
+        </section>
+
+        <section className={`px-8 py-9 md:px-10 md:py-10 ${pageBreak}`}>
+          <h2 className="text-2xl font-semibold mb-4">Executive Summary</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-stone-200 bg-white p-4 avoid-break">
+              <p className="text-sm font-semibold mb-2">Ranking by NPV cost</p>
+              <ul className="list-disc list-inside text-sm space-y-1 text-stone-700">
+                {sortedByNpv.slice(0, 6).map((d, i) => (
+                  <li key={`${d.name}-${i}`}>
+                    Rank {i + 1}: <strong>{d.name}</strong> at {formatCurrency(d.npvCost)} NPV and {formatCurrencyPerSF(d.avgCostPsfYear)} average cost/SF/year.
+                  </li>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {matrixRows.map((row, rowIdx) => (
-                <tr key={row.label} className={rowIdx % 2 === 0 ? "bg-white" : "bg-stone-50"}>
-                  <th className="text-left p-2 border border-stone-200 font-medium sticky left-0 bg-inherit">{row.label}</th>
-                  {derived.map((d, i) => (
-                    <td key={`${row.label}-${i}`} className="p-2 border border-stone-200 align-top">{row.value(d)}</td>
+              </ul>
+            </div>
+            <div className="rounded-xl border border-stone-200 bg-white p-4 avoid-break">
+              <p className="text-sm font-semibold mb-2">Key decision points</p>
+              <ul className="list-disc list-inside text-sm space-y-1 text-stone-700">
+                <li>Validate legal rights and options: ROFR, ROFO, renewal/extension, termination, and assignment/sublease terms.</li>
+                <li>Confirm OpEx treatment: exclusions, controllable caps, and base-year or NNN definitions.</li>
+                <li>Reconcile TI, free-rent economics, and capex timing versus occupancy and cashflow priorities.</li>
+                <li>Review parking and non-rent charges that may materially affect blended annual occupancy cost.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        {scenarioChunks.map((scenarioChunk, chunkIdx) =>
+          metricChunks.map((metricChunk, metricIdx) => {
+            const startOpt = chunkIdx * 3 + 1;
+            const endOpt = startOpt + scenarioChunk.length - 1;
+            const startMetric = metricIdx * 11 + 1;
+            const endMetric = startMetric + metricChunk.length - 1;
+
+            return (
+              <section key={`matrix-${chunkIdx}-${metricIdx}`} className={`px-6 py-8 md:px-8 md:py-9 ${pageBreak}`}>
+                <div className="mb-3">
+                  <h2 className="text-2xl font-semibold">Comparison Matrix</h2>
+                  <p className="text-xs text-stone-500 mt-1">
+                    Options {startOpt}-{endOpt} of {derived.length} | Metrics {startMetric}-{endMetric} of {matrixRows.length}
+                  </p>
+                </div>
+                <div className="overflow-hidden rounded-lg border border-stone-300 bg-white">
+                  <table className="w-full border-collapse text-[10px] md:text-[11px] table-fixed">
+                    <thead>
+                      <tr className="bg-stone-100">
+                        <th className="text-left p-2 border border-stone-300 w-[220px]">Metric</th>
+                        {scenarioChunk.map((d, i) => (
+                          <th key={`${d.name}-head-${i}`} className="text-left p-2 border border-stone-300 whitespace-normal break-words">{d.name}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {metricChunk.map((row, rowIdx) => (
+                        <tr key={row.label} className={rowIdx % 2 === 0 ? "bg-white" : "bg-stone-50"}>
+                          <th className="text-left p-2 border border-stone-200 font-medium whitespace-normal break-words">{row.label}</th>
+                          {scenarioChunk.map((d, i) => (
+                            <td key={`${row.label}-${i}`} className="p-2 border border-stone-200 align-top whitespace-normal break-words">{row.value(d)}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            );
+          })
+        )}
+
+        {chartChunks.map((chunk, idx) => {
+          const chartHeight = Math.max(300, chunk.length * 40);
+          return (
+            <section key={`charts-${idx}`} className={`px-8 py-9 md:px-10 md:py-10 ${pageBreak}`}>
+              <h2 className="text-2xl font-semibold mb-4">Cost Visuals (Options {idx * 8 + 1}-{idx * 8 + chunk.length})</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-stone-200 rounded-lg p-3 bg-white avoid-break">
+                  <p className="font-medium text-sm mb-2">Average cost ($/SF/year)</p>
+                  <div style={{ height: chartHeight }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={chunk} layout="vertical" margin={{ top: 8, right: 14, left: 14, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
+                        <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => formatCurrency(Number(v))} />
+                        <YAxis type="category" dataKey="shortName" width={150} tick={{ fontSize: 10 }} />
+                        <Tooltip formatter={(v: number) => formatCurrencyPerSF(v)} />
+                        <Bar dataKey="avg_cost_psf_year" fill="#0f172a" name="Avg cost/SF/year" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                <div className="border border-stone-200 rounded-lg p-3 bg-white avoid-break">
+                  <p className="font-medium text-sm mb-2">NPV cost</p>
+                  <div style={{ height: chartHeight }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={chunk} layout="vertical" margin={{ top: 8, right: 14, left: 14, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
+                        <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => formatCurrency(Number(v))} />
+                        <YAxis type="category" dataKey="shortName" width={150} tick={{ fontSize: 10 }} />
+                        <Tooltip formatter={(v: number) => formatCurrency(v)} />
+                        <Bar dataKey="npv_cost" fill="#334155" name="NPV cost" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </section>
+          );
+        })}
+
+        <section className={`px-8 py-9 md:px-10 md:py-10 ${pageBreak}`}>
+          <h2 className="text-2xl font-semibold mb-4">Lease Abstract Highlights</h2>
+          <p className="text-sm text-stone-600 mb-5">
+            Bullet-point lease abstract for each proposal. Items below should be verified against final legal lease language.
+          </p>
+          <div className="space-y-4">
+            {derived.map((d, idx) => (
+              <article key={`abstract-${d.name}-${idx}`} className="rounded-xl border border-stone-200 bg-white p-4 avoid-break">
+                <h3 className="text-base font-semibold">{d.name}</h3>
+                <p className="text-xs text-stone-500 mt-0.5">{d.premises || "Premises not specified"}</p>
+                <ul className="mt-3 list-disc list-inside text-sm text-stone-700 space-y-1">
+                  {buildLeaseAbstractBullets(d).map((line, lineIdx) => (
+                    <li key={`${d.name}-bullet-${lineIdx}`}>{line}</li>
                   ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className={`p-8 md:p-10 ${pageBreak}`}>
-        <h2 className="text-2xl font-semibold mb-5">Scenario Cost Visuals</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="h-80 border border-stone-200 rounded-lg p-3">
-            <p className="font-medium text-sm mb-2">Avg cost $/SF/year</p>
-            <ResponsiveContainer width="100%" height="92%">
-              <BarChart data={chartRows} layout="vertical" margin={{ top: 6, right: 8, left: 8, bottom: 6 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => formatCurrency(v)} />
-                <YAxis type="category" dataKey="name" width={95} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(v: number) => formatCurrencyPerSF(v)} />
-                <Legend />
-                <Bar dataKey="avg_cost_psf_year" fill="#1f2937" name="Avg cost/SF/year" />
-              </BarChart>
-            </ResponsiveContainer>
+                </ul>
+              </article>
+            ))}
           </div>
-          <div className="h-80 border border-stone-200 rounded-lg p-3">
-            <p className="font-medium text-sm mb-2">NPV cost</p>
-            <ResponsiveContainer width="100%" height="92%">
-              <BarChart data={chartRows} layout="vertical" margin={{ top: 6, right: 8, left: 8, bottom: 6 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => formatCurrency(v)} />
-                <YAxis type="category" dataKey="name" width={95} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(v: number) => formatCurrency(v)} />
-                <Legend />
-                <Bar dataKey="npv_cost" fill="#334155" name="NPV" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="h-80 border border-stone-200 rounded-lg p-3">
-            <p className="font-medium text-sm mb-2">Avg cost/year</p>
-            <ResponsiveContainer width="100%" height="92%">
-              <BarChart data={chartRows} layout="vertical" margin={{ top: 6, right: 8, left: 8, bottom: 6 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => formatCurrency(v)} />
-                <YAxis type="category" dataKey="name" width={95} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(v: number) => formatCurrency(v)} />
-                <Legend />
-                <Bar dataKey="avg_cost_year" fill="#64748b" name="Avg cost/year" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      {derived.map((d, i) => (
-        <section key={`${d.name}-${i}`} className={`p-8 md:p-10 ${pageBreak}`}>
-          <h2 className="text-2xl font-semibold mb-2">Scenario Detail: {d.name}</h2>
-          <p className="text-stone-600 text-sm mb-4">{d.premises || "Premises not specified"}</p>
+        {derived.map((d, i) => (
+          <section key={`${d.name}-${i}`} className={`px-8 py-9 md:px-10 md:py-10 ${pageBreak}`}>
+            <h2 className="text-2xl font-semibold mb-2">Scenario Detail: {d.name}</h2>
+            <p className="text-stone-600 text-sm mb-4">{d.premises || "Premises not specified"}</p>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-6">
-            <div className="border border-stone-200 rounded-lg p-3"><p className="text-stone-500">RSF</p><p className="font-semibold">{formatRSF(d.rsf)}</p></div>
-            <div className="border border-stone-200 rounded-lg p-3"><p className="text-stone-500">Term</p><p className="font-semibold">{d.termYears.toFixed(2)} years</p></div>
-            <div className="border border-stone-200 rounded-lg p-3"><p className="text-stone-500">NPV</p><p className="font-semibold">{formatCurrency(d.npvCost)}</p></div>
-            <div className="border border-stone-200 rounded-lg p-3"><p className="text-stone-500">Avg cost/SF/year</p><p className="font-semibold">{formatCurrencyPerSF(d.avgCostPsfYear)}</p></div>
-          </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-6">
+              <div className="border border-stone-200 rounded-lg p-3 bg-white"><p className="text-stone-500">RSF</p><p className="font-semibold">{formatRSF(d.rsf)}</p></div>
+              <div className="border border-stone-200 rounded-lg p-3 bg-white"><p className="text-stone-500">Term</p><p className="font-semibold">{d.termYears.toFixed(2)} years</p></div>
+              <div className="border border-stone-200 rounded-lg p-3 bg-white"><p className="text-stone-500">NPV</p><p className="font-semibold">{formatCurrency(d.npvCost)}</p></div>
+              <div className="border border-stone-200 rounded-lg p-3 bg-white"><p className="text-stone-500">Avg cost/SF/year</p><p className="font-semibold">{formatCurrencyPerSF(d.avgCostPsfYear)}</p></div>
+            </div>
 
-          <h3 className="text-lg font-medium mb-2">Rent Steps</h3>
-          <div className="overflow-x-auto border border-stone-300 rounded-lg mb-5">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-stone-100">
-                  <th className="text-left p-2 border border-stone-300">Start month</th>
-                  <th className="text-left p-2 border border-stone-300">End month</th>
-                  <th className="text-left p-2 border border-stone-300">Rate ($/SF/year)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.rentSteps.length === 0 ? (
-                  <tr><td colSpan={3} className="p-2 border border-stone-200 text-stone-500">No rent steps provided.</td></tr>
-                ) : d.rentSteps.map((step, idx) => (
-                  <tr key={`${d.name}-step-${idx}`} className={idx % 2 === 0 ? "bg-white" : "bg-stone-50"}>
-                    <td className="p-2 border border-stone-200">{step.start}</td>
-                    <td className="p-2 border border-stone-200">{step.end}</td>
-                    <td className="p-2 border border-stone-200">{formatCurrencyPerSF(step.rate)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <h3 className="text-lg font-medium mb-2">Relevant Notes & Clauses</h3>
-          {d.clauses.length > 0 ? (
-            <div className="border border-stone-300 rounded-lg overflow-hidden">
-              <table className="w-full text-xs">
+            <h3 className="text-lg font-medium mb-2">Rent Steps</h3>
+            <div className="overflow-hidden border border-stone-300 rounded-lg mb-5 bg-white">
+              <table className="w-full text-xs table-fixed">
                 <thead>
                   <tr className="bg-stone-100">
-                    <th className="text-left p-2 border border-stone-300 w-44">Category</th>
-                    <th className="text-left p-2 border border-stone-300">Detail</th>
+                    <th className="text-left p-2 border border-stone-300 w-32">Start month</th>
+                    <th className="text-left p-2 border border-stone-300 w-32">End month</th>
+                    <th className="text-left p-2 border border-stone-300">Rate ($/SF/year)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {d.clauses.map((c, idx) => (
-                    <tr key={`${d.name}-clause-${idx}`} className={idx % 2 === 0 ? "bg-white" : "bg-stone-50"}>
-                      <td className="p-2 border border-stone-200 font-medium">{c.category}</td>
-                      <td className="p-2 border border-stone-200">{c.detail}</td>
+                  {d.rentSteps.length === 0 ? (
+                    <tr><td colSpan={3} className="p-2 border border-stone-200 text-stone-500">No rent steps provided.</td></tr>
+                  ) : d.rentSteps.map((step, idx) => (
+                    <tr key={`${d.name}-step-${idx}`} className={idx % 2 === 0 ? "bg-white" : "bg-stone-50"}>
+                      <td className="p-2 border border-stone-200">{step.start}</td>
+                      <td className="p-2 border border-stone-200">{step.end}</td>
+                      <td className="p-2 border border-stone-200">{formatCurrencyPerSF(step.rate)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          ) : (
-            <p className="text-sm text-stone-500">No additional lease notes were captured for this scenario.</p>
-          )}
-        </section>
-      ))}
+          </section>
+        ))}
 
-      <section className="min-h-[40vh] p-8 md:p-10">
-        <h2 className="text-xl font-semibold mb-3">Disclaimer</h2>
-        <p className="text-sm text-stone-600 max-w-3xl">
-          This analysis is for discussion purposes only. Figures are based on the assumptions provided and do not constitute legal, accounting, or investment advice.
-          Verify lease language and business terms with legal counsel and your brokerage team prior to final decisions.
-        </p>
-      </section>
+        <section className="px-8 py-9 md:px-10 md:py-10">
+          <h2 className="text-xl font-semibold mb-3">Disclaimer</h2>
+          <p className="text-sm text-stone-600 max-w-4xl">
+            This analysis is for discussion purposes only. Figures are based on the assumptions provided and do not constitute legal, accounting,
+            or investment advice. Verify lease language and business terms with legal counsel and your brokerage team before final decisions.
+          </p>
+        </section>
+      </main>
+
+      <style jsx global>{`
+        @media print {
+          .report-page {
+            background: #fff !important;
+            color: #111827 !important;
+          }
+          .report-page .page-break {
+            break-after: page;
+            page-break-after: always;
+          }
+          .report-page .avoid-break {
+            break-inside: avoid-page;
+            page-break-inside: avoid;
+          }
+          .report-page table {
+            page-break-inside: auto;
+          }
+          .report-page tr,
+          .report-page td,
+          .report-page th {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+        }
+      `}</style>
     </div>
   );
 }

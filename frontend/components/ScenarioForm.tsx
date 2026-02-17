@@ -8,6 +8,8 @@ interface ScenarioFormProps {
   onUpdate: (s: ScenarioWithId) => void;
   onAddScenario: () => void;
   onDuplicateScenario: () => void;
+  onDeleteScenario: (id: string) => void;
+  onAcceptChanges: () => void;
 }
 
 const defaultScenarioInput: ScenarioInput = {
@@ -33,6 +35,8 @@ export function ScenarioForm({
   onUpdate,
   onAddScenario,
   onDuplicateScenario,
+  onDeleteScenario,
+  onAcceptChanges,
 }: ScenarioFormProps) {
   const update = <K extends keyof ScenarioInput>(
     key: K,
@@ -54,6 +58,73 @@ export function ScenarioForm({
     );
     onUpdate({ ...scenario, rent_steps: steps });
   };
+
+  const addRentStep = () => {
+    if (!scenario) return;
+    const last = scenario.rent_steps[scenario.rent_steps.length - 1];
+    const nextStart = last ? Math.max(0, last.end + 1) : 0;
+    const nextEnd = nextStart + 11;
+    const nextRate = last ? last.rate_psf_yr : 0;
+    onUpdate({
+      ...scenario,
+      rent_steps: [...scenario.rent_steps, { start: nextStart, end: nextEnd, rate_psf_yr: nextRate }],
+    });
+  };
+
+  const removeRentStep = (index: number) => {
+    if (!scenario) return;
+    if (scenario.rent_steps.length <= 1) return;
+    onUpdate({
+      ...scenario,
+      rent_steps: scenario.rent_steps.filter((_, i) => i !== index),
+    });
+  };
+
+  const autoFixRentSteps = () => {
+    if (!scenario) return;
+    const sorted = [...scenario.rent_steps]
+      .map((s) => ({
+        start: Math.max(0, Math.floor(Number(s.start) || 0)),
+        end: Math.max(0, Math.floor(Number(s.end) || 0)),
+        rate_psf_yr: Math.max(0, Number(s.rate_psf_yr) || 0),
+      }))
+      .sort((a, b) => (a.start - b.start) || (a.end - b.end));
+
+    const normalized: RentStep[] = [];
+    sorted.forEach((step, idx) => {
+      const prev = normalized[normalized.length - 1];
+      let start = step.start;
+      if (idx === 0 && start !== 0) start = 0;
+      if (prev) start = Math.max(start, prev.end + 1);
+      const end = Math.max(start, step.end);
+      const rate = step.rate_psf_yr;
+
+      if (prev && start === prev.end + 1 && Math.abs(prev.rate_psf_yr - rate) < 0.005) {
+        prev.end = end;
+      } else {
+        normalized.push({ start, end, rate_psf_yr: rate });
+      }
+    });
+
+    onUpdate({ ...scenario, rent_steps: normalized.length > 0 ? normalized : [{ start: 0, end: 11, rate_psf_yr: 0 }] });
+  };
+
+  const rentStepIssues = (() => {
+    if (!scenario || scenario.rent_steps.length === 0) return ["Add at least one rent step."];
+    const issues: string[] = [];
+    const steps = [...scenario.rent_steps].sort((a, b) => a.start - b.start);
+    if (steps[0] && steps[0].start !== 0) issues.push("First step should start at month 0.");
+    for (let i = 0; i < steps.length; i += 1) {
+      const s = steps[i];
+      if (s.end < s.start) issues.push(`Step ${i + 1} ends before it starts.`);
+      if (i > 0) {
+        const prev = steps[i - 1];
+        if (s.start <= prev.end) issues.push(`Step ${i + 1} overlaps step ${i}.`);
+        if (s.start > prev.end + 1) issues.push(`Gap between step ${i} and step ${i + 1}.`);
+      }
+    }
+    return issues;
+  })();
 
   const inputClass = "mt-1 block w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm text-white focus:border-[#3b82f6] focus:outline-none focus:ring-1 focus:ring-[#3b82f6] placeholder:text-zinc-500";
   const btnSecondary = "rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b]";
@@ -79,19 +150,39 @@ export function ScenarioForm({
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <div>
           <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-1">Scenario editor</p>
           <h2 className="text-lg font-semibold text-white">Scenario editor</h2>
         </div>
-        <span className="inline-flex gap-2">
-          <button type="button" onClick={onAddScenario} className={btnSecondary}>
-            Add scenario
-          </button>
-          <button type="button" onClick={onDuplicateScenario} className={btnSecondary}>
-            Duplicate scenario
-          </button>
-        </span>
+      </div>
+
+      <div className="mb-5 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onAcceptChanges}
+          className="rounded-full bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          title="Save edits and close the scenario editor"
+        >
+          Accept changes
+        </button>
+        <button type="button" onClick={onAddScenario} className={btnSecondary}>
+          Add scenario
+        </button>
+        <button type="button" onClick={onDuplicateScenario} className={btnSecondary}>
+          Duplicate scenario
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof window !== "undefined" && window.confirm("Delete this scenario?")) {
+              onDeleteScenario(scenario.id);
+            }
+          }}
+          className="rounded-full border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-500/20 focus:outline-none focus:ring-2 focus:ring-red-500"
+        >
+          Delete scenario
+        </button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -229,14 +320,48 @@ export function ScenarioForm({
         </label>
       </div>
 
-      <div className="mt-4">
-        <span className="text-sm text-zinc-400 block mb-2">
-          Rent steps (start month, end month, rate $/SF/yr)
-        </span>
+      <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Rent schedule</h3>
+            <p className="text-xs text-zinc-400 mt-1">
+              Month `0` is lease start. Steps must be continuous with no overlap. Example: `0-11`, `12-23`, `24-35`.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button type="button" onClick={autoFixRentSteps} className={btnSecondary}>
+              Auto-fix steps
+            </button>
+            <button type="button" onClick={addRentStep} className={btnSecondary}>
+              Add rent step
+            </button>
+          </div>
+        </div>
+        {rentStepIssues.length > 0 && (
+          <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+            <p className="text-xs font-medium text-amber-200 mb-1">Rent step warnings</p>
+            <ul className="list-disc list-inside text-xs text-amber-100/90 space-y-0.5">
+              {rentStepIssues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="hidden md:grid grid-cols-[64px_1fr_1fr_1fr_120px_80px] gap-3 px-1 pb-1">
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Step</span>
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Rate ($/SF/yr)</span>
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Lease years</span>
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Action</span>
+        </div>
         {scenario.rent_steps.map((step, i) => (
-          <div key={i} className="flex flex-wrap gap-3 items-end mb-2">
+          <div key={i} className="grid grid-cols-1 md:grid-cols-[64px_1fr_1fr_1fr_120px_80px] gap-3 items-end mb-3">
+            <div className="text-xs text-zinc-400 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
+              #{i + 1}
+            </div>
             <label>
-              <span className="sr-only">Start month</span>
+              <span className="text-xs text-zinc-500 mb-1 block">Start month</span>
               <input
                 type="number"
                 min={0}
@@ -244,11 +369,11 @@ export function ScenarioForm({
                 onChange={(e) =>
                   updateRentStep(i, "start", Number(e.target.value))
                 }
-                className="w-24 rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
               />
             </label>
             <label>
-              <span className="sr-only">End month</span>
+              <span className="text-xs text-zinc-500 mb-1 block">End month</span>
               <input
                 type="number"
                 min={0}
@@ -256,11 +381,11 @@ export function ScenarioForm({
                 onChange={(e) =>
                   updateRentStep(i, "end", Number(e.target.value))
                 }
-                className="w-24 rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
               />
             </label>
             <label>
-              <span className="sr-only">Rate $/SF/yr</span>
+              <span className="text-xs text-zinc-500 mb-1 block">Rate ($/SF/yr)</span>
               <input
                 type="number"
                 min={0}
@@ -269,9 +394,20 @@ export function ScenarioForm({
                 onChange={(e) =>
                   updateRentStep(i, "rate_psf_yr", Number(e.target.value))
                 }
-                className="w-28 rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
               />
             </label>
+            <div className="text-xs text-zinc-300 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
+              Y{Math.floor(step.start / 12) + 1} - Y{Math.floor(step.end / 12) + 1}
+            </div>
+            <button
+              type="button"
+              onClick={() => removeRentStep(i)}
+              disabled={scenario.rent_steps.length <= 1}
+              className="h-9 rounded-lg border border-red-500/40 text-red-300 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Remove
+            </button>
           </div>
         ))}
       </div>
