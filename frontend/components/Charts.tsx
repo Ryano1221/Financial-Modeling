@@ -1,16 +1,6 @@
 "use client";
 
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 import { formatCurrency, formatCurrencyPerSF } from "@/lib/format";
-import type { CashflowResult } from "@/lib/types";
 
 export interface ChartRow {
   name: string;
@@ -23,76 +13,86 @@ interface ChartsProps {
   data: ChartRow[];
 }
 
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
+}
+
+function MetricCard({
+  title,
+  rows,
+  getValue,
+  format,
+}: {
+  title: string;
+  rows: ChartRow[];
+  getValue: (r: ChartRow) => number;
+  format: (v: number) => string;
+}) {
+  const values = rows.map(getValue).map((v) => (Number.isFinite(v) ? v : 0));
+  const max = Math.max(1, ...values);
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+      <h3 className="text-sm font-medium text-white mb-4">{title}</h3>
+      <div className="space-y-3">
+        {rows.map((row) => {
+          const value = Number.isFinite(getValue(row)) ? getValue(row) : 0;
+          const widthPct = clampPercent((value / max) * 100);
+          return (
+            <div key={`${title}-${row.name}`} className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-zinc-300 truncate max-w-[65%]" title={row.name}>
+                  {row.name}
+                </span>
+                <span className="text-xs text-zinc-400">{format(value)}</span>
+              </div>
+              <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-[#3b82f6] rounded-full transition-all duration-500"
+                  style={{ width: `${widthPct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function Charts({ data }: ChartsProps) {
   if (data.length === 0) return null;
 
-  const chartClass = "rounded-xl border border-white/10 bg-white/[0.03] p-5";
-  const chartHeight = 280;
-  const gridStroke = "rgba(255,255,255,0.08)";
-  const barFill = "#3b82f6";
-  const xDomain: [number, (max: number) => number] = [0, (max) => (Number.isFinite(max) && max > 0 ? max * 1.1 : 1)];
-  const allZero =
-    data.every((d) => d.avg_cost_psf_year === 0) &&
-    data.every((d) => d.npv_cost === 0) &&
-    data.every((d) => d.avg_cost_year === 0);
+  const rows = data.filter(
+    (d) =>
+      Number.isFinite(d.avg_cost_psf_year) &&
+      Number.isFinite(d.npv_cost) &&
+      Number.isFinite(d.avg_cost_year)
+  );
+  if (rows.length === 0) return null;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {allZero && (
-        <div className="lg:col-span-3 text-xs text-amber-300/90 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-          Charts are zero because all computed costs are currently 0. Confirm rent steps, RSF, dates, and OpEx values.
-        </div>
-      )}
-      <div className={chartClass}>
-        <h3 className="text-sm font-medium text-white mb-3">
-          Avg cost $/SF/year by scenario
-        </h3>
-        <div style={{ height: chartHeight }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-              <XAxis type="number" domain={xDomain} tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrencyPerSF(v)} />
-              <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
-              <Tooltip formatter={(v: number) => formatCurrencyPerSF(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
-              <Bar dataKey="avg_cost_psf_year" fill={barFill} radius={[0, 4, 4, 0]} name="Avg $/SF/yr" minPointSize={3} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className={chartClass}>
-        <h3 className="text-sm font-medium text-white mb-3">
-          NPV cost by scenario
-        </h3>
-        <div style={{ height: chartHeight }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-              <XAxis type="number" domain={xDomain} tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrency(v)} />
-              <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
-              <Tooltip formatter={(v: number) => formatCurrency(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
-              <Bar dataKey="npv_cost" fill={barFill} radius={[0, 4, 4, 0]} name="NPV cost" minPointSize={3} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className={chartClass}>
-        <h3 className="text-sm font-medium text-white mb-3">
-          Avg cost/year by scenario
-        </h3>
-        <div style={{ height: chartHeight }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-              <XAxis type="number" domain={xDomain} tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrency(v)} />
-              <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
-              <Tooltip formatter={(v: number) => formatCurrency(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
-              <Bar dataKey="avg_cost_year" fill={barFill} radius={[0, 4, 4, 0]} name="Avg cost/yr" minPointSize={3} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      <MetricCard
+        title="Avg cost $/SF/year by scenario"
+        rows={rows}
+        getValue={(r) => r.avg_cost_psf_year}
+        format={(v) => formatCurrencyPerSF(v)}
+      />
+      <MetricCard
+        title="NPV cost by scenario"
+        rows={rows}
+        getValue={(r) => r.npv_cost}
+        format={(v) => formatCurrency(v)}
+      />
+      <MetricCard
+        title="Avg cost/year by scenario"
+        rows={rows}
+        getValue={(r) => r.avg_cost_year}
+        format={(v) => formatCurrency(v)}
+      />
     </div>
   );
 }

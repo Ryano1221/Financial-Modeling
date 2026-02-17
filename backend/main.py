@@ -90,7 +90,10 @@ except ModuleNotFoundError:
 
 print("BOOT_VERSION", "health_v_2026_02_16_2055", flush=True)
 
-REPORT_BASE_URL = os.environ.get("REPORT_BASE_URL", "http://localhost:3000")
+REPORT_BASE_URL = os.environ.get(
+    "REPORT_BASE_URL",
+    "https://thecremodel.com" if os.environ.get("RENDER") else "http://localhost:3000",
+)
 
 # Version for /health and BOOT log (Render sets RENDER_GIT_COMMIT)
 VERSION = (os.environ.get("RENDER_GIT_COMMIT") or "").strip() or "unknown"
@@ -514,6 +517,55 @@ def _month_diff(commencement: date, expiration: date) -> int:
     return max(1, round(delta / 30.4375))
 
 
+def _normalize_suite_candidate(raw: str) -> str:
+    v = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not v:
+        return ""
+    v = re.sub(r"(?i)^(?:suite|ste\.?|unit|space|premises)\s*[:#-]?\s*", "", v).strip(" ,.;:-")
+    # Keep common suite formats like 110, 11C, A-210, PH-2
+    token_match = re.match(r"(?i)^([A-Za-z0-9][A-Za-z0-9\-]{0,14})", v)
+    if token_match:
+        token = token_match.group(1)
+        low = token.lower()
+        # Reject common header/lease words that are not suites.
+        if low in {
+            "landlord", "tenant", "lease", "premises", "building", "property",
+            "office", "floor", "term", "year", "month", "rent", "address",
+            "located", "option", "renewal", "expiration", "commencement",
+        }:
+            return ""
+        # Suites are typically numeric/alphanumeric short tokens; reject long words without digits.
+        if not re.search(r"\d", token) and len(token) > 6:
+            return ""
+        if re.fullmatch(r"(?i)\d+", token):
+            return token.lstrip("0") or token
+        return token.upper()
+    return ""
+
+
+def _extract_suite_from_text(text: str) -> str:
+    if not text:
+        return ""
+    suite_patterns = [
+        r"(?i)\b(?:suite|ste\.?|unit|space)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
+        r"(?i)\bpremises\s*(?:known as|is|:)?\s*(?:suite|ste\.?)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
+        r"(?i)\bat\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
+        r"(?i)\bfloor\s+([A-Za-z0-9][A-Za-z0-9\-]{0,8})\s+suite\s+([A-Za-z0-9][A-Za-z0-9\-]{0,14})",
+    ]
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    search_lines = lines[:220]
+    for ln in search_lines:
+        for pat in suite_patterns:
+            m = re.search(pat, ln)
+            if not m:
+                continue
+            candidate_raw = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
+            candidate = _normalize_suite_candidate(candidate_raw)
+            if candidate:
+                return candidate
+    return ""
+
+
 def _looks_like_address(value: str) -> bool:
     v = " ".join((value or "").split()).strip()
     if not v:
@@ -674,24 +726,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # ---- Suite ----
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    head = lines[:80]
-    suite_patterns = [
-        r"(?i)\b(?:suite|ste\.?|unit|space)\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
-        r"(?i)premises[^.]*?(?:suite|ste\.?)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
-        r"(?i)at\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,40})",
-    ]
-    for ln in head:
-        for pat in suite_patterns:
-            m = re.search(pat, ln)
-            if m:
-                raw = m.group(1).strip(" ,.-")
-                # Normalize "Suite 220" / "Ste 220" -> "220" (digits only or first token)
-                if raw:
-                    digits_only = re.sub(r"\D", "", raw)
-                    hints["suite"] = digits_only if digits_only else raw
-                break
-        if hints["suite"]:
-            break
+    head = lines[:120]
+    hints["suite"] = _extract_suite_from_text(text)
 
     # ---- Address / building (includes premises labels and located-at lines) ----
     building_patterns = [
@@ -983,6 +1019,8 @@ def _normalize_impl(
             if extracted_hints.get("term_months") is not None:
                 updates["term_months"] = extracted_hints["term_months"]
             suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
+            if not suite_val:
+                suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
             building_val = str(extracted_hints.get("building_name") or "").strip()
             if not building_val:
                 building_val = _derive_building_name_from_premises_or_address(
@@ -1001,12 +1039,12 @@ def _normalize_impl(
                 # If this is actually an address and address is blank, keep both populated.
                 if not (canonical.address or "").strip() and _looks_like_address(building_val):
                     updates["address"] = building_val
-            if extracted_hints.get("suite"):
-                updates["suite"] = str(extracted_hints["suite"])
-            if building_val and extracted_hints.get("suite"):
-                updates["premises_name"] = f"{building_val} Suite {extracted_hints['suite']}"
-            elif extracted_hints.get("suite") and not (canonical.premises_name or "").strip():
-                updates["premises_name"] = str(extracted_hints["suite"])
+            if suite_val:
+                updates["suite"] = suite_val
+            if building_val and suite_val:
+                updates["premises_name"] = f"{building_val} Suite {suite_val}"
+            elif suite_val and not (canonical.premises_name or "").strip():
+                updates["premises_name"] = f"Suite {suite_val}"
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
             if note_highlights:
@@ -1284,14 +1322,42 @@ def get_report_pdf(report_id: str):
 
     url = f"{REPORT_BASE_URL}/report?reportId={report_id}"
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.goto(url, wait_until="networkidle", timeout=30000)
-        page.emulate_media(media="print")
-        page.wait_for_timeout(1500)  # allow charts to render
-        pdf_bytes = page.pdf(format="A4", print_background=True, margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"})
-        browser.close()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.emulate_media(media="print")
+            page.wait_for_timeout(1500)  # allow charts to render
+            pdf_bytes = page.pdf(
+                format="A4",
+                print_background=True,
+                margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
+            )
+            browser.close()
+    except Exception as e:
+        # Fallback: generate report PDF directly from stored first scenario.
+        try:
+            entries = data.get("scenarios") if isinstance(data, dict) else None
+            if not isinstance(entries, list) or not entries:
+                raise ValueError("No scenarios in stored report payload.")
+            first = entries[0] if isinstance(entries[0], dict) else {}
+            scenario_raw = first.get("scenario")
+            result_raw = first.get("result")
+            if not isinstance(scenario_raw, dict) or not isinstance(result_raw, dict):
+                raise ValueError("Invalid stored report payload shape.")
+            scenario = Scenario.model_validate(scenario_raw)
+            compute_result = CashflowResult.model_validate(result_raw)
+            brand = get_brand("default")
+            if brand is None:
+                raise ValueError("Default brand not found.")
+            from reporting.report_builder import build_report_pdf
+            pdf_bytes = build_report_pdf(scenario, compute_result, brand, meta={})
+        except Exception as fallback_err:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Deck PDF failed via URL ({e!s}) and direct fallback ({fallback_err!s}).",
+            ) from fallback_err
 
     return Response(
         content=pdf_bytes,

@@ -563,13 +563,53 @@ export default function Home() {
         throw new Error(text || `HTTP ${res.status}`);
       }
       const data: { report_id: string } = await res.json();
-      window.open(getApiUrl(`/reports/${data.report_id}/pdf`), "_blank", "noopener,noreferrer");
+      const pdfRes = await fetchApi(`/reports/${data.report_id}/pdf`, { method: "GET" });
+      if (!pdfRes.ok) {
+        const body = await pdfRes.json().catch(() => null);
+        const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : `HTTP ${pdfRes.status}`;
+        throw new Error(detail);
+      }
+      const blob = await pdfRes.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "lease-deck.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      setExportPdfError(getDisplayErrorMessage(err));
+      const fallbackErr = getDisplayErrorMessage(err);
+      // Fallback: if deck PDF fails, generate selected scenario report PDF directly.
+      if (selectedScenario) {
+        try {
+          const direct = await fetchApi("/report", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              brand_id: brandId,
+              scenario: scenarioToPayload(selectedScenario),
+              meta: buildReportMeta(),
+            }),
+          });
+          if (direct.ok) {
+            const blob = await direct.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "lease-financial-analysis.pdf";
+            a.click();
+            URL.revokeObjectURL(url);
+            setExportPdfError("Deck PDF failed; downloaded selected scenario report PDF instead.");
+            return;
+          }
+        } catch {
+          // fall through to original error
+        }
+      }
+      setExportPdfError(fallbackErr);
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, results]);
+  }, [scenarios, results, selectedScenario, brandId, buildReportMeta]);
 
   const buildReportMeta = useCallback(() => ({
     prepared_for: reportMeta.prepared_for || undefined,
@@ -601,6 +641,27 @@ export default function Home() {
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : res.statusText;
+        if (res.status === 503) {
+          const previewRes = await fetchApi("/report/preview", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              brand_id: brandId,
+              scenario: scenarioToPayload(selectedScenario),
+              meta: buildReportMeta(),
+            }),
+          });
+          if (previewRes.ok) {
+            const html = await previewRes.text();
+            const w = window.open("", "_blank", "noopener,noreferrer");
+            if (w) {
+              w.document.write(html);
+              w.document.close();
+            }
+            setReportError({ statusCode: 503, message: "PDF service unavailable, opened HTML preview instead.", reportId });
+            return;
+          }
+        }
         setReportError({ statusCode: res.status, message: detail || `HTTP ${res.status}`, reportId });
         return;
       }
