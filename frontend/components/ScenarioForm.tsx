@@ -1,6 +1,7 @@
 "use client";
 
 import type { ScenarioWithId, ScenarioInput, RentStep, OpexMode } from "@/lib/types";
+import { buildPremisesName } from "@/lib/canonical-api";
 
 interface ScenarioFormProps {
   scenario: ScenarioWithId | null;
@@ -11,6 +12,9 @@ interface ScenarioFormProps {
 
 const defaultScenarioInput: ScenarioInput = {
   name: "New scenario",
+  building_name: "",
+  suite: "",
+  floor: "",
   rsf: 10000,
   commencement: "2026-01-01",
   expiration: "2031-01-01",
@@ -35,7 +39,12 @@ export function ScenarioForm({
     value: ScenarioInput[K]
   ) => {
     if (!scenario) return;
-    onUpdate({ ...scenario, [key]: value });
+    const next = { ...scenario, [key]: value };
+    if (key === "building_name" || key === "suite") {
+      const label = buildPremisesName(next.building_name, next.suite);
+      if (label) next.name = label;
+    }
+    onUpdate(next);
   };
 
   const updateRentStep = (index: number, field: keyof RentStep, value: number) => {
@@ -87,8 +96,20 @@ export function ScenarioForm({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <label className="block">
-          <span className="text-sm text-zinc-400">Name</span>
-          <input type="text" value={scenario.name} onChange={(e) => update("name", e.target.value)} className={inputClass} />
+          <span className="text-sm text-zinc-400">Building name</span>
+          <input type="text" value={scenario.building_name ?? ""} onChange={(e) => update("building_name", e.target.value)} className={inputClass} placeholder="e.g. Capital View Center" />
+        </label>
+        <label className="block">
+          <span className="text-sm text-zinc-400">Suite</span>
+          <input type="text" value={scenario.suite ?? ""} onChange={(e) => update("suite", e.target.value)} className={inputClass} placeholder="e.g. 220" />
+        </label>
+        <label className="block">
+          <span className="text-sm text-zinc-400">Floor (optional)</span>
+          <input type="text" value={scenario.floor ?? ""} onChange={(e) => update("floor", e.target.value)} className={inputClass} placeholder="e.g. 2" />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className="text-sm text-zinc-400">Street address (optional)</span>
+          <input type="text" value={scenario.address ?? ""} onChange={(e) => update("address", e.target.value)} className={inputClass} placeholder="e.g. 123 Main St, City, State" />
         </label>
         <label className="block">
           <span className="text-sm text-zinc-400">RSF</span>

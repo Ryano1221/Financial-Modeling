@@ -81,6 +81,9 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         scenario_name=scenario_name or scenario.name,
         premises_name=scenario.name,
         address="",
+        building_name="",
+        suite="",
+        floor="",
         rsf=scenario.rsf,
         lease_type=LeaseType.NNN if scenario.opex_mode.value == "nnn" else LeaseType.NNN,
         commencement_date=scenario.commencement,
@@ -156,11 +159,21 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
     except ValueError:
         est = ExpenseStructureType.NNN
 
+    building_name = str(get("building_name", "") or "").strip()
+    suite = str(get("suite", "") or "").strip()
+    floor = str(get("floor", "") or "").strip()
+    premises = str(get("premises_name", get("name", "") or "")).strip()
+    if building_name and suite and not premises:
+        premises = f"{building_name} Suite {suite}"
+
     return CanonicalLease(
         scenario_id=scenario_id or get("scenario_id", ""),
         scenario_name=scenario_name or get("scenario_name", get("name", "Unnamed")),
-        premises_name=get("premises_name", get("name", "")),
+        premises_name=premises,
         address=get("address", ""),
+        building_name=building_name,
+        suite=suite,
+        floor=floor,
         rsf=float(get("rsf", 0) or 0),
         lease_type=lt,
         commencement_date=comm or date(2026, 1, 1),
@@ -199,9 +212,10 @@ def _compute_confidence_and_missing(lease: CanonicalLease) -> tuple[float, List[
     """Compute aggregate confidence, missing fields, and clarification questions."""
     missing: List[str] = []
     questions: List[str] = []
-    if not lease.premises_name:
+    has_premises = bool((lease.premises_name or "").strip()) or bool((lease.building_name or "").strip()) or bool((lease.suite or "").strip())
+    if not has_premises:
         missing.append("premises_name")
-        questions.append("What is the premises or suite name?")
+        questions.append("What is the building name or suite?")
     if lease.rsf <= 0:
         missing.append("rsf")
         questions.append("What is the rentable square footage?")

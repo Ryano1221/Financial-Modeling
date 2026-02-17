@@ -1,12 +1,13 @@
+import { getApiBaseUrl, getSiteUrl } from "./env";
+
 /**
- * Backend base URL: NEXT_PUBLIC_BACKEND_URL (no trailing slash).
- * Required for all environments; browser calls Render directly (no Vercel proxy).
+ * Backend base URL (no trailing slash). Uses getApiBaseUrl from env.ts.
+ * Set NEXT_PUBLIC_API_BASE_URL or NEXT_PUBLIC_BACKEND_URL in production.
  */
 export function getBackendBaseUrl(): string {
-  const v = process.env.NEXT_PUBLIC_BACKEND_URL?.trim() ?? "";
-  const url = v.endsWith("/") ? v.slice(0, -1) : v;
+  const url = getApiBaseUrl();
   if (!url) {
-    throw new Error("NEXT_PUBLIC_BACKEND_URL is not set. Set it in Vercel (or .env.local) to your Render backend URL.");
+    throw new Error("API base URL is not set. Set NEXT_PUBLIC_API_BASE_URL or NEXT_PUBLIC_BACKEND_URL in Vercel (or .env.local).");
   }
   return url;
 }
@@ -21,10 +22,12 @@ export function getBackendBaseUrlForDisplay(): string {
 }
 
 let _logged = false;
-/** Log resolved backend base URL once on page load (dev only). Call from a client component on mount. */
-export function logBackendBaseUrlOnce(): void {
+/** Log resolved API and site URLs once on page load. Call from a client component on mount. */
+export function logResolvedUrlsOnce(): void {
   if (_logged) return;
   _logged = true;
-  const url = getBackendBaseUrlForDisplay();
-  console.log("[backend] NEXT_PUBLIC_BACKEND_URL resolved:", url);
+  const api = getBackendBaseUrlForDisplay();
+  const site = getSiteUrl() || "[not set]";
+  console.log("RESOLVED_API_BASE_URL", api);
+  console.log("RESOLVED_SITE_URL", site);
 }

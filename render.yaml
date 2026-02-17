@@ -1,6 +1,8 @@
+# Backend: Docker service. Frontend (Vercel) must set NEXT_PUBLIC_BACKEND_URL to this service URL.
+# If you have a second, non-Docker Python service, name it financial-modeling-legacy and do not use it for production.
 services:
   - type: web
-    name: thecremodel-backend
+    name: financial-modeling-docker
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend

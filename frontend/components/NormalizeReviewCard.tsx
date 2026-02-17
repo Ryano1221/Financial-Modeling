@@ -4,8 +4,10 @@ import { useState, useCallback } from "react";
 import type { NormalizerResponse, BackendCanonicalLease } from "@/lib/types";
 
 const REVIEW_FIELDS: { key: keyof BackendCanonicalLease; label: string; type?: "number" | "text"; placeholder?: string }[] = [
-  { key: "address", label: "Building name", type: "text", placeholder: "Enter building name" },
-  { key: "premises_name", label: "Suite", type: "text", placeholder: "Enter suite" },
+  { key: "building_name", label: "Building name", type: "text", placeholder: "e.g. Capital View Center" },
+  { key: "suite", label: "Suite", type: "text", placeholder: "e.g. 220" },
+  { key: "floor", label: "Floor (optional)", type: "text", placeholder: "e.g. 2" },
+  { key: "address", label: "Street address", type: "text", placeholder: "e.g. 123 Main St, City, State" },
   { key: "rsf", label: "RSF", type: "number" },
   { key: "commencement_date", label: "Commencement date", type: "text" },
   { key: "expiration_date", label: "Expiration date", type: "text" },
@@ -33,7 +35,11 @@ export function NormalizeReviewCard({ data, onConfirm, onCancel }: NormalizeRevi
   }, []);
 
   const handleConfirm = useCallback(() => {
-    onConfirm(edited);
+    const payload = { ...edited };
+    const b = (payload.building_name ?? "").toString().trim();
+    const su = (payload.suite ?? "").toString().trim();
+    if (b && su) payload.premises_name = `${b} Suite ${su}`;
+    onConfirm(payload);
   }, [edited, onConfirm]);
 
   return (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatRSF, formatDateISO } from "@/lib/format";
 import type { ScenarioWithId } from "@/lib/types";
 
 interface ScenarioListProps {
@@ -109,9 +110,9 @@ export function ScenarioList({
                     </button>
                   )}
                 </td>
-                <td className="py-2.5 px-4 text-right text-zinc-400">{s.rsf.toLocaleString()}</td>
-                <td className="py-2.5 px-4 text-zinc-400">{s.commencement}</td>
-                <td className="py-2.5 px-4 text-zinc-400">{s.expiration}</td>
+                <td className="py-2.5 px-4 text-right text-zinc-400">{formatRSF(s.rsf)}</td>
+                <td className="py-2.5 px-4 text-zinc-400">{formatDateISO(s.commencement)}</td>
+                <td className="py-2.5 px-4 text-zinc-400">{formatDateISO(s.expiration)}</td>
                 <td className="py-2.5 px-4 text-zinc-400 capitalize">
                   {s.opex_mode === "base_year" ? "Base year" : "NNN"}
                 </td>

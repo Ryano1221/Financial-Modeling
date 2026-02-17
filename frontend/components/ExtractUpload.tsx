@@ -1,8 +1,12 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { fetchApi, getApiUrl } from "@/lib/api";
+import { getApiUrl, getBaseUrl } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
+
+const NORMALIZE_TIMEOUT_MS = 60000;
+const NORMALIZE_TIMEOUT_MESSAGE =
+  "Normalize request timed out after 60s. Backend may be cold starting or stuck processing.";
 
 interface ExtractUploadProps {
   showAdvancedOptions?: boolean;
@@ -110,68 +114,72 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
       }
       setLoading(true);
       onError("");
-      const buildForm = () => {
-        const form = new FormData();
-        form.append("source", fn.endsWith(".pdf") ? "PDF" : "WORD");
-        form.append("file", file);
-        return form;
-      };
-      const maxTries = 3;
-      const retryDelayMs = 6000;
-      let lastRes: Response | null = null;
-      let lastBody: unknown = null;
+      const rid = crypto.randomUUID();
+      const form = new FormData();
+      form.append("source", fn.endsWith(".pdf") ? "PDF" : "WORD");
+      form.append("file", file);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), NORMALIZE_TIMEOUT_MS);
       try {
-        const requestUrl = getApiUrl("/normalize");
-        console.log("[ExtractUpload] start upload");
-        console.log("[ExtractUpload] request url:", requestUrl);
-        for (let attempt = 1; attempt <= maxTries; attempt++) {
+        console.log("[normalize] start", {
+          rid,
+          file: file.name,
+          size: file.size,
+          type: file.type,
+          backend: getBaseUrl(),
+        });
+        const url = getApiUrl("/normalize");
+        const res = await fetch(url, {
+          method: "POST",
+          body: form,
+          headers: { "x-request-id": rid },
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        console.log("[normalize] response", { rid, status: res.status });
+        const rawText = await res.text();
+        if (res.ok) {
+          let data: NormalizerResponse;
           try {
-            const res = await fetchApi("/normalize", {
-              method: "POST",
-              body: buildForm(),
-            });
-            lastRes = res;
-            console.log("[ExtractUpload] response status:", res.status);
-            const rawText = await res.text();
-            console.log("[ExtractUpload] response text (first 200 chars):", rawText.slice(0, 200));
-            if (res.ok) {
-              const data: NormalizerResponse = JSON.parse(rawText) as NormalizerResponse;
-              onSuccess(data);
-              return;
-            }
-            const body = JSON.parse(rawText || "{}") as unknown;
-            lastBody = body;
-            const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
-            const reason = classifyFailureReason(detail);
-            const isRetryable = [502, 503, 504].includes(res.status) && attempt < maxTries;
-            if (isRetryable) {
-              await new Promise((r) => setTimeout(r, retryDelayMs));
-              continue;
-            }
-            if (res.status >= 500 || res.status === 503 || res.status === 429) {
-              onError("");
-              onSuccess(buildFallbackNormalizerResponse(file.name, reason));
-              return;
-            }
-            onError(formatNormalizeError(res, body));
-            return;
-          } catch (e) {
-            if (attempt < maxTries) {
-              await new Promise((r) => setTimeout(r, retryDelayMs));
-            } else {
-              throw e;
-            }
+            data = JSON.parse(rawText) as NormalizerResponse;
+          } catch {
+            throw new Error("Normalize returned non-JSON: " + rawText.slice(0, 200));
           }
+          if (data.canonical_lease) {
+            console.log("[normalize] parsed", { hasCanonical: !!data?.canonical_lease, lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type });
+            console.log("[normalize] calling onSuccess");
+            onSuccess(data);
+            return;
+          }
+          throw new Error("Unexpected normalize response keys: " + Object.keys(data).join(","));
         }
-        if (lastRes && !lastRes.ok && lastBody !== null) {
-          const detail = lastBody && typeof lastBody === "object" && "detail" in lastBody ? (lastBody as { detail: unknown }).detail : null;
-          const reason = classifyFailureReason(detail);
+        const body = (() => {
+          try {
+            return JSON.parse(rawText || "{}") as unknown;
+          } catch {
+            return null;
+          }
+        })();
+        if (body && typeof body === "object" && "error" in body) {
+          throw new Error(String((body as { error: unknown }).error));
+        }
+        const reason = classifyFailureReason(body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null);
+        if (res.status >= 500 || res.status === 503 || res.status === 429) {
           onError("");
           onSuccess(buildFallbackNormalizerResponse(file.name, reason));
+          return;
         }
+        onError(formatNormalizeError(res, body));
       } catch (e) {
-        const reason = classifyFailureReason(e instanceof Error ? e.message : String(e));
-        onError("");
+        clearTimeout(timeoutId);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[normalize] error", { rid, msg });
+        if (e instanceof Error && (e.name === "AbortError" || msg.toLowerCase().includes("abort"))) {
+          onError(NORMALIZE_TIMEOUT_MESSAGE);
+          return;
+        }
+        const reason = classifyFailureReason(msg);
+        onError(msg || "Request failed.");
         onSuccess(buildFallbackNormalizerResponse(file.name, reason));
       } finally {
         setLoading(false);

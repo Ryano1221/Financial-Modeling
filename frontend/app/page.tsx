@@ -40,6 +40,7 @@ import {
   backendCanonicalToScenarioInput,
   scenarioInputToBackendCanonical,
   canonicalResponseToEngineResult,
+  getPremisesDisplayName,
   normalizeLeaseType,
 } from "@/lib/canonical-api";
 import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
@@ -714,10 +715,16 @@ export default function Home() {
     setExportExcelError(null);
     try {
       if (isProduction && scenarios.every((s) => canonicalComputeCache[s.id])) {
-        const items = scenarios.map((s) => ({
-          response: canonicalComputeCache[s.id]!,
-          scenarioName: s.name,
-        }));
+        const items = scenarios.map((s) => {
+          const res = canonicalComputeCache[s.id]!;
+          const scenarioName = getPremisesDisplayName({
+            building_name: res.metrics.building_name,
+            suite: res.metrics.suite,
+            premises_name: res.metrics.premises_name,
+            scenario_name: s.name,
+          });
+          return { response: res, scenarioName };
+        });
         const buffer = await buildBrokerWorkbookFromCanonicalResponses(items);
         const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
         const url = URL.createObjectURL(blob);
@@ -750,7 +757,15 @@ export default function Home() {
       return included
         .map((s) => {
           const cached = canonicalComputeCache[s.id];
-          if (cached) return canonicalResponseToEngineResult(cached, s.id, s.name);
+          if (cached) {
+            const displayName = getPremisesDisplayName({
+              building_name: cached.metrics.building_name,
+              suite: cached.metrics.suite,
+              premises_name: cached.metrics.premises_name,
+              scenario_name: s.name,
+            });
+            return canonicalResponseToEngineResult(cached, s.id, displayName);
+          }
           return null;
         })
         .filter((r): r is NonNullable<typeof r> => r !== null);
@@ -1095,4 +1110,3 @@ export default function Home() {
     </>
   );
 }
-// trigger redeploy

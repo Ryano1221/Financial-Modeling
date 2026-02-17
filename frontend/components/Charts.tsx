@@ -9,7 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { formatCurrency, formatCurrencyPerSF } from "@/lib/format";
 import type { CashflowResult } from "@/lib/types";
 
 export interface ChartRow {
@@ -41,9 +41,9 @@ export function Charts({ data }: ChartsProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 8 }} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatNumber(v)} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => formatCurrencyPerSF(v)} />
               <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11, fill: "#a1a1aa" }} />
-              <Tooltip formatter={(v: number) => formatNumber(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
+              <Tooltip formatter={(v: number) => formatCurrencyPerSF(v)} contentStyle={{ backgroundColor: "#111113", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }} labelStyle={{ color: "#fff" }} />
               <Bar dataKey="avg_cost_psf_year" fill={barFill} radius={[0, 4, 4, 0]} name="Avg $/SF/yr" />
             </BarChart>
           </ResponsiveContainer>

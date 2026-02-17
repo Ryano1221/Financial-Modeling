@@ -39,6 +39,9 @@ class CanonicalMetrics(BaseModel):
     """Summary matrix and broker metrics; labels locked for export."""
     premises_name: str = ""
     address: str = ""
+    building_name: str = ""
+    suite: str = ""
+    floor: str = ""
     rsf: float = 0.0
     lease_type: str = ""
     term_months: int = 0

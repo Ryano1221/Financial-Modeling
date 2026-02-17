@@ -580,9 +580,8 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
         scenario_dict, confidence, warnings = _apply_safe_defaults(raw)
         warnings = extra_warnings + warnings
     except Exception as e:
-        # Never block extraction on LLM availability; return heuristic scenario instead.
-        scenario_dict, confidence, warnings = _heuristic_extract_scenario(text, prefill, llm_error=e)
-        warnings = extra_warnings + warnings
+        print("AI_EXTRACT_FAIL", {"err": str(e)[:400], "type": type(e).__name__}, flush=True)
+        raise
     scenario = Scenario.model_validate(scenario_dict)
     return ExtractionResponse(
         scenario=scenario,

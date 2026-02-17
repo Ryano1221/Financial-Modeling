@@ -1,5 +1,5 @@
 {
-  "name": "lease-deck-workspace",
+  "name": "thecremodel-workspace",
   "private": true,
   "scripts": {
     "start:codex": "npx -y @openai/codex@latest app-server"

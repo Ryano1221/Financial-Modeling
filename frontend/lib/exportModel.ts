@@ -12,7 +12,7 @@ import type { EngineResult, MonthlyRow, AnnualRow } from "@/lib/lease-engine/mon
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
-import { formatBuildingSuiteAddress } from "@/lib/canonical-api";
+import { getPremisesDisplayName } from "@/lib/canonical-api";
 import {
   formatCurrency,
   formatCurrencyPerSF,
@@ -269,9 +269,9 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     summarySheet.getCell(2, col).font = { bold: true };
   });
   const metricLabels = SUMMARY_MATRIX_ROW_LABELS;
-  const getMetricVal = (m: CanonicalMetrics, rowIndex: number): string | number => {
+  const getMetricVal = (m: CanonicalMetrics, rowIndex: number, scenarioName?: string): string | number => {
     switch (rowIndex) {
-      case 0: return formatBuildingSuiteAddress({ building_name: m.building_name, suite: m.suite, address: m.address }) || m.premises_name || "";
+      case 0: return getPremisesDisplayName({ building_name: m.building_name, suite: m.suite, premises_name: m.premises_name, scenario_name: scenarioName });
       case 1: return m.rsf ?? 0;
       case 2: return m.lease_type ?? "";
       case 3: return m.term_months ?? 0;
@@ -295,7 +295,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     summarySheet.getCell(row, 1).value = label;
     summarySheet.getCell(row, 1).font = { bold: true };
     items.forEach((item, colIndex) => {
-      const val = getMetricVal(item.response.metrics, rowIndex);
+      const val = getMetricVal(item.response.metrics, rowIndex, item.scenarioName);
       const out = typeof val === "number"
         ? (rowIndex === 1 ? formatRSF(val) : rowIndex === 3 ? formatMonths(val) : rowIndex === 14 ? formatPercent(val) : [6, 10, 13].includes(rowIndex) ? formatCurrencyPerSF(val) : [7, 8, 9, 11, 12].includes(rowIndex) ? formatCurrency(val, { decimals: 2 }) : formatCurrency(val, { decimals: 2 }))
         : rowIndex === 4 || rowIndex === 5 ? formatDateISO(String(val)) : String(val);
@@ -314,7 +314,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     sheet.getCell(row, 1).font = { bold: true, size: 12 };
     row += 2;
     const inputRows: [string, string | number][] = [
-      ["Premises name", formatBuildingSuiteAddress({ building_name: m.building_name, suite: m.suite, address: m.address }) || m.premises_name || ""],
+      ["Premises name", getPremisesDisplayName({ building_name: m.building_name, suite: m.suite, premises_name: m.premises_name, scenario_name: scenarioName })],
       ["Rentable square footage", m.rsf ?? 0],
       ["Lease type", m.lease_type ?? ""],
       ["Lease term (months)", m.term_months ?? 0],

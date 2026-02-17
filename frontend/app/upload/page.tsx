@@ -4,7 +4,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useCallback } from "react";
 import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
+import { formatCurrencyPerSF, formatDateISO, formatMonths, formatPercent, formatRSF } from "@/lib/format";
 import type { LeaseExtraction, ScenarioInput, RentStep } from "@/lib/types";
+
+function formatExtractedDisplay(key: string, value: unknown): string {
+  if (value == null) return "—";
+  if (key === "rsf") return formatRSF(typeof value === "number" ? value : Number(value));
+  if (key === "commencement" || key === "expiration") return formatDateISO(String(value));
+  if (key === "free_rent") return formatMonths(typeof value === "number" ? value : Number(value));
+  if (key === "ti_allowance" || key === "base_opex_psf_yr" || key === "base_year_opex_psf_yr") return formatCurrencyPerSF(typeof value === "number" ? value : Number(value));
+  if (key === "opex_growth" || key === "discount_rate_annual") return formatPercent(typeof value === "number" ? value : Number(value));
+  return String(value);
+}
 
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 
@@ -168,7 +179,7 @@ export default function UploadPage() {
                 <div>
                   <p className="text-xs font-medium text-stone-500 uppercase mb-1">Extracted</p>
                   <p className="text-sm text-stone-700">
-                    {ext?.value != null ? String(ext.value) : "—"}
+                    {ext?.value != null ? formatExtractedDisplay(key, ext.value) : "—"}
                     {ext?.confidence != null && (
                       <span className="ml-2 text-stone-400">({Math.round((ext.confidence ?? 0) * 100)}%)</span>
                     )}

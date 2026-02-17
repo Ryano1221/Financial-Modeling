@@ -99,6 +99,34 @@ pdftoppm -v
 
 If both commands succeed, scanned PDF OCR extraction is available.
 
+**Verify POST /compute-canonical** — Backend expects a single JSON object (CanonicalLease), not wrapped in `{"canonical_lease": ...}`. Example (replace `$BACKEND` with e.g. `https://financial-modeling-docker.onrender.com`):
+
+```bash
+curl -sS -X POST "$BACKEND/compute-canonical" \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: $(uuidgen)" \
+  -d '{
+    "scenario_id": "test-1",
+    "scenario_name": "Test",
+    "premises_name": "Suite 100",
+    "rsf": 5000,
+    "lease_type": "NNN",
+    "commencement_date": "2026-01-01",
+    "expiration_date": "2031-12-31",
+    "term_months": 72,
+    "free_rent_months": 0,
+    "discount_rate_annual": 0.08,
+    "rent_schedule": [{"start_month": 0, "end_month": 71, "rent_psf_annual": 32}],
+    "expense_structure_type": "nnn",
+    "opex_psf_year_1": 8,
+    "opex_growth_rate": 0.03,
+    "expense_stop_psf": 0,
+    "parking_count": 0,
+    "parking_rate_monthly": 0,
+    "ti_allowance_psf": 0
+  }'
+```
+
 **Vercel (frontend)** — Set **NEXT_PUBLIC_BACKEND_URL** in Vercel project env to your backend URL (e.g. `https://your-backend.onrender.com`). Production builds fail if this is missing or contains localhost/127.0.0.1.
 
 **Backend deps sanity check** — From repo root: `bash backend/scripts/check-deps.sh` (installs deps and runs `python -c "import fastapi, uvicorn"`). CI runs the same check on push/PR when `backend/` changes (see `.github/workflows/backend-deps.yml`).

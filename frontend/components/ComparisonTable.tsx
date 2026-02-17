@@ -1,6 +1,6 @@
 "use client";
 
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { formatCurrency, formatCurrencyPerSF, formatMonths } from "@/lib/format";
 import type { CashflowResult } from "@/lib/types";
 
 export type SortKey = "avg_cost_psf_year" | "npv_cost" | "avg_cost_year";
@@ -19,14 +19,14 @@ interface ComparisonTableProps {
   onSort: (key: SortKey) => void;
 }
 
-const COLUMNS: { key: keyof CashflowResult; label: string; format: (v: number) => string }[] = [
-  { key: "term_months", label: "Term (mo)", format: (v) => String(v) },
+const COLUMNS: { key: keyof CashflowResult; label: string; format: (v: number | null | undefined) => string }[] = [
+  { key: "term_months", label: "Term (mo)", format: formatMonths },
   { key: "rent_nominal", label: "Rent (nominal)", format: formatCurrency },
   { key: "opex_nominal", label: "Opex (nominal)", format: formatCurrency },
   { key: "total_cost_nominal", label: "Total cost (nominal)", format: formatCurrency },
   { key: "npv_cost", label: "NPV cost", format: formatCurrency },
   { key: "avg_cost_year", label: "Avg cost/year", format: formatCurrency },
-  { key: "avg_cost_psf_year", label: "Avg $/SF/yr", format: formatNumber },
+  { key: "avg_cost_psf_year", label: "Avg $/SF/yr", format: formatCurrencyPerSF },
 ];
 
 export function ComparisonTable({

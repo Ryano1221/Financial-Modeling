@@ -48,6 +48,26 @@ export function buildPremisesName(buildingName?: string | null, suite?: string |
   return su || b || "";
 }
 
+/**
+ * Single display name for premises everywhere (cards, summary, export).
+ * If building_name or suite exists → "{building_name} Suite {suite}" with sensible spacing.
+ * Else if premises_name exists → premises_name.
+ * Else → scenario name (fallback).
+ */
+export function getPremisesDisplayName(opts: {
+  building_name?: string | null;
+  suite?: string | null;
+  premises_name?: string | null;
+  scenario_name?: string | null;
+}): string {
+  const b = (opts.building_name ?? "").trim();
+  const su = (opts.suite ?? "").trim();
+  if (b || su) return `${b}${b && su ? " Suite " : ""}${su}`.trim();
+  const p = (opts.premises_name ?? "").trim();
+  if (p) return p;
+  return (opts.scenario_name ?? "").trim() || "Option";
+}
+
 /** Display order: Building name, Suite, Street address (for any Address or Premises display). */
 export function formatBuildingSuiteAddress(c: {
   building_name?: string | null;
@@ -140,7 +160,7 @@ export function canonicalResponseToEngineResult(
   const m = res.metrics;
   const termMonths = m.term_months ?? 0;
   const metrics: OptionMetrics = {
-    premisesName: formatBuildingSuiteAddress({ building_name: m.building_name, suite: m.suite, address: m.address }) || m.premises_name || "",
+    premisesName: getPremisesDisplayName({ building_name: m.building_name, suite: m.suite, premises_name: m.premises_name, scenario_name: scenarioName }),
     rsf: m.rsf ?? 0,
     leaseType: m.lease_type ?? "",
     termMonths,

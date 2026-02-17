@@ -11,7 +11,7 @@ from datetime import date
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LeaseType(str, Enum):
@@ -140,8 +140,11 @@ class CanonicalLease(BaseModel):
     # --- Core Lease Info ---
     scenario_id: str = ""
     scenario_name: str = ""
-    premises_name: str = ""
+    premises_name: str = ""  # Display label; set from building_name + " Suite " + suite when both exist
     address: str = ""
+    building_name: str = ""
+    suite: str = ""
+    floor: str = ""
     # Allow 0 during low-confidence review flows; frontend enforces user confirmation before compute.
     rsf: float = Field(ge=0.0, description="Rentable square feet")
     lease_type: LeaseType = LeaseType.NNN
@@ -194,6 +197,15 @@ class CanonicalLease(BaseModel):
     @classmethod
     def coerce_lease_type(cls, v: Any) -> LeaseType:
         return _coerce_lease_type(v)
+
+    @model_validator(mode="after")
+    def set_premises_name_from_building_and_suite(self) -> "CanonicalLease":
+        """When building_name and suite exist, set premises_name as display label."""
+        bn = (self.building_name or "").strip()
+        su = (self.suite or "").strip()
+        if bn and su:
+            return self.model_copy(update={"premises_name": f"{bn} Suite {su}"})
+        return self
 
     @field_validator("rent_schedule")
     @classmethod

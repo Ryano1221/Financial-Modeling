@@ -187,6 +187,9 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     metrics = CanonicalMetrics(
         premises_name=normalized.premises_name or "",
         address=normalized.address or "",
+        building_name=normalized.building_name or "",
+        suite=normalized.suite or "",
+        floor=normalized.floor or "",
         rsf=normalized.rsf,
         lease_type=getattr(normalized.lease_type, "value", str(normalized.lease_type)) if hasattr(normalized.lease_type, "value") else str(normalized.lease_type),
         term_months=term_months,

@@ -10,7 +10,7 @@ import {
   CartesianGrid,
   ResponsiveContainer,
 } from "recharts";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { formatCurrency, formatCurrencyPerSF, formatDateISO, formatMonths, formatPercent, formatRSF } from "@/lib/format";
 import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import type { ReportData } from "@/lib/types";
 
@@ -111,7 +111,7 @@ function ReportContent() {
         <ul className="mt-6 list-disc list-inside text-stone-600 space-y-2">
           {scenarios.map(({ scenario, result }) => (
             <li key={scenario.name}>
-              <strong>{scenario.name}</strong>: {formatCurrency(result.npv_cost)} NPV cost over {result.term_months} months; {formatNumber(result.avg_cost_psf_year)} $/SF/yr average.
+              <strong>{scenario.name}</strong>: {formatCurrency(result.npv_cost)} NPV cost over {formatMonths(result.term_months)}; {formatCurrencyPerSF(result.avg_cost_psf_year)} average.
             </li>
           ))}
         </ul>
@@ -137,12 +137,12 @@ function ReportContent() {
               {scenarios.map(({ scenario, result }) => (
                 <tr key={scenario.name} className="border-b border-stone-100">
                   <td className="py-2 px-4 font-medium">{scenario.name}</td>
-                  <td className="py-2 px-4 text-right">{result.term_months}</td>
+                  <td className="py-2 px-4 text-right">{formatMonths(result.term_months)}</td>
                   <td className="py-2 px-4 text-right">{formatCurrency(result.rent_nominal)}</td>
                   <td className="py-2 px-4 text-right">{formatCurrency(result.opex_nominal)}</td>
                   <td className="py-2 px-4 text-right">{formatCurrency(result.total_cost_nominal)}</td>
                   <td className="py-2 px-4 text-right">{formatCurrency(result.npv_cost)}</td>
-                  <td className="py-2 px-4 text-right">{formatNumber(result.avg_cost_psf_year)}</td>
+                  <td className="py-2 px-4 text-right">{formatCurrencyPerSF(result.avg_cost_psf_year)}</td>
                 </tr>
               ))}
             </tbody>
@@ -157,7 +157,7 @@ function ReportContent() {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartRows} margin={{ top: 8, right: 24, left: 8, bottom: 8 }} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke="#e7e5e4" />
-              <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
+              <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => formatCurrencyPerSF(v)} />
               <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 11 }} />
               <Bar dataKey="avg_cost_psf_year" fill="#57534e" radius={[0, 4, 4, 0]} name="Avg $/SF/yr" />
             </BarChart>
@@ -201,7 +201,7 @@ function ReportContent() {
         <ul className="list-disc list-inside text-stone-600 space-y-2 max-w-2xl">
           {scenarios.map(({ scenario }) => (
             <li key={scenario.name}>
-              <strong>{scenario.name}</strong>: {scenario.rsf.toLocaleString()} RSF, {scenario.commencement} – {scenario.expiration}, discount rate {(scenario.discount_rate_annual * 100).toFixed(1)}%, opex mode {scenario.opex_mode}.
+              <strong>{scenario.name}</strong>: {formatRSF(scenario.rsf)}, {formatDateISO(scenario.commencement)} – {formatDateISO(scenario.expiration)}, discount rate {formatPercent(scenario.discount_rate_annual, { decimals: 1 })}, opex mode {scenario.opex_mode}.
             </li>
           ))}
         </ul>

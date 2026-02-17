@@ -358,7 +358,7 @@ def compute_scenario(scenario: Scenario) -> CashflowResult:
 
 
 COMPUTE_CANONICAL_EXPECTED = (
-    "CanonicalLease JSON: scenario_id?, scenario_name?, premises_name?, address?, rsf, "
+    "CanonicalLease JSON: scenario_id?, scenario_name?, premises_name?, address?, building_name?, suite?, floor?, rsf, "
     "commencement_date (YYYY-MM-DD), expiration_date (YYYY-MM-DD), term_months, "
     "rent_schedule: [{start_month, end_month, rent_psf_annual}], lease_type (e.g. NNN), "
     "expense_structure_type (nnn|base_year), free_rent_months?, discount_rate_annual?, etc."
@@ -628,7 +628,11 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         for pat in suite_patterns:
             m = re.search(pat, ln)
             if m:
-                hints["suite"] = m.group(1).strip(" ,.-")
+                raw = m.group(1).strip(" ,.-")
+                # Normalize "Suite 220" / "Ste 220" -> "220" (digits only or first token)
+                if raw:
+                    digits_only = re.sub(r"\D", "", raw)
+                    hints["suite"] = digits_only if digits_only else raw
                 break
         if hints["suite"]:
             break
@@ -831,11 +835,15 @@ def _normalize_impl(
             if extracted_hints.get("term_months") is not None:
                 updates["term_months"] = extracted_hints["term_months"]
             if extracted_hints.get("building_name"):
+                updates["building_name"] = str(extracted_hints["building_name"])
                 if not (canonical.address or "").strip():
                     updates["address"] = str(extracted_hints["building_name"])
             if extracted_hints.get("suite"):
-                if not (canonical.premises_name or "").strip():
-                    updates["premises_name"] = str(extracted_hints["suite"])
+                updates["suite"] = str(extracted_hints["suite"])
+            if extracted_hints.get("building_name") and extracted_hints.get("suite"):
+                updates["premises_name"] = f"{extracted_hints['building_name']} Suite {extracted_hints['suite']}"
+            elif extracted_hints.get("suite") and not (canonical.premises_name or "").strip():
+                updates["premises_name"] = str(extracted_hints["suite"])
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
             if updates:

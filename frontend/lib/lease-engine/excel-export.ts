@@ -4,6 +4,15 @@
  */
 
 import ExcelJS from "exceljs";
+import {
+  formatCurrency,
+  formatCurrencyPerSF,
+  formatDateISO,
+  formatMonths,
+  formatNumber,
+  formatPercent,
+  formatRSF,
+} from "@/lib/format";
 import type { LeaseScenarioCanonical } from "./canonical-schema";
 import type { EngineResult, OptionMetrics } from "./monthly-engine";
 import { runMonthlyEngine } from "./monthly-engine";
@@ -67,13 +76,17 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
 
 export function formatMetricValue(key: string, value: unknown): string {
   if (value == null) return "";
-  if (key === "discountRateUsed" && typeof value === "number") return `${(value * 100).toFixed(1)}%`;
-  if (key === "escalationPercent" || key === "opexEscalationPercent") return `${Number(value)}%`;
   if (typeof value === "number") {
-    if (key.includes("Psf") || key.includes("Percent") || key.includes("Rate")) return value.toFixed(2);
-    if (key.includes("Cost") || key.includes("Rent") || key.includes("Obligation") || key.includes("Npv") || key.includes("Budget") || key.includes("Allowance") || key.includes("Pocket")) return value.toLocaleString("en-US", { maximumFractionDigits: 0 });
-    return String(value);
+    if (key === "discountRateUsed") return formatPercent(value, { decimals: 1 });
+    if (key === "escalationPercent" || key === "opexEscalationPercent") return formatPercent(value);
+    if (key === "rsf") return formatRSF(value);
+    if (key === "termMonths") return formatMonths(value);
+if (key === "commencementDate" || key === "expirationDate") return typeof value === "string" ? formatDateISO(value) : String(value ?? "");
+  if (key.includes("Psf") || key.includes("psf")) return formatCurrencyPerSF(value);
+    if (key.includes("Cost") || key.includes("Rent") || key.includes("Obligation") || key.includes("Npv") || key.includes("Budget") || key.includes("Allowance") || key.includes("Pocket")) return formatCurrency(value);
+    return formatNumber(value);
   }
+  if (key === "commencementDate" || key === "expirationDate") return formatDateISO(typeof value === "string" ? value : undefined);
   return String(value);
 }
 
@@ -200,7 +213,7 @@ export async function buildWorkbook(
     const m = result.metrics;
     [
       ["NPV @ discount rate", m.npvAtDiscount],
-      ["Discount rate used", `${(m.discountRateUsed * 100).toFixed(1)}%`],
+      ["Discount rate used", formatPercent(m.discountRateUsed, { decimals: 1 })],
       ["Total estimated obligation", m.totalObligation],
       ["Avg cost/RSF/year", m.avgCostPsfYr],
       ["Avg monthly cost", m.avgAllInCostPerMonth],
