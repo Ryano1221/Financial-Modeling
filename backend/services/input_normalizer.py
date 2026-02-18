@@ -162,11 +162,11 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
     building_name = str(get("building_name", "") or "").strip()
     suite = str(get("suite", "") or "").strip()
     floor = str(get("floor", "") or "").strip()
-    if not suite and floor:
-        suite = floor
     premises = str(get("premises_name", get("name", "") or "")).strip()
     if building_name and suite and not premises:
         premises = f"{building_name} Suite {suite}"
+    elif building_name and floor and not premises:
+        premises = f"{building_name} Floor {floor}"
 
     return CanonicalLease(
         scenario_id=scenario_id or get("scenario_id", ""),
@@ -214,7 +214,12 @@ def _compute_confidence_and_missing(lease: CanonicalLease) -> tuple[float, List[
     """Compute aggregate confidence, missing fields, and clarification questions."""
     missing: List[str] = []
     questions: List[str] = []
-    has_premises = bool((lease.premises_name or "").strip()) or bool((lease.building_name or "").strip()) or bool((lease.suite or "").strip())
+    has_premises = (
+        bool((lease.premises_name or "").strip())
+        or bool((lease.building_name or "").strip())
+        or bool((lease.suite or "").strip())
+        or bool((lease.floor or "").strip())
+    )
     if not has_premises:
         missing.append("premises_name")
         questions.append("What is the building name or suite?")

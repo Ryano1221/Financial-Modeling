@@ -121,6 +121,23 @@ def test_extract_hints_parses_parking_ratio_count_and_monthly_rate() -> None:
     assert hints["parking_ratio"] == 3.5
 
 
+def test_extract_hints_parses_opex_psf_and_source_year() -> None:
+    text = (
+        "Additional Rent. Operating Expenses for 2025 are estimated at $12.50 per RSF per year. "
+        "Tenant shall reimburse such operating expenses monthly."
+    )
+    hints = main._extract_lease_hints(text, "lease.pdf", "test-rid")
+    assert hints["opex_psf_year_1"] == 12.5
+    assert hints["opex_source_year"] == 2025
+
+
+def test_extract_hints_parses_opex_psf_without_year() -> None:
+    text = "CAM charges are $9.75/SF and reconciled annually."
+    hints = main._extract_lease_hints(text, "lease.pdf", "test-rid")
+    assert hints["opex_psf_year_1"] == 9.75
+    assert hints["opex_source_year"] is None
+
+
 def test_note_highlights_include_parking_ratio() -> None:
     text = "Parking ratio shall be 4.0 spaces per 1,000 RSF for the Premises."
     notes = main._extract_lease_note_highlights(text)

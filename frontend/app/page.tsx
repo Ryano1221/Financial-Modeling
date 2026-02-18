@@ -837,6 +837,7 @@ export default function Home() {
             const scenarioName = getPremisesDisplayName({
               building_name: res.metrics.building_name,
               suite: res.metrics.suite,
+              floor: res.metrics.floor,
               premises_name: res.metrics.premises_name,
               scenario_name: s.name,
             });
@@ -875,6 +876,7 @@ export default function Home() {
           const displayName = getPremisesDisplayName({
             building_name: cached.metrics.building_name,
             suite: cached.metrics.suite,
+            floor: cached.metrics.floor,
             premises_name: cached.metrics.premises_name,
             scenario_name: s.name,
           });

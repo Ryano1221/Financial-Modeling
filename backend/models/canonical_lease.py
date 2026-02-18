@@ -200,16 +200,15 @@ class CanonicalLease(BaseModel):
 
     @model_validator(mode="after")
     def set_premises_name_from_building_and_suite(self) -> "CanonicalLease":
-        """Populate suite from floor fallback, then set premises_name from building + suite."""
+        """Set premises_name from building + suite/floor fallback."""
         bn = (self.building_name or "").strip()
         su = (self.suite or "").strip()
         fl = (self.floor or "").strip()
-        effective_suite = su or fl
         updates: dict[str, str] = {}
-        if not su and effective_suite:
-            updates["suite"] = effective_suite
-        if bn and effective_suite:
-            updates["premises_name"] = f"{bn} Suite {effective_suite}"
+        if bn and su:
+            updates["premises_name"] = f"{bn} Suite {su}"
+        elif bn and fl:
+            updates["premises_name"] = f"{bn} Floor {fl}"
         if updates:
             return self.model_copy(update=updates)
         return self

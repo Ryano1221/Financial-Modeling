@@ -16,6 +16,6 @@ def test_dict_to_canonical_uses_floor_when_suite_missing() -> None:
             "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 40}],
         }
     )
-    assert canonical.suite == "7"
+    assert canonical.suite == ""
     assert canonical.floor == "7"
-    assert canonical.premises_name == "500 Congress Avenue Suite 7"
+    assert canonical.premises_name == "500 Congress Avenue Floor 7"

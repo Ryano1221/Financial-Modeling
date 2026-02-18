@@ -174,8 +174,14 @@ function deriveScenario(entry: ScenarioEntry): DerivedScenario {
   const termMonths = Math.max(0, Math.round(toNumber(result.term_months)));
   const termYears = safeDiv(termMonths, 12);
   const buildingName = (scenario.building_name || "").trim();
-  const suite = (scenario.suite || "").trim() || (scenario.floor || "").trim();
-  const premises = buildingName && suite ? `${buildingName} Suite ${suite}` : buildingName || suite || scenario.name;
+  const suiteValue = (scenario.suite || "").trim();
+  const floorValue = (scenario.floor || "").trim();
+  const suite = suiteValue || (floorValue ? `Floor ${floorValue}` : "");
+  const premises = buildingName && suiteValue
+    ? `${buildingName} Suite ${suiteValue}`
+    : buildingName && floorValue
+      ? `${buildingName} Floor ${floorValue}`
+      : buildingName || suite || scenario.name;
   const parkingSpaces = toNumber(scenario.parking_spaces);
   const parkingRate = toNumber(scenario.parking_cost_monthly_per_space);
   const parkingMonthly = parkingSpaces * parkingRate;
@@ -295,7 +301,7 @@ function ReportContent() {
 
   const matrixRows: MatrixRow[] = [
     { label: "Building", value: (d) => d.buildingName || "-" },
-    { label: "Suite", value: (d) => d.suite || "-" },
+    { label: "Suite / floor", value: (d) => d.suite || "-" },
     { label: "Premises", value: (d) => d.premises },
     { label: "Rentable square footage", value: (d) => formatRSF(d.rsf) },
     { label: "Lease term", value: (d) => `${d.termYears.toFixed(2)} years` },

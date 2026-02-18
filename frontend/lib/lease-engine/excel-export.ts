@@ -75,8 +75,8 @@ export const METRIC_LABELS: (keyof OptionMetrics)[] = [
 
 export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   buildingName: "Building name",
-  suiteName: "Suite name",
-  premisesName: "Building + suite",
+  suiteName: "Suite / floor",
+  premisesName: "Building + suite/floor",
   rsf: "Rentable square footage",
   leaseType: "Lease type",
   termMonths: "Lease term (months)",
@@ -176,7 +176,7 @@ export async function buildWorkbook(
     const generalRows = [
       ["Rentable square footage", scenario.partyAndPremises.rentableSqFt],
       ["Building name", scenario.partyAndPremises.premisesLabel ?? ""],
-      ["Suite name", scenario.partyAndPremises.floorsOrSuite ?? ""],
+      ["Suite / floor", scenario.partyAndPremises.floorsOrSuite ?? ""],
       ["Lease type", scenario.expenseSchedule.leaseType],
       ["Lease term (months)", scenario.datesAndTerm.leaseTermMonths],
       ["Commencement date", scenario.datesAndTerm.commencementDate],

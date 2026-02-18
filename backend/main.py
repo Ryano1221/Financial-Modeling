@@ -736,6 +736,56 @@ def _extract_floor_from_text(text: str) -> str:
     return candidates[0][2]
 
 
+def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[int]]:
+    """Extract OpEx $/SF/yr and optional source year from lease text."""
+    if not text:
+        return None, None
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return None, None
+    segments = _iter_text_segments(lines, max_lines=320)
+    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance)\b")
+    value_patterns = [
+        re.compile(
+            r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|square\s*feet?|sq\.?\s*ft)\s*(?:/|per)?\s*(?:year|yr|annum|annual)?\b"
+        ),
+        re.compile(r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:psf|p/?sf)\b"),
+    ]
+    candidates: list[tuple[int, int, float, Optional[int]]] = []
+    for idx, seg in enumerate(segments):
+        if not opex_kw.search(seg):
+            continue
+        low = seg.lower()
+        for pat in value_patterns:
+            for m in pat.finditer(seg):
+                value = _coerce_float_token(m.group(1), 0.0)
+                if not (0 < value <= 150):
+                    continue
+                score = 1
+                if "operating expense" in low or "common area maintenance" in low or "opex" in low or re.search(r"(?i)\bcam\b", seg):
+                    score += 4
+                if "base year" in low:
+                    score += 2
+                if re.search(r"(?i)\b(?:estimate|estimated|projected)\b", seg):
+                    score += 1
+                if re.search(r"(?i)\b(?:base rent|rental rate|rent schedule|rent step)\b", seg):
+                    score -= 3
+                if re.search(r"(?i)\b(?:parking)\b", seg):
+                    score -= 2
+                year_match = re.search(r"(?i)\b(?:for|in|base year|as of)\s*(20\d{2})\b", seg)
+                if not year_match:
+                    year_match = re.search(r"\b(20\d{2})\b", seg)
+                source_year: Optional[int] = int(year_match.group(1)) if year_match else None
+                if source_year is not None and not (1990 <= source_year <= 2100):
+                    source_year = None
+                candidates.append((score, idx, float(round(value, 4)), source_year))
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+    _, _, best_value, best_year = candidates[0]
+    return best_value, best_year
+
+
 def _clean_address_candidate(raw: str) -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:-")
     if not v:
@@ -1096,6 +1146,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "parking_ratio": None,
         "parking_count": None,
         "parking_rate_monthly": None,
+        "opex_psf_year_1": None,
+        "opex_source_year": None,
     }
     if not text:
         return hints
@@ -1394,6 +1446,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["parking_rate_monthly"] = rate
             break
 
+    hinted_opex, hinted_opex_year = _extract_opex_psf_from_text(text)
+    if hinted_opex is not None and hinted_opex > 0:
+        hints["opex_psf_year_1"] = hinted_opex
+    if hinted_opex_year is not None:
+        hints["opex_source_year"] = hinted_opex_year
+
     return hints
 
 
@@ -1668,17 +1726,20 @@ def _normalize_impl(
                 fallback_exp = extracted_hints.get("expiration_date") or date(2031, 1, 31)
                 fallback_term = _coerce_int_token(extracted_hints.get("term_months"), 0) or _month_diff(fallback_comm, fallback_exp)
                 fallback_term = max(12, fallback_term)
-                fallback_suite = str(extracted_hints.get("suite") or extracted_hints.get("floor") or "").strip()
+                fallback_suite = str(extracted_hints.get("suite") or "").strip()
+                fallback_floor = str(extracted_hints.get("floor") or "").strip()
                 fallback_building = str(extracted_hints.get("building_name") or "").strip() or _fallback_building_from_filename(file.filename or "")
                 fallback_address = str(extracted_hints.get("address") or "").strip()
                 fallback_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 10000.0
+                fallback_loc = f"Suite {fallback_suite}" if fallback_suite else (f"Floor {fallback_floor}" if fallback_floor else "")
+                fallback_name = f"{fallback_building} {fallback_loc}".strip() if (fallback_building or fallback_loc) else "Extracted lease"
                 fallback_payload = {
-                    "scenario_name": f"{fallback_building} Suite {fallback_suite}".strip() if fallback_building or fallback_suite else "Extracted lease",
+                    "scenario_name": fallback_name,
                     "building_name": fallback_building,
                     "suite": fallback_suite,
-                    "floor": str(extracted_hints.get("floor") or "").strip(),
+                    "floor": fallback_floor,
                     "address": fallback_address,
-                    "premises_name": f"{fallback_building} Suite {fallback_suite}".strip() if fallback_building and fallback_suite else (fallback_building or f"Suite {fallback_suite}" if fallback_suite else "Extracted lease"),
+                    "premises_name": fallback_name,
                     "rsf": fallback_rsf,
                     "commencement_date": fallback_comm,
                     "expiration_date": fallback_exp,
@@ -1698,6 +1759,7 @@ def _normalize_impl(
                     "rent_schedule": 0.65,
                     "building_name": 0.8 if fallback_building else 0.2,
                     "suite": 0.8 if fallback_suite else 0.2,
+                    "floor": 0.8 if fallback_floor else 0.2,
                 }
                 confidence_score = 0.7
                 used_fallback = True
@@ -1733,6 +1795,7 @@ def _normalize_impl(
         # Apply heuristic overrides: prefer premises-scoped RSF and term dates from commencing/expiring.
         if canonical and isinstance(canonical, CanonicalLease) and not is_generated_report_doc:
             updates: dict = {}
+            extra_note_lines: list[str] = []
             # RSF override is score-gated to avoid pulling ratio values (e.g. "per 1,000 RSF").
             hinted_rsf = extracted_hints.get("rsf")
             hinted_rsf_score = int(extracted_hints.get("_rsf_score", -999) or -999)
@@ -1755,9 +1818,6 @@ def _normalize_impl(
             floor_val = str(extracted_hints.get("floor") or canonical.floor or "").strip()
             if floor_val and not (canonical.floor or "").strip():
                 updates["floor"] = floor_val
-            if not suite_val and floor_val:
-                suite_val = floor_val
-                warnings.append("Suite was not found; using premises floor as suite fallback.")
             address_val = str(extracted_hints.get("address") or canonical.address or "").strip()
             if address_val and not (canonical.address or "").strip():
                 updates["address"] = address_val
@@ -1781,20 +1841,45 @@ def _normalize_impl(
                     updates["address"] = building_val
             if suite_val:
                 updates["suite"] = suite_val
-            if building_val and suite_val:
-                updates["premises_name"] = f"{building_val} Suite {suite_val}"
-            elif suite_val and not (canonical.premises_name or "").strip():
-                updates["premises_name"] = f"Suite {suite_val}"
+            location_label = f"Suite {suite_val}" if suite_val else (f"Floor {floor_val}" if floor_val else "")
+            if building_val and location_label:
+                updates["premises_name"] = f"{building_val} {location_label}"
+            elif location_label and not (canonical.premises_name or "").strip():
+                updates["premises_name"] = location_label
             scenario_name_val = str(canonical.scenario_name or "").strip()
             if _looks_like_generic_scenario_name(scenario_name_val):
-                if building_val and suite_val:
-                    updates["scenario_name"] = f"{building_val} Suite {suite_val}"
+                if building_val and location_label:
+                    updates["scenario_name"] = f"{building_val} {location_label}"
                 elif building_val:
                     updates["scenario_name"] = building_val
-                elif suite_val:
-                    updates["scenario_name"] = f"Suite {suite_val}"
+                elif location_label:
+                    updates["scenario_name"] = location_label
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
+
+            hinted_opex = _coerce_float_token(extracted_hints.get("opex_psf_year_1"), 0.0)
+            if hinted_opex > 0:
+                updates["opex_psf_year_1"] = hinted_opex
+                if _coerce_float_token(canonical.expense_stop_psf, 0.0) <= 0:
+                    updates["expense_stop_psf"] = hinted_opex
+            opex_source_year = _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
+            commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
+            commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0
+            if hinted_opex > 0 and opex_source_year >= 1900 and commencement_year >= 1900 and opex_source_year < commencement_year:
+                years_forward = commencement_year - opex_source_year
+                escalated_opex = round(hinted_opex * (1.03 ** years_forward), 4)
+                updates["opex_psf_year_1"] = escalated_opex
+                updates["expense_stop_psf"] = escalated_opex
+                updates["opex_growth_rate"] = 0.03
+                estimate_note = (
+                    f"OpEx estimate: source year {opex_source_year} value ${hinted_opex:,.2f}/SF escalated "
+                    f"3% YoY to {commencement_year} (${escalated_opex:,.2f}/SF), then 3% YoY thereafter."
+                )
+                extra_note_lines.append(estimate_note)
+                warnings.append(
+                    f"OpEx estimated at 3% YoY from {opex_source_year} to {commencement_year}; "
+                    "using 3% annual escalation thereafter."
+                )
 
             hinted_parking_ratio = _coerce_float_token(extracted_hints.get("parking_ratio"), 0.0)
             if hinted_parking_ratio > 0:
@@ -1847,6 +1932,13 @@ def _normalize_impl(
                     "No ROFR/ROFO/renewal/OpEx-exclusion clauses were confidently detected. "
                     "Review lease clauses manually."
                 )
+            if extra_note_lines:
+                existing_notes = str(updates.get("notes") or canonical.notes or "").strip()
+                for line in extra_note_lines:
+                    if not line or line in existing_notes:
+                        continue
+                    existing_notes = f"{existing_notes} | {line}".strip(" |") if existing_notes else line
+                updates["notes"] = existing_notes[:1600]
             if updates:
                 canonical = canonical.model_copy(update=updates)
 

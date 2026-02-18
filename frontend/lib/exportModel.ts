@@ -16,7 +16,7 @@ import type { CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
 /** Locked for regression tests: do not change order or labels. */
 export const SUMMARY_MATRIX_ROW_LABELS = [
   "Building name",
-  "Suite name",
+  "Suite / floor",
   "RSF",
   "Lease type",
   "Term (months)",
@@ -83,6 +83,13 @@ const CLAUSE_PATTERNS: Array<{ label: string; regex: RegExp }> = [
 function safeDiv(numerator: number, denominator: number): number {
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return 0;
   return numerator / denominator;
+}
+
+function canonicalSuiteOrFloor(suite?: string | null, floor?: string | null): string {
+  const su = (suite ?? "").trim();
+  if (su) return su;
+  const fl = (floor ?? "").trim();
+  return fl ? `Floor ${fl}` : "";
 }
 
 function sanitizeSheetName(name: string, fallback: string): string {
@@ -332,7 +339,7 @@ export async function buildBrokerWorkbook(
     get: (m: EngineResult["metrics"]) => string | number;
   }> = [
     { label: "Building name", format: "text", get: (m) => m.buildingName },
-    { label: "Suite name", format: "text", get: (m) => m.suiteName },
+    { label: "Suite / floor", format: "text", get: (m) => m.suiteName },
     { label: "RSF", format: "integer", get: (m) => m.rsf },
     { label: "Lease type", format: "text", get: (m) => m.leaseType },
     { label: "Term (months)", format: "integer", get: (m) => m.termMonths },
@@ -454,7 +461,7 @@ export async function buildBrokerWorkbook(
     const inputRows: Array<{ label: string; value: string | number; format: ValueFormat }> = [
       { label: "Scenario name", value: scenario.name ?? "", format: "text" },
       { label: "Building name", value: scenario.partyAndPremises?.premisesLabel ?? "", format: "text" },
-      { label: "Suite name", value: scenario.partyAndPremises?.floorsOrSuite ?? "", format: "text" },
+      { label: "Suite / floor", value: scenario.partyAndPremises?.floorsOrSuite ?? "", format: "text" },
       { label: "Premises", value: scenario.partyAndPremises?.premisesName ?? "", format: "text" },
       { label: "Rentable square footage", value: scenario.partyAndPremises?.rentableSqFt ?? 0, format: "integer" },
       { label: "Lease type", value: scenario.expenseSchedule?.leaseType ?? "", format: "text" },
@@ -703,7 +710,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     get: (m: CanonicalMetrics) => string | number;
   }> = [
     { label: "Building name", format: "text", get: (m) => m.building_name ?? "" },
-    { label: "Suite name", format: "text", get: (m) => m.suite ?? "" },
+    { label: "Suite / floor", format: "text", get: (m) => canonicalSuiteOrFloor(m.suite, m.floor) },
     { label: "RSF", format: "integer", get: (m) => m.rsf ?? 0 },
     { label: "Lease type", format: "text", get: (m) => m.lease_type ?? "" },
     { label: "Term (months)", format: "integer", get: (m) => m.term_months ?? 0 },
@@ -812,7 +819,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     const inputRows: Array<{ label: string; value: string | number; format: ValueFormat }> = [
       { label: "Scenario name", value: scenarioName, format: "text" },
       { label: "Building name", value: m.building_name ?? c.building_name ?? "", format: "text" },
-      { label: "Suite name", value: m.suite ?? c.suite ?? "", format: "text" },
+      { label: "Suite / floor", value: canonicalSuiteOrFloor(m.suite ?? c.suite, m.floor ?? c.floor), format: "text" },
       { label: "Premises", value: m.premises_name ?? c.premises_name ?? "", format: "text" },
       { label: "Rentable square footage", value: m.rsf ?? 0, format: "integer" },
       { label: "Lease type", value: m.lease_type ?? c.lease_type ?? "", format: "text" },

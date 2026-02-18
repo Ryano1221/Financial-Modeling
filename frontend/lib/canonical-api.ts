@@ -31,6 +31,13 @@ export function getSuiteOrFloor(suite?: string | null, floor?: string | null): s
   return (floor ?? "").trim();
 }
 
+export function getSuiteOrFloorDisplay(suite?: string | null, floor?: string | null): string {
+  const su = (suite ?? "").trim();
+  if (su) return su;
+  const fl = (floor ?? "").trim();
+  return fl ? `Floor ${fl}` : "";
+}
+
 export function normalizeLeaseType(
   input?: string | null
 ): "NNN" | "Gross" | "Modified Gross" | "Absolute NNN" | "Full Service" {
@@ -49,14 +56,19 @@ export function normalizeLeaseType(
 /** Build display premises_name from building_name + suite (or floor fallback). */
 export function buildPremisesName(buildingName?: string | null, suite?: string | null, floor?: string | null): string {
   const b = (buildingName ?? "").trim();
-  const su = getSuiteOrFloor(suite, floor);
+  const su = (suite ?? "").trim();
+  const fl = (floor ?? "").trim();
   if (b && su) return `${b} Suite ${su}`;
-  return su || b || "";
+  if (b && fl) return `${b} Floor ${fl}`;
+  if (su) return su;
+  if (fl) return `Floor ${fl}`;
+  return b || "";
 }
 
 /**
  * Single display name for premises everywhere (cards, summary, export).
- * If building_name or suite exists → "{building_name} Suite {suite}" with sensible spacing.
+ * If suite exists, use "{building_name} Suite {suite}".
+ * If suite is missing and floor exists, use "{building_name} Floor {floor}".
  * Else if premises_name exists → premises_name.
  * Else → scenario name (fallback).
  */
@@ -68,14 +80,19 @@ export function getPremisesDisplayName(opts: {
   scenario_name?: string | null;
 }): string {
   const b = (opts.building_name ?? "").trim();
-  const su = getSuiteOrFloor(opts.suite, opts.floor);
-  if (b || su) return `${b}${b && su ? " Suite " : ""}${su}`.trim();
+  const su = (opts.suite ?? "").trim();
+  const fl = (opts.floor ?? "").trim();
+  if (b && su) return `${b} Suite ${su}`.trim();
+  if (b && fl) return `${b} Floor ${fl}`.trim();
+  if (su) return su;
+  if (fl) return `Floor ${fl}`;
+  if (b) return b;
   const p = (opts.premises_name ?? "").trim();
   if (p) return p;
   return (opts.scenario_name ?? "").trim() || "Option";
 }
 
-/** Display order: Building name, Suite, Street address (for any Address or Premises display). */
+/** Display order: Building name, Suite/floor fallback, Street address (for any Address or Premises display). */
 export function formatBuildingSuiteAddress(c: {
   building_name?: string | null;
   suite?: string | null;
@@ -83,7 +100,7 @@ export function formatBuildingSuiteAddress(c: {
   address?: string | null;
 }): string {
   const b = (c.building_name ?? "").trim();
-  const su = getSuiteOrFloor(c.suite, c.floor);
+  const su = getSuiteOrFloorDisplay(c.suite, c.floor);
   const a = (c.address ?? "").trim();
   const parts = [b, su, a].filter(Boolean);
   return parts.join(" · ") || "";
@@ -96,11 +113,11 @@ export function scenarioInputToBackendCanonical(
   scenarioName?: string
 ): BackendCanonicalLease {
   const termMonths = monthDiff(s.commencement, s.expiration);
-  const suite = getSuiteOrFloor(s.suite, s.floor);
+  const suite = (s.suite ?? "").trim();
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
-    premises_name: buildPremisesName(s.building_name, suite, s.floor) || s.name,
+    premises_name: buildPremisesName(s.building_name, s.suite, s.floor) || s.name,
     address: s.address ?? "",
     building_name: s.building_name ?? "",
     suite,
@@ -133,7 +150,7 @@ export function backendCanonicalToScenarioInput(
   c: BackendCanonicalLease,
   name?: string
 ): ScenarioInput {
-  const suite = getSuiteOrFloor(c.suite, c.floor);
+  const suite = (c.suite ?? "").trim();
   const rentSteps: { start: number; end: number; rate_psf_yr: number }[] = (
     c.rent_schedule ?? []
   ).map((step: BackendRentScheduleStep) => ({
@@ -176,7 +193,7 @@ export function canonicalResponseToEngineResult(
   const termMonths = m.term_months ?? 0;
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
-    suiteName: getSuiteOrFloor(m.suite, m.floor),
+    suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),
     premisesName: getPremisesDisplayName({
       building_name: m.building_name,
       suite: m.suite,
