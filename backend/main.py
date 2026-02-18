@@ -579,6 +579,47 @@ def _normalize_suite_candidate(raw: str) -> str:
     return ""
 
 
+def _is_notice_or_party_context(segment: str) -> bool:
+    low = (segment or "").lower()
+    return any(
+        token in low
+        for token in (
+            "address for notices",
+            "addresses for notices",
+            "notice:",
+            "notices:",
+            "prior to occupancy",
+            "after occupancy",
+            "attn:",
+            "attention:",
+            "c/o",
+            "sublessor",
+            "sublessee",
+            "lessor",
+            "lessee",
+        )
+    )
+
+
+def _iter_text_segments(lines: list[str], max_lines: int = 260) -> list[str]:
+    upper = min(len(lines), max_lines)
+    out: list[str] = []
+    seen: set[str] = set()
+    for i in range(upper):
+        variants = [lines[i]]
+        if i + 1 < upper:
+            variants.append(f"{lines[i]} {lines[i+1]}")
+        if i + 2 < upper:
+            variants.append(f"{lines[i]} {lines[i+1]} {lines[i+2]}")
+        for seg in variants:
+            normalized = " ".join(seg.split()).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+    return out
+
+
 def _extract_suite_from_text(text: str) -> str:
     if not text:
         return ""
@@ -586,42 +627,62 @@ def _extract_suite_from_text(text: str) -> str:
         r"(?i)\b(?:suite|ste\.?|unit)\b\s*[:#-]?\s*(?:no\.?|#)?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
         r"(?i)\bspace\b\s*(?:no\.?|#)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
         r"(?i)\bpremises\s*(?:known as|is|:)?\s*(?:suite|ste\.?)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
+        r"(?i)\bdesignated\s+as\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
+        r"(?i)\bshall\s+refer\s+to\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
         r"(?i)\bat\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
         r"(?i)\bfloor\s+([A-Za-z0-9][A-Za-z0-9\-]{0,8})\s+suite\s+([A-Za-z0-9][A-Za-z0-9\-]{0,14})",
     ]
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    search_lines = lines[:220]
-    for ln in search_lines:
+    segments = _iter_text_segments(lines, max_lines=260)
+    candidates: list[tuple[int, int, str]] = []
+    for idx, ln in enumerate(segments):
+        low = ln.lower()
         for pat in suite_patterns:
-            m = re.search(pat, ln)
-            if not m:
-                continue
-            candidate_raw = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
-            candidate = _normalize_suite_candidate(candidate_raw)
-            if candidate:
-                return candidate
-    return ""
+            for m in re.finditer(pat, ln):
+                candidate_raw = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
+                candidate = _normalize_suite_candidate(candidate_raw)
+                if not candidate:
+                    continue
+                score = 1
+                if any(k in low for k in ("premises", "located", "designated", "revised premises", "description of premises")):
+                    score += 3
+                if _is_notice_or_party_context(low):
+                    score -= 3
+                if re.search(rf"(?i)\bsuite\s*[:#-]?\s*{re.escape(candidate)}\b", ln):
+                    score += 1
+                if re.search(r"(?i)\b\d{1,6}\s+[A-Za-z0-9].*\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?)\b", ln):
+                    if not any(k in low for k in ("premises", "located", "designated")):
+                        score -= 2
+                candidates.append((score, idx, candidate))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda x: (-x[0], x[1], 0 if re.search(r"\d", x[2]) else 1))
+    return candidates[0][2]
 
 
-def _extract_address_from_text(text: str) -> str:
+def _clean_address_candidate(raw: str) -> str:
+    v = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not v:
+        return ""
+    v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
+    v = re.sub(r'(?i),\s*(?:suite|ste\.?|unit|floor)\s*$', "", v).strip(" ,.;:-")
+    v = re.sub(r'(?i)\s+and\s+located\s+at.*$', "", v).strip(" ,.;:-")
+    return v
+
+
+def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
     if not text:
         return ""
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
         return ""
-    segments: list[str] = []
-    upper = min(len(lines), 260)
-    for i in range(upper):
-        segments.append(lines[i])
-        if i + 1 < upper:
-            segments.append(f"{lines[i]} {lines[i+1]}")
-        if i + 2 < upper:
-            segments.append(f"{lines[i]} {lines[i+1]} {lines[i+2]}")
+    segments = _iter_text_segments(lines, max_lines=280)
 
     street_suffix = r"(?:Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|Lane|Ln\.?|Way|Plaza|Parkway|Pkwy\.?)"
-    core_addr = rf"(\d{{1,6}}\s+[A-Za-z0-9\.\- ]{{3,90}}{street_suffix}(?:,\s*[A-Za-z .'-]{{2,40}}){{1,3}})"
+    core_addr = rf"(\d{{1,6}}\s+[A-Za-z0-9\.\- ]{{2,100}}\b{street_suffix}\b(?:\s*,?\s*(?:Suite|Ste\.?|Unit|Floor)\s*[A-Za-z0-9\-]+)?(?:,\s*[A-Za-z0-9 .'-]{{2,50}}){{0,3}})"
     addr_patterns = [
         rf"(?i)\blocated\s+(?:on\s+the\s+\d+(?:st|nd|rd|th)\s+floor\s+of|at)\s+{core_addr}",
+        rf"(?i)\bbuilding\s+located\s+at\s+{core_addr}",
         rf"(?i)\b(?:premises|leased premises)\s+(?:located\s+at|at)\s+{core_addr}",
         rf"(?i)\bfloor\s+of\s+{core_addr}",
         rf"(?i)\b{core_addr}",
@@ -634,12 +695,24 @@ def _extract_address_from_text(text: str) -> str:
             m = re.search(pat, seg)
             if not m:
                 continue
-            candidate = " ".join(m.group(1).split()).strip(" ,.;:-")
+            candidate = _clean_address_candidate(m.group(1))
             if not _looks_like_address(candidate):
                 continue
             score = 1
             if any(k in low for k in ("located", "premises", "floor of", "leased")):
                 score += 2
+            if re.search(r"(?i)\b(austin|texas|tx|california|ca|new york|ny|florida|fl)\b", candidate):
+                score += 1
+            if _is_notice_or_party_context(low):
+                score -= 3
+            c_low = candidate.lower()
+            if any(k in c_low for k in ("rsf", "cam", "reconciliation", "rent", "rate", "month", "year")):
+                score -= 3
+            if suite_hint:
+                if re.search(rf"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*{re.escape(suite_hint)}\b", candidate):
+                    score += 2
+                elif re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*[A-Za-z0-9\-]+\b", candidate):
+                    score -= 1
             if score > best_score:
                 best_score = score
                 best = candidate
@@ -650,7 +723,10 @@ def _looks_like_address(value: str) -> bool:
     v = " ".join((value or "").split()).strip()
     if not v:
         return False
-    if re.search(r"\b\d{1,6}\s+[A-Za-z0-9].*\b(?:st|street|ave|avenue|blvd|boulevard|dr|drive|rd|road|ln|lane|way|plaza|pkwy|parkway)\b", v, re.I):
+    if re.search(r"\b\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9\.\- ]{2,100}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|drive|dr\.?|road|rd\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?)\b", v, re.I):
+        low = v.lower()
+        if any(k in low for k in ("rsf", "cam", "reconciliation", "rent", "rate per", "month", "year")):
+            return False
         return True
     if "," in v and re.search(r"\b[A-Z]{2}\b|\b(?:Texas|California|New York|Florida|Illinois)\b", v, re.I):
         return True
@@ -668,8 +744,24 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     if suite_hint:
         v = re.sub(rf"(?i)\b{re.escape(suite_hint)}\b", "", v).strip(" ,.;:-")
     # Remove weak lead-ins.
-    v = re.sub(r"(?i)^(?:at|located at|known as)\s+", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)^(?:at|located at|known as|the building located at|building located at)\s+", "", v).strip(" ,.;:-")
+    v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
+    v = re.sub(r'(?i)\s+and\s+located\s+at.*$', "", v).strip(" ,.;:-")
     low = v.lower()
+    if low in {"description of premises", "building size", "building", "premises"}:
+        return ""
+    if any(
+        phrase in low
+        for phrase in (
+            "description of premises",
+            "rentable area",
+            "addresses for notices",
+            "address for notices",
+            "prior to occupancy",
+            "after occupancy",
+        )
+    ):
+        return ""
     # Reject legal-clause text that is not a building identifier.
     if any(
         bad in low
@@ -689,6 +781,49 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     if len(v) < 4:
         return ""
     return v
+
+
+def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hint: str = "") -> str:
+    if not text:
+        return ""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    segments = _iter_text_segments(lines, max_lines=280)
+    state_token = r"(?:TX|Texas|CA|California|NY|New York|FL|Florida|IL|Illinois)"
+    patterns: list[tuple[re.Pattern[str], int]] = [
+        (re.compile(r"(?i)\bbuilding\s+commonly\s+known\s+as\s+(?:the\s+)?([^\n,;\.]{3,100})"), 5),
+        (re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,100})"), 4),
+        (re.compile(r"(?i)\blocated\s+at\s+(?:suite|ste\.?|unit)\s*[A-Za-z0-9\-]+,\s*([^,\n]{3,100}(?:,\s*[A-Za-z .'-]{2,40}){1,2})"), 4),
+        (re.compile(rf"(?i)\blocated\s+at\s+([^,\n]{{3,100}}(?:,\s*[A-Za-z .'-]{{2,40}}){{1,2}}(?:,\s*{state_token})?)"), 2),
+    ]
+    best = ""
+    best_score = -999
+    for seg in segments:
+        low = seg.lower()
+        for pat, base_score in patterns:
+            m = pat.search(seg)
+            if not m:
+                continue
+            candidate = _clean_building_candidate(m.group(1), suite_hint=suite_hint)
+            if not candidate:
+                continue
+            score = base_score
+            if any(token in low for token in ("premises", "located", "commonly known")):
+                score += 1
+            if any(token in candidate.lower() for token in ("center", "tower", "plaza", "building", "campus", "park")):
+                score += 1
+            if _looks_like_address(candidate):
+                score += 1
+            if _is_notice_or_party_context(low):
+                score -= 3
+            if score > best_score:
+                best_score = score
+                best = candidate
+    if best:
+        return best
+    addr = _clean_building_candidate(address_hint, suite_hint=suite_hint)
+    if _looks_like_address(addr):
+        return addr
+    return ""
 
 
 def _derive_building_name_from_premises_or_address(premises_name: str, address: str, suite_hint: str = "") -> str:
@@ -822,29 +957,15 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     )
 
     # ---- Suite ----
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    head = lines[:120]
     hints["suite"] = _extract_suite_from_text(text)
-    hints["address"] = _extract_address_from_text(text)
+    hints["address"] = _extract_address_from_text(text, suite_hint=hints["suite"])
 
     # ---- Address / building (includes premises labels and located-at lines) ----
-    building_patterns = [
-        r"(?i)\b(?:building|property|tower|project)\s*(?:name)?\s*[:#-]\s*([^,;\n]{3,80})",
-        r"(?i)\bpremises(?:\s+name)?\s*[:#-]\s*([^\n]{5,120})",
-        r"(?i)(?:premises|located at)\s+[^.]*?([A-Za-z0-9][A-Za-z0-9\s,\.\-]{10,80}(?:Texas|TX|California|CA)[^.]*)",
-        r"(?i)at\s+suite\s+[A-Za-z0-9\-]+\s*,?\s*([^.\n]{5,80})",
-        r"(?i)\bleased\s+premises\s+(?:is|are|shall be)\s*[:#-]?\s*([^\n]{8,120})",
-    ]
-    for ln in head:
-        for pat in building_patterns:
-            m = re.search(pat, ln)
-            if m:
-                candidate = _clean_building_candidate(m.group(1), hints.get("suite", ""))
-                if len(candidate) >= 5:
-                    hints["building_name"] = candidate
-                    break
-        if hints["building_name"]:
-            break
+    hints["building_name"] = _extract_building_name_from_text(
+        text,
+        suite_hint=hints.get("suite", ""),
+        address_hint=hints.get("address", ""),
+    )
     if not hints["building_name"] and hints.get("address"):
         hints["building_name"] = str(hints["address"])
 

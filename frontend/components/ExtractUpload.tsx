@@ -4,9 +4,14 @@ import { useCallback, useState } from "react";
 import { getApiUrl, getBaseUrl } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
 
-const NORMALIZE_TIMEOUT_MS = 60000;
+const NORMALIZE_TIMEOUT_MS = 180000;
 const NORMALIZE_TIMEOUT_MESSAGE =
-  "Normalize request timed out after 60s. Backend may be cold starting or stuck processing.";
+  "Normalize request timed out after 180s. Backend may be cold starting or processing a very large file.";
+const NORMALIZE_MAX_ATTEMPTS = 2;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface ExtractUploadProps {
   showAdvancedOptions?: boolean;
@@ -117,64 +122,106 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
       const form = new FormData();
       form.append("source", fn.endsWith(".pdf") ? "PDF" : "WORD");
       form.append("file", file);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), NORMALIZE_TIMEOUT_MS);
       try {
-        console.log("[normalize] start", {
-          rid,
-          file: file.name,
-          size: file.size,
-          type: file.type,
-          backend: getBaseUrl(),
-        });
+        let lastError: Error | null = null;
         const url = getApiUrl("/normalize");
-        const res = await fetch(url, {
-          method: "POST",
-          body: form,
-          headers: { "x-request-id": rid },
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        console.log("[normalize] response", { rid, status: res.status });
-        const rawText = await res.text();
-        if (res.ok) {
-          let data: NormalizerResponse;
+        for (let attempt = 1; attempt <= NORMALIZE_MAX_ATTEMPTS; attempt += 1) {
+          const attemptRid = `${rid}-${attempt}`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), NORMALIZE_TIMEOUT_MS);
           try {
-            data = JSON.parse(rawText) as NormalizerResponse;
-          } catch {
-            throw new Error("Normalize returned non-JSON: " + rawText.slice(0, 200));
+            console.log("[normalize] start", {
+              rid: attemptRid,
+              attempt,
+              file: file.name,
+              size: file.size,
+              type: file.type,
+              backend: getBaseUrl(),
+            });
+            if (attempt > 1) {
+              try {
+                await fetch(getApiUrl("/health"), { method: "GET" });
+              } catch {
+                // best-effort warm-up only
+              }
+              await sleep(1000);
+            }
+            const res = await fetch(url, {
+              method: "POST",
+              body: form,
+              headers: { "x-request-id": attemptRid },
+              signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            console.log("[normalize] response", { rid: attemptRid, status: res.status, attempt });
+            const rawText = await res.text();
+            if (res.ok) {
+              let data: NormalizerResponse;
+              try {
+                data = JSON.parse(rawText) as NormalizerResponse;
+              } catch {
+                throw new Error("Normalize returned non-JSON: " + rawText.slice(0, 200));
+              }
+              if (data.canonical_lease) {
+                console.log("[normalize] parsed", {
+                  hasCanonical: !!data?.canonical_lease,
+                  lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type,
+                });
+                console.log("[normalize] calling onSuccess");
+                onSuccess(data);
+                return;
+              }
+              throw new Error("Unexpected normalize response keys: " + Object.keys(data).join(","));
+            }
+            const body = (() => {
+              try {
+                return JSON.parse(rawText || "{}") as unknown;
+              } catch {
+                return null;
+              }
+            })();
+            if (body && typeof body === "object" && "error" in body) {
+              throw new Error(String((body as { error: unknown }).error));
+            }
+            const reason = classifyFailureReason(body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null);
+            if (res.status >= 500 || res.status === 503 || res.status === 429) {
+              onError("");
+              onSuccess(buildFallbackNormalizerResponse(file.name, reason));
+              return;
+            }
+            onError(formatNormalizeError(res, body));
+            return;
+          } catch (err) {
+            clearTimeout(timeoutId);
+            const msg = err instanceof Error ? err.message : String(err);
+            const isAbort = err instanceof Error && (err.name === "AbortError" || msg.toLowerCase().includes("abort"));
+            if (!isAbort || attempt === NORMALIZE_MAX_ATTEMPTS) {
+              lastError = err instanceof Error ? err : new Error(msg || "Request failed.");
+              break;
+            }
+            console.warn("[normalize] timeout, retrying", { rid: attemptRid, attempt, msg });
           }
-          if (data.canonical_lease) {
-            console.log("[normalize] parsed", { hasCanonical: !!data?.canonical_lease, lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type });
-            console.log("[normalize] calling onSuccess");
-            onSuccess(data);
+        }
+
+        if (lastError) {
+          const msg = lastError.message || "Request failed.";
+          if (lastError.name === "AbortError" || msg.toLowerCase().includes("abort")) {
+            const reason = "Backend timeout after retry.";
+            onError(NORMALIZE_TIMEOUT_MESSAGE);
+            onSuccess(buildFallbackNormalizerResponse(file.name, reason));
             return;
           }
-          throw new Error("Unexpected normalize response keys: " + Object.keys(data).join(","));
-        }
-        const body = (() => {
-          try {
-            return JSON.parse(rawText || "{}") as unknown;
-          } catch {
-            return null;
-          }
-        })();
-        if (body && typeof body === "object" && "error" in body) {
-          throw new Error(String((body as { error: unknown }).error));
-        }
-        const reason = classifyFailureReason(body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null);
-        if (res.status >= 500 || res.status === 503 || res.status === 429) {
-          onError("");
+          const reason = classifyFailureReason(msg);
+          onError(msg);
           onSuccess(buildFallbackNormalizerResponse(file.name, reason));
           return;
         }
-        onError(formatNormalizeError(res, body));
       } catch (e) {
-        clearTimeout(timeoutId);
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[normalize] error", { rid, msg });
         if (e instanceof Error && (e.name === "AbortError" || msg.toLowerCase().includes("abort"))) {
           onError(NORMALIZE_TIMEOUT_MESSAGE);
+          onSuccess(buildFallbackNormalizerResponse(file.name, "Backend timeout."));
           return;
         }
         const reason = classifyFailureReason(msg);

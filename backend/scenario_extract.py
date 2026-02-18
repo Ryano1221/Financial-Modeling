@@ -12,7 +12,7 @@ import re
 import time
 from datetime import date
 from io import BytesIO
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from models import ExtractionResponse, Scenario, RentStep, OpexMode
 
@@ -263,6 +263,14 @@ _RE_BASE_RENT = re.compile(
     r"\b(?:base\s+rent|rental\s+rate|annual\s+rent)\b[^\n$]{0,40}\$?\s*([\d,]+\.?\d*)",
     re.I,
 )
+_RE_YEAR_RATE_INLINE = re.compile(
+    r"(?i)\b(?:lease\s*)?years?\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?"
+    r"\b[^\n$]{0,120}\$?\s*([\d,]+(?:\.\d{1,4})?)"
+)
+_RE_YEAR_TABLE_HEADER = re.compile(r"(?i)\b(?:lease\s*)?years?\b.*\b(?:rent|rate|psf|/sf|per\s+sf)\b")
+_RE_YEAR_TABLE_ROW = re.compile(
+    r"^\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?\s+\$?\s*([\d,]+(?:\.\d{1,4})?)\b"
+)
 
 
 def _parse_text_date_token(s: str) -> str | None:
@@ -290,6 +298,248 @@ def _parse_text_date_token(s: str) -> str | None:
             y = int(m.group(3))
             return f"{y:04d}-{mo:02d}-{d:02d}"
     return None
+
+
+def _coerce_int_token(value: Any, default: int | None = None) -> int | None:
+    if value is None or isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        if value != value:
+            return default
+        return int(value)
+    if isinstance(value, str):
+        token = value.strip().replace(",", "")
+        if not token:
+            return default
+        m = re.search(r"-?\d+", token)
+        if m:
+            try:
+                return int(m.group(0))
+            except ValueError:
+                return default
+    return default
+
+
+def _coerce_float_token(value: Any, default: float | None = None) -> float | None:
+    if value is None or isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        if value != value:
+            return default
+        return float(value)
+    if isinstance(value, str):
+        token = value.strip().replace(",", "")
+        if not token:
+            return default
+        m = re.search(r"-?\d+(?:\.\d+)?", token)
+        if m:
+            try:
+                return float(m.group(0))
+            except ValueError:
+                return default
+    return default
+
+
+def _term_month_count(commencement: date, expiration: date) -> int:
+    """
+    Return lease term as month count.
+    Example: 2026-01-01 to 2031-01-31 => 60 (months 0..59).
+    """
+    months = (expiration.year - commencement.year) * 12 + (expiration.month - commencement.month)
+    if expiration.day < commencement.day:
+        months -= 1
+    return max(1, months)
+
+
+def _convert_year_index_steps_to_month_steps(steps: list[dict[str, float | int]], one_based: bool) -> list[dict[str, float | int]]:
+    offset = 1 if one_based else 0
+    normalized_years: list[dict[str, float | int]] = []
+    for step in sorted(steps, key=lambda s: (int(s["start"]), int(s["end"]))):
+        year_start = max(0, int(step["start"]) - offset)
+        year_end = max(year_start, int(step["end"]) - offset)
+        normalized_years.append(
+            {
+                "start": year_start,
+                "end": year_end,
+                "rate_psf_yr": float(step["rate_psf_yr"]),
+            }
+        )
+    if not normalized_years:
+        return []
+    # Some proposals use absolute lease-year labels (e.g. "Years 12-13").
+    # Rebase to the first detected year so the extracted schedule always starts at month 0.
+    min_year = min(int(step["start"]) for step in normalized_years)
+    converted: list[dict[str, float | int]] = []
+    for step in normalized_years:
+        rebased_start = max(0, int(step["start"]) - min_year)
+        rebased_end = max(rebased_start, int(step["end"]) - min_year)
+        converted.append(
+            {
+                "start": rebased_start * 12,
+                "end": ((rebased_end + 1) * 12) - 1,
+                "rate_psf_yr": float(step["rate_psf_yr"]),
+            }
+        )
+    return converted
+
+
+def _looks_like_year_index_steps(steps: list[dict[str, float | int]], term_month_count: int) -> bool:
+    """
+    Detect common extraction mistakes where "Year 1, Year 2..." was interpreted
+    as months 0,1,... instead of month ranges.
+    """
+    if len(steps) < 2:
+        return False
+    max_end = max(int(s["end"]) for s in steps)
+    max_span = max((int(s["end"]) - int(s["start"]) + 1) for s in steps)
+    # Strong signal: many tiny contiguous buckets like 0-0,1-1,2-2 (or 1-1,2-2...).
+    if len(steps) >= 3 and max_end <= 12 and max_span <= 2:
+        return True
+    if term_month_count < 24:
+        return False
+    if max_end > 30 or max_span > 6:
+        return False
+    # If interpreted as months, schedule covers too little of the term.
+    if (max_end + 1) >= max(18, term_month_count // 2):
+        return False
+    # If interpreted as years, coverage should be close to total term.
+    years_coverage_months = (max_end + 1) * 12
+    return years_coverage_months >= max(24, term_month_count - 24)
+
+
+def _repair_and_extend_month_steps(
+    steps: list[dict[str, float | int]], term_month_count: int
+) -> list[dict[str, float | int]]:
+    if not steps:
+        return []
+    ordered = sorted(steps, key=lambda s: (int(s["start"]), int(s["end"])))
+    normalized: list[dict[str, float | int]] = []
+    for raw in ordered:
+        start = max(0, int(raw["start"]))
+        end = max(start, int(raw["end"]))
+        rate = max(0.0, float(raw["rate_psf_yr"]))
+        if not normalized:
+            if start != 0:
+                start = 0
+            normalized.append({"start": start, "end": end, "rate_psf_yr": rate})
+            continue
+        prev = normalized[-1]
+        expected = int(prev["end"]) + 1
+        if start > expected:
+            prev["end"] = start - 1
+        elif start < expected:
+            start = expected
+            if end < start:
+                end = start
+        normalized.append({"start": start, "end": end, "rate_psf_yr": rate})
+    target_end = max(0, term_month_count - 1)
+    if normalized[-1]["end"] < target_end:
+        normalized[-1]["end"] = target_end
+    return normalized
+
+
+def _normalize_rent_steps(
+    raw_steps: Any,
+    term_month_count: int,
+    prefill: dict | None = None,
+) -> tuple[list[dict[str, float | int]], list[str]]:
+    parsed: list[dict[str, float | int]] = []
+    notes: list[str] = []
+    for step in raw_steps or []:
+        if not isinstance(step, dict):
+            continue
+        start = _coerce_int_token(step.get("start"), 0)
+        end = _coerce_int_token(step.get("end"), start)
+        rate = _coerce_float_token(step.get("rate_psf_yr"), 30.0)
+        if start is None or end is None or rate is None:
+            continue
+        if end < start:
+            end = start
+        parsed.append({"start": start, "end": end, "rate_psf_yr": max(0.0, float(rate))})
+
+    if not parsed:
+        return (
+            [{"start": 0, "end": max(0, term_month_count - 1), "rate_psf_yr": 30.0}],
+            ["Rent steps missing; default single step applied."],
+        )
+
+    basis = str((prefill or {}).get("_rent_steps_basis") or "").strip().lower()
+    year_base_hint = _coerce_int_token((prefill or {}).get("_rent_steps_year_base"), None)
+    looks_like_years = basis == "year_index" or _looks_like_year_index_steps(parsed, term_month_count)
+    if looks_like_years:
+        one_based = year_base_hint == 1
+        if year_base_hint is None:
+            min_year_index = min(min(int(s["start"]), int(s["end"])) for s in parsed)
+            one_based = min_year_index >= 1
+        parsed = _convert_year_index_steps_to_month_steps(parsed, one_based=one_based)
+        notes.append("Rent schedule interpreted as lease years and converted to month ranges (Year 1 = months 0-11).")
+
+    return _repair_and_extend_month_steps(parsed, term_month_count), notes
+
+
+def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
+    """
+    Parse common proposal tables like:
+      Year 1: $45.00
+      Years 2-3: $46.35
+    and convert to month-index rent steps.
+    """
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return []
+
+    year_rows: list[tuple[int, int, float]] = []
+    header_window = 0
+    for line in lines[:800]:
+        if _RE_YEAR_TABLE_HEADER.search(line):
+            header_window = 30
+        if header_window > 0:
+            m = _RE_YEAR_TABLE_ROW.search(line)
+            if m:
+                y1 = _coerce_int_token(m.group(1), None)
+                y2 = _coerce_int_token(m.group(2), y1)
+                rate = _coerce_float_token(m.group(3), None)
+                if y1 is not None and y2 is not None and rate is not None and 2 <= rate <= 500:
+                    if y2 < y1:
+                        y1, y2 = y2, y1
+                    year_rows.append((y1, y2, float(rate)))
+            header_window -= 1
+
+        for m in _RE_YEAR_RATE_INLINE.finditer(line):
+            y1 = _coerce_int_token(m.group(1), None)
+            y2 = _coerce_int_token(m.group(2), y1)
+            rate = _coerce_float_token(m.group(3), None)
+            if y1 is None or y2 is None or rate is None:
+                continue
+            matched = line[m.start():m.end()]
+            if "$" not in matched and not re.search(r"(?i)\b(?:rent|rate|psf|/sf|per\s+sf)\b", line):
+                continue
+            if not (2 <= rate <= 500):
+                continue
+            if y2 < y1:
+                y1, y2 = y2, y1
+            year_rows.append((y1, y2, float(rate)))
+
+    if not year_rows:
+        return []
+
+    deduped: list[tuple[int, int, float]] = []
+    seen: set[tuple[int, int, float]] = set()
+    for y1, y2, rate in sorted(year_rows, key=lambda x: (x[0], x[1], x[2])):
+        key = (int(y1), int(y2), round(float(rate), 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((int(y1), int(y2), float(rate)))
+
+    min_year = min(y1 for y1, _, _ in deduped)
+    one_based = min_year >= 1
+    raw_steps = [{"start": y1, "end": y2, "rate_psf_yr": rate} for y1, y2, rate in deduped]
+    month_steps = _convert_year_index_steps_to_month_steps(raw_steps, one_based=one_based)
+    if not month_steps:
+        return []
+    derived_term_months = max(int(step["end"]) for step in month_steps) + 1
+    return _repair_and_extend_month_steps(month_steps, term_month_count=max(12, derived_term_months))
 
 
 def _regex_prefill(text: str) -> dict:
@@ -378,6 +628,22 @@ def _regex_prefill(text: str) -> dict:
                 prefill["rate_psf_yr"] = v
         except ValueError:
             pass
+    year_table_steps = _extract_year_table_rent_steps(text)
+    if year_table_steps:
+        inferred_term_from_dates = None
+        if comm and exp:
+            inferred_term_from_dates = _term_month_count(_safe_date(comm), _safe_date(exp))
+        year_table_term = max(int(step["end"]) for step in year_table_steps) + 1
+        # Guardrail: in amendment/sublease files, master-lease year tables can appear
+        # and be wildly out of range for the current document's term.
+        if not (
+            inferred_term_from_dates
+            and inferred_term_from_dates <= 36
+            and year_table_term > inferred_term_from_dates * 4
+        ):
+            prefill["rent_steps"] = year_table_steps
+            prefill["_rent_steps_basis"] = "month_index"
+            prefill["_rent_steps_source"] = "year_table_regex"
     # Opex mode
     low = text.lower()
     if "base year" in low or "expense stop" in low:
@@ -420,11 +686,19 @@ def _llm_extract_scenario(text: str, prefill: dict) -> dict:
         from openai import OpenAI
     except ImportError:
         raise ImportError("openai required: pip install openai")
-    client = OpenAI(api_key=api_key)
+    timeout_sec = 45.0
+    try:
+        timeout_env = float((os.environ.get("OPENAI_EXTRACT_TIMEOUT_SEC") or "45").strip())
+        if timeout_env > 0:
+            timeout_sec = timeout_env
+    except (TypeError, ValueError, AttributeError):
+        pass
+    client = OpenAI(api_key=api_key, timeout=timeout_sec)
 
+    prefill_for_model = {k: v for k, v in (prefill or {}).items() if not str(k).startswith("_")}
     prefill_hint = ""
-    if prefill:
-        prefill_hint = f"\nPre-extracted values (use these when confident, else null + warning): {json.dumps(prefill)}"
+    if prefill_for_model:
+        prefill_hint = f"\nPre-extracted values (use these when confident, else null + warning): {json.dumps(prefill_for_model)}"
 
     prompt = f"""Extract lease terms as JSON only. No markdown, no prose.
 - Output a single JSON object: {{ "scenario": {{ ... }}, "confidence": {{ "rsf": 0.9, ... }}, "warnings": [] }}
@@ -461,7 +735,7 @@ JSON:"""
             out = json.loads(raw)
             # Merge prefill into scenario so LLM doesn't have to repeat
             scenario = out.get("scenario") or {}
-            for k, v in prefill.items():
+            for k, v in prefill_for_model.items():
                 if v is not None and (scenario.get(k) is None or scenario.get(k) == ""):
                     scenario[k] = v
             out["scenario"] = scenario
@@ -500,13 +774,23 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     rate = float(prefill.get("rate_psf_yr", 30.0) or 30.0)
     commencement = str(prefill.get("commencement") or "2026-01-01")
     expiration = str(prefill.get("expiration") or "2031-01-31")
+    term_month_count = _term_month_count(_safe_date(commencement), _safe_date(expiration))
+    prefill_steps = prefill.get("rent_steps") if isinstance(prefill.get("rent_steps"), list) else None
+    if prefill_steps:
+        rent_steps, rent_step_notes = _normalize_rent_steps(prefill_steps, term_month_count=term_month_count, prefill=prefill)
+    else:
+        rent_steps, rent_step_notes = _normalize_rent_steps(
+            [{"start": 0, "end": max(0, term_month_count - 1), "rate_psf_yr": rate}],
+            term_month_count=term_month_count,
+            prefill=prefill,
+        )
 
     scenario = {
         "name": _infer_scenario_name(text),
         "rsf": rsf,
         "commencement": commencement,
         "expiration": expiration,
-        "rent_steps": [{"start": 0, "end": 59, "rate_psf_yr": rate}],
+        "rent_steps": rent_steps,
         "free_rent_months": int(prefill.get("free_rent_months", 0) or 0),
         "ti_allowance_psf": float(prefill.get("ti_allowance_psf", 0.0) or 0.0),
         "opex_mode": opex_mode,
@@ -530,6 +814,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         "AI extraction was unavailable; used deterministic fallback extraction.",
         "Please review lease terms before running analysis.",
     ]
+    warnings.extend(rent_step_notes)
     if llm_error:
         msg = str(llm_error).lower()
         if "openai_api_key" in msg:
@@ -548,13 +833,11 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     return scenario, confidence, warnings
 
 
-def _apply_safe_defaults(raw: dict) -> tuple[dict, dict[str, float], list[str]]:
+def _apply_safe_defaults(raw: dict, prefill: dict | None = None) -> tuple[dict, dict[str, float], list[str]]:
     """Apply safe defaults to raw LLM output; return (scenario_dict, confidence, warnings)."""
     scenario = raw.get("scenario") or {}
     confidence = dict(raw.get("confidence") or {})
     warnings = list(raw.get("warnings") or [])
-
-    default_rent_step = [{"start": 0, "end": 59, "rate_psf_yr": 30.0}]
 
     name = scenario.get("name")
     if not name or not str(name).strip():
@@ -572,37 +855,35 @@ def _apply_safe_defaults(raw: dict) -> tuple[dict, dict[str, float], list[str]]:
         scenario["rsf"] = float(rsf)
 
     commencement = scenario.get("commencement")
-    scenario["commencement"] = _safe_date(commencement if isinstance(commencement, str) else None)
+    commencement_date = commencement if isinstance(commencement, date) else _safe_date(commencement if isinstance(commencement, str) else None)
+    scenario["commencement"] = commencement_date
     if not commencement:
         warnings.append("Commencement date missing; default 2026-01-01 applied.")
         confidence.setdefault("commencement", 0.0)
 
     expiration = scenario.get("expiration")
-    scenario["expiration"] = _safe_date(expiration if isinstance(expiration, str) else None)
+    expiration_date = expiration if isinstance(expiration, date) else _safe_date(expiration if isinstance(expiration, str) else None)
+    scenario["expiration"] = expiration_date
     if not expiration:
         warnings.append("Expiration date missing; default 2031-01-31 applied.")
         confidence.setdefault("expiration", 0.0)
 
-    rent_steps = scenario.get("rent_steps")
-    if not rent_steps or not isinstance(rent_steps, list) or len(rent_steps) == 0:
-        scenario["rent_steps"] = default_rent_step
-        warnings.append("Rent steps missing; default single step applied.")
+    term_month_count = _term_month_count(commencement_date, expiration_date)
+    rent_steps_input = scenario.get("rent_steps")
+    had_explicit_rent_steps = isinstance(rent_steps_input, list) and len(rent_steps_input) > 0
+    if not isinstance(rent_steps_input, list) or len(rent_steps_input) == 0:
+        rent_steps_input = (prefill or {}).get("rent_steps") if isinstance((prefill or {}).get("rent_steps"), list) else []
+        if rent_steps_input:
+            warnings.append("Rent steps inferred from rent schedule table in the uploaded file.")
+    normalized_steps, rent_step_notes = _normalize_rent_steps(
+        rent_steps_input,
+        term_month_count=term_month_count,
+        prefill=prefill,
+    )
+    scenario["rent_steps"] = normalized_steps
+    warnings.extend(rent_step_notes)
+    if not had_explicit_rent_steps:
         confidence.setdefault("rent_steps", 0.0)
-    else:
-        normalized = []
-        for step in rent_steps:
-            if not isinstance(step, dict):
-                continue
-            normalized.append({
-                "start": int(step.get("start", 0)),
-                "end": int(step.get("end", 59)),
-                "rate_psf_yr": float(step.get("rate_psf_yr", 30.0)),
-            })
-        if not normalized:
-            scenario["rent_steps"] = default_rent_step
-            warnings.append("Rent steps invalid; default applied.")
-        else:
-            scenario["rent_steps"] = normalized
 
     scenario.setdefault("free_rent_months", 0)
     scenario.setdefault("ti_allowance_psf", 0.0)
@@ -667,13 +948,31 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
 
     prefill = _regex_prefill(text)
     text_for_llm, extra_warnings = _prepare_text_for_llm(text)
+    raw: dict | None = None
+    llm_error: Exception | None = None
     try:
         raw = _llm_extract_scenario(text_for_llm, prefill=prefill)
-        scenario_dict, confidence, warnings = _apply_safe_defaults(raw)
-        warnings = extra_warnings + warnings
     except Exception as e:
+        llm_error = e
+        logger.warning("[extract] AI extraction failed; using deterministic fallback. err=%s", str(e)[:280])
         print("AI_EXTRACT_FAIL", {"err": str(e)[:400], "type": type(e).__name__}, flush=True)
-        raise
+
+    if raw is None:
+        fallback_scenario, fallback_confidence, fallback_warnings = _heuristic_extract_scenario(
+            text,
+            prefill=prefill,
+            llm_error=llm_error,
+        )
+        fallback_raw = {
+            "scenario": fallback_scenario,
+            "confidence": fallback_confidence,
+            "warnings": fallback_warnings,
+        }
+        scenario_dict, confidence, warnings = _apply_safe_defaults(fallback_raw, prefill=prefill)
+    else:
+        scenario_dict, confidence, warnings = _apply_safe_defaults(raw, prefill=prefill)
+
+    warnings = extra_warnings + warnings
     scenario = Scenario.model_validate(scenario_dict)
     return ExtractionResponse(
         scenario=scenario,
