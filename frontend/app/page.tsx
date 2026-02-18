@@ -278,10 +278,9 @@ export default function Home() {
       setLastExtractWarnings(data.warnings?.length ? data.warnings : null);
       setExtractError(null);
       const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
-      if (needsReview) {
-        setPendingNormalize(data);
-        return;
-      }
+
+      // Always add parsed scenarios so batch uploads of multiple files never stall on a
+      // single review gate. Low-confidence fields can still be edited in the form.
       setPendingNormalize(null);
 
       if (!data.canonical_lease) {
@@ -301,6 +300,15 @@ export default function Home() {
       });
       setPendingNormalize(null);
       setExtractError(null);
+
+      if (needsReview) {
+        const reviewMsg = "Low-confidence fields were auto-populated. Please review Building name, Suite, RSF, dates, and rent schedule.";
+        setLastExtractWarnings((prev) => {
+          const base = data.warnings?.length ? data.warnings : prev ?? [];
+          if (base.includes(reviewMsg)) return base;
+          return [...base, reviewMsg];
+        });
+      }
 
       const computeUrl = getApiUrl("/compute-canonical");
       const outgoingLeaseType = (canonical as { lease_type?: string })?.lease_type;
