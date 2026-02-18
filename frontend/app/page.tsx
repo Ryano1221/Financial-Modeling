@@ -53,6 +53,14 @@ const NOISY_WARNING_PATTERNS = [
   /automatic extraction failed\.\s*heuristic review template loaded/i,
   /rent_schedule was empty; added single step at \$0/i,
 ];
+const HARD_REVIEW_WARNING_PATTERNS = [
+  /automatic extraction failed/i,
+  /review template/i,
+  /no text could be extracted/i,
+  /could not process this file automatically/i,
+  /could not confidently parse/i,
+  /lease normalization failed/i,
+];
 
 type ReportErrorState = { statusCode: number; message: string; reportId?: string } | null;
 
@@ -299,7 +307,6 @@ export default function Home() {
       const warnings = sanitizeExtractionWarnings(data.warnings);
       setLastExtractWarnings(warnings.length > 0 ? warnings : null);
       setExtractError(null);
-      const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
 
       if (!data.canonical_lease) {
         console.log("[compute] skip: no canonical_lease");
@@ -308,6 +315,20 @@ export default function Home() {
       }
 
       const canonical = data.canonical_lease;
+      const criticalMissing = new Set(["rsf", "rent_schedule", "term_months", "commencement_date", "expiration_date"]);
+      const hasCriticalMissing = (data.missing_fields ?? []).some((f) => criticalMissing.has(String(f)));
+      const hasHardReviewWarning = warnings.some((w) =>
+        HARD_REVIEW_WARNING_PATTERNS.some((p) => p.test(w))
+      );
+      const hasInvalidCoreValues =
+        !canonical ||
+        !Number.isFinite(Number(canonical.rsf)) ||
+        Number(canonical.rsf) <= 0 ||
+        !Number.isFinite(Number(canonical.term_months)) ||
+        Number(canonical.term_months) <= 0 ||
+        !Array.isArray(canonical.rent_schedule) ||
+        canonical.rent_schedule.length === 0;
+      const needsReview = hasCriticalMissing || hasHardReviewWarning || hasInvalidCoreValues;
 
       if (needsReview) {
         const queued: NormalizerResponse = {
