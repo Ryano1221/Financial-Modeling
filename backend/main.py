@@ -555,6 +555,15 @@ def _month_diff(commencement: date, expiration: date) -> int:
     return max(1, round(delta / 30.4375))
 
 
+def _coerce_int_token(value: object, default: int = 0) -> int:
+    if value is None:
+        return int(default)
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def _normalize_suite_candidate(raw: str) -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:-")
     if not v:
@@ -1028,6 +1037,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if not text:
         return hints
 
+    suite_hint = _extract_suite_from_text(text)
+
     # ---- RSF: collect candidates with context-aware score ----
     rsf_patterns = [
         r"(?i)\b(?:rentable\s+area|rentable\s+square\s+feet|rsf)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
@@ -1073,10 +1084,30 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 score -= 4
             if any(k in low for k in ("shopping center contains", "center contains", "total rsf", "whole center", "entire center", "building contains approximately")):
                 score -= 5
+            if any(
+                k in low
+                for k in (
+                    "right of first refusal",
+                    "first refusal space",
+                    "option to extend",
+                    "extension period",
+                    "third party proposal",
+                    "fair market rent",
+                )
+            ):
+                score -= 6
             if re.search(r"(?i)\$\s*\d[\d,]*(?:\.\d+)?\s*(?:/|per)\s*(?:sf|rsf)", low):
                 score -= 2
             if value <= 1500 and re.search(r"(?i)\b(?:per|ratio|density|occup|person|people|work\s*station)\b", low):
                 score -= 6
+            if suite_hint:
+                suite_match = re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*([A-Za-z0-9\-]+)\b", snippet)
+                if suite_match:
+                    cand_suite = _normalize_suite_candidate(suite_match.group(1))
+                    if cand_suite and cand_suite != suite_hint:
+                        score -= 8
+                    elif cand_suite and cand_suite == suite_hint:
+                        score += 3
 
             rsf_candidates.append(
                 {
@@ -1236,7 +1267,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     )
 
     # ---- Suite ----
-    hints["suite"] = _extract_suite_from_text(text)
+    hints["suite"] = suite_hint
     hints["address"] = _extract_address_from_text(text, suite_hint=hints["suite"])
 
     # ---- Address / building (includes premises labels and located-at lines) ----
@@ -1576,6 +1607,33 @@ def _normalize_impl(
                     updates["scenario_name"] = f"Suite {suite_val}"
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
+            target_term_months = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0
+            if target_term_months > 0 and canonical.rent_schedule:
+                adjusted_schedule = sorted(
+                    canonical.rent_schedule,
+                    key=lambda s: (int(getattr(s, "start_month", 0)), int(getattr(s, "end_month", 0))),
+                )
+                expected_start = 0
+                rewritten = []
+                for step in adjusted_schedule:
+                    start_m = int(getattr(step, "start_month", 0))
+                    end_m = int(getattr(step, "end_month", start_m))
+                    if start_m < expected_start:
+                        start_m = expected_start
+                    if start_m > expected_start:
+                        start_m = expected_start
+                    if end_m < start_m:
+                        end_m = start_m
+                    expected_start = end_m + 1
+                    rewritten.append(step.model_copy(update={"start_month": start_m, "end_month": end_m}))
+                target_end = max(0, target_term_months - 1)
+                trimmed = [s for s in rewritten if int(getattr(s, "start_month", 0)) <= target_end]
+                if trimmed:
+                    last = trimmed[-1]
+                    last_end = int(getattr(last, "end_month", target_end))
+                    if last_end != target_end:
+                        trimmed[-1] = last.model_copy(update={"end_month": target_end})
+                    updates["rent_schedule"] = trimmed
             if note_highlights:
                 updates["notes"] = " | ".join(note_highlights)[:1600]
             elif text.strip() and not (canonical.notes or "").strip():

@@ -87,6 +87,18 @@ def test_extract_hints_parses_commencement_and_expiration_from_term_clause() -> 
     assert hints["term_months"] == 33
 
 
+def test_extract_hints_prefers_subject_premises_rsf_over_rofr_space() -> None:
+    text = (
+        "Description of Premises: The Premises is known as Suite 300 located at "
+        "8300 North MoPac Expressway, Austin, Texas, and consists of approximately 22,022 rentable square feet.\n"
+        "Right of First Refusal Space: Suite 200 containing 16,252 RSF may be offered under separate terms.\n"
+    )
+    hints = main._extract_lease_hints(text, "mopac-sublease.pdf", "test-rid")
+    assert hints["suite"] == "300"
+    assert hints["rsf"] == 22022
+    assert hints["building_name"] == "8300 North MoPac Expressway, Austin, Texas"
+
+
 def test_detect_generated_report_document() -> None:
     text = (
         "Lease Economics Comparison\\n"

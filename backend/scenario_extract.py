@@ -23,17 +23,19 @@ OCR_EARLY_EXIT_MIN_CHARS = 1500
 # When OCR runs, only process this many pages (default)
 DEFAULT_OCR_PAGES = 5
 # Snippet pack cap
-SNIPPET_PACK_MAX_CHARS = 12_000
+SNIPPET_PACK_MAX_CHARS = 20_000
 # Fallback truncation when snippet pack too small
 FALLBACK_HEAD_CHARS = 20_000
 FALLBACK_TAIL_CHARS = 20_000
 # Lines of context around keyword matches for snippet pack
-SNIPPET_CONTEXT_LINES = 20
+SNIPPET_CONTEXT_LINES = 24
 
 FOCUS_KEYWORDS = [
     "rent", "base rent", "rental rate", "term", "commencement", "expiration",
     "operating expenses", "CAM", "NNN", "base year", "TI", "tenant improvement",
     "allowance", "abatement", "free rent", "parking", "option", "renewal", "termination",
+    "premises", "suite", "building", "property", "address",
+    "rentable square feet", "rentable area", "square feet", "rsf",
 ]
 SNIPPET_MIN_CHARS = 500  # if snippet pack smaller than this, use fallback truncation
 
@@ -229,7 +231,8 @@ def _prepare_text_for_llm(text: str) -> tuple[str, list[str]]:
 
 # ---- Regex pre-extraction ----
 _RE_RSF = re.compile(
-    r"\b(?:rsf|rentable\s+square\s+feet?|sq\.?\s*ft\.?)\b[ \t:]*[\d,]+\.?\d*|[\d,]+\.?\d*[ \t]*(?:rsf|sf|sq\.?\s*ft\.?)\b",
+    r"\b(?:rsf|rentable\s+square\s+feet?|sq\.?\s*ft\.?)\b[ \t:]*[\d,]+\.?\d*|"
+    r"[\d,]+\.?\d*[ \t]*(?:rsf|sf|sq\.?\s*ft\.?|rentable\s+square\s+feet?)\b",
     re.I,
 )
 _RE_NUM = re.compile(r"[\d,]+\.?\d*")
@@ -270,6 +273,16 @@ _RE_YEAR_RATE_INLINE = re.compile(
 _RE_YEAR_TABLE_HEADER = re.compile(r"(?i)\b(?:lease\s*)?years?\b.*\b(?:rent|rate|psf|/sf|per\s+sf)\b")
 _RE_YEAR_TABLE_ROW = re.compile(
     r"^\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?\s+\$?\s*([\d,]+(?:\.\d{1,4})?)\b"
+)
+_RE_YEAR_LABEL_ONLY = re.compile(
+    r"(?i)^\s*(?:lease\s*)?years?\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?\s*$"
+)
+_RE_SIMPLE_RATE_LINE = re.compile(r"^\s*\$?\s*([\d,]+(?:\.\d{1,4})?)\s*$")
+_RE_RENT_TABLE_HINT = re.compile(
+    r"(?i)\b(base\s+rent|lease\s+year|annual\s+rate|rate\s*\(psf\)|monthly\s+base\s+rent)\b"
+)
+_RE_NON_RENT_YEAR_CONTEXT = re.compile(
+    r"(?i)\b(parking|space(?:s)?|per\s+space|free\s+rent|abatement|opex|operating\s+expense|cam|tax(?:es)?)\b"
 )
 
 
@@ -477,6 +490,35 @@ def _normalize_rent_steps(
     return _repair_and_extend_month_steps(parsed, term_month_count), notes
 
 
+def _looks_like_fragmented_year_schedule(steps: list[dict[str, float | int]], term_month_count: int) -> bool:
+    """
+    Detect bad LLM outputs like:
+      0-2, 3-3, 4-4, 5-5, 6-59
+    which are typically lease-year labels misread as month buckets.
+    """
+    if len(steps) < 4:
+        return False
+    ordered = sorted(steps, key=lambda s: (int(s["start"]), int(s["end"])))
+    if int(ordered[0]["start"]) != 0:
+        return False
+    if int(ordered[-1]["end"]) != max(0, term_month_count - 1):
+        return False
+    lead = ordered[:-1]
+    if len(lead) < 3:
+        return False
+    max_lead_end = max(int(s["end"]) for s in lead)
+    max_lead_span = max(int(s["end"]) - int(s["start"]) + 1 for s in lead)
+    tail = ordered[-1]
+    tail_span = int(tail["end"]) - int(tail["start"]) + 1
+    if max_lead_end > 12 or max_lead_span > 3:
+        return False
+    if int(tail["start"]) > 12:
+        return False
+    if tail_span < max(18, term_month_count // 2):
+        return False
+    return True
+
+
 def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
     """
     Parse common proposal tables like:
@@ -490,9 +532,11 @@ def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
 
     year_rows: list[tuple[int, int, float]] = []
     header_window = 0
-    for line in lines[:800]:
-        if _RE_YEAR_TABLE_HEADER.search(line):
-            header_window = 30
+    scan_limit = min(len(lines), 1000)
+    for idx, line in enumerate(lines[:scan_limit]):
+        low_line = line.lower()
+        if _RE_YEAR_TABLE_HEADER.search(line) or _RE_RENT_TABLE_HINT.search(line):
+            header_window = max(header_window, 50)
         if header_window > 0:
             m = _RE_YEAR_TABLE_ROW.search(line)
             if m:
@@ -503,9 +547,28 @@ def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
                     if y2 < y1:
                         y1, y2 = y2, y1
                     year_rows.append((y1, y2, float(rate)))
+            else:
+                label = _RE_YEAR_LABEL_ONLY.search(line)
+                if label:
+                    y1 = _coerce_int_token(label.group(1), None)
+                    y2 = _coerce_int_token(label.group(2), y1)
+                    if y1 is not None and y2 is not None:
+                        if y2 < y1:
+                            y1, y2 = y2, y1
+                        for look_ahead in lines[idx + 1: idx + 5]:
+                            rate_match = _RE_SIMPLE_RATE_LINE.search(look_ahead)
+                            if not rate_match:
+                                continue
+                            rate = _coerce_float_token(rate_match.group(1), None)
+                            if rate is None or not (2 <= rate <= 500):
+                                continue
+                            year_rows.append((y1, y2, float(rate)))
+                            break
             header_window -= 1
 
         for m in _RE_YEAR_RATE_INLINE.finditer(line):
+            if _RE_NON_RENT_YEAR_CONTEXT.search(low_line):
+                continue
             y1 = _coerce_int_token(m.group(1), None)
             y2 = _coerce_int_token(m.group(2), y1)
             rate = _coerce_float_token(m.group(3), None)
@@ -540,6 +603,46 @@ def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
         return []
     derived_term_months = max(int(step["end"]) for step in month_steps) + 1
     return _repair_and_extend_month_steps(month_steps, term_month_count=max(12, derived_term_months))
+
+
+def _infer_rate_psf_from_monthly_rent(text: str, rsf: float | None) -> float | None:
+    if rsf is None or rsf <= 0:
+        return None
+    monthly_candidates: list[float] = []
+
+    # Explicit monthly base rent amount.
+    m = re.search(r"(?i)\bmonthly\s+(?:base\s+)?rent\b[^\n$]{0,40}\$?\s*([\d,]+(?:\.\d{1,2})?)", text)
+    if m:
+        v = _coerce_float_token(m.group(1), None)
+        if v and 500 <= v <= 2_000_000:
+            monthly_candidates.append(float(v))
+
+    # "1 month of Prepaid Rent ($51,384.67)" pattern.
+    m = re.search(r"(?i)\bprepaid\s+rent\b[^\n$]{0,80}\(\$?\s*([\d,]+(?:\.\d{1,2})?)\)", text)
+    if m:
+        v = _coerce_float_token(m.group(1), None)
+        if v and 500 <= v <= 2_000_000:
+            monthly_candidates.append(float(v))
+
+    # "2 months' rent ($109,027.99)" => infer one month.
+    m = re.search(
+        r"(?i)\b(\d{1,2})\s+months?[’']?\s+rent\b[^\n$]{0,80}\(\$?\s*([\d,]+(?:\.\d{1,2})?)\)",
+        text,
+    )
+    if m:
+        months = _coerce_int_token(m.group(1), None)
+        total = _coerce_float_token(m.group(2), None)
+        if months and months > 0 and total and 500 <= total <= 4_000_000:
+            monthly_candidates.append(float(total) / float(months))
+
+    if not monthly_candidates:
+        return None
+
+    monthly = monthly_candidates[0]
+    annual_psf = (monthly * 12.0) / float(rsf)
+    if 2.0 <= annual_psf <= 500.0:
+        return round(float(annual_psf), 4)
+    return None
 
 
 def _regex_prefill(text: str) -> dict:
@@ -707,6 +810,10 @@ def _regex_prefill(text: str) -> dict:
                 prefill["rate_psf_yr"] = v
         except ValueError:
             pass
+    if "rate_psf_yr" not in prefill:
+        inferred_rate = _infer_rate_psf_from_monthly_rent(text, _coerce_float_token(prefill.get("rsf"), None))
+        if inferred_rate is not None:
+            prefill["rate_psf_yr"] = inferred_rate
     year_table_steps = _extract_year_table_rent_steps(text)
     if year_table_steps:
         inferred_term_from_dates = None
@@ -765,14 +872,13 @@ def _llm_extract_scenario(text: str, prefill: dict) -> dict:
         from openai import OpenAI
     except ImportError:
         raise ImportError("openai required: pip install openai")
-    timeout_sec = 45.0
+    timeout_sec = 18.0
     try:
-        timeout_env = float((os.environ.get("OPENAI_EXTRACT_TIMEOUT_SEC") or "45").strip())
+        timeout_env = float((os.environ.get("OPENAI_EXTRACT_TIMEOUT_SEC") or "18").strip())
         if timeout_env > 0:
             timeout_sec = timeout_env
     except (TypeError, ValueError, AttributeError):
         pass
-    client = OpenAI(api_key=api_key, timeout=timeout_sec)
 
     prefill_for_model = {k: v for k, v in (prefill or {}).items() if not str(k).startswith("_")}
     prefill_hint = ""
@@ -781,9 +887,13 @@ def _llm_extract_scenario(text: str, prefill: dict) -> dict:
 
     prompt = f"""Extract lease terms as JSON only. No markdown, no prose.
 - Output a single JSON object: {{ "scenario": {{ ... }}, "confidence": {{ "rsf": 0.9, ... }}, "warnings": [] }}
-- rent_steps: month-index only: [{{"start": 0, "end": 59, "rate_psf_yr": number}}, ...]
+- Scenario fields to fill when present: name, rsf, commencement, expiration, rent_steps, free_rent_months, ti_allowance_psf, opex_mode, base_opex_psf_yr, base_year_opex_psf_yr, opex_growth.
+- Treat lease year tables correctly: Year 1 = months 0-11, Year 2 = months 12-23, etc.
+- rent_steps must be month-index ranges only: [{{"start": 0, "end": 59, "rate_psf_yr": number}}, ...]
+- rent_steps must be contiguous, no overlaps/gaps, sorted ascending.
+- Prefer the subject Premises/Suite/Space for RSF and dates; ignore ROFR/ROFO/expansion/option spaces unless they are explicitly the leased premises.
 - Do not invent values. Use null and add a warning when unknown.
-- Apply safe defaults only for required fields; add warning for each default.
+- If only monthly rent and RSF are provided, infer annual PSF rent.
 {prefill_hint}
 
 Text:
@@ -794,10 +904,20 @@ Text:
 JSON:"""
 
     configured = (os.environ.get("OPENAI_LEASE_MODEL") or "").strip()
-    models = [m.strip() for m in configured.split(",") if m.strip()] if configured else ["gpt-4o-mini", "gpt-4.1-mini"]
+    models = (
+        [m.strip() for m in configured.split(",") if m.strip()]
+        if configured
+        else ["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"]
+    )
     last_error: Exception | None = None
+    deadline = time.monotonic() + max(6.0, timeout_sec)
     for model in models:
+        remaining = deadline - time.monotonic()
+        if remaining <= 1.0:
+            break
+        per_call_timeout = max(6.0, min(timeout_sec, remaining))
         try:
+            client = OpenAI(api_key=api_key, timeout=per_call_timeout)
             t0 = time.perf_counter()
             response = client.chat.completions.create(
                 model=model,
@@ -822,6 +942,10 @@ JSON:"""
         except Exception as e:
             last_error = e
             logger.warning("[extract] model failed model=%s error=%s", model, e)
+            low = str(e).lower()
+            # Connection/timeouts are usually service-wide; fail fast to deterministic fallback.
+            if any(x in low for x in ("connection", "timeout", "timed out", "api connection", "network")):
+                break
             continue
     if last_error is not None:
         raise last_error
@@ -983,10 +1107,30 @@ def _apply_safe_defaults(raw: dict, prefill: dict | None = None) -> tuple[dict, 
     term_month_count = _term_month_count(commencement_date, expiration_date)
     rent_steps_input = scenario.get("rent_steps")
     had_explicit_rent_steps = isinstance(rent_steps_input, list) and len(rent_steps_input) > 0
-    if not isinstance(rent_steps_input, list) or len(rent_steps_input) == 0:
-        rent_steps_input = (prefill or {}).get("rent_steps") if isinstance((prefill or {}).get("rent_steps"), list) else []
-        if rent_steps_input:
-            warnings.append("Rent steps inferred from rent schedule table in the uploaded file.")
+    prefill_steps = (prefill or {}).get("rent_steps") if isinstance((prefill or {}).get("rent_steps"), list) else []
+    if not isinstance(rent_steps_input, list):
+        rent_steps_input = []
+    if len(rent_steps_input) == 0 and prefill_steps:
+        rent_steps_input = prefill_steps
+        warnings.append("Rent steps inferred from rent schedule table in the uploaded file.")
+    elif len(rent_steps_input) > 0 and prefill_steps:
+        parsed_explicit: list[dict[str, float | int]] = []
+        for step in rent_steps_input:
+            if not isinstance(step, dict):
+                continue
+            start = _coerce_int_token(step.get("start"), None)
+            end = _coerce_int_token(step.get("end"), start)
+            rate = _coerce_float_token(step.get("rate_psf_yr"), None)
+            if start is None or end is None or rate is None:
+                continue
+            parsed_explicit.append({"start": int(start), "end": int(max(start, end)), "rate_psf_yr": float(rate)})
+        if parsed_explicit and _looks_like_fragmented_year_schedule(parsed_explicit, term_month_count):
+            rent_steps_input = prefill_steps
+            warnings.append(
+                "Rent steps from AI output looked fragmented; replaced with rent schedule table extraction "
+                "(Year 1 = months 0-11)."
+            )
+
     normalized_steps, rent_step_notes = _normalize_rent_steps(
         rent_steps_input,
         term_month_count=term_month_count,
