@@ -38,6 +38,15 @@ export function ScenarioForm({
   onDeleteScenario,
   onAcceptChanges,
 }: ScenarioFormProps) {
+  const toDisplayMonth = (monthIndex: number): number => {
+    if (!Number.isFinite(monthIndex)) return 1;
+    return Math.max(1, Math.floor(monthIndex) + 1);
+  };
+  const toInternalMonth = (displayMonth: number): number => {
+    if (!Number.isFinite(displayMonth)) return 0;
+    return Math.max(0, Math.floor(displayMonth) - 1);
+  };
+
   const update = <K extends keyof ScenarioInput>(
     key: K,
     value: ScenarioInput[K]
@@ -113,7 +122,7 @@ export function ScenarioForm({
     if (!scenario || scenario.rent_steps.length === 0) return ["Add at least one rent step."];
     const issues: string[] = [];
     const steps = [...scenario.rent_steps].sort((a, b) => a.start - b.start);
-    if (steps[0] && steps[0].start !== 0) issues.push("First step should start at month 0.");
+    if (steps[0] && steps[0].start !== 0) issues.push("First step should start at month 1.");
     for (let i = 0; i < steps.length; i += 1) {
       const s = steps[i];
       if (s.end < s.start) issues.push(`Step ${i + 1} ends before it starts.`);
@@ -325,7 +334,7 @@ export function ScenarioForm({
           <div>
             <h3 className="text-sm font-semibold text-white">Rent schedule</h3>
             <p className="text-xs text-zinc-400 mt-1">
-              Month `0` is lease start. Steps must be continuous with no overlap. Example: `0-11`, `12-23`, `24-35`.
+              Month `1` is lease start. Steps must be continuous with no overlap. Example: `1-12`, `13-24`, `25-36`.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
@@ -365,10 +374,10 @@ export function ScenarioForm({
                 <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">Start month</span>
                 <input
                   type="number"
-                  min={0}
-                  value={step.start}
+                  min={1}
+                  value={toDisplayMonth(step.start)}
                   onChange={(e) =>
-                    updateRentStep(i, "start", Number(e.target.value))
+                    updateRentStep(i, "start", toInternalMonth(Number(e.target.value)))
                   }
                   className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
                 />
@@ -377,10 +386,10 @@ export function ScenarioForm({
                 <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">End month</span>
                 <input
                   type="number"
-                  min={0}
-                  value={step.end}
+                  min={1}
+                  value={toDisplayMonth(step.end)}
                   onChange={(e) =>
-                    updateRentStep(i, "end", Number(e.target.value))
+                    updateRentStep(i, "end", toInternalMonth(Number(e.target.value)))
                   }
                   className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
                 />
@@ -403,10 +412,12 @@ export function ScenarioForm({
                   const startMonth = Math.max(0, Math.floor(Number(step.start) || 0));
                   const endMonthRaw = Math.max(0, Math.floor(Number(step.end) || 0));
                   const endMonth = Math.max(startMonth, endMonthRaw);
-                  const startYear = Math.floor(startMonth / 12) + 1;
-                  const endYear = Math.floor(endMonth / 12) + 1;
+                  const startDisplayMonth = startMonth + 1;
+                  const endDisplayMonth = endMonth + 1;
+                  const startYear = Math.floor((startDisplayMonth - 1) / 12) + 1;
+                  const endYear = Math.floor((endDisplayMonth - 1) / 12) + 1;
                   const yearLabel = startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
-                  return `${yearLabel} (M${startMonth}-${endMonth})`;
+                  return `${yearLabel} (M${startDisplayMonth}-${endDisplayMonth})`;
                 })()}
               </div>
               <button
