@@ -124,6 +124,7 @@ export default function Home() {
   const [extractError, setExtractError] = useState<string | null>(null);
   const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
   const [pendingNormalize, setPendingNormalize] = useState<NormalizerResponse | null>(null);
+  const [pendingNormalizeQueue, setPendingNormalizeQueue] = useState<NormalizerResponse[]>([]);
   const [brands, setBrands] = useState<BrandConfig[]>([]);
   const [brandId, setBrandId] = useState<string>("default");
   const [reportLoading, setReportLoading] = useState(false);
@@ -279,7 +280,11 @@ export default function Home() {
       setExtractError(null);
       const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
       if (needsReview) {
-        setPendingNormalize(data);
+        if (!pendingNormalize) {
+          setPendingNormalize(data);
+        } else {
+          setPendingNormalizeQueue((prev) => [...prev, data]);
+        }
         return;
       }
       setPendingNormalize(null);
@@ -330,7 +335,7 @@ export default function Home() {
         })
         .catch((e) => console.error("[compute] failed", e));
     },
-    []
+    [pendingNormalize]
   );
 
   const handleNormalizeConfirm = useCallback(
@@ -340,6 +345,7 @@ export default function Home() {
         runComputeForScenario(newScenario);
       });
       setLastExtractWarnings(null);
+      setPendingNormalize(null);
     },
     [addScenarioFromCanonical, runComputeForScenario]
   );
@@ -347,8 +353,23 @@ export default function Home() {
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message);
     setLastExtractWarnings(null);
+    if (!pendingNormalize && pendingNormalizeQueue.length > 0) {
+      const [next, ...rest] = pendingNormalizeQueue;
+      setPendingNormalize(next ?? null);
+      setPendingNormalizeQueue(rest);
+    }
+  }, [pendingNormalize, pendingNormalizeQueue]);
+
+  const handleNormalizeCancel = useCallback(() => {
     setPendingNormalize(null);
   }, []);
+
+  useEffect(() => {
+    if (pendingNormalize || pendingNormalizeQueue.length === 0) return;
+    const [next, ...rest] = pendingNormalizeQueue;
+    setPendingNormalize(next);
+    setPendingNormalizeQueue(rest);
+  }, [pendingNormalize, pendingNormalizeQueue]);
 
   useEffect(() => {
     try {
@@ -1022,7 +1043,7 @@ export default function Home() {
                     <NormalizeReviewCard
                       data={pendingNormalize}
                       onConfirm={handleNormalizeConfirm}
-                      onCancel={() => setPendingNormalize(null)}
+                      onCancel={handleNormalizeCancel}
                     />
                   </div>
                 )}
