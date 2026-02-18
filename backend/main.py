@@ -564,6 +564,15 @@ def _coerce_int_token(value: object, default: int = 0) -> int:
         return int(default)
 
 
+def _coerce_float_token(value: object, default: float = 0.0) -> float:
+    if value is None:
+        return float(default)
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def _normalize_suite_candidate(raw: str) -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:-")
     if not v:
@@ -1033,6 +1042,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "building_name": "",
         "address": "",
         "lease_type": None,
+        "parking_ratio": None,
+        "parking_count": None,
+        "parking_rate_monthly": None,
     }
     if not text:
         return hints
@@ -1288,6 +1300,48 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if m:
         hints["lease_type"] = re.sub(r"\s+", " ", m.group(1).strip())
 
+    # Parking ratio and economics
+    parking_ratio_patterns = [
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:spaces?|stalls?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
+        r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*1,?000\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*\/\s*1,?000\s*(?:rsf|sf)\b",
+    ]
+    for pat in parking_ratio_patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        ratio = _coerce_float_token(m.group(1), 0.0)
+        if 0.1 <= ratio <= 30:
+            hints["parking_ratio"] = ratio
+            break
+
+    parking_count_patterns = [
+        r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
+        r"(?i)\b(\d{1,4})\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
+        r"(?i)\bentitled\s+to\s+(\d{1,4})\s+(?:parking\s+)?spaces?\b",
+    ]
+    for pat in parking_count_patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        count = _coerce_int_token(m.group(1), 0)
+        if 1 <= count <= 10000:
+            hints["parking_count"] = count
+            break
+
+    parking_rate_patterns = [
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\s*(?:per|\/)\s*month\b",
+        r"(?i)\bparking\b[^.\n]{0,80}\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
+    ]
+    for pat in parking_rate_patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        rate = _coerce_float_token(m.group(1), 0.0)
+        if 1 <= rate <= 10000:
+            hints["parking_rate_monthly"] = rate
+            break
+
     return hints
 
 
@@ -1339,6 +1393,20 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
             ],
         ),
         (
+            "Parking ratio",
+            [
+                re.compile(r"\b\d+(?:\.\d+)?\s*(?:spaces?|stalls?)\s*(?:per|/)\s*1,?000\s*(?:rsf|sf|square feet)\b", re.I),
+                re.compile(r"\bparking ratio\b.{0,60}\b\d+(?:\.\d+)?\s*(?:per|/)\s*1,?000\b", re.I),
+            ],
+        ),
+        (
+            "Parking charges",
+            [
+                re.compile(r"\$\s*\d[\d,]*(?:\.\d{1,2})?\s*(?:per|/)\s*(?:space|stall)\s*(?:per|/)\s*month\b", re.I),
+                re.compile(r"\bparking\b.{0,90}\$\s*\d[\d,]*(?:\.\d{1,2})?\b", re.I),
+            ],
+        ),
+        (
             "OpEx exclusions",
             [
                 re.compile(
@@ -1359,6 +1427,25 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
             "Audit rights",
             [
                 re.compile(r"\b(audit|inspect)\b.{0,70}\b(records|books|operating expenses?|cam)\b", re.I),
+            ],
+        ),
+        (
+            "Assignment/Sublease",
+            [
+                re.compile(r"\b(assign(?:ment)?|sublet|sublease)\b.{0,90}\b(consent|permitted|not be unreasonably withheld|restriction)\b", re.I),
+            ],
+        ),
+        (
+            "Use restrictions",
+            [
+                re.compile(r"\b(use\s+clause|permitted use|exclusive use)\b", re.I),
+                re.compile(r"\bshall\s+use\s+the\s+premises\b", re.I),
+            ],
+        ),
+        (
+            "Holdover",
+            [
+                re.compile(r"\bholdover\b.{0,70}\b(rent|rate|percent|%)\b", re.I),
             ],
         ),
     ]
@@ -1522,18 +1609,25 @@ def _normalize_impl(
         if canonical is not None:
             pass
         elif text.strip():
-            # No try/except: let AI extraction failures propagate (503 from endpoint).
-            extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
-            if extraction and extraction.scenario:
-                canonical = _scenario_to_canonical(extraction.scenario, "", "")
-                field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
-                confidence_score = min(field_confidence.values()) if field_confidence else 0.78
-                warnings.extend(extraction.warnings or [])
-            else:
+            try:
+                extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
+            except Exception as e:
                 canonical = _dict_to_canonical({}, "", "")
-                confidence_score = 0.4
+                confidence_score = 0.35
                 used_fallback = True
-                warnings.append("We could not confidently parse this lease. Please review extracted fields.")
+                warnings.append(_safe_extraction_warning(e))
+                warnings.append("Automatic extraction failed. Heuristic review template loaded for confirmation.")
+            else:
+                if extraction and extraction.scenario:
+                    canonical = _scenario_to_canonical(extraction.scenario, "", "")
+                    field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
+                    confidence_score = min(field_confidence.values()) if field_confidence else 0.78
+                    warnings.extend(extraction.warnings or [])
+                else:
+                    canonical = _dict_to_canonical({}, "", "")
+                    confidence_score = 0.4
+                    used_fallback = True
+                    warnings.append("We could not confidently parse this lease. Please review extracted fields.")
             if ocr_used:
                 warnings.append("OCR was used for this document.")
         else:
@@ -1607,6 +1701,24 @@ def _normalize_impl(
                     updates["scenario_name"] = f"Suite {suite_val}"
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
+
+            hinted_parking_ratio = _coerce_float_token(extracted_hints.get("parking_ratio"), 0.0)
+            if hinted_parking_ratio > 0:
+                updates["parking_ratio"] = hinted_parking_ratio
+            hinted_parking_rate = _coerce_float_token(extracted_hints.get("parking_rate_monthly"), 0.0)
+            if hinted_parking_rate > 0:
+                updates["parking_rate_monthly"] = hinted_parking_rate
+            hinted_parking_count = _coerce_int_token(extracted_hints.get("parking_count"), 0)
+            if hinted_parking_count > 0:
+                updates["parking_count"] = hinted_parking_count
+            elif hinted_parking_ratio > 0:
+                existing_count = _coerce_int_token(updates.get("parking_count", canonical.parking_count), 0)
+                effective_rsf = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0)
+                if existing_count <= 0 and effective_rsf > 0:
+                    inferred_count = int(round((hinted_parking_ratio * effective_rsf) / 1000.0))
+                    if inferred_count > 0:
+                        updates["parking_count"] = inferred_count
+
             target_term_months = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0
             if target_term_months > 0 and canonical.rent_schedule:
                 adjusted_schedule = sorted(

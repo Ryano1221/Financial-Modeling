@@ -278,8 +278,11 @@ export default function Home() {
       setLastExtractWarnings(data.warnings?.length ? data.warnings : null);
       setExtractError(null);
       const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
-      if (needsReview) setPendingNormalize(data);
-      else setPendingNormalize(null);
+      if (needsReview) {
+        setPendingNormalize(data);
+        return;
+      }
+      setPendingNormalize(null);
 
       if (!data.canonical_lease) {
         console.log("[compute] skip: no canonical_lease");

@@ -99,6 +99,23 @@ def test_extract_hints_prefers_subject_premises_rsf_over_rofr_space() -> None:
     assert hints["building_name"] == "8300 North MoPac Expressway, Austin, Texas"
 
 
+def test_extract_hints_parses_parking_ratio_count_and_monthly_rate() -> None:
+    text = (
+        "Tenant shall be entitled to 77 unreserved parking spaces at $150 per space per month. "
+        "Parking ratio: 3.5 spaces per 1,000 RSF."
+    )
+    hints = main._extract_lease_hints(text, "lease.pdf", "test-rid")
+    assert hints["parking_count"] == 77
+    assert hints["parking_rate_monthly"] == 150.0
+    assert hints["parking_ratio"] == 3.5
+
+
+def test_note_highlights_include_parking_ratio() -> None:
+    text = "Parking ratio shall be 4.0 spaces per 1,000 RSF for the Premises."
+    notes = main._extract_lease_note_highlights(text)
+    assert any("Parking ratio:" in n for n in notes)
+
+
 def test_detect_generated_report_document() -> None:
     text = (
         "Lease Economics Comparison\\n"
