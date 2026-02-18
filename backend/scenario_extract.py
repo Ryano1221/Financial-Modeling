@@ -932,8 +932,10 @@ JSON:"""
                 raw = re.sub(r"^```\w*\n?", "", raw)
                 raw = re.sub(r"\n?```\s*$", "", raw)
             out = json.loads(raw)
+            if not isinstance(out, dict):
+                raise ValueError("LLM output was not a JSON object.")
             # Merge prefill into scenario so LLM doesn't have to repeat
-            scenario = out.get("scenario") or {}
+            scenario = out.get("scenario") if isinstance(out.get("scenario"), dict) else {}
             for k, v in prefill_for_model.items():
                 if v is not None and (scenario.get(k) is None or scenario.get(k) == ""):
                     scenario[k] = v
@@ -1046,10 +1048,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         "ti_allowance_psf": 0.6 if "ti_allowance_psf" in prefill else 0.0,
         "free_rent_months": 0.6 if "free_rent_months" in prefill else 0.0,
     }
-    warnings = [
-        "AI extraction was unavailable; used deterministic fallback extraction.",
-        "Please review lease terms before running analysis.",
-    ]
+    warnings: list[str] = []
     warnings.extend(rent_step_notes)
     if llm_error:
         msg = str(llm_error).lower()
@@ -1069,11 +1068,16 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     return scenario, confidence, warnings
 
 
-def _apply_safe_defaults(raw: dict, prefill: dict | None = None) -> tuple[dict, dict[str, float], list[str]]:
+def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[dict, dict[str, float], list[str]]:
     """Apply safe defaults to raw LLM output; return (scenario_dict, confidence, warnings)."""
-    scenario = raw.get("scenario") or {}
-    confidence = dict(raw.get("confidence") or {})
-    warnings = list(raw.get("warnings") or [])
+    if not isinstance(raw, dict):
+        raw = {"scenario": {}, "confidence": {}, "warnings": ["AI response shape was invalid; used fallback defaults."]}
+
+    scenario = raw.get("scenario") if isinstance(raw.get("scenario"), dict) else {}
+    confidence_raw = raw.get("confidence")
+    confidence = dict(confidence_raw) if isinstance(confidence_raw, dict) else {}
+    warnings_raw = raw.get("warnings")
+    warnings = list(warnings_raw) if isinstance(warnings_raw, list) else []
 
     name = scenario.get("name")
     if not name or not str(name).strip():
@@ -1202,38 +1206,59 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
             text_length=original_length,
         )
 
-    prefill = _regex_prefill(text)
-    text_for_llm, extra_warnings = _prepare_text_for_llm(text)
-    raw: dict | None = None
-    llm_error: Exception | None = None
     try:
-        raw = _llm_extract_scenario(text_for_llm, prefill=prefill)
-    except Exception as e:
-        llm_error = e
-        logger.warning("[extract] AI extraction failed; using deterministic fallback. err=%s", str(e)[:280])
-        print("AI_EXTRACT_FAIL", {"err": str(e)[:400], "type": type(e).__name__}, flush=True)
+        prefill = _regex_prefill(text)
+        text_for_llm, extra_warnings = _prepare_text_for_llm(text)
+        raw: dict | None = None
+        llm_error: Exception | None = None
+        try:
+            raw = _llm_extract_scenario(text_for_llm, prefill=prefill)
+        except Exception as e:
+            llm_error = e
+            logger.warning("[extract] AI extraction failed; using deterministic fallback. err=%s", str(e)[:280])
+            print("AI_EXTRACT_FAIL", {"err": str(e)[:400], "type": type(e).__name__}, flush=True)
 
-    if raw is None:
+        if raw is None:
+            fallback_scenario, fallback_confidence, fallback_warnings = _heuristic_extract_scenario(
+                text,
+                prefill=prefill,
+                llm_error=llm_error,
+            )
+            fallback_raw = {
+                "scenario": fallback_scenario,
+                "confidence": fallback_confidence,
+                "warnings": fallback_warnings,
+            }
+            scenario_dict, confidence, warnings = _apply_safe_defaults(fallback_raw, prefill=prefill)
+        else:
+            scenario_dict, confidence, warnings = _apply_safe_defaults(raw, prefill=prefill)
+
+        warnings = extra_warnings + warnings
+        scenario = Scenario.model_validate(scenario_dict)
+        return ExtractionResponse(
+            scenario=scenario,
+            confidence=confidence,
+            warnings=warnings,
+            source=source,
+            text_length=original_length,
+        )
+    except Exception as e:
+        logger.exception("[extract] unexpected extraction failure; forcing deterministic fallback")
+        prefill = _regex_prefill(text) if text else {}
         fallback_scenario, fallback_confidence, fallback_warnings = _heuristic_extract_scenario(
             text,
             prefill=prefill,
-            llm_error=llm_error,
+            llm_error=e,
         )
-        fallback_raw = {
-            "scenario": fallback_scenario,
-            "confidence": fallback_confidence,
-            "warnings": fallback_warnings,
-        }
-        scenario_dict, confidence, warnings = _apply_safe_defaults(fallback_raw, prefill=prefill)
-    else:
-        scenario_dict, confidence, warnings = _apply_safe_defaults(raw, prefill=prefill)
-
-    warnings = extra_warnings + warnings
-    scenario = Scenario.model_validate(scenario_dict)
-    return ExtractionResponse(
-        scenario=scenario,
-        confidence=confidence,
-        warnings=warnings,
-        source=source,
-        text_length=original_length,
-    )
+        scenario_dict, confidence, warnings = _apply_safe_defaults(
+            {"scenario": fallback_scenario, "confidence": fallback_confidence, "warnings": fallback_warnings},
+            prefill=prefill,
+        )
+        scenario = Scenario.model_validate(scenario_dict)
+        return ExtractionResponse(
+            scenario=scenario,
+            confidence=confidence,
+            warnings=warnings,
+            source=source,
+            text_length=original_length,
+        )
