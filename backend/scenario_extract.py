@@ -872,9 +872,9 @@ def _llm_extract_scenario(text: str, prefill: dict) -> dict:
         from openai import OpenAI
     except ImportError:
         raise ImportError("openai required: pip install openai")
-    timeout_sec = 18.0
+    timeout_sec = 60.0
     try:
-        timeout_env = float((os.environ.get("OPENAI_EXTRACT_TIMEOUT_SEC") or "18").strip())
+        timeout_env = float((os.environ.get("OPENAI_EXTRACT_TIMEOUT_SEC") or "60").strip())
         if timeout_env > 0:
             timeout_sec = timeout_env
     except (TypeError, ValueError, AttributeError):
@@ -907,15 +907,16 @@ JSON:"""
     models = (
         [m.strip() for m in configured.split(",") if m.strip()]
         if configured
-        else ["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"]
+        else ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1"]
     )
     last_error: Exception | None = None
-    deadline = time.monotonic() + max(6.0, timeout_sec)
+    # Allow multiple model attempts before falling back to deterministic extraction.
+    deadline = time.monotonic() + max(20.0, timeout_sec * max(1, min(len(models), 2)))
     for model in models:
         remaining = deadline - time.monotonic()
         if remaining <= 1.0:
             break
-        per_call_timeout = max(6.0, min(timeout_sec, remaining))
+        per_call_timeout = max(10.0, min(timeout_sec, remaining))
         try:
             client = OpenAI(api_key=api_key, timeout=per_call_timeout)
             t0 = time.perf_counter()
@@ -1051,6 +1052,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     warnings: list[str] = []
     warnings.extend(rent_step_notes)
     if llm_error:
+        warnings.append("Automatic extraction fallback was used for this upload.")
         msg = str(llm_error).lower()
         if "openai_api_key" in msg:
             warnings.append("OPENAI_API_KEY is not configured on backend.")
@@ -1064,7 +1066,6 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
             warnings.append("AI extraction timed out.")
         elif "connection" in msg or "network" in msg or "api connection" in msg:
             warnings.append("Backend could not connect to OpenAI API.")
-        warnings.append(f"Extractor detail: {str(llm_error)[:160]}")
     return scenario, confidence, warnings
 
 

@@ -48,11 +48,32 @@ import type { CanonicalComputeResponse } from "@/lib/types";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
+const NOISY_WARNING_PATTERNS = [
+  /automatic extraction failed due to a backend processing issue/i,
+  /automatic extraction failed\.\s*heuristic review template loaded/i,
+  /rent_schedule was empty; added single step at \$0/i,
+];
 
 type ReportErrorState = { statusCode: number; message: string; reportId?: string } | null;
 
 function nextId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function sanitizeExtractionWarnings(warnings?: string[] | null): string[] {
+  const source = Array.isArray(warnings) ? warnings : [];
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of source) {
+    const msg = String(raw ?? "").replace(/\s+/g, " ").trim();
+    if (!msg) continue;
+    if (NOISY_WARNING_PATTERNS.some((p) => p.test(msg))) continue;
+    const key = msg.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(msg);
+  }
+  return deduped;
 }
 
 /** POST /compute-canonical with request id, lease_type normalization, and lifecycle logs. */
@@ -123,7 +144,7 @@ export default function Home() {
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
-  const [pendingNormalize, setPendingNormalize] = useState<NormalizerResponse | null>(null);
+  const [pendingNormalizeQueue, setPendingNormalizeQueue] = useState<NormalizerResponse[]>([]);
   const [brands, setBrands] = useState<BrandConfig[]>([]);
   const [brandId, setBrandId] = useState<string>("default");
   const [reportLoading, setReportLoading] = useState(false);
@@ -144,6 +165,7 @@ export default function Home() {
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
+  const pendingNormalize = pendingNormalizeQueue[0] ?? null;
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
 
@@ -264,7 +286,6 @@ export default function Home() {
         delete next[scenarioWithId.id];
         return next;
       });
-      setPendingNormalize(null);
       setExtractError(null);
       onAdded?.(scenarioWithId);
     },
@@ -275,67 +296,34 @@ export default function Home() {
     (data: NormalizerResponse) => {
       const hasCanonical = !!data?.canonical_lease;
       console.log("[compute] about to call", { hasCanonical });
-      setLastExtractWarnings(data.warnings?.length ? data.warnings : null);
+      const warnings = sanitizeExtractionWarnings(data.warnings);
+      setLastExtractWarnings(warnings.length > 0 ? warnings : null);
       setExtractError(null);
       const needsReview = data.confidence_score < 0.85 || (data.missing_fields?.length ?? 0) > 0;
-      setPendingNormalize(null);
 
       if (!data.canonical_lease) {
         console.log("[compute] skip: no canonical_lease");
+        setExtractError("Extraction completed, but no lease payload was returned. Please retry the upload.");
         return;
       }
 
       const canonical = data.canonical_lease;
-      const scenarioInput = backendCanonicalToScenarioInput(canonical);
-      const scenarioWithId: ScenarioWithId = { id: nextId(), ...scenarioInput };
-      setScenarios((prev) => [...prev, scenarioWithId]);
-      setSelectedId(scenarioWithId.id);
-      setResults((prev) => {
-        const next = { ...prev };
-        delete next[scenarioWithId.id];
-        return next;
-      });
-      setPendingNormalize(null);
-      setExtractError(null);
 
       if (needsReview) {
-        const reviewMsg = "Low-confidence fields were auto-populated. Please review Building name, Suite, RSF, dates, and rent schedule.";
-        setLastExtractWarnings((prev) => {
-          const base = data.warnings?.length ? data.warnings : prev ?? [];
-          if (base.includes(reviewMsg)) return base;
-          return [...base, reviewMsg];
-        });
+        const queued: NormalizerResponse = {
+          ...data,
+          warnings,
+        };
+        setPendingNormalizeQueue((prev) => [...prev, queued]);
+        return;
       }
 
-      const computeUrl = getApiUrl("/compute-canonical");
-      const outgoingLeaseType = (canonical as { lease_type?: string })?.lease_type;
-      console.log("[compute] outgoing canonical.lease_type=%s url=%s", outgoingLeaseType, computeUrl);
-      fetchComputeCanonical(scenarioWithId.id, canonical)
-        .then((res) => {
-          console.log("[compute] response status", res.status);
-          if (!res.ok) return null;
-          return res.json() as Promise<CanonicalComputeResponse>;
-        })
-        .then((computeData) => {
-          if (computeData) {
-            setCanonicalComputeCache((prev) => ({ ...prev, [scenarioWithId.id]: computeData }));
-            setResults((prev) => ({
-              ...prev,
-              [scenarioWithId.id]: {
-                term_months: computeData.metrics.term_months,
-                rent_nominal: computeData.metrics.base_rent_total,
-                opex_nominal: computeData.metrics.opex_total,
-                total_cost_nominal: computeData.metrics.total_obligation_nominal,
-                npv_cost: computeData.metrics.npv_cost,
-                avg_cost_year: computeData.metrics.total_obligation_nominal / (computeData.metrics.term_months / 12 || 1),
-                avg_cost_psf_year: computeData.metrics.avg_all_in_cost_psf_year,
-              },
-            }));
-          }
-        })
-        .catch((e) => console.error("[compute] failed", e));
+      addScenarioFromCanonical(canonical, (newScenario) => {
+        console.log("[compute] about to run", { scenarioId: newScenario.id, lease_type: (canonical as { lease_type?: string })?.lease_type ?? "NNN" });
+        runComputeForScenario(newScenario);
+      });
     },
-    []
+    [addScenarioFromCanonical, runComputeForScenario]
   );
 
   const handleNormalizeConfirm = useCallback(
@@ -345,10 +333,14 @@ export default function Home() {
         runComputeForScenario(newScenario);
       });
       setLastExtractWarnings(null);
-      setPendingNormalize(null);
+      setPendingNormalizeQueue((prev) => prev.slice(1));
     },
     [addScenarioFromCanonical, runComputeForScenario]
   );
+
+  const handleNormalizeCancel = useCallback(() => {
+    setPendingNormalizeQueue((prev) => prev.slice(1));
+  }, []);
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message || null);
@@ -1027,8 +1019,13 @@ export default function Home() {
                     <NormalizeReviewCard
                       data={pendingNormalize}
                       onConfirm={handleNormalizeConfirm}
-                      onCancel={() => setPendingNormalize(null)}
+                      onCancel={handleNormalizeCancel}
                     />
+                    {pendingNormalizeQueue.length > 1 && (
+                      <p className="mt-2 text-xs text-zinc-400">
+                        {pendingNormalizeQueue.length - 1} more extracted file{pendingNormalizeQueue.length - 1 === 1 ? "" : "s"} waiting for review.
+                      </p>
+                    )}
                   </div>
                 )}
                 {extractError && (
