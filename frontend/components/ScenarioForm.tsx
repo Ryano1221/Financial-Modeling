@@ -44,8 +44,8 @@ export function ScenarioForm({
   ) => {
     if (!scenario) return;
     const next = { ...scenario, [key]: value };
-    if (key === "building_name" || key === "suite") {
-      const label = buildPremisesName(next.building_name, next.suite);
+    if (key === "building_name" || key === "suite" || key === "floor") {
+      const label = buildPremisesName(next.building_name, next.suite, next.floor);
       if (label) next.name = label;
     }
     onUpdate(next);

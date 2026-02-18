@@ -25,6 +25,12 @@ export const LEASE_TYPE_ENUM = [
 
 export type LeaseTypeEnum = (typeof LEASE_TYPE_ENUM)[number];
 
+export function getSuiteOrFloor(suite?: string | null, floor?: string | null): string {
+  const su = (suite ?? "").trim();
+  if (su) return su;
+  return (floor ?? "").trim();
+}
+
 export function normalizeLeaseType(
   input?: string | null
 ): "NNN" | "Gross" | "Modified Gross" | "Absolute NNN" | "Full Service" {
@@ -40,10 +46,10 @@ export function normalizeLeaseType(
   return "NNN";
 }
 
-/** Build display premises_name from building_name + suite when both exist. */
-export function buildPremisesName(buildingName?: string | null, suite?: string | null): string {
+/** Build display premises_name from building_name + suite (or floor fallback). */
+export function buildPremisesName(buildingName?: string | null, suite?: string | null, floor?: string | null): string {
   const b = (buildingName ?? "").trim();
-  const su = (suite ?? "").trim();
+  const su = getSuiteOrFloor(suite, floor);
   if (b && su) return `${b} Suite ${su}`;
   return su || b || "";
 }
@@ -57,11 +63,12 @@ export function buildPremisesName(buildingName?: string | null, suite?: string |
 export function getPremisesDisplayName(opts: {
   building_name?: string | null;
   suite?: string | null;
+  floor?: string | null;
   premises_name?: string | null;
   scenario_name?: string | null;
 }): string {
   const b = (opts.building_name ?? "").trim();
-  const su = (opts.suite ?? "").trim();
+  const su = getSuiteOrFloor(opts.suite, opts.floor);
   if (b || su) return `${b}${b && su ? " Suite " : ""}${su}`.trim();
   const p = (opts.premises_name ?? "").trim();
   if (p) return p;
@@ -72,10 +79,11 @@ export function getPremisesDisplayName(opts: {
 export function formatBuildingSuiteAddress(c: {
   building_name?: string | null;
   suite?: string | null;
+  floor?: string | null;
   address?: string | null;
 }): string {
   const b = (c.building_name ?? "").trim();
-  const su = (c.suite ?? "").trim();
+  const su = getSuiteOrFloor(c.suite, c.floor);
   const a = (c.address ?? "").trim();
   const parts = [b, su, a].filter(Boolean);
   return parts.join(" · ") || "";
@@ -88,13 +96,14 @@ export function scenarioInputToBackendCanonical(
   scenarioName?: string
 ): BackendCanonicalLease {
   const termMonths = monthDiff(s.commencement, s.expiration);
+  const suite = getSuiteOrFloor(s.suite, s.floor);
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
-    premises_name: buildPremisesName(s.building_name, s.suite) || s.name,
+    premises_name: buildPremisesName(s.building_name, suite, s.floor) || s.name,
     address: s.address ?? "",
     building_name: s.building_name ?? "",
-    suite: s.suite ?? "",
+    suite,
     floor: s.floor ?? "",
     rsf: s.rsf,
     lease_type: "NNN",
@@ -124,6 +133,7 @@ export function backendCanonicalToScenarioInput(
   c: BackendCanonicalLease,
   name?: string
 ): ScenarioInput {
+  const suite = getSuiteOrFloor(c.suite, c.floor);
   const rentSteps: { start: number; end: number; rate_psf_yr: number }[] = (
     c.rent_schedule ?? []
   ).map((step: BackendRentScheduleStep) => ({
@@ -136,7 +146,7 @@ export function backendCanonicalToScenarioInput(
   return {
     name: displayName,
     building_name: c.building_name ?? "",
-    suite: c.suite ?? "",
+    suite,
     floor: c.floor ?? "",
     address: c.address ?? "",
     notes: c.notes ?? "",
@@ -166,8 +176,14 @@ export function canonicalResponseToEngineResult(
   const termMonths = m.term_months ?? 0;
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
-    suiteName: m.suite ?? "",
-    premisesName: getPremisesDisplayName({ building_name: m.building_name, suite: m.suite, premises_name: m.premises_name, scenario_name: scenarioName }),
+    suiteName: getSuiteOrFloor(m.suite, m.floor),
+    premisesName: getPremisesDisplayName({
+      building_name: m.building_name,
+      suite: m.suite,
+      floor: m.floor,
+      premises_name: m.premises_name,
+      scenario_name: scenarioName,
+    }),
     rsf: m.rsf ?? 0,
     leaseType: m.lease_type ?? "",
     termMonths,

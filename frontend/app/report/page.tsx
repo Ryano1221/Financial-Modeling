@@ -174,7 +174,7 @@ function deriveScenario(entry: ScenarioEntry): DerivedScenario {
   const termMonths = Math.max(0, Math.round(toNumber(result.term_months)));
   const termYears = safeDiv(termMonths, 12);
   const buildingName = (scenario.building_name || "").trim();
-  const suite = (scenario.suite || "").trim();
+  const suite = (scenario.suite || "").trim() || (scenario.floor || "").trim();
   const premises = buildingName && suite ? `${buildingName} Suite ${suite}` : buildingName || suite || scenario.name;
   const parkingSpaces = toNumber(scenario.parking_spaces);
   const parkingRate = toNumber(scenario.parking_cost_monthly_per_space);

@@ -37,7 +37,8 @@ export function NormalizeReviewCard({ data, onConfirm, onCancel }: NormalizeRevi
   const handleConfirm = useCallback(() => {
     const payload = { ...edited };
     const b = (payload.building_name ?? "").toString().trim();
-    const su = (payload.suite ?? "").toString().trim();
+    const su = (payload.suite ?? "").toString().trim() || (payload.floor ?? "").toString().trim();
+    if (!(payload.suite ?? "").toString().trim() && su) payload.suite = su;
     if (b && su) payload.premises_name = `${b} Suite ${su}`;
     onConfirm(payload);
   }, [edited, onConfirm]);

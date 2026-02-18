@@ -605,6 +605,23 @@ def _normalize_suite_candidate(raw: str) -> str:
     return ""
 
 
+def _normalize_floor_candidate(raw: str) -> str:
+    v = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not v:
+        return ""
+    v = re.sub(r"(?i)^(?:floor|fl\.?|level)\s*[:#-]?\s*", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)(?:st|nd|rd|th)$", "", v).strip(" ,.;:-")
+    token_match = re.match(r"(?i)^([A-Za-z0-9][A-Za-z0-9\-]{0,8})", v)
+    if not token_match:
+        return ""
+    token = token_match.group(1)
+    if re.fullmatch(r"(?i)\d+", token):
+        return token.lstrip("0") or token
+    if re.fullmatch(r"(?i)[A-Za-z]{1,3}", token):
+        return token.upper()
+    return token
+
+
 def _is_notice_or_party_context(segment: str) -> bool:
     low = (segment or "").lower()
     return any(
@@ -683,6 +700,39 @@ def _extract_suite_from_text(text: str) -> str:
     if not candidates:
         return ""
     candidates.sort(key=lambda x: (-x[0], x[1], 0 if re.search(r"\d", x[2]) else 1))
+    return candidates[0][2]
+
+
+def _extract_floor_from_text(text: str) -> str:
+    if not text:
+        return ""
+    floor_patterns = [
+        r"(?i)\bon\s+the\s+(\d{1,3})(?:st|nd|rd|th)?\s+floor\b",
+        r"(?i)\b(\d{1,3})(?:st|nd|rd|th)?\s+floor\b",
+        r"(?i)\bfloor\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,8})\b",
+        r"(?i)\blevel\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,8})\b",
+    ]
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    segments = _iter_text_segments(lines, max_lines=260)
+    candidates: list[tuple[int, int, str]] = []
+    for idx, ln in enumerate(segments):
+        low = ln.lower()
+        for pat in floor_patterns:
+            for m in re.finditer(pat, ln):
+                candidate = _normalize_floor_candidate(m.group(1))
+                if not candidate:
+                    continue
+                score = 1
+                if any(k in low for k in ("premises", "located", "floor of", "sublease premises")):
+                    score += 3
+                if _is_notice_or_party_context(low):
+                    score -= 3
+                if any(k in low for k in ("parking", "garage", "basement", "loading dock")):
+                    score -= 2
+                candidates.append((score, idx, candidate))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda x: (-x[0], x[1]))
     return candidates[0][2]
 
 
@@ -1039,6 +1089,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "expiration_date": None,
         "term_months": None,
         "suite": "",
+        "floor": "",
         "building_name": "",
         "address": "",
         "lease_type": None,
@@ -1280,6 +1331,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # ---- Suite ----
     hints["suite"] = suite_hint
+    hints["floor"] = _extract_floor_from_text(text)
     hints["address"] = _extract_address_from_text(text, suite_hint=hints["suite"])
 
     # ---- Address / building (includes premises labels and located-at lines) ----
@@ -1664,6 +1716,12 @@ def _normalize_impl(
             suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
             if not suite_val:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
+            floor_val = str(extracted_hints.get("floor") or canonical.floor or "").strip()
+            if floor_val and not (canonical.floor or "").strip():
+                updates["floor"] = floor_val
+            if not suite_val and floor_val:
+                suite_val = floor_val
+                warnings.append("Suite was not found; using premises floor as suite fallback.")
             address_val = str(extracted_hints.get("address") or canonical.address or "").strip()
             if address_val and not (canonical.address or "").strip():
                 updates["address"] = address_val

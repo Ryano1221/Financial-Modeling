@@ -24,6 +24,17 @@ def test_address_and_building_fallback_from_premises_sentence() -> None:
     assert hints["suite"] == ""
 
 
+def test_floor_parser_extracts_floor_when_suite_missing() -> None:
+    text = (
+        "Landlord leases to Tenant premises located on the 7th floor of "
+        "500 Congress Avenue, Austin, Texas."
+    )
+    hints = main._extract_lease_hints(text, "floor-only.pdf", "test-rid")
+    assert main._extract_floor_from_text(text) == "7"
+    assert hints["floor"] == "7"
+    assert hints["suite"] == ""
+
+
 def test_suite_parser_keeps_alphanumeric_suite_values() -> None:
     text = "Premises: Suite 11C at 123 Main Street, Austin, TX."
     assert main._extract_suite_from_text(text) == "11C"

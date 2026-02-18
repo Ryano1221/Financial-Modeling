@@ -18,7 +18,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const rsf = s.rsf;
   const leaseType = s.opex_mode === "base_year" ? "base_year" : "nnn";
   const buildingName = (s.building_name ?? "").trim();
-  const suiteName = (s.suite ?? "").trim();
+  const suiteName = (s.suite ?? "").trim() || (s.floor ?? "").trim();
   const premisesName = buildingName && suiteName ? `${buildingName} Suite ${suiteName}` : (buildingName || suiteName || s.name);
   const parkingSpaces = s.parking_spaces ?? 0;
   const parkingCost = s.parking_cost_monthly_per_space ?? 0;

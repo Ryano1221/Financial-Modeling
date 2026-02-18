@@ -162,6 +162,8 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
     building_name = str(get("building_name", "") or "").strip()
     suite = str(get("suite", "") or "").strip()
     floor = str(get("floor", "") or "").strip()
+    if not suite and floor:
+        suite = floor
     premises = str(get("premises_name", get("name", "") or "")).strip()
     if building_name and suite and not premises:
         premises = f"{building_name} Suite {suite}"
