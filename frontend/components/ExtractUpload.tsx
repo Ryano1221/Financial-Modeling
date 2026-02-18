@@ -185,6 +185,16 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
             }
             const reason = classifyFailureReason(body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null);
             if (res.status >= 500 || res.status === 503 || res.status === 429) {
+              if (attempt < NORMALIZE_MAX_ATTEMPTS) {
+                console.warn("[normalize] upstream temporary failure, retrying", {
+                  rid: attemptRid,
+                  status: res.status,
+                  attempt,
+                  reason,
+                });
+                await sleep(1000 * attempt);
+                continue;
+              }
               onError("");
               onSuccess(buildFallbackNormalizerResponse(file.name, reason));
               return;
