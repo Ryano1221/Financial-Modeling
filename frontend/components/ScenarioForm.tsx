@@ -127,11 +127,11 @@ export function ScenarioForm({
   })();
 
   const inputClass = "mt-1 block w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm text-white focus:border-[#3b82f6] focus:outline-none focus:ring-1 focus:ring-[#3b82f6] placeholder:text-zinc-500";
-  const btnSecondary = "rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b]";
+  const btnSecondary = "rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] w-full sm:w-auto";
 
   if (!scenario) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 md:p-6">
         <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Scenario editor</p>
         <h2 className="text-lg font-semibold text-white mb-2">Scenario editor</h2>
         <p className="text-sm text-zinc-400 mb-4">
@@ -149,7 +149,7 @@ export function ScenarioForm({
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 md:p-6">
       <div className="mb-4">
         <div>
           <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-1">Scenario editor</p>
@@ -161,7 +161,7 @@ export function ScenarioForm({
         <button
           type="button"
           onClick={onAcceptChanges}
-          className="rounded-full bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="rounded-full bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-auto"
           title="Save edits and close the scenario editor"
         >
           Accept changes
@@ -179,13 +179,13 @@ export function ScenarioForm({
               onDeleteScenario(scenario.id);
             }
           }}
-          className="rounded-full border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-500/20 focus:outline-none focus:ring-2 focus:ring-red-500"
+          className="rounded-full border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-500/20 focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-auto"
         >
           Delete scenario
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         <label className="block">
           <span className="text-sm text-zinc-400">Building name</span>
           <input type="text" value={scenario.building_name ?? ""} onChange={(e) => update("building_name", e.target.value)} className={inputClass} placeholder="e.g. Capital View Center" />
@@ -198,7 +198,7 @@ export function ScenarioForm({
           <span className="text-sm text-zinc-400">Floor (optional)</span>
           <input type="text" value={scenario.floor ?? ""} onChange={(e) => update("floor", e.target.value)} className={inputClass} placeholder="e.g. 2" />
         </label>
-        <label className="block sm:col-span-2">
+        <label className="block sm:col-span-2 xl:col-span-2">
           <span className="text-sm text-zinc-400">Street address (optional)</span>
           <input type="text" value={scenario.address ?? ""} onChange={(e) => update("address", e.target.value)} className={inputClass} placeholder="e.g. 123 Main St, City, State" />
         </label>
@@ -320,15 +320,15 @@ export function ScenarioForm({
         </label>
       </div>
 
-      <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+      <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-3 sm:p-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-2">
           <div>
             <h3 className="text-sm font-semibold text-white">Rent schedule</h3>
             <p className="text-xs text-zinc-400 mt-1">
               Month `0` is lease start. Steps must be continuous with no overlap. Example: `0-11`, `12-23`, `24-35`.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
             <button type="button" onClick={autoFixRentSteps} className={btnSecondary}>
               Auto-fix steps
             </button>
@@ -347,7 +347,7 @@ export function ScenarioForm({
             </ul>
           </div>
         )}
-        <div className="hidden md:grid grid-cols-[64px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.35fr)_96px] gap-3 px-1 pb-1">
+        <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.4fr)_112px] gap-3 px-1 pb-1">
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Step</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
@@ -357,12 +357,12 @@ export function ScenarioForm({
         </div>
         {scenario.rent_steps.map((step, i) => (
           <div key={i} className="rounded-lg border border-white/10 bg-white/[0.015] p-3 mb-3">
-            <div className="grid grid-cols-1 md:grid-cols-[64px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.35fr)_96px] gap-2 items-end">
-              <div className="text-xs text-zinc-400 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] col-span-2 sm:col-span-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.4fr)_112px] gap-3 xl:gap-2 items-end">
+              <div className="text-xs text-zinc-400 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] sm:col-span-2 xl:col-span-1">
                 #{i + 1}
               </div>
               <label className="col-span-1">
-                <span className="text-[11px] text-zinc-500 mb-1 block md:hidden">Start month</span>
+                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">Start month</span>
                 <input
                   type="number"
                   min={0}
@@ -374,7 +374,7 @@ export function ScenarioForm({
                 />
               </label>
               <label className="col-span-1">
-                <span className="text-[11px] text-zinc-500 mb-1 block md:hidden">End month</span>
+                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">End month</span>
                 <input
                   type="number"
                   min={0}
@@ -386,7 +386,7 @@ export function ScenarioForm({
                 />
               </label>
               <label className="col-span-1">
-                <span className="text-[11px] text-zinc-500 mb-1 block md:hidden">Rate ($/SF/yr)</span>
+                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">Rate ($/SF/yr)</span>
                 <input
                   type="number"
                   min={0}
@@ -398,21 +398,22 @@ export function ScenarioForm({
                   className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
                 />
               </label>
-              <div className="text-xs text-zinc-300 h-9 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] whitespace-nowrap">
+              <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
                 {(() => {
                   const startMonth = Math.max(0, Math.floor(Number(step.start) || 0));
                   const endMonthRaw = Math.max(0, Math.floor(Number(step.end) || 0));
                   const endMonth = Math.max(startMonth, endMonthRaw);
                   const startYear = Math.floor(startMonth / 12) + 1;
                   const endYear = Math.floor(endMonth / 12) + 1;
-                  return startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
+                  const yearLabel = startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
+                  return `${yearLabel} (M${startMonth}-${endMonth})`;
                 })()}
               </div>
               <button
                 type="button"
                 onClick={() => removeRentStep(i)}
                 disabled={scenario.rent_steps.length <= 1}
-                className="h-9 rounded-lg border border-red-500/40 text-red-300 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="h-10 rounded-lg border border-red-500/40 text-red-300 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed w-full"
               >
                 Remove
               </button>

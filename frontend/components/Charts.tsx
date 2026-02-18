@@ -34,7 +34,7 @@ function MetricCard({
   const values = rows.map(getValue).map((v) => (Number.isFinite(v) ? v : 0));
   const max = Math.max(1, ...values);
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
       <h3 className="text-sm font-medium text-white mb-4">{title}</h3>
       <div className="space-y-3">
         {rows.map((row) => {
@@ -43,7 +43,7 @@ function MetricCard({
           return (
             <div key={`${title}-${row.name}`} className="space-y-1.5">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-zinc-300 truncate max-w-[65%]" title={row.name}>
+                <span className="text-xs text-zinc-300 truncate max-w-[58%] sm:max-w-[65%]" title={row.name}>
                   {row.name}
                 </span>
                 <span className="text-xs text-zinc-400">{format(value)}</span>
@@ -74,7 +74,7 @@ export function Charts({ data }: ChartsProps) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 sm:gap-6">
       <MetricCard
         title="Avg cost $/SF/year by scenario"
         rows={rows}

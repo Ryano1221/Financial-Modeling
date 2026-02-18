@@ -919,27 +919,27 @@ export default function Home() {
 
   return (
     <>
-      <div className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex flex-col justify-center items-center text-center px-6 pt-24">
-        <h1 className="text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-tight">
+      <div className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex flex-col justify-center items-center text-center px-4 sm:px-6 pt-24">
+        <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-tight">
           The Commercial Real Estate Model
         </h1>
 
-        <p className="text-zinc-400 text-lg mt-6 max-w-2xl">
+        <p className="text-zinc-400 text-base sm:text-lg mt-6 max-w-2xl">
           Transform any lease into a structured, branded financial analysis in minutes.
           Built for brokerages, investment firms, and enterprise real estate teams.
         </p>
 
-        <div className="flex gap-6 mt-10 flex-wrap justify-center">
+        <div className="flex gap-4 sm:gap-6 mt-10 flex-wrap justify-center w-full sm:w-auto">
           <a
             href="/example"
-            className="px-8 py-4 bg-white text-black font-semibold rounded-full hover:scale-105 transition-transform duration-300"
+            className="w-full sm:w-auto px-8 py-4 bg-white text-black font-semibold rounded-full hover:scale-105 transition-transform duration-300"
           >
             View Example Report
           </a>
 
           <a
             href="#extract"
-            className="px-8 py-4 border border-zinc-600 text-white rounded-full hover:bg-zinc-800 transition-colors duration-300"
+            className="w-full sm:w-auto px-8 py-4 border border-zinc-600 text-white rounded-full hover:bg-zinc-800 transition-colors duration-300"
           >
             Try It Live
           </a>
@@ -948,11 +948,11 @@ export default function Home() {
 
       <FeatureTiles />
 
-      <main className="relative z-10 max-w-[96rem] mx-auto px-6 py-12 md:py-16">
+      <main className="relative z-10 mx-auto w-full max-w-[120rem] px-4 py-10 sm:px-6 md:py-14 lg:px-8 lg:py-16 2xl:px-10">
         <section id="extract" className="scroll-mt-24">
-        <div className="grid grid-cols-1 lg:grid-cols-[0.85fr_1.15fr] xl:grid-cols-[0.8fr_1.2fr] gap-8 lg:gap-10">
+        <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] 2xl:grid-cols-[0.85fr_1.15fr] gap-6 lg:gap-8 2xl:gap-10">
           {/* Left column: renewal/relocate + upload & extract */}
-          <div className="space-y-6">
+          <div className="space-y-5 sm:space-y-6">
             <section className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-5 shadow-xl">
               <button
                 type="button"
@@ -1056,7 +1056,7 @@ export default function Home() {
           </div>
 
           {/* Right column: scenarios + form + actions */}
-          <div className="space-y-6">
+          <div className="space-y-5 sm:space-y-6">
             <ResultsActionsCard>
         <ScenarioList
           scenarios={scenarios}
@@ -1105,7 +1105,7 @@ export default function Home() {
               type="button"
               onClick={exportExcelDeck}
               disabled={exportExcelLoading || scenarios.length === 0}
-              className="rounded-full bg-emerald-600/90 text-white px-5 py-2.5 text-sm font-medium hover:bg-emerald-600 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+              className="rounded-full bg-emerald-600/90 text-white px-5 py-2.5 text-sm font-medium hover:bg-emerald-600 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
             >
               {exportExcelLoading ? "Exporting…" : "Export Excel"}
             </button>
@@ -1113,7 +1113,7 @@ export default function Home() {
               type="button"
               onClick={exportPdfDeck}
               disabled={exportPdfLoading || scenarios.length === 0}
-              className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+              className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
             >
               {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
             </button>
@@ -1125,7 +1125,7 @@ export default function Home() {
                 type="button"
                 onClick={runAnalysis}
                 disabled={loading || scenarios.length === 0}
-                className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+                className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
               >
                 {loading ? "Running…" : "Run analysis"}
               </button>
@@ -1133,7 +1133,7 @@ export default function Home() {
                 type="button"
                 onClick={generateReport}
                 disabled={reportLoading || !selectedScenario}
-                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
               >
                 {reportLoading ? "Generating…" : "Generate Report"}
               </button>
@@ -1141,7 +1141,7 @@ export default function Home() {
                 type="button"
                 onClick={previewReport}
                 disabled={previewLoading || !selectedScenario}
-                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
               >
                 {previewLoading ? "Opening…" : "Preview Report"}
               </button>

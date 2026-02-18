@@ -268,12 +268,12 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         className={`
-          border-2 border-dashed rounded-xl p-8 text-center transition-colors
+          border-2 border-dashed rounded-xl p-5 sm:p-8 text-center transition-colors
           ${dragOver ? "border-[#3b82f6]/50 bg-[#3b82f6]/10" : "border-white/20 bg-white/[0.03]"}
           ${loading ? "pointer-events-none opacity-70" : ""}
         `}
       >
-        <p className="text-sm text-zinc-400 mb-2">
+        <p className="text-sm text-zinc-400 mb-2 leading-relaxed">
           Drag and drop one or more <strong className="text-zinc-300">.pdf</strong> or <strong className="text-zinc-300">.docx</strong> lease documents here, or click to choose.
         </p>
         <input

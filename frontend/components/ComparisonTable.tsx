@@ -64,7 +64,7 @@ export function ComparisonTable({
         </p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[980px] text-xs sm:text-sm">
           <thead>
             <tr className="bg-white/[0.04] border-b border-white/10">
               <th className="text-left py-2.5 px-4 font-medium text-zinc-400">Name</th>
@@ -85,7 +85,7 @@ export function ComparisonTable({
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className="border-b border-white/5 hover:bg-white/[0.04]">
-                <td className="py-2.5 px-4 font-medium text-white">{row.name}</td>
+                <td className="py-2.5 px-4 font-medium text-white max-w-[16rem] truncate" title={row.name}>{row.name}</td>
                 {COLUMNS.map((col) => (
                   <td key={col.key} className="py-2.5 px-4 text-right text-zinc-400">
                     {col.format(row.result[col.key] as number)}

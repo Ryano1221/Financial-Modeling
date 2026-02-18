@@ -61,7 +61,7 @@ export function ScenarioList({
         <p className="text-xs text-zinc-500">Rename, reorder, include in summary, or set baseline. State is saved locally.</p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[980px] text-xs sm:text-sm">
           <thead>
             <tr className="bg-white/[0.04] border-b border-white/10">
               <th className="text-left py-2.5 px-4 font-medium text-zinc-400">Name</th>
@@ -101,9 +101,10 @@ export function ScenarioList({
                     <button
                       type="button"
                       onClick={() => onSelect(s.id)}
-                      className="text-left font-medium text-white hover:underline focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-1 rounded inline-flex items-center gap-1"
+                      className="text-left font-medium text-white hover:underline focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-1 rounded inline-flex items-center gap-1 max-w-[20rem] min-w-0"
+                      title={s.name}
                     >
-                      {s.name}
+                      <span className="truncate">{s.name}</span>
                       {baselineId === s.id && (
                         <span className="text-[10px] uppercase text-zinc-500 font-normal">(baseline)</span>
                       )}

@@ -20,7 +20,7 @@ export function SummaryMatrix({ results }: SummaryMatrixProps) {
         </p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[780px] text-xs sm:text-sm">
           <thead>
             <tr className="bg-white/[0.04] border-b border-white/10">
               <th className="text-left py-2.5 px-4 font-medium text-zinc-400 w-48">Metric</th>

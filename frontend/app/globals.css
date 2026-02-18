@@ -11,8 +11,20 @@
     --accent: #3b82f6;
     --accent-glow: rgba(59, 130, 246, 0.35);
   }
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
   body {
     font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  }
+  img,
+  svg,
+  canvas,
+  video {
+    max-width: 100%;
+    height: auto;
   }
   ::selection {
     background: rgba(59, 130, 246, 0.35);
