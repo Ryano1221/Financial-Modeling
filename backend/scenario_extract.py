@@ -10,7 +10,8 @@ import logging
 import os
 import re
 import time
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 from io import BytesIO
 from typing import Any, BinaryIO
 
@@ -161,7 +162,14 @@ def extract_text_from_docx(file: BinaryIO) -> str:
         raise ImportError("python-docx required: pip install python-docx")
     try:
         doc = Document(file)
-        parts = [p.text for p in doc.paragraphs if p.text]
+        parts = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+        # Proposal/LOI files often place key economics in tables. Include them in text payload.
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [" ".join((cell.text or "").split()) for cell in row.cells]
+                cells = [c for c in cells if c]
+                if cells:
+                    parts.append(" | ".join(cells))
         return "\n\n".join(parts) if parts else ""
     except Exception as e:
         raise ValueError(f"Failed to read DOCX: {e}") from e
@@ -251,15 +259,15 @@ _RE_EXP_LABEL = re.compile(
 _RE_BUILDING = re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,80})")
 _RE_SUITE = re.compile(r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,30})")
 _RE_TI = re.compile(
-    r"\b(?:ti\s+allowance|tenant\s+improvement|improvement\s+allowance)\s*[:\s]*\$?\s*[\d,]+\.?\d*",
+    r"(?i)\b(?:ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b[^\n$]{0,100}\$?\s*[\d,]+(?:\.\d+)?",
     re.I,
 )
 _RE_FREE_RENT = re.compile(
-    r"\b(?:free\s+rent|rent\s+abatement|abatement)\s*(?:of\s*)?(\d+)\s*(?:months?)?",
+    r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b[^\n]{0,50}?\(?(\d{1,2})\)?\s*(?:months?)?",
     re.I,
 )
 _RE_BASE_OPEX = re.compile(
-    r"\b(?:base\s+year\s+)?(?:opex|operating\s+expenses?|cam|nnn)\s*[:\s]*\$?\s*[\d,]+\.?\d*\s*(?:/?\s*sf|psf)?",
+    r"(?i)\b(?:base\s+year\s+)?(?:opex|operating\s+expenses?|cam|nnn)\b[^\n$]{0,140}\$\s*[\d,]+(?:\.\d+)?(?:\s*(?:/|per)\s*(?:rsf|sf|psf))?",
     re.I,
 )
 _RE_BASE_RENT = re.compile(
@@ -283,6 +291,12 @@ _RE_RENT_TABLE_HINT = re.compile(
 )
 _RE_NON_RENT_YEAR_CONTEXT = re.compile(
     r"(?i)\b(parking|space(?:s)?|per\s+space|free\s+rent|abatement|opex|operating\s+expense|cam|tax(?:es)?)\b"
+)
+_RE_MONTH_RANGE_RATE = re.compile(
+    r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:per|/)\s*(?:rsf|sf|psf)\b[^\n]{0,120}\bfor\s+months?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b"
+)
+_RE_ANNUAL_ESCALATION = re.compile(
+    r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+escalat(?:ion|ions)\b[^\n]{0,80}\bstarting\s+in\s+month\s*(\d{1,3})\b"
 )
 
 
@@ -362,6 +376,54 @@ def _term_month_count(commencement: date, expiration: date) -> int:
     if expiration.day < commencement.day:
         months -= 1
     return max(1, months)
+
+
+def _expiration_from_term_months(commencement: date, term_months: int) -> date:
+    """Compute lease expiration from commencement + term months (inclusive month accounting)."""
+    tm = max(1, int(term_months))
+    total = (commencement.month - 1) + tm
+    year = commencement.year + (total // 12)
+    month = (total % 12) + 1
+    day = min(commencement.day, monthrange(year, month)[1])
+    anniv = date(year, month, day)
+    return anniv - timedelta(days=1)
+
+
+def _extract_term_months_from_text(text: str) -> int | None:
+    if not text:
+        return None
+    month_patterns = [
+        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,120}?\((\d{1,3})\)\s*months?\b",
+        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,120}?\b(\d{1,3})\s*months?\b",
+    ]
+    for pat in month_patterns:
+        for m in re.finditer(pat, text):
+            try:
+                months = int(m.group(1))
+            except (TypeError, ValueError):
+                continue
+            context = (m.group(0) or "").lower()
+            if any(k in context for k in ("renewal", "option", "extension", "additional")):
+                continue
+            if 1 <= months <= 600:
+                return months
+
+    year_patterns = [
+        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,140}?\((\d{1,2})\)\s*years?\b",
+        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,140}?\b(\d{1,2})\s*years?\b",
+    ]
+    for pat in year_patterns:
+        for m in re.finditer(pat, text):
+            try:
+                years = int(m.group(1))
+            except (TypeError, ValueError):
+                continue
+            context = (m.group(0) or "").lower()
+            if any(k in context for k in ("renewal", "option", "extension", "additional")):
+                continue
+            if 1 <= years <= 50:
+                return years * 12
+    return None
 
 
 def _convert_year_index_steps_to_month_steps(steps: list[dict[str, float | int]], one_based: bool) -> list[dict[str, float | int]]:
@@ -605,6 +667,73 @@ def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
     return _repair_and_extend_month_steps(month_steps, term_month_count=max(12, derived_term_months))
 
 
+def _extract_month_phrase_rent_steps(text: str, term_month_count: int) -> list[dict[str, float | int]]:
+    """
+    Parse month-range proposal text like:
+      "$38.00 per RSF ... for months 1-12 with 3% annual escalations starting in month 13"
+    """
+    if not text:
+        return []
+    base_match = _RE_MONTH_RANGE_RATE.search(text)
+    if not base_match:
+        return []
+    rate = _coerce_float_token(base_match.group(1), None)
+    start_month_1 = _coerce_int_token(base_match.group(2), None)
+    end_month_1 = _coerce_int_token(base_match.group(3), None)
+    if rate is None or start_month_1 is None or end_month_1 is None:
+        return []
+    if not (2 <= float(rate) <= 500):
+        return []
+    if start_month_1 <= 0 or end_month_1 < start_month_1:
+        return []
+
+    term = max(1, int(term_month_count))
+    steps: list[dict[str, float | int]] = []
+    first_start = max(1, start_month_1)
+    first_end = min(term, max(first_start, end_month_1))
+    steps.append(
+        {
+            "start": first_start - 1,
+            "end": first_end - 1,
+            "rate_psf_yr": round(float(rate), 4),
+        }
+    )
+
+    esc_match = _RE_ANNUAL_ESCALATION.search(text)
+    if not esc_match:
+        if first_end < term:
+            steps.append(
+                {
+                    "start": first_end,
+                    "end": term - 1,
+                    "rate_psf_yr": round(float(rate), 4),
+                }
+            )
+        return _repair_and_extend_month_steps(steps, term_month_count=term)
+
+    esc_pct = _coerce_float_token(esc_match.group(1), None)
+    esc_start_1 = _coerce_int_token(esc_match.group(2), None)
+    if esc_pct is None or esc_start_1 is None or esc_pct < 0 or esc_start_1 <= 0:
+        return _repair_and_extend_month_steps(steps, term_month_count=term)
+    esc_rate = float(esc_pct) / 100.0
+
+    current_start_1 = max(esc_start_1, first_end + 1)
+    current_rate = float(rate) * (1.0 + esc_rate)
+    while current_start_1 <= term:
+        current_end_1 = min(term, current_start_1 + 11)
+        steps.append(
+            {
+                "start": current_start_1 - 1,
+                "end": current_end_1 - 1,
+                "rate_psf_yr": round(current_rate, 4),
+            }
+        )
+        current_start_1 += 12
+        current_rate *= 1.0 + esc_rate
+
+    return _repair_and_extend_month_steps(steps, term_month_count=term)
+
+
 def _infer_rate_psf_from_monthly_rent(text: str, rsf: float | None) -> float | None:
     if rsf is None or rsf <= 0:
         return None
@@ -670,8 +799,12 @@ def _regex_prefill(text: str) -> dict:
         score = 0
         if any(k in snippet for k in ("premises", "suite", "rentable", "square feet", "consisting of")):
             score += 4
+        if any(k in snippet for k in ("spec suite", "lease premises", "premises:", "located in suite")):
+            score += 4
         if 2_000 <= value <= 300_000:
             score += 1
+        if any(k in snippet for k in ("project size", "building size", "between two buildings", "entire project")):
+            score -= 7
         if re.search(r"(?i)\bper\s+1,?000\s+rsf\b|/1,?000\s*rsf|ratio", snippet):
             score -= 9
         if re.search(r"(?i)\(\s*\d[\d,]*\s*rsf\s*/\s*\d[\d,]*\s*rsf\s*\)", snippet):
@@ -775,6 +908,11 @@ def _regex_prefill(text: str) -> dict:
         prefill["commencement"] = comm
     if exp:
         prefill["expiration"] = exp
+    term_months = _extract_term_months_from_text(text)
+    if term_months is not None:
+        prefill["term_months"] = int(term_months)
+        if comm and not exp:
+            prefill["expiration"] = _expiration_from_term_months(_safe_date(comm), term_months).isoformat()
     # TI allowance ($/sf)
     m = _RE_TI.search(text)
     if m:
@@ -794,10 +932,10 @@ def _regex_prefill(text: str) -> dict:
     # Base opex $/sf
     m = _RE_BASE_OPEX.search(text)
     if m:
-        nums = _RE_NUM.findall(m.group(0))
-        if nums:
+        amount_match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", m.group(0))
+        if amount_match:
             try:
-                prefill["base_opex_psf_yr"] = float(nums[0].replace(",", ""))
+                prefill["base_opex_psf_yr"] = float(amount_match.group(1).replace(",", ""))
             except ValueError:
                 pass
     # Base rent ($/sf/yr)
@@ -830,6 +968,12 @@ def _regex_prefill(text: str) -> dict:
             prefill["rent_steps"] = year_table_steps
             prefill["_rent_steps_basis"] = "month_index"
             prefill["_rent_steps_source"] = "year_table_regex"
+    elif term_months:
+        month_phrase_steps = _extract_month_phrase_rent_steps(text, term_month_count=int(term_months))
+        if month_phrase_steps:
+            prefill["rent_steps"] = month_phrase_steps
+            prefill["_rent_steps_basis"] = "month_index"
+            prefill["_rent_steps_source"] = "month_phrase_regex"
     # Opex mode
     low = text.lower()
     if "base year" in low or "expense stop" in low:
@@ -839,12 +983,28 @@ def _regex_prefill(text: str) -> dict:
     # Scenario name from building/suite if possible
     building = None
     suite = None
+    premises_line_match = re.search(r"(?im)^\s*premises\s*:\s*([^\n]+)$", text)
+    if premises_line_match:
+        premises_line = premises_line_match.group(1)
+        m = re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*([A-Za-z0-9][A-Za-z0-9\-]{0,20})\b", premises_line)
+        if m:
+            suite = m.group(1).strip(" ,.-")
     m = _RE_BUILDING.search(text)
     if m:
         building = m.group(1).strip(" ,.-")
-    m = _RE_SUITE.search(text)
-    if m:
-        suite = m.group(1).strip(" ,.-")
+    if not building:
+        m = re.search(
+            r"(?i)\blease\s+(?:space|premises)\s+at\s+([A-Za-z0-9&' .-]{3,80}?)(?:\s*[–-]\s*building\s*([A-Za-z0-9]+))?\b",
+            text,
+        )
+        if m:
+            bname = m.group(1).strip(" ,.-")
+            bnum = (m.group(2) or "").strip()
+            building = f"{bname} - Building {bnum}".strip(" -") if bnum else bname
+    if suite is None:
+        suite_match = _RE_SUITE.search(text)
+        if suite_match:
+            suite = suite_match.group(1).strip(" ,.-")
     if building and suite:
         prefill["name"] = f"{building} Suite {suite}"
     elif building:
@@ -1013,7 +1173,8 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     rate = float(prefill.get("rate_psf_yr", 30.0) or 30.0)
     commencement = str(prefill.get("commencement") or "2026-01-01")
     expiration = str(prefill.get("expiration") or "2031-01-31")
-    term_month_count = _term_month_count(_safe_date(commencement), _safe_date(expiration))
+    term_month_hint = _coerce_int_token(prefill.get("term_months"), None)
+    term_month_count = int(term_month_hint) if term_month_hint and term_month_hint > 0 else _term_month_count(_safe_date(commencement), _safe_date(expiration))
     prefill_steps = prefill.get("rent_steps") if isinstance(prefill.get("rent_steps"), list) else None
     if prefill_steps:
         rent_steps, rent_step_notes = _normalize_rent_steps(prefill_steps, term_month_count=term_month_count, prefill=prefill)
@@ -1025,7 +1186,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         )
 
     scenario = {
-        "name": _infer_scenario_name(text),
+        "name": str(prefill.get("name") or _infer_scenario_name(text)),
         "rsf": rsf,
         "commencement": commencement,
         "expiration": expiration,
@@ -1095,6 +1256,10 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
     else:
         scenario["rsf"] = float(rsf)
 
+    term_months_hint = _coerce_int_token(
+        scenario.get("term_months"),
+        _coerce_int_token((prefill or {}).get("term_months"), None),
+    )
     commencement = scenario.get("commencement")
     commencement_date = commencement if isinstance(commencement, date) else _safe_date(commencement if isinstance(commencement, str) else None)
     scenario["commencement"] = commencement_date
@@ -1104,12 +1269,23 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
 
     expiration = scenario.get("expiration")
     expiration_date = expiration if isinstance(expiration, date) else _safe_date(expiration if isinstance(expiration, str) else None)
+    expiration_inferred_from_term = False
+    if term_months_hint and term_months_hint > 1:
+        is_missing_exp = not expiration
+        is_degenerate_exp = expiration_date <= commencement_date
+        if is_missing_exp or is_degenerate_exp:
+            expiration_date = _expiration_from_term_months(commencement_date, int(term_months_hint))
+            expiration_inferred_from_term = True
+            if is_missing_exp:
+                warnings.append(f"Expiration date inferred from commencement + {int(term_months_hint)} month term.")
+            else:
+                warnings.append(f"Expiration date corrected from {int(term_months_hint)} month lease term.")
     scenario["expiration"] = expiration_date
-    if not expiration:
+    if not expiration and not expiration_inferred_from_term:
         warnings.append("Expiration date missing; default 2031-01-31 applied.")
         confidence.setdefault("expiration", 0.0)
 
-    term_month_count = _term_month_count(commencement_date, expiration_date)
+    term_month_count = int(term_months_hint) if term_months_hint and term_months_hint > 0 else _term_month_count(commencement_date, expiration_date)
     rent_steps_input = scenario.get("rent_steps")
     had_explicit_rent_steps = isinstance(rent_steps_input, list) and len(rent_steps_input) > 0
     prefill_steps = (prefill or {}).get("rent_steps") if isinstance((prefill or {}).get("rent_steps"), list) else []

@@ -9,7 +9,8 @@ import re
 import time
 import traceback
 import uuid
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -555,6 +556,16 @@ def _month_diff(commencement: date, expiration: date) -> int:
     return max(1, round(delta / 30.4375))
 
 
+def _expiration_from_term_months(commencement: date, term_months: int) -> date:
+    tm = max(1, int(term_months))
+    total = (commencement.month - 1) + tm
+    year = commencement.year + (total // 12)
+    month = (total % 12) + 1
+    day = min(commencement.day, monthrange(year, month)[1])
+    anniv = date(year, month, day)
+    return anniv - timedelta(days=1)
+
+
 def _coerce_int_token(value: object, default: int = 0) -> int:
     if value is None:
         return int(default)
@@ -615,6 +626,8 @@ def _normalize_floor_candidate(raw: str) -> str:
     if not token_match:
         return ""
     token = token_match.group(1)
+    if token.lower() in {"of", "the"}:
+        return ""
     if re.fullmatch(r"(?i)\d+", token):
         return token.lstrip("0") or token
     if re.fullmatch(r"(?i)[A-Za-z]{1,3}", token):
@@ -750,20 +763,25 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
             r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|square\s*feet?|sq\.?\s*ft)\s*(?:/|per)?\s*(?:year|yr|annum|annual)?\b"
         ),
         re.compile(r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:psf|p/?sf)\b"),
+        re.compile(r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\b"),
     ]
     candidates: list[tuple[int, int, float, Optional[int]]] = []
     for idx, seg in enumerate(segments):
         if not opex_kw.search(seg):
             continue
         low = seg.lower()
-        for pat in value_patterns:
+        for pat_idx, pat in enumerate(value_patterns):
             for m in pat.finditer(seg):
                 value = _coerce_float_token(m.group(1), 0.0)
                 if not (0 < value <= 150):
                     continue
+                if pat_idx == 2 and value < 3.0:
+                    continue
                 score = 1
                 if "operating expense" in low or "common area maintenance" in low or "opex" in low or re.search(r"(?i)\bcam\b", seg):
                     score += 4
+                if re.search(r"(?i)\bestimated\s+operating\s+expenses?\b|\boperating\s+expenses?\s+for\s+20\d{2}\b", seg):
+                    score += 5
                 if "base year" in low:
                     score += 2
                 if re.search(r"(?i)\b(?:estimate|estimated|projected)\b", seg):
@@ -772,6 +790,10 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
                     score -= 3
                 if re.search(r"(?i)\b(?:parking)\b", seg):
                     score -= 2
+                if re.search(r"(?i)\b(?:ti|tenant improvements?|allowance|furniture|cabling|ff&e)\b", seg):
+                    score -= 8
+                if pat_idx == 2:
+                    score -= 1
                 year_match = re.search(r"(?i)\b(?:for|in|base year|as of)\s*(20\d{2})\b", seg)
                 if not year_match:
                     year_match = re.search(r"\b(20\d{2})\b", seg)
@@ -916,6 +938,7 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
     segments = _iter_text_segments(lines, max_lines=280)
     state_token = r"(?:TX|Texas|CA|California|NY|New York|FL|Florida|IL|Illinois)"
     patterns: list[tuple[re.Pattern[str], int]] = [
+        (re.compile(r"(?i)\blease\s+(?:proposal|space|premises)\s+(?:to\s+[^\n]{1,60}\s+for\s+office\s+space\s+at|at)\s+([A-Za-z0-9&' .-]{3,80}?\s*[–-]\s*Building\s*[A-Za-z0-9]+)"), 6),
         (re.compile(r"(?i)\bbuilding\s+commonly\s+known\s+as\s+(?:the\s+)?([^\n,;\.]{3,100})"), 5),
         (re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,100})"), 4),
         (re.compile(r"(?i)\blocated\s+at\s+(?:suite|ste\.?|unit)\s*[A-Za-z0-9\-]+,\s*([^,\n]{3,100}(?:,\s*[A-Za-z .'-]{2,40}){1,2})"), 4),
@@ -1005,7 +1028,10 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     if not text:
         return None
     term_month_patterns = [
+        r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,120}?\((\d{1,3})\)\s*(?:calendar\s+)?months?\b",
         r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
+        r"(?i)\blease\s+term\b[^.\n]{0,120}?\((\d{1,3})\)\s*(?:calendar\s+)?months?\b",
+        r"(?i)\blease\s+term\b[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
         r"(?i)\bsublease\s+term\b[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
     ]
     for pat in term_month_patterns:
@@ -1267,6 +1293,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     date_token_capture = r"(\w+\s+\d{1,2},?\s+\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})"
     comm_direct_pats = [
         rf"(?i)\bcommenc(?:e|ing)?(?:\s+on)?(?:\s+the\s+later\s+to\s+occur\s+of)?\s+{date_token_capture}",
+        rf"(?i)\b(?:lease\s+)?commencement\b[^.\n]{{0,120}}?\bestimated\s+to\s+be\s+{date_token_capture}",
         rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\bcommencement\s+date\b",
     ]
     exp_direct_pats = [
@@ -1372,6 +1399,14 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         hints["term_months"] = term_from_text
     if hints["commencement_date"] and hints["expiration_date"]:
         hints["term_months"] = _month_diff(hints["commencement_date"], hints["expiration_date"])
+    elif hints["commencement_date"] and hints.get("term_months"):
+        try:
+            hints["expiration_date"] = _expiration_from_term_months(
+                hints["commencement_date"],
+                int(hints["term_months"]),
+            )
+        except Exception:
+            pass
 
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
@@ -1812,6 +1847,17 @@ def _normalize_impl(
                 updates["expiration_date"] = extracted_hints["expiration_date"]
             if extracted_hints.get("term_months") is not None:
                 updates["term_months"] = extracted_hints["term_months"]
+                if not extracted_hints.get("expiration_date"):
+                    comm_for_term = updates.get("commencement_date", canonical.commencement_date)
+                    if isinstance(comm_for_term, date):
+                        try:
+                            derived_exp = _expiration_from_term_months(comm_for_term, int(extracted_hints["term_months"]))
+                            updates["expiration_date"] = derived_exp
+                            warnings.append(
+                                f"Expiration inferred from {int(extracted_hints['term_months'])}-month lease term and commencement date."
+                            )
+                        except Exception:
+                            pass
             suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
             if not suite_val:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
