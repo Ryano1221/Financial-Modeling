@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import calendar
 from datetime import date
 from enum import Enum
 from typing import Any, List, Literal, Optional, Union
@@ -94,6 +95,10 @@ class Scenario(BaseModel):
         months = y_diff * 12 + m_diff
         if self.expiration.day < self.commencement.day:
             months -= 1
+        if self.commencement.day == 1:
+            month_end = calendar.monthrange(self.expiration.year, self.expiration.month)[1]
+            if self.expiration.day == month_end:
+                months += 1
         return max(months, 0)
 
     @field_validator("rent_steps")

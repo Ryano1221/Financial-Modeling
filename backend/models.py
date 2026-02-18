@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date
 from enum import Enum
 from typing import Any, List, Literal, Optional, Union
@@ -123,6 +124,13 @@ class Scenario(BaseModel):
         # does not count as a full month.
         if self.expiration.day < self.commencement.day:
             months -= 1
+        # Lease abstracts often express terms as full calendar months where
+        # commencement is the 1st and expiration is month-end (e.g. 2027-01-01
+        # to 2032-12-31 should be 72 months).
+        if self.commencement.day == 1:
+            month_end = calendar.monthrange(self.expiration.year, self.expiration.month)[1]
+            if self.expiration.day == month_end:
+                months += 1
         return max(months, 0)
 
     @field_validator("rent_steps")
@@ -309,4 +317,3 @@ class ReportRequest(BaseModel):
     brand_id: str = "default"
     scenario: Scenario
     meta: Optional[ReportMeta] = None
-

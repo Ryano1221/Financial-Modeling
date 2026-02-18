@@ -2351,6 +2351,7 @@ def build_report_pdf_endpoint(req: ReportRequest) -> Response:
         raise HTTPException(
             status_code=503,
             detail="Report module not available. Use POST /report/preview for HTML.",
+            headers=base_headers,
         )
     try:
         pdf_bytes = build_report_pdf(
@@ -2363,12 +2364,14 @@ def build_report_pdf_endpoint(req: ReportRequest) -> Response:
         raise HTTPException(
             status_code=503,
             detail="Playwright is required for PDF. Install: pip install playwright && playwright install chromium. Use POST /report/preview for HTML without Playwright.",
+            headers=base_headers,
         )
     except Exception as e:
         print(f"[report] PDF generation failed: {e!s}")
         raise HTTPException(
-            status_code=500,
-            detail=f"PDF generation failed: {e!s}. Use POST /report/preview to get HTML instead.",
+            status_code=503,
+            detail=f"PDF generation runtime unavailable. Use POST /report/preview to get HTML instead.",
+            headers=base_headers,
         ) from e
 
     set_cached_report(scenario_dict, req.brand_id, meta_dict, pdf_bytes)

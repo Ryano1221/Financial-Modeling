@@ -2,6 +2,8 @@
   "name": "thecremodel-workspace",
   "private": true,
   "scripts": {
-    "start:codex": "npx -y @openai/codex@latest app-server"
+    "start:codex": "npx -y @openai/codex@latest app-server",
+    "setup:backend-dev": "bash scripts/setup-backend-dev.sh",
+    "test:backend": "bash scripts/test-backend.sh"
   }
 }

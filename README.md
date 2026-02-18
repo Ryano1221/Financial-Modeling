@@ -73,6 +73,17 @@ export OPENAI_API_KEY=your_openai_key_here
 uvicorn main:app --reload --host 127.0.0.1 --port 8010
 ```
 
+**Backend test setup (recommended)**
+
+Use the repo scripts so tests always run from `backend/.venv`:
+
+```bash
+npm run setup:backend-dev
+npm run test:backend
+```
+
+This installs `backend/requirements-dev.txt` (including `pytest`) into `backend/.venv`.
+
 **Render (backend, OCR-ready Docker setup)** — use Docker runtime so scanned PDF OCR works (`tesseract` + `poppler` are system packages and are not reliably installable on native Python runtime).
 
 1. In Render, create/update backend as a **Docker Web Service** from this repo.
