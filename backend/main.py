@@ -504,7 +504,7 @@ def _parse_number_token(raw: str) -> Optional[float]:
 
 
 def _parse_lease_date(s: str) -> Optional[date]:
-    """Parse date from strings like 'June 1 2026', 'May 31, 2036', '2026-06-01'."""
+    """Parse date from strings like 'June 1 2026', '05/31/2036', '2026-06-01'."""
     if not s or not isinstance(s, str):
         return None
     s = s.strip()[:64]
@@ -515,6 +515,14 @@ def _parse_lease_date(s: str) -> Optional[date]:
     if m:
         try:
             y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            return date(y, mo, d)
+        except ValueError:
+            pass
+    # US month/day/year
+    m = re.match(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", s)
+    if m:
+        try:
+            mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
             return date(y, mo, d)
         except ValueError:
             pass
@@ -712,7 +720,7 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
                 if re.search(rf"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*{re.escape(suite_hint)}\b", candidate):
                     score += 2
                 elif re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*[A-Za-z0-9\-]+\b", candidate):
-                    score -= 1
+                    score -= 3
             if score > best_score:
                 best_score = score
                 best = candidate
@@ -853,14 +861,162 @@ def _fallback_building_from_filename(filename: str) -> str:
     return _clean_building_candidate(stem)
 
 
+def _extract_first_date_token(text: str) -> Optional[date]:
+    if not text:
+        return None
+    low_text = text.lower()
+    if "e.g" in low_text or "example" in low_text:
+        return None
+    patterns = [
+        r"(?i)\b(\w+\s+\d{1,2},?\s+\d{4})\b",
+        r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2})\b",
+        r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{4})\b",
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, text):
+            prefix = text[max(0, m.start() - 24):m.start()].lower()
+            if "e.g" in prefix or "example" in prefix:
+                continue
+            d = _parse_lease_date(m.group(1))
+            if d:
+                return d
+    return None
+
+
+def _extract_term_months_from_text(text: str) -> Optional[int]:
+    if not text:
+        return None
+    term_month_patterns = [
+        r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
+        r"(?i)\bsublease\s+term\b[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
+    ]
+    for pat in term_month_patterns:
+        for m in re.finditer(pat, text):
+            context = (m.group(0) or "").lower()
+            if any(k in context for k in ("extension", "renewal", "option")):
+                continue
+            try:
+                months = int(m.group(1))
+                if 1 <= months <= 600:
+                    return months
+            except (TypeError, ValueError):
+                continue
+
+    # Handles "Term shall be ten (10) years ..." and "Term: 5 years"
+    term_year_patterns = [
+        r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,140}?\((\d{1,2})\)\s*years?\b",
+        r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,140}?\b(\d{1,2})\s*years?\b",
+        r"(?i)\bsublease\s+term\b[^.\n]{0,140}?\((\d{1,2})\)\s*years?\b",
+        r"(?i)\bsublease\s+term\b[^.\n]{0,140}?\b(\d{1,2})\s*years?\b",
+    ]
+    for pat in term_year_patterns:
+        for m in re.finditer(pat, text):
+            context = (m.group(0) or "").lower()
+            if any(k in context for k in ("extension", "renewal", "option", "additional term")):
+                continue
+            try:
+                years = int(m.group(1))
+                if 1 <= years <= 50:
+                    return years * 12
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _looks_like_generated_report_document(text: str) -> bool:
+    low = (text or "").lower()
+    if not low:
+        return False
+    markers = [
+        "lease economics comparison",
+        "comparison matrix",
+        "multi-scenario report generated",
+        "avg cost/sf/year",
+        "start month end month rate",
+        "no clause notes extracted",
+        "review rofr/rofo",
+    ]
+    hits = sum(1 for m in markers if m in low)
+    return hits >= 3
+
+
+def _looks_like_generic_scenario_name(name: str) -> bool:
+    low = " ".join((name or "").split()).strip().lower()
+    if not low:
+        return True
+    bad_fragments = (
+        "extract",
+        "lease agreement",
+        "hereby leases",
+        "this lease",
+        "agreement made",
+        "by and between",
+        "sample report",
+        "comparison matrix",
+        "analysis",
+        "premises",
+        "sublessee",
+        "sublessor",
+        "landlord",
+        "tenant",
+        "witnesseth",
+        "whereas",
+    )
+    if any(x in low for x in bad_fragments):
+        return True
+    if len(low) > 80:
+        return True
+    if not re.search(r"[a-z]", low):
+        return True
+    if re.fullmatch(r"[A-Z\s]{4,}", (name or "").strip()) and len((name or "").split()) <= 4:
+        return True
+    if re.fullmatch(r"\d+\.\s*[a-z\s]+", low):
+        return True
+    if re.fullmatch(r"lease(?:\s+\d+)?", low):
+        return True
+    return False
+
+
+def _should_override_rsf(
+    current_rsf: Optional[float],
+    candidate_rsf: Optional[float],
+    candidate_score: int,
+    current_confidence: float = 0.0,
+) -> bool:
+    if candidate_rsf is None:
+        return False
+    try:
+        cand = float(candidate_rsf)
+    except (TypeError, ValueError):
+        return False
+    if not (100 <= cand <= 2_000_000):
+        return False
+    cur = float(current_rsf or 0.0)
+    if cur <= 0:
+        return True
+    if not (100 <= cur <= 2_000_000):
+        return True
+    ratio = cand / cur if cur > 0 else 1.0
+    if candidate_score >= 1 and cand >= 2_000 and cur / max(cand, 1.0) >= 3.0:
+        return True
+    if candidate_score >= 6:
+        return True
+    if candidate_score >= 4 and 0.35 <= ratio <= 2.8:
+        return True
+    if candidate_score >= 3 and current_confidence < 0.5 and 0.30 <= ratio <= 3.2:
+        return True
+    return False
+
+
 def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     """
-    Heuristic extraction: RSF (prefer premises/suite, downrank center/total), term dates
-    from 'commencing'/'expiring', term_months from dates, suite, address.
+    Heuristic extraction: RSF (prefer premises/suite and avoid ratio/table values), term dates
+    from commencement/expiration/ending/through language, term_months from text or dates, suite, address.
     Logs rsf_candidates and term_candidates with rid. Returns dict for merging into canonical.
     """
     hints = {
         "rsf": None,
+        "_rsf_score": -999,
         "commencement_date": None,
         "expiration_date": None,
         "term_months": None,
@@ -872,9 +1028,10 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if not text:
         return hints
 
-    # ---- RSF: collect all candidates with snippet and score ----
+    # ---- RSF: collect candidates with context-aware score ----
     rsf_patterns = [
-        r"(?i)\b(?:rsf|rentable\s+square\s+feet|rentable\s+area)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
+        r"(?i)\b(?:rentable\s+area|rentable\s+square\s+feet|rsf)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
+        r"(?i)\b(?:premises|leased\s+premises|sublease\s+premises)[^.:\n]{0,140}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rentable\s+square\s+feet|square\s*feet|rsf)\b",
         r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|square\s*feet|sf)\b",
     ]
     rsf_candidates: list[dict] = []
@@ -883,68 +1040,190 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             value = _parse_number_token(m.group(1))
             if value is None or not (100 <= value <= 2_000_000):
                 continue
-            start = max(0, m.start() - 120)
-            end = min(len(text), m.end() + 120)
+            value_token = re.escape(m.group(1))
+            start = max(0, m.start() - 80)
+            end = min(len(text), m.end() + 80)
             snippet = text[start:end].replace("\n", " ").strip()
             score = 0
             low = snippet.lower()
-            if any(k in low for k in ("premises", "suite", "rentable square feet", "rentable area", " at ")):
-                score += 2
-            if any(k in low for k in ("shopping center", "center contains", "total rsf", "entire center", "total square feet", "whole center")):
+            if any(k in low for k in ("premises", "suite", "rentable square feet", "rentable area", "consisting of", "comprising", "description of premises")):
+                score += 4
+            if re.search(r"(?i)\bpremises\s*:\s*(?:suite|ste\.?|unit)?", low):
+                score += 3
+            if re.search(r"(?i)\brentable\s+area\s*:", low):
+                score += 3
+            if re.search(rf"(?i)\bsuite\s*[:#-]?\s*[A-Za-z0-9\-]+\s+{value_token}\s*(?:square\s*feet|rsf)\b", snippet):
+                score += 5
+            if re.search(rf"(?i)\brentable\s+area\s*[:#-]?\s*{value_token}\b", snippet):
+                score += 4
+            if re.search(r"(?i)\bconsisting\s+of\s+approximately\b", low):
+                score += 3
+            if any(k in low for k in ("approx", "approximately")):
+                score += 1
+            if 2_000 <= value <= 300_000:
+                score += 1
+
+            if re.search(r"(?i)\bper\s+1,?000\s+(?:rsf|sf|rentable\s+square\s+feet)\b|/1,?000\s*(?:rsf|sf)|ratio", low):
+                score -= 9
+            if re.search(r"(?i)\bper\s+\d[\d,]*\s*(?:rsf|sf|rentable\s+square\s+feet)\b", low):
+                score -= 6
+            if re.search(r"(?i)\(\s*\d[\d,]*\s*rsf\s*/\s*\d[\d,]*\s*rsf\s*\)", low):
+                score -= 8
+            if any(k in low for k in ("parking", "spaces per", "density", "work station", "workstation", "cam", "opex", "operating expenses", "taxes", "insurance")):
+                score -= 4
+            if any(k in low for k in ("shopping center contains", "center contains", "total rsf", "whole center", "entire center", "building contains approximately")):
+                score -= 5
+            if re.search(r"(?i)\$\s*\d[\d,]*(?:\.\d+)?\s*(?:/|per)\s*(?:sf|rsf)", low):
                 score -= 2
-            rsf_candidates.append({"value": value, "snippet": snippet[:200], "score": score})
+            if value <= 1500 and re.search(r"(?i)\b(?:per|ratio|density|occup|person|people|work\s*station)\b", low):
+                score -= 6
+
+            rsf_candidates.append(
+                {
+                    "value": value,
+                    "snippet": snippet[:220],
+                    "score": score,
+                    "start": m.start(),
+                }
+            )
 
     chosen_rsf = None
     if rsf_candidates:
-        # Dedupe by value, keep max score per value
+        # Dedupe by value, keep highest score and earliest position for that value.
         by_val: dict[float, dict] = {}
         for c in rsf_candidates:
             v = c["value"]
-            if v not in by_val or c["score"] > by_val[v]["score"]:
+            if (
+                v not in by_val
+                or c["score"] > by_val[v]["score"]
+                or (c["score"] == by_val[v]["score"] and c["start"] < by_val[v]["start"])
+            ):
                 by_val[v] = c
-        candidates_sorted = sorted(by_val.values(), key=lambda x: (-x["score"], x["value"]))
+        candidates_sorted = sorted(by_val.values(), key=lambda x: (-x["score"], x["start"], -x["value"]))
         chosen_rsf = candidates_sorted[0]["value"]
         hints["rsf"] = chosen_rsf
+        hints["_rsf_score"] = int(candidates_sorted[0]["score"])
         _LOG.info(
             "NORMALIZE_RSF_CANDIDATES rid=%s count=%s candidates=%s",
             rid,
             len(candidates_sorted),
             [(c["value"], c["score"], c["snippet"][:80]) for c in candidates_sorted],
         )
-        _LOG.info("NORMALIZE_RSF_CHOSEN rid=%s value=%s", rid, chosen_rsf)
+        _LOG.info(
+            "NORMALIZE_RSF_CHOSEN rid=%s value=%s score=%s",
+            rid,
+            chosen_rsf,
+            hints["_rsf_score"],
+        )
 
-    # ---- Term: commencing / expiring (do not use lease "as of" as commencement) ----
+    # ---- Term: commencement / expiration / ending / through ----
     term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
-    # Commencing June 1 2026 / commencing 2026-06-01
-    comm_pats = [
-        r"(?i)\bcommenc(?:e|ing)?\s+(\w+\s+\d{1,2},?\s+\d{4})",
-        r"(?i)\bcommenc(?:e|ing)?\s+(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
-        r"(?i)\bterm\s+[^.]*?commenc(?:e|ing)?\s+(\w+\s+\d{1,2},?\s+\d{4})",
+    date_token_capture = r"(\w+\s+\d{1,2},?\s+\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})"
+    comm_direct_pats = [
+        rf"(?i)\bcommenc(?:e|ing)?(?:\s+on)?(?:\s+the\s+later\s+to\s+occur\s+of)?\s+{date_token_capture}",
+        rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\bcommencement\s+date\b",
     ]
-    for pat in comm_pats:
+    exp_direct_pats = [
+        rf"(?i)\bexpir(?:e|ing|ation)\b(?:\s+on)?\s+{date_token_capture}",
+        rf"(?i)\bending\s+on\s+{date_token_capture}",
+        rf"(?i)\b(?:sublease\s+term|term)\b[^.\n]{{0,220}}\bthrough\b[^.\n]{{0,90}}?{date_token_capture}",
+        rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\b(?:expiration|termination)\s+date\b",
+    ]
+    comm_context_pats = [
+        r"(?i)\bestimated\s+commencement\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
+        r"(?i)\bcommencement\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
+    ]
+    exp_context_pats = [
+        r"(?i)\bestimated\s+(?:termination|expiration)\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
+        r"(?i)\b(?:termination|expiration)\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
+    ]
+
+    for pat in comm_direct_pats:
         m = re.search(pat, text)
-        if m:
-            d = _parse_lease_date(m.group(1))
+        if not m:
+            continue
+        if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
+            continue
+        d = _parse_lease_date(m.group(1))
+        if d:
+            term_candidates["commencement"] = d
+            break
+    if term_candidates["commencement"] is None:
+        for pat in comm_context_pats:
+            m = re.search(pat, text)
+            if not m:
+                continue
+            candidate_text = m.group(1) or ""
+            if "e.g" in candidate_text.lower() or "example" in candidate_text.lower():
+                continue
+            d = _extract_first_date_token(candidate_text)
             if d:
                 term_candidates["commencement"] = d
                 break
-    exp_pats = [
-        r"(?i)\bexpir(?:e|ing)?\s+(\w+\s+\d{1,2},?\s+\d{4})",
-        r"(?i)\bexpir(?:e|ing)?\s+(\d{4}[-/]\d{1,2}[-/]\d{1,2})",
-        r"(?i)\bexpir(?:e|ing)?\s+(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
-    ]
-    for pat in exp_pats:
+
+    for pat in exp_direct_pats:
         m = re.search(pat, text)
-        if m:
-            d = _parse_lease_date(m.group(1))
+        if not m:
+            continue
+        if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
+            continue
+        d = _parse_lease_date(m.group(1))
+        if d:
+            term_candidates["expiration"] = d
+            break
+    if term_candidates["expiration"] is None:
+        for pat in exp_context_pats:
+            m = re.search(pat, text)
+            if not m:
+                continue
+            candidate_text = m.group(1) or ""
+            if "e.g" in candidate_text.lower() or "example" in candidate_text.lower():
+                continue
+            d = _extract_first_date_token(candidate_text)
             if d:
                 term_candidates["expiration"] = d
+                break
+
+    # Some scanned/basic-provisions tables place the date on following lines.
+    if term_candidates["commencement"] is None or term_candidates["expiration"] is None:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for idx, ln in enumerate(lines):
+            low_ln = ln.lower()
+            is_comm_label = bool(
+                "estimated commencement date" in low_ln
+                or re.search(r"(?i)\bcommencement\s+date\s*[:\-]\s*$", low_ln)
+            )
+            is_exp_label = bool(
+                "estimated termination date" in low_ln
+                or "estimated expiration date" in low_ln
+                or re.search(r"(?i)\b(?:expiration|termination)\s+date\s*[:\-]\s*$", low_ln)
+            )
+            if term_candidates["commencement"] is None and is_comm_label:
+                for nxt in lines[idx + 1: idx + 8]:
+                    if "e.g" in nxt.lower() or "example" in nxt.lower():
+                        continue
+                    d = _extract_first_date_token(nxt)
+                    if d:
+                        term_candidates["commencement"] = d
+                        break
+            if term_candidates["expiration"] is None and is_exp_label:
+                for nxt in lines[idx + 1: idx + 8]:
+                    if "e.g" in nxt.lower() or "example" in nxt.lower():
+                        continue
+                    d = _extract_first_date_token(nxt)
+                    if d:
+                        term_candidates["expiration"] = d
+                        break
+            if term_candidates["commencement"] is not None and term_candidates["expiration"] is not None:
                 break
 
     if term_candidates["commencement"]:
         hints["commencement_date"] = term_candidates["commencement"]
     if term_candidates["expiration"]:
         hints["expiration_date"] = term_candidates["expiration"]
+    term_from_text = _extract_term_months_from_text(text)
+    if term_from_text is not None:
+        hints["term_months"] = term_from_text
     if hints["commencement_date"] and hints["expiration_date"]:
         hints["term_months"] = _month_diff(hints["commencement_date"], hints["expiration_date"])
 
@@ -1198,8 +1477,20 @@ def _normalize_impl(
 
         extracted_hints = _extract_lease_hints(text, file.filename or "", rid)
         note_highlights = _extract_lease_note_highlights(text)
+        is_generated_report_doc = bool(text.strip() and _looks_like_generated_report_document(text))
 
-        if text.strip():
+        if is_generated_report_doc:
+            canonical = _dict_to_canonical({}, "", "")
+            confidence_score = 0.25
+            used_fallback = True
+            warnings.append(
+                "This file appears to be a generated analysis/report PDF, not an original lease/proposal. "
+                "Upload the source lease/proposal/amendment document."
+            )
+
+        if canonical is not None:
+            pass
+        elif text.strip():
             # No try/except: let AI extraction failures propagate (503 from endpoint).
             extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
             if extraction and extraction.scenario:
@@ -1227,12 +1518,18 @@ def _normalize_impl(
             warnings.append("We could not process this file automatically. Please review and fill required fields.")
 
         # Apply heuristic overrides: prefer premises-scoped RSF and term dates from commencing/expiring.
-        if canonical and isinstance(canonical, CanonicalLease):
+        if canonical and isinstance(canonical, CanonicalLease) and not is_generated_report_doc:
             updates: dict = {}
-            # RSF: use heuristic when missing or when heuristic found premises-scoped value (we logged chosen).
-            if extracted_hints.get("rsf") is not None:
-                if (canonical.rsf or 0) <= 0 or extracted_hints["rsf"] < (canonical.rsf or 0):
-                    updates["rsf"] = extracted_hints["rsf"]
+            # RSF override is score-gated to avoid pulling ratio values (e.g. "per 1,000 RSF").
+            hinted_rsf = extracted_hints.get("rsf")
+            hinted_rsf_score = int(extracted_hints.get("_rsf_score", -999) or -999)
+            rsf_conf = 0.0
+            try:
+                rsf_conf = float(field_confidence.get("rsf", 0.0) or 0.0)
+            except (TypeError, ValueError, AttributeError):
+                rsf_conf = 0.0
+            if _should_override_rsf(canonical.rsf, hinted_rsf, hinted_rsf_score, rsf_conf):
+                updates["rsf"] = hinted_rsf
             if extracted_hints.get("commencement_date"):
                 updates["commencement_date"] = extracted_hints["commencement_date"]
             if extracted_hints.get("expiration_date"):
@@ -1269,6 +1566,14 @@ def _normalize_impl(
                 updates["premises_name"] = f"{building_val} Suite {suite_val}"
             elif suite_val and not (canonical.premises_name or "").strip():
                 updates["premises_name"] = f"Suite {suite_val}"
+            scenario_name_val = str(canonical.scenario_name or "").strip()
+            if _looks_like_generic_scenario_name(scenario_name_val):
+                if building_val and suite_val:
+                    updates["scenario_name"] = f"{building_val} Suite {suite_val}"
+                elif building_val:
+                    updates["scenario_name"] = building_val
+                elif suite_val:
+                    updates["scenario_name"] = f"Suite {suite_val}"
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
             if note_highlights:

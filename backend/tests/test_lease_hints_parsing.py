@@ -63,3 +63,36 @@ def test_extract_hints_building_commonly_known_pattern() -> None:
     hints = main._extract_lease_hints(text, "amendment.pdf", "test-rid")
     assert hints["suite"] == "1100"
     assert hints["building_name"] == "Bank of America Center"
+
+
+def test_extract_hints_prefers_premises_rsf_over_total_and_ratio() -> None:
+    text = (
+        "Landlord leases to Tenant approximately 3,200 rentable square feet (\"RSF\") located at Suite 110, "
+        "Barton Creek Plaza, Austin, Texas (the \"Premises\"). "
+        "The shopping center contains approximately 85,000 RSF. "
+        "Customer parking shall be provided at a ratio of 4.5 spaces per 1,000 RSF."
+    )
+    hints = main._extract_lease_hints(text, "lease-example-2.pdf", "test-rid")
+    assert hints["rsf"] == 3200
+
+
+def test_extract_hints_parses_commencement_and_expiration_from_term_clause() -> None:
+    text = (
+        "Term. Sublessor hereby sublets to Sublessee for the term commencing on the later to occur of "
+        "September 1, 2024 and ending on May 31, 2027 (the \"Expiration Date\")."
+    )
+    hints = main._extract_lease_hints(text, "sublease.pdf", "test-rid")
+    assert str(hints["commencement_date"]) == "2024-09-01"
+    assert str(hints["expiration_date"]) == "2027-05-31"
+    assert hints["term_months"] == 33
+
+
+def test_detect_generated_report_document() -> None:
+    text = (
+        "Lease Economics Comparison\\n"
+        "Multi-scenario report generated from stored report payload.\\n"
+        "Comparison Matrix\\n"
+        "Avg cost/SF/year\\n"
+        "Start month End month Rate\\n"
+    )
+    assert main._looks_like_generated_report_document(text) is True

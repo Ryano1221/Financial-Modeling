@@ -240,10 +240,10 @@ _RE_MONTH_DATE = re.compile(
     r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2}),?\s+(20\d{2})\b"
 )
 _RE_COMM_LABEL = re.compile(
-    r"(?i)\b(?:commencement(?:\s+date)?|commencing|lease\s+commencement)\b[^A-Za-z0-9]{0,10}([^\n]{0,40})"
+    r"(?i)\b(?:estimated\s+commencement(?:\s+date)?|commencement(?:\s+date)?|commencing|lease\s+commencement)\b[^A-Za-z0-9]{0,20}([^\n]{0,120})"
 )
 _RE_EXP_LABEL = re.compile(
-    r"(?i)\b(?:expiration(?:\s+date)?|expires?|expiring|lease\s+expiration)\b[^A-Za-z0-9]{0,10}([^\n]{0,40})"
+    r"(?i)\b(?:estimated\s+(?:termination|expiration)\s+date|termination(?:\s+date)?|expiration(?:\s+date)?|expires?|expiring|lease\s+expiration)\b[^A-Za-z0-9]{0,20}([^\n]{0,120})"
 )
 _RE_BUILDING = re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,80})")
 _RE_SUITE = re.compile(r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,30})")
@@ -545,35 +545,114 @@ def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
 def _regex_prefill(text: str) -> dict:
     """Fast regex pass to prefill scenario fields. Returns dict of field -> value (or None)."""
     prefill = {}
-    # RSF: look for number in first match
-    m = _RE_RSF.search(text)
-    if m:
+    def _in_example_context(raw_text: str, idx: int) -> bool:
+        prefix = raw_text[max(0, idx - 28):idx].lower()
+        return ("e.g" in prefix) or ("example" in prefix)
+
+    # RSF: score all matches; avoid ratio/rate contexts (e.g., "per 1,000 RSF").
+    rsf_best: tuple[int, int, float] | None = None  # (score, start, value)
+    for m in _RE_RSF.finditer(text):
         nums = _RE_NUM.findall(m.group(0))
-        if nums:
-            try:
-                prefill["rsf"] = float(nums[0].replace(",", ""))
-            except ValueError:
-                pass
+        if not nums:
+            continue
+        try:
+            value = float(nums[0].replace(",", ""))
+        except ValueError:
+            continue
+        if not (100 <= value <= 2_000_000):
+            continue
+        start = max(0, m.start() - 140)
+        end = min(len(text), m.end() + 140)
+        snippet = text[start:end].replace("\n", " ").lower()
+        score = 0
+        if any(k in snippet for k in ("premises", "suite", "rentable", "square feet", "consisting of")):
+            score += 4
+        if 2_000 <= value <= 300_000:
+            score += 1
+        if re.search(r"(?i)\bper\s+1,?000\s+rsf\b|/1,?000\s*rsf|ratio", snippet):
+            score -= 9
+        if re.search(r"(?i)\(\s*\d[\d,]*\s*rsf\s*/\s*\d[\d,]*\s*rsf\s*\)", snippet):
+            score -= 8
+        if any(k in snippet for k in ("cam", "opex", "operating expenses", "taxes", "insurance", "parking")):
+            score -= 4
+        if any(k in snippet for k in ("shopping center contains", "total rsf", "entire center")):
+            score -= 5
+        if re.search(r"(?i)\$\s*\d[\d,]*(?:\.\d+)?\s*(?:/|per)\s*(?:sf|rsf)", snippet):
+            score -= 4
+        candidate = (score, m.start(), value)
+        if rsf_best is None or candidate[0] > rsf_best[0] or (candidate[0] == rsf_best[0] and candidate[1] < rsf_best[1]):
+            rsf_best = candidate
+    if rsf_best is not None:
+        prefill["rsf"] = rsf_best[2]
     # Dates: prefer labeled commencement/expiration first, then generic first-two date fallback.
     comm = None
     exp = None
     m = _RE_COMM_LABEL.search(text)
     if m:
         comm = _parse_text_date_token(m.group(1))
+    if not comm:
+        m = re.search(r"(?i)\bcommenc(?:e|ing|ement)\b[^\n]{0,140}", text)
+        if m and "e.g" not in (m.group(0) or "").lower():
+            comm = _parse_text_date_token(m.group(0))
     m = _RE_EXP_LABEL.search(text)
     if m:
         exp = _parse_text_date_token(m.group(1))
+    if not exp:
+        m = re.search(r"(?i)\bending\s+on\b[^\n]{0,120}", text)
+        if m and "e.g" not in (m.group(0) or "").lower():
+            exp = _parse_text_date_token(m.group(0))
+    if not exp:
+        m = re.search(r"(?i)\b(?:sublease\s+term|term)\b[^\n]{0,200}\bthrough\b[^\n]{0,120}", text)
+        if m and "e.g" not in (m.group(0) or "").lower():
+            exp = _parse_text_date_token(m.group(0))
+    if not comm or not exp:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for idx, ln in enumerate(lines):
+            low_ln = ln.lower()
+            is_comm_label = bool(
+                "estimated commencement date" in low_ln
+                or re.search(r"(?i)\bcommencement\s+date\s*[:\-]\s*$", low_ln)
+            )
+            is_exp_label = bool(
+                "estimated termination date" in low_ln
+                or "estimated expiration date" in low_ln
+                or re.search(r"(?i)\b(?:expiration|termination)\s+date\s*[:\-]\s*$", low_ln)
+            )
+            if not comm and is_comm_label:
+                for nxt in lines[idx + 1: idx + 8]:
+                    if "e.g" in nxt.lower() or "example" in nxt.lower():
+                        continue
+                    parsed = _parse_text_date_token(nxt)
+                    if parsed:
+                        comm = parsed
+                        break
+            if not exp and is_exp_label:
+                for nxt in lines[idx + 1: idx + 8]:
+                    if "e.g" in nxt.lower() or "example" in nxt.lower():
+                        continue
+                    parsed = _parse_text_date_token(nxt)
+                    if parsed:
+                        exp = parsed
+                        break
+            if comm and exp:
+                break
     if not comm or not exp:
         generic_dates: list[str] = []
         for hit in _RE_ISO_DATE.finditer(text):
+            if _in_example_context(text, hit.start()):
+                continue
             iso = _parse_text_date_token(hit.group(0))
             if iso:
                 generic_dates.append(iso)
         for hit in _RE_US_DATE.finditer(text):
+            if _in_example_context(text, hit.start()):
+                continue
             iso = _parse_text_date_token(hit.group(0))
             if iso:
                 generic_dates.append(iso)
         for hit in _RE_MONTH_DATE.finditer(text):
+            if _in_example_context(text, hit.start()):
+                continue
             iso = _parse_text_date_token(hit.group(0))
             if iso:
                 generic_dates.append(iso)
@@ -751,12 +830,45 @@ JSON:"""
 
 def _infer_scenario_name(text: str) -> str:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    labeled_patterns = [
+        re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,80})"),
+        re.compile(r"(?i)\bpremises\s*[:#-]\s*(?:suite|ste\.?|unit)?\s*([A-Za-z0-9][A-Za-z0-9\- ]{1,40})"),
+    ]
+    for ln in lines[:80]:
+        for pat in labeled_patterns:
+            m = pat.search(ln)
+            if not m:
+                continue
+            candidate = " ".join(m.group(1).split()).strip(" ,.;:-")
+            if candidate and 2 <= len(candidate) <= 80:
+                return candidate
+
+    banned_fragments = (
+        "hereby leases",
+        "landlord",
+        "tenant",
+        "this lease",
+        "agreement made",
+        "commencement",
+        "expiration",
+        "term",
+        "rent",
+        "operating expenses",
+        "table of contents",
+    )
     for ln in lines[:40]:
         if len(ln) > 90:
             continue
         # Skip headings that are usually generic
         low = ln.lower()
         if any(k in low for k in ("lease", "agreement", "exhibit", "table of contents", "page ")):
+            continue
+        if any(k in low for k in banned_fragments):
+            continue
+        if re.fullmatch(r"[\d\W_]+", ln):
+            continue
+        # Avoid picking long legal clauses as scenario names.
+        if "," in ln and len(ln.split()) > 9:
             continue
         if re.search(r"[A-Za-z]", ln):
             return ln
