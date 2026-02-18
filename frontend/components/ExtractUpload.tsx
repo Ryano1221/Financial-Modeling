@@ -64,48 +64,6 @@ function classifyFailureReason(raw: unknown): string | null {
   return null;
 }
 
-function buildFallbackNormalizerResponse(fileName: string, reason?: string | null): NormalizerResponse {
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), 1);
-  const end = new Date(start.getFullYear() + 5, start.getMonth(), start.getDate());
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const reasonLine = reason ? `Likely cause: ${reason}` : null;
-  return {
-    canonical_lease: {
-      scenario_name: fileName.replace(/\.(pdf|docx)$/i, "") || "Uploaded lease",
-      premises_name: "",
-      address: "",
-      building_name: "",
-      suite: "",
-      rsf: 0,
-      lease_type: "NNN",
-      commencement_date: iso(start),
-      expiration_date: iso(end),
-      term_months: 60,
-      free_rent_months: 0,
-      discount_rate_annual: 0.08,
-      rent_schedule: [],
-      opex_psf_year_1: 0,
-      opex_growth_rate: 0,
-      expense_stop_psf: 0,
-      expense_structure_type: "nnn",
-      parking_count: 0,
-      parking_rate_monthly: 0,
-      ti_allowance_psf: 0,
-      notes: "Clause highlights unavailable from auto-extraction. Review ROFR/ROFO, renewal/extension rights, termination rights, and OpEx exclusions manually.",
-    },
-    confidence_score: 0.2,
-    field_confidence: {},
-    missing_fields: ["address", "premises_name", "rsf", "rent_schedule", "term_months"],
-    clarification_questions: ["Automatic extraction failed. Enter Building name, Suite, RSF, and base rent schedule."],
-    warnings: [
-      "Automatic extraction was unavailable for this upload.",
-      "A review template was loaded so you can continue without re-uploading.",
-      ...(reasonLine ? [reasonLine] : []),
-    ],
-  };
-}
-
 export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError }: ExtractUploadProps) {
   const [dragOver, setDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -185,8 +143,17 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
             }
             const reason = classifyFailureReason(body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null);
             if (res.status >= 500 || res.status === 503 || res.status === 429) {
-              onError("");
-              onSuccess(buildFallbackNormalizerResponse(file.name, reason));
+              if (attempt < NORMALIZE_MAX_ATTEMPTS) {
+                console.warn("[normalize] upstream temporary failure, retrying", {
+                  rid: attemptRid,
+                  status: res.status,
+                  attempt,
+                  reason,
+                });
+                await sleep(1000 * attempt);
+                continue;
+              }
+              onError(reason ?? formatNormalizeError(res, body));
               return;
             }
             onError(formatNormalizeError(res, body));
@@ -206,14 +173,11 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         if (lastError) {
           const msg = lastError.message || "Request failed.";
           if (lastError.name === "AbortError" || msg.toLowerCase().includes("abort")) {
-            const reason = "Backend timeout after retry.";
             onError(NORMALIZE_TIMEOUT_MESSAGE);
-            onSuccess(buildFallbackNormalizerResponse(file.name, reason));
             return;
           }
           const reason = classifyFailureReason(msg);
-          onError(msg);
-          onSuccess(buildFallbackNormalizerResponse(file.name, reason));
+          onError(reason ?? msg);
           return;
         }
       } catch (e) {
@@ -221,12 +185,10 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         console.error("[normalize] error", { rid, msg });
         if (e instanceof Error && (e.name === "AbortError" || msg.toLowerCase().includes("abort"))) {
           onError(NORMALIZE_TIMEOUT_MESSAGE);
-          onSuccess(buildFallbackNormalizerResponse(file.name, "Backend timeout."));
           return;
         }
         const reason = classifyFailureReason(msg);
-        onError(msg || "Request failed.");
-        onSuccess(buildFallbackNormalizerResponse(file.name, reason));
+        onError(reason ?? (msg || "Request failed."));
       } finally {
         // batch processor manages loading state
       }

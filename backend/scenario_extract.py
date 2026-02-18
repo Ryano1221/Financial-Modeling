@@ -943,8 +943,8 @@ JSON:"""
             last_error = e
             logger.warning("[extract] model failed model=%s error=%s", model, e)
             low = str(e).lower()
-            # Connection/timeouts are usually service-wide; fail fast to deterministic fallback.
-            if any(x in low for x in ("connection", "timeout", "timed out", "api connection", "network")):
+            # Fail fast only for hard auth/config errors.
+            if any(x in low for x in ("invalid api key", "incorrect api key", "authentication", "unauthorized", "api key")):
                 break
             continue
     if last_error is not None:
