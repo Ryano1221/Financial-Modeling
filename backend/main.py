@@ -1221,9 +1221,7 @@ def _extract_phase_in_schedule(text: str, term_months_hint: Optional[int] = None
         generic_rsf_pat = re.compile(
             r"(?i)\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|sf|square\s*feet)\b"
         )
-        phase_header_pat = re.compile(
-            r"(?i)^\s*phase\s+(?:[ivx]+|\d+)\b[^\n]*\(\s*months?\s*\d"
-        )
+        phase_header_pat = re.compile(r"(?i)^\s*phase\s+(?:[ivx]+|\d+)\b")
 
         def _month_window_from_text(s: str) -> tuple[Optional[int], Optional[int], bool]:
             m = month_range_pat.search(s)
@@ -1268,7 +1266,24 @@ def _extract_phase_in_schedule(text: str, term_months_hint: Optional[int] = None
                 return float(add_val)
             return prev_total if prev_total and prev_total > 0 else None
 
-        phase_indices = [i for i, ln in enumerate(lines) if phase_header_pat.search(ln)]
+        phase_indices = []
+        for i, ln in enumerate(lines):
+            if not phase_header_pat.search(ln):
+                continue
+            low_ln = ln.lower()
+            # Skip non-occupancy "phase" blocks (security/credit/admin language).
+            if any(
+                bad in low_ln
+                for bad in (
+                    "security deposit",
+                    "letter of credit",
+                    "burn down",
+                    "performance",
+                    "accelerat",
+                )
+            ):
+                continue
+            phase_indices.append(i)
         if phase_indices:
             steps_raw: list[dict] = []
             prev_total_rsf: Optional[float] = None

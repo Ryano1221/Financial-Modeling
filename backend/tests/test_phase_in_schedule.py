@@ -41,6 +41,27 @@ def test_extract_phase_in_schedule_from_phase_blocks() -> None:
     ]
 
 
+def test_extract_phase_in_schedule_from_ocrish_phase_lines() -> None:
+    text = """
+    PHASE I - INITIAL OCCUPANCY MONTHS 1-18
+    12,500 RSF
+    BASE RENT 48.00/RSF
+    PHASE II - EXPANSION PREMISES MONTH 19
+    ADDITIONAL 8,500 RSF
+    TOTAL PREMISES AFTER EXPANSION 21,000 RSF
+    PHASE III - OPTIONAL FUTURE EXPANSION MONTHS 24-48
+    ADDITIONAL 10,000 RSF
+    TOTAL PREMISES AFTER EXPANSION 31,000 RSF
+    PHASE I: 300,000 LETTER OF CREDIT
+    """
+    steps = _extract_phase_in_schedule(text, term_months_hint=84)
+    assert steps == [
+        {"start_month": 0, "end_month": 17, "rsf": 12500.0},
+        {"start_month": 18, "end_month": 22, "rsf": 21000.0},
+        {"start_month": 23, "end_month": 83, "rsf": 31000.0},
+    ]
+
+
 def test_compute_canonical_applies_phase_in_rsf_to_monthly_costs() -> None:
     lease = CanonicalLease(
         scenario_id="phase-1",
