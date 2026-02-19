@@ -62,6 +62,11 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
             }
           : undefined,
     },
+    phaseInSchedule: (s.phase_in_steps ?? []).map((step) => ({
+      startMonth: step.start_month,
+      endMonth: step.end_month,
+      rsf: step.rsf,
+    })),
     expenseSchedule: {
       leaseType,
       baseOpexPsfYr: s.base_opex_psf_yr,

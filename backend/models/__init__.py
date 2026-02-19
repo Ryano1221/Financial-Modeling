@@ -28,6 +28,7 @@ from .legacy import (
 from .canonical_lease import (
     CanonicalLease,
     RentScheduleStep,
+    PhaseInStep,
     FreeRentPeriod,
     RentAbatement,
     RenewalOption,
@@ -67,6 +68,7 @@ __all__ = [
     "ReportRequest",
     "CanonicalLease",
     "RentScheduleStep",
+    "PhaseInStep",
     "FreeRentPeriod",
     "RentAbatement",
     "RenewalOption",

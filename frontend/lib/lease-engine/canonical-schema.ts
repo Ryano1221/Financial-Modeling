@@ -16,6 +16,12 @@ export interface RentStepCanonical {
   ratePsfYr: number;
 }
 
+export interface PhaseInStepCanonical {
+  startMonth: number;
+  endMonth: number;
+  rsf: number;
+}
+
 /** Abatement/free rent */
 export interface RentAbatement {
   startDate: string; // YYYY-MM-DD
@@ -132,6 +138,7 @@ export interface LeaseScenarioCanonical {
   partyAndPremises: PartyAndPremisesCanonical;
   datesAndTerm: DatesAndTermCanonical;
   rentSchedule: RentScheduleCanonical;
+  phaseInSchedule?: PhaseInStepCanonical[];
   expenseSchedule: ExpenseScheduleCanonical;
   parkingSchedule: ParkingScheduleCanonical;
   tiSchedule: TIScheduleCanonical;

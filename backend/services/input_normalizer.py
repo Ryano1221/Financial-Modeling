@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from models import (
     CanonicalLease,
     RentScheduleStep,
+    PhaseInStep,
     Scenario,
     LeaseType,
     EscalationType,
@@ -93,6 +94,7 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         discount_rate_annual=scenario.discount_rate_annual,
         notes="",
         rent_schedule=rent_schedule,
+        phase_in_schedule=[],
         opex_psf_year_1=scenario.base_opex_psf_yr,
         opex_growth_rate=scenario.opex_growth,
         expense_stop_psf=scenario.base_year_opex_psf_yr,
@@ -148,6 +150,20 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         rate = float(get("rate_psf_yr") or get("rent_psf_annual", 0))
         rent_schedule = [RentScheduleStep(start_month=0, end_month=max(0, term - 1), rent_psf_annual=rate)]
 
+    phase_in_schedule: List[PhaseInStep] = []
+    raw_phase_in = data.get("phase_in_schedule", data.get("phase_in_steps", []))
+    for step in raw_phase_in or []:
+        if isinstance(step, dict):
+            phase_in_schedule.append(
+                PhaseInStep(
+                    start_month=int(step.get("start_month", step.get("start", 0))),
+                    end_month=int(step.get("end_month", step.get("end", 0))),
+                    rsf=float(step.get("rsf", 0) or 0),
+                )
+            )
+        elif isinstance(step, PhaseInStep):
+            phase_in_schedule.append(step)
+
     lease_type_str = (get("lease_type") or get("opex_mode") or "NNN").strip()
     try:
         lt = LeaseType(lease_type_str)
@@ -185,6 +201,7 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         discount_rate_annual=float(get("discount_rate_annual", 0.08) or 0.08),
         notes=str(get("notes", "")),
         rent_schedule=rent_schedule,
+        phase_in_schedule=phase_in_schedule,
         opex_psf_year_1=float(get("opex_psf_year_1", get("base_opex_psf_yr", 0)) or 0),
         opex_growth_rate=float(get("opex_growth_rate", get("opex_growth", 0)) or 0),
         expense_stop_psf=float(get("expense_stop_psf", get("base_year_opex_psf_yr", 0)) or 0),

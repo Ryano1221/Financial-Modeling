@@ -1152,6 +1152,99 @@ def _should_override_rsf(
     return False
 
 
+def _extract_phase_in_schedule(text: str, term_months_hint: Optional[int] = None) -> list[dict]:
+    """
+    Extract phase-in occupancy rows such as:
+      "Months 1-12 | 3,300 RSF"
+      "Months 13-24 | 4,600 RSF"
+    Returns canonical month-index steps (0-based).
+    """
+    if not text:
+        return []
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return []
+
+    phase_line_idx = [
+        i for i, ln in enumerate(lines)
+        if re.search(r"(?i)\bphase(?:\s*[- ]?\s*in)?\b", ln)
+    ]
+    if not phase_line_idx:
+        return []
+
+    # DOCX table rows are often emitted after paragraph text; scan all lines once phase language exists.
+    candidates = lines
+
+    row_pattern = re.compile(
+        r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b"
+        r"[^\n\r]{0,140}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})(?:\.\d+)?\s*(?:rsf|sf|square\s*feet)\b"
+    )
+
+    parsed: list[dict] = []
+    for ln in candidates:
+        m = row_pattern.search(ln)
+        if not m:
+            continue
+        start_month_1 = _coerce_int_token(m.group(1), 0)
+        end_month_1 = _coerce_int_token(m.group(2), 0)
+        rsf = _coerce_float_token(m.group(3), 0.0)
+        if start_month_1 <= 0 or end_month_1 <= 0 or rsf <= 0:
+            continue
+        start = start_month_1 - 1
+        end = max(start, end_month_1 - 1)
+        if term_months_hint and term_months_hint > 0:
+            if start >= term_months_hint:
+                continue
+            end = min(end, term_months_hint - 1)
+        parsed.append(
+            {
+                "start_month": int(start),
+                "end_month": int(end),
+                "rsf": float(rsf),
+            }
+        )
+
+    if len(parsed) < 2:
+        return []
+
+    parsed = sorted(parsed, key=lambda s: (int(s["start_month"]), int(s["end_month"])))
+    deduped: list[dict] = []
+    seen_step: set[tuple[int, int, float]] = set()
+    for step in parsed:
+        key = (
+            int(step["start_month"]),
+            int(step["end_month"]),
+            round(float(step["rsf"]), 4),
+        )
+        if key in seen_step:
+            continue
+        seen_step.add(key)
+        deduped.append(step)
+    if len(deduped) < 2:
+        return []
+
+    expected = 0
+    for i, step in enumerate(deduped):
+        start = int(step["start_month"])
+        end = int(step["end_month"])
+        if i == 0 and start != 0:
+            return []
+        if start != expected or end < start:
+            return []
+        expected = end + 1
+
+    if term_months_hint and term_months_hint > 0 and deduped[-1]["end_month"] < (term_months_hint - 1):
+        deduped[-1] = {
+            **deduped[-1],
+            "end_month": int(term_months_hint - 1),
+        }
+
+    unique_rsf = {round(float(step["rsf"]), 4) for step in deduped}
+    if len(unique_rsf) < 2:
+        return []
+    return deduped
+
+
 def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     """
     Heuristic extraction: RSF (prefer premises/suite and avoid ratio/table values), term dates
@@ -1174,6 +1267,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "parking_rate_monthly": None,
         "opex_psf_year_1": None,
         "opex_source_year": None,
+        "phase_in_schedule": [],
     }
     if not text:
         return hints
@@ -1407,6 +1501,16 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             )
         except Exception:
             pass
+
+    phase_schedule = _extract_phase_in_schedule(text, term_months_hint=_coerce_int_token(hints.get("term_months"), 0))
+    if phase_schedule:
+        hints["phase_in_schedule"] = phase_schedule
+        phase_rsf = max(float(step.get("rsf", 0.0) or 0.0) for step in phase_schedule)
+        if phase_rsf > 0:
+            hints["rsf"] = phase_rsf
+            hints["_rsf_score"] = max(int(hints.get("_rsf_score", -999) or -999), 10)
+        if not hints.get("term_months"):
+            hints["term_months"] = int(phase_schedule[-1]["end_month"]) + 1
 
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
@@ -1786,6 +1890,8 @@ def _normalize_impl(
                     "opex_growth_rate": 0.03,
                     "discount_rate_annual": 0.08,
                 }
+                if isinstance(extracted_hints.get("phase_in_schedule"), list) and extracted_hints["phase_in_schedule"]:
+                    fallback_payload["phase_in_schedule"] = extracted_hints["phase_in_schedule"]
                 canonical = _dict_to_canonical(fallback_payload, "", "")
                 field_confidence = {
                     "rsf": 0.75 if extracted_hints.get("rsf") else 0.25,
@@ -1971,6 +2077,37 @@ def _normalize_impl(
                     if last_end != target_end:
                         trimmed[-1] = last.model_copy(update={"end_month": target_end})
                     updates["rent_schedule"] = trimmed
+            phase_schedule_hint = extracted_hints.get("phase_in_schedule")
+            if isinstance(phase_schedule_hint, list) and phase_schedule_hint:
+                normalized_phase = []
+                for step in phase_schedule_hint:
+                    if not isinstance(step, dict):
+                        continue
+                    start_m = _coerce_int_token(step.get("start_month"), 0)
+                    end_m = _coerce_int_token(step.get("end_month"), start_m)
+                    rsf_m = _coerce_float_token(step.get("rsf"), 0.0)
+                    if end_m < start_m or rsf_m <= 0:
+                        continue
+                    normalized_phase.append(
+                        {
+                            "start_month": start_m,
+                            "end_month": end_m,
+                            "rsf": rsf_m,
+                        }
+                    )
+                if normalized_phase:
+                    updates["phase_in_schedule"] = normalized_phase
+                    max_phase_rsf = max(float(s["rsf"]) for s in normalized_phase)
+                    if _should_override_rsf(
+                        _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0),
+                        max_phase_rsf,
+                        10,
+                        rsf_conf,
+                    ):
+                        updates["rsf"] = max_phase_rsf
+                    if target_term_months <= 0:
+                        updates["term_months"] = int(normalized_phase[-1]["end_month"]) + 1
+                    warnings.append("Phase-in occupancy schedule detected and applied to monthly calculations.")
             if note_highlights:
                 updates["notes"] = " | ".join(note_highlights)[:1600]
             elif text.strip() and not (canonical.notes or "").strip():

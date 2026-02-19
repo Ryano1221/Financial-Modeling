@@ -104,16 +104,15 @@ function getDiscountRate(s: LeaseScenarioCanonical, globalDiscountRate?: number)
 
 /** Build monthly base rent from steps and abatement */
 function monthlyBaseRent(
-  rsf: number,
   termMonths: number,
   steps: RentStepCanonical[],
+  effectiveRsf: number[],
   abatement?: RentAbatement
 ): number[] {
   const rent = new Array<number>(termMonths).fill(0);
   for (const step of steps) {
-    const monthlyRate = (step.ratePsfYr / 12) * rsf;
     for (let m = step.startMonth; m <= Math.min(step.endMonth, termMonths - 1); m++) {
-      if (m >= 0) rent[m] = monthlyRate;
+      if (m >= 0) rent[m] = (step.ratePsfYr / 12) * (effectiveRsf[m] ?? 0);
     }
   }
   if (abatement && abatement.months > 0) {
@@ -130,12 +129,12 @@ function monthlyBaseRent(
 
 /** Monthly opex from lease type */
 function monthlyOpex(
-  rsf: number,
   termMonths: number,
   baseOpexPsfYr: number,
   baseYearPsfYr: number | undefined,
   escalationPercent: number,
-  leaseType: string
+  leaseType: string,
+  effectiveRsf: number[]
 ): number[] {
   const opex: number[] = [];
   if (leaseType === "full_service") return new Array(termMonths).fill(0);
@@ -147,9 +146,27 @@ function monthlyOpex(
       const baseYear = baseYearPsfYr ?? baseOpexPsfYr;
       chargePsfYr = Math.max(0, annualPsf - baseYear);
     }
-    opex.push((chargePsfYr / 12) * rsf);
+    opex.push((chargePsfYr / 12) * (effectiveRsf[m] ?? 0));
   }
   return opex;
+}
+
+function effectiveRsfSchedule(
+  defaultRsf: number,
+  termMonths: number,
+  phaseInSchedule?: Array<{ startMonth: number; endMonth: number; rsf: number }>
+): number[] {
+  const base = Math.max(0, defaultRsf || 0);
+  const out = new Array<number>(termMonths).fill(base);
+  if (!phaseInSchedule || phaseInSchedule.length === 0) return out;
+  const sorted = [...phaseInSchedule].sort((a, b) => (a.startMonth - b.startMonth) || (a.endMonth - b.endMonth));
+  for (const step of sorted) {
+    const start = Math.max(0, step.startMonth | 0);
+    const end = Math.min(termMonths - 1, Math.max(start, step.endMonth | 0));
+    const rsf = Math.max(0, Number(step.rsf) || 0);
+    for (let m = start; m <= end; m++) out[m] = rsf;
+  }
+  return out;
 }
 
 /** Monthly parking from slots */
@@ -246,20 +263,29 @@ export function runMonthlyEngine(
   const termMonths = scenario.datesAndTerm.leaseTermMonths;
   const comm = scenario.datesAndTerm.commencementDate;
   const discountRate = getDiscountRate(scenario, globalDiscountRate);
-
-  const baseRent = monthlyBaseRent(
+  const effectiveRsf = effectiveRsfSchedule(
     rsf,
     termMonths,
+    (scenario.phaseInSchedule ?? []).map((step) => ({
+      startMonth: step.startMonth,
+      endMonth: step.endMonth,
+      rsf: step.rsf,
+    }))
+  );
+
+  const baseRent = monthlyBaseRent(
+    termMonths,
     scenario.rentSchedule.steps,
+    effectiveRsf,
     scenario.rentSchedule.abatement
   );
   const opex = monthlyOpex(
-    rsf,
     termMonths,
     scenario.expenseSchedule.baseOpexPsfYr,
     scenario.expenseSchedule.baseYearOpexPsfYr,
     scenario.expenseSchedule.annualEscalationPercent,
-    scenario.expenseSchedule.leaseType
+    scenario.expenseSchedule.leaseType,
+    effectiveRsf
   );
   const parking = monthlyParking(
     termMonths,
@@ -296,7 +322,8 @@ export function runMonthlyEngine(
     const pv = total[m] / Math.pow(1 + monthlyRate, m);
     const periodStart = addMonthsToDate(comm, m);
     const periodEnd = addMonthsToDate(comm, m + 1);
-    const effPsfYr = rsf > 0 ? (total[m] * 12) / rsf : 0;
+    const monthRsf = effectiveRsf[m] ?? rsf;
+    const effPsfYr = monthRsf > 0 ? (total[m] * 12) / monthRsf : 0;
     monthly.push({
       monthIndex: m,
       periodStart,
@@ -328,6 +355,8 @@ export function runMonthlyEngine(
     }
     const periodStart = addMonthsToDate(comm, start);
     const periodEnd = addMonthsToDate(comm, end);
+    const yearRsf = effectiveRsf.slice(start, end);
+    const avgYearRsf = yearRsf.length > 0 ? yearRsf.reduce((a, b) => a + b, 0) / yearRsf.length : rsf;
     annual.push({
       leaseYear: y + 1,
       periodStart,
@@ -338,16 +367,17 @@ export function runMonthlyEngine(
       tiAmortization: sumTi,
       misc: sumMisc,
       total: sumTotal,
-      effectivePsfYr: rsf > 0 ? (sumTotal / (end - start)) * 12 / rsf : 0,
+      effectivePsfYr: avgYearRsf > 0 ? (sumTotal / (end - start)) * 12 / avgYearRsf : 0,
     });
   }
 
   const totalObligation = total.reduce((a, b) => a + b, 0);
   const npv = total.reduce((acc, cf, t) => acc + cf / Math.pow(1 + monthlyRate, t), 0);
   const years = termMonths / 12;
+  const avgRsfTerm = effectiveRsf.length > 0 ? effectiveRsf.reduce((a, b) => a + b, 0) / effectiveRsf.length : rsf;
   const avgCostYear = years > 0 ? totalObligation / years : 0;
-  const avgCostPsfYr = rsf > 0 ? avgCostYear / rsf : 0;
-  const equalizedAvgPsfYr = rsf > 0 ? totalObligation / years / rsf : 0;
+  const avgCostPsfYr = avgRsfTerm > 0 ? avgCostYear / avgRsfTerm : 0;
+  const equalizedAvgPsfYr = avgRsfTerm > 0 && years > 0 ? totalObligation / years / avgRsfTerm : 0;
 
   const firstStep = scenario.rentSchedule.steps[0];
   const buildingName = (scenario.partyAndPremises.premisesLabel ?? "").trim();

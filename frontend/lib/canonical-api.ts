@@ -4,7 +4,7 @@
  */
 
 import type { ScenarioInput, CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
-import type { BackendCanonicalLease, BackendRentScheduleStep } from "@/lib/types";
+import type { BackendCanonicalLease, BackendRentScheduleStep, BackendPhaseInStep } from "@/lib/types";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 
 function monthDiff(comm: string, exp: string): number {
@@ -134,6 +134,11 @@ export function scenarioInputToBackendCanonical(
       end_month: step.end,
       rent_psf_annual: step.rate_psf_yr,
     })),
+    phase_in_schedule: (s.phase_in_steps ?? []).map((step) => ({
+      start_month: step.start_month,
+      end_month: step.end_month,
+      rsf: step.rsf,
+    })),
     opex_psf_year_1: s.base_opex_psf_yr ?? 0,
     opex_growth_rate: s.opex_growth ?? 0,
     expense_stop_psf: s.base_year_opex_psf_yr ?? 0,
@@ -158,6 +163,13 @@ export function backendCanonicalToScenarioInput(
     end: step.end_month,
     rate_psf_yr: step.rent_psf_annual,
   }));
+  const phaseInSteps: { start_month: number; end_month: number; rsf: number }[] = (
+    c.phase_in_schedule ?? []
+  ).map((step: BackendPhaseInStep) => ({
+    start_month: step.start_month,
+    end_month: step.end_month,
+    rsf: step.rsf,
+  }));
   const opexMode = c.expense_structure_type === "base_year" ? "base_year" : "nnn";
   const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
   return {
@@ -171,6 +183,7 @@ export function backendCanonicalToScenarioInput(
     commencement: c.commencement_date,
     expiration: c.expiration_date,
     rent_steps: rentSteps.length > 0 ? rentSteps : [{ start: 0, end: Math.max(0, (c.term_months ?? 0) - 1), rate_psf_yr: 0 }],
+    phase_in_steps: phaseInSteps.length > 0 ? phaseInSteps : undefined,
     free_rent_months: typeof c.free_rent_months === "number" ? c.free_rent_months : 0,
     ti_allowance_psf: c.ti_allowance_psf ?? 0,
     opex_mode: opexMode,

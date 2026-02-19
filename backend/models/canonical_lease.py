@@ -79,6 +79,21 @@ class RentScheduleStep(BaseModel):
         return v
 
 
+class PhaseInStep(BaseModel):
+    """One phase-in occupancy step (effective RSF by month range)."""
+    start_month: int = Field(ge=0, description="Start month index (0-based)")
+    end_month: int = Field(ge=0, description="End month index (inclusive)")
+    rsf: float = Field(ge=0.0, description="Effective occupied RSF for this phase")
+
+    @field_validator("end_month")
+    @classmethod
+    def end_ge_start(cls, v: int, info: Any) -> int:
+        start = info.data.get("start_month")
+        if start is not None and v < start:
+            raise ValueError("end_month must be >= start_month")
+        return v
+
+
 # --- Concessions ---
 
 
@@ -160,6 +175,10 @@ class CanonicalLease(BaseModel):
         default_factory=list,
         description="Rent steps; must cover term from month 0",
     )
+    phase_in_schedule: List[PhaseInStep] = Field(
+        default_factory=list,
+        description="Optional phased RSF occupancy schedule; when present, month-by-month costs use this RSF.",
+    )
 
     # --- Operating Expenses ---
     opex_psf_year_1: float = Field(ge=0.0, default=0.0)
@@ -223,6 +242,19 @@ class CanonicalLease(BaseModel):
         for s in sorted_steps:
             if s.start_month != expected:
                 raise ValueError("rent_schedule must be contiguous starting at month 0")
+            expected = s.end_month + 1
+        return sorted_steps
+
+    @field_validator("phase_in_schedule")
+    @classmethod
+    def validate_phase_in_schedule_contiguous(cls, steps: List[PhaseInStep]) -> List[PhaseInStep]:
+        if not steps:
+            return steps
+        sorted_steps = sorted(steps, key=lambda s: (s.start_month, s.end_month))
+        expected = 0
+        for s in sorted_steps:
+            if s.start_month != expected:
+                raise ValueError("phase_in_schedule must be contiguous starting at month 0")
             expected = s.end_month + 1
         return sorted_steps
 

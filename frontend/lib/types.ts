@@ -8,6 +8,12 @@ export interface RentStep {
   rate_psf_yr: number;
 }
 
+export interface PhaseInStep {
+  start_month: number;
+  end_month: number;
+  rsf: number;
+}
+
 /** One-time cost item (backend). */
 export interface OneTimeCost {
   name: string;
@@ -27,6 +33,7 @@ export interface ScenarioInput {
   commencement: string; // YYYY-MM-DD
   expiration: string;   // YYYY-MM-DD
   rent_steps: RentStep[];
+  phase_in_steps?: PhaseInStep[];
   free_rent_months: number;
   ti_allowance_psf: number;
   opex_mode: OpexMode;
@@ -213,6 +220,12 @@ export interface BackendRentScheduleStep {
   rent_psf_annual: number;
 }
 
+export interface BackendPhaseInStep {
+  start_month: number;
+  end_month: number;
+  rsf: number;
+}
+
 export interface BackendCanonicalLease {
   scenario_id?: string;
   scenario_name?: string;
@@ -229,6 +242,7 @@ export interface BackendCanonicalLease {
   free_rent_months: number;
   discount_rate_annual: number;
   rent_schedule: BackendRentScheduleStep[];
+  phase_in_schedule?: BackendPhaseInStep[];
   opex_psf_year_1?: number;
   opex_growth_rate?: number;
   expense_stop_psf?: number;
