@@ -61,6 +61,20 @@ export function NormalizeReviewCard({ data, onConfirm, onCancel }: NormalizeRevi
       {data.clarification_questions.length > 0 && (
         <p className="text-xs text-zinc-400">{data.clarification_questions[0]}</p>
       )}
+      {data.extraction_summary && (
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-zinc-300 space-y-1">
+          <p>
+            <span className="text-zinc-400">Document type:</span>{" "}
+            {data.extraction_summary.document_type_detected || "unknown"}
+          </p>
+          {data.extraction_summary.sections_searched.length > 0 && (
+            <p>
+              <span className="text-zinc-400">Sections searched:</span>{" "}
+              {data.extraction_summary.sections_searched.join(", ")}
+            </p>
+          )}
+        </div>
+      )}
       <div className="grid gap-3 max-h-80 overflow-y-auto">
         {REVIEW_FIELDS.map(({ key, label, type, placeholder }) => {
           const val = edited[key];

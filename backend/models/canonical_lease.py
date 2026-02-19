@@ -183,6 +183,10 @@ class CanonicalLease(BaseModel):
 
     # --- Operating Expenses ---
     opex_psf_year_1: float = Field(ge=0.0, default=0.0)
+    opex_by_calendar_year: dict[int, float] = Field(
+        default_factory=dict,
+        description="Optional explicit calendar-year OpEx table, e.g. {2026: 12.5, 2027: 12.9}.",
+    )
     opex_growth_rate: float = Field(ge=0.0, default=0.0)
     expense_stop_psf: float = Field(ge=0.0, default=0.0)
     base_year: Optional[int] = Field(default=None, ge=1)

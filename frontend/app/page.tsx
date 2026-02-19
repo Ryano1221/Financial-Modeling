@@ -32,6 +32,7 @@ import type {
   ScenarioInput,
   BrandConfig,
   BackendCanonicalLease,
+  ExtractionSummary,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
@@ -165,6 +166,7 @@ export default function Home() {
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
+  const [lastExtractionSummary, setLastExtractionSummary] = useState<ExtractionSummary | null>(null);
   const [pendingNormalizeQueue, setPendingNormalizeQueue] = useState<NormalizerResponse[]>([]);
   const [brands, setBrands] = useState<BrandConfig[]>([]);
   const [brandId, setBrandId] = useState<string>("default");
@@ -319,6 +321,7 @@ export default function Home() {
       console.log("[compute] about to call", { hasCanonical });
       const warnings = sanitizeExtractionWarnings(data.warnings);
       setLastExtractWarnings(warnings.length > 0 ? warnings : null);
+      setLastExtractionSummary(data.extraction_summary ?? null);
       setExtractError(null);
 
       if (!data.canonical_lease) {
@@ -367,18 +370,23 @@ export default function Home() {
         runComputeForScenario(newScenario);
       });
       setLastExtractWarnings(null);
+      setLastExtractionSummary(null);
       setPendingNormalizeQueue((prev) => prev.slice(1));
     },
     [addScenarioFromCanonical, runComputeForScenario]
   );
 
   const handleNormalizeCancel = useCallback(() => {
+    setLastExtractionSummary(null);
     setPendingNormalizeQueue((prev) => prev.slice(1));
   }, []);
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message || null);
-    if (message) setLastExtractWarnings(null);
+    if (message) {
+      setLastExtractWarnings(null);
+      setLastExtractionSummary(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -1082,6 +1090,43 @@ export default function Home() {
                         <li key={i}>{w}</li>
                       ))}
                     </ul>
+                  </div>
+                )}
+                {lastExtractionSummary && (
+                  <div className="mt-3 p-3 bg-white/[0.03] border border-white/10 rounded-lg text-sm">
+                    <p className="font-medium text-white mb-2">Extraction summary</p>
+                    <div className="space-y-1 text-zinc-300 text-xs">
+                      <p>
+                        <span className="text-zinc-400">Document type detected:</span>{" "}
+                        {lastExtractionSummary.document_type_detected || "unknown"}
+                      </p>
+                      {lastExtractionSummary.key_terms_found.length > 0 && (
+                        <div>
+                          <p className="text-zinc-400">Key terms found</p>
+                          <ul className="list-disc list-inside text-zinc-300">
+                            {lastExtractionSummary.key_terms_found.map((item, i) => (
+                              <li key={`${item}-${i}`}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {lastExtractionSummary.key_terms_missing.length > 0 && (
+                        <div>
+                          <p className="text-zinc-400">Key terms missing</p>
+                          <ul className="list-disc list-inside text-zinc-300">
+                            {lastExtractionSummary.key_terms_missing.map((item, i) => (
+                              <li key={`${item}-${i}`}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {lastExtractionSummary.sections_searched.length > 0 && (
+                        <p>
+                          <span className="text-zinc-400">Sections searched:</span>{" "}
+                          {lastExtractionSummary.sections_searched.join(", ")}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </UploadExtractCard>

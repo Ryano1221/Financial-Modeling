@@ -73,6 +73,14 @@ class CanonicalComputeResponse(BaseModel):
     assumptions: List[str] = Field(default_factory=list)
 
 
+class ExtractionSummary(BaseModel):
+    """Short, user-facing summary of what extraction found and where it looked."""
+    document_type_detected: str = "unknown"
+    key_terms_found: List[str] = Field(default_factory=list)
+    key_terms_missing: List[str] = Field(default_factory=list)
+    sections_searched: List[str] = Field(default_factory=list)
+
+
 class NormalizerResponse(BaseModel):
     """Response from POST /normalize when confidence < threshold or missing fields."""
     canonical_lease: CanonicalLease
@@ -81,3 +89,4 @@ class NormalizerResponse(BaseModel):
     missing_fields: List[str] = Field(default_factory=list)
     clarification_questions: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
+    extraction_summary: ExtractionSummary = Field(default_factory=ExtractionSummary)

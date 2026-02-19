@@ -149,16 +149,50 @@ def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple
             raise ValueError(f"Invalid canonical lease after defaults: {e}") from e
 
 
-def _annual_opex_psf_for_year(lease: CanonicalLease, year_index: int) -> float:
+def _annual_opex_psf_for_calendar_year(
+    lease: CanonicalLease,
+    calendar_year: int,
+    commencement_year: int,
+) -> float:
+    # If explicit year table exists, prefer it over growth math.
+    explicit = getattr(lease, "opex_by_calendar_year", {}) or {}
+    if explicit:
+        normalized: dict[int, float] = {}
+        for k, v in explicit.items():
+            try:
+                year_k = int(k)
+                val = float(v)
+            except (TypeError, ValueError):
+                continue
+            if 1900 <= year_k <= 2200 and val >= 0:
+                normalized[year_k] = val
+        if normalized:
+            if calendar_year in normalized:
+                return float(normalized[calendar_year])
+            floor_years = [y for y in normalized if y <= calendar_year]
+            if floor_years:
+                return float(normalized[max(floor_years)])
+            return float(normalized[min(normalized.keys())])
+
     base = float(lease.opex_psf_year_1 or 0.0)
     growth = float(lease.opex_growth_rate or 0.0)
     if growth <= 0:
         return base
-    return base * ((1.0 + growth) ** year_index)
+    year_delta = max(0, int(calendar_year) - int(commencement_year))
+    return base * ((1.0 + growth) ** year_delta)
 
 
-def _charge_opex_psf_for_month(lease: CanonicalLease, month_index: int) -> float:
-    annual_opex_psf = _annual_opex_psf_for_year(lease, month_index // 12)
+def _charge_opex_psf_for_month(
+    lease: CanonicalLease,
+    month_index: int,
+    commencement: date,
+) -> float:
+    period_date = _date_from_commencement_month(commencement, month_index)
+    annual_opex_psf = _annual_opex_psf_for_calendar_year(
+        lease=lease,
+        calendar_year=period_date.year,
+        commencement_year=commencement.year,
+    )
     if str(lease.expense_structure_type) == "base_year":
         return max(0.0, annual_opex_psf - float(lease.expense_stop_psf or 0.0))
     return annual_opex_psf
@@ -225,7 +259,7 @@ def _compute_phase_aware_monthly(
         rent_rate = _rate_psf_for_month(lease, m)
         rent[m] = (rent_rate / 12.0) * rsf_m
 
-        opex_charge_psf_yr = _charge_opex_psf_for_month(lease, m)
+        opex_charge_psf_yr = _charge_opex_psf_for_month(lease, m, lease.commencement_date)
         opex[m] = (opex_charge_psf_yr / 12.0) * rsf_m
 
         parking_count = float(lease.parking_count or 0)

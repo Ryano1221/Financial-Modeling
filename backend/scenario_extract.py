@@ -596,7 +596,10 @@ def _normalize_rent_steps(
             min_year_index = min(min(int(s["start"]), int(s["end"])) for s in parsed)
             one_based = min_year_index >= 1
         parsed = _convert_year_index_steps_to_month_steps(parsed, one_based=one_based)
-        notes.append("Rent schedule interpreted as lease years and converted to month ranges (Year 1 = months 0-11).")
+        notes.append(
+            "Rent schedule interpreted as lease years and converted to month ranges "
+            "(Year 1 = months 1-12, stored internally as 0-11)."
+        )
 
     return _repair_and_extend_month_steps(parsed, term_month_count), notes
 
@@ -1153,7 +1156,7 @@ def _llm_extract_scenario(text: str, prefill: dict) -> dict:
     prompt = f"""Extract lease terms as JSON only. No markdown, no prose.
 - Output a single JSON object: {{ "scenario": {{ ... }}, "confidence": {{ "rsf": 0.9, ... }}, "warnings": [] }}
 - Scenario fields to fill when present: name, rsf, commencement, expiration, rent_steps, free_rent_months, ti_allowance_psf, opex_mode, base_opex_psf_yr, base_year_opex_psf_yr, opex_growth.
-- Treat lease year tables correctly: Year 1 = months 0-11, Year 2 = months 12-23, etc.
+- Treat lease year tables correctly: Year 1 = months 1-12 (stored internally as 0-11), Year 2 = months 13-24, etc.
 - rent_steps must be month-index ranges only: [{{"start": 0, "end": 59, "rate_psf_yr": number}}, ...]
 - rent_steps must be contiguous, no overlaps/gaps, sorted ascending.
 - Prefer the subject Premises/Suite/Space for RSF and dates; ignore ROFR/ROFO/expansion/option spaces unless they are explicitly the leased premises.
@@ -1414,7 +1417,7 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
             rent_steps_input = prefill_steps
             warnings.append(
                 "Rent steps from AI output looked fragmented; replaced with rent schedule table extraction "
-                "(Year 1 = months 0-11)."
+                    "(Year 1 = months 1-12, stored internally as 0-11)."
             )
 
     normalized_steps, rent_step_notes = _normalize_rent_steps(

@@ -32,7 +32,7 @@ def test_apply_safe_defaults_converts_zero_based_year_indices_to_month_ranges() 
         {"start": 12, "end": 23, "rate_psf_yr": 46.0},
         {"start": 24, "end": 59, "rate_psf_yr": 47.0},
     ]
-    assert any("Year 1 = months 0-11" in w for w in warnings)
+    assert any("Year 1 = months 1-12" in w for w in warnings)
 
 
 def test_apply_safe_defaults_converts_one_based_year_indices_to_month_ranges() -> None:
@@ -79,7 +79,7 @@ def test_apply_safe_defaults_keeps_month_index_schedule_unchanged() -> None:
         {"start": 0, "end": 11, "rate_psf_yr": 38.0},
         {"start": 12, "end": 23, "rate_psf_yr": 39.14},
     ]
-    assert not any("Year 1 = months 0-11" in w for w in warnings)
+    assert not any("Year 1 = months 1-12" in w for w in warnings)
 
 
 def test_apply_safe_defaults_rebases_absolute_lease_year_labels() -> None:
@@ -103,7 +103,7 @@ def test_apply_safe_defaults_rebases_absolute_lease_year_labels() -> None:
         {"start": 0, "end": 11, "rate_psf_yr": 38.0},
         {"start": 12, "end": 23, "rate_psf_yr": 39.14},
     ]
-    assert any("Year 1 = months 0-11" in w for w in warnings)
+    assert any("Year 1 = months 1-12" in w for w in warnings)
 
 
 def test_regex_prefill_extracts_year_table_rows_as_month_steps() -> None:

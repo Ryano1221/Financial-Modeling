@@ -607,11 +607,17 @@ def _window_to_month_bounds(
     return start_i, end_i
 
 
+def _month_index_to_calendar_year(commencement: date, month_index: int) -> int:
+    total = (commencement.month - 1) + max(0, int(month_index))
+    return commencement.year + (total // 12)
+
+
 def _split_rent_schedule_by_boundaries(
     rent_schedule: list,
     term_months: int,
     phase_in_schedule: list,
     free_rent_periods: list,
+    commencement_date: Optional[date] = None,
 ) -> list[dict]:
     if not rent_schedule:
         return []
@@ -663,6 +669,13 @@ def _split_rent_schedule_by_boundaries(
     if term_months > 0:
         boundaries.add(0)
         boundaries.add(term_months)
+    if commencement_date and term_months > 1:
+        prev_year = _month_index_to_calendar_year(commencement_date, 0)
+        for month_idx in range(1, term_months):
+            curr_year = _month_index_to_calendar_year(commencement_date, month_idx)
+            if curr_year != prev_year:
+                boundaries.add(month_idx)
+                prev_year = curr_year
 
     if not normalized_steps:
         return []
@@ -978,6 +991,53 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
     candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
     _, _, best_value, best_year = candidates[0]
     return best_value, best_year
+
+
+def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
+    """Extract explicit calendar-year OpEx rows, e.g. 2026 $12.50/SF, 2027 $12.88/SF."""
+    if not text:
+        return {}
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return {}
+
+    results: dict[int, float] = {}
+    row_pat = re.compile(
+        r"(?i)\b(20\d{2})\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\b"
+    )
+    rev_pat = re.compile(
+        r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?[^\n]{0,80}\b(20\d{2})\b"
+    )
+    table_pat = re.compile(
+        r"(?i)^\s*(20\d{2})\s*(?:\||:|-|–|—)?\s*\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\s*$"
+    )
+    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance|additional rent)\b")
+
+    for idx, line in enumerate(lines[:1200]):
+        context = " ".join(
+            lines[max(0, idx - 1): min(len(lines), idx + 2)]
+        )
+        if not opex_kw.search(context):
+            continue
+        for pat in (table_pat, row_pat):
+            for m in pat.finditer(line):
+                year = _coerce_int_token(m.group(1), None)
+                value = _coerce_float_token(m.group(2), None)
+                if year is None or value is None:
+                    continue
+                if not (1990 <= year <= 2200 and 0 < value <= 150):
+                    continue
+                results[int(year)] = float(round(value, 4))
+        for m in rev_pat.finditer(line):
+            value = _coerce_float_token(m.group(1), None)
+            year = _coerce_int_token(m.group(2), None)
+            if year is None or value is None:
+                continue
+            if not (1990 <= year <= 2200 and 0 < value <= 150):
+                continue
+            results[int(year)] = float(round(value, 4))
+
+    return dict(sorted(results.items()))
 
 
 def _clean_address_candidate(raw: str) -> str:
@@ -1775,6 +1835,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "parking_rate_monthly": None,
         "opex_psf_year_1": None,
         "opex_source_year": None,
+        "opex_by_calendar_year": {},
         "free_rent_scope": None,
         "free_rent_start_month": None,
         "free_rent_end_month": None,
@@ -2195,6 +2256,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             break
 
     hinted_opex, hinted_opex_year = _extract_opex_psf_from_text(text)
+    opex_by_year = _extract_opex_by_calendar_year_from_text(text)
+    if opex_by_year:
+        hints["opex_by_calendar_year"] = opex_by_year
+        if hinted_opex is None:
+            first_year = min(opex_by_year.keys())
+            hints["opex_psf_year_1"] = float(opex_by_year[first_year])
+            hints["opex_source_year"] = int(first_year)
     if hinted_opex is not None and hinted_opex > 0:
         hints["opex_psf_year_1"] = hinted_opex
     if hinted_opex_year is not None:
@@ -2329,6 +2397,145 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
     return notes
 
 
+def _detect_document_type(text: str, filename: str = "") -> str:
+    """Best-effort document type detection across leases, proposals, LOIs, amendments, etc."""
+    corpus = f"{filename}\n{text[:6000]}".lower()
+    score: dict[str, int] = {
+        "rfp": 0,
+        "loi": 0,
+        "proposal": 0,
+        "counter": 0,
+        "amendment": 0,
+        "renewal": 0,
+        "term_sheet": 0,
+        "lease": 0,
+    }
+    patterns: list[tuple[str, list[str]]] = [
+        ("rfp", [r"\brfp\b", r"request for proposal", r"submission requirements"]),
+        ("loi", [r"\bloi\b", r"letter of intent"]),
+        ("proposal", [r"\bproposal\b", r"economic proposal", r"business terms proposal"]),
+        ("counter", [r"\bcounter\b", r"counter proposal", r"redline"]),
+        ("amendment", [r"\bamendment\b", r"first amendment", r"second amendment", r"addendum"]),
+        ("renewal", [r"\brenewal\b", r"renewal term", r"extension term", r"exercise (?:its )?option"]),
+        ("term_sheet", [r"term sheet", r"deal points", r"summary of terms"]),
+        ("lease", [r"\blease\b", r"lease agreement", r"landlord hereby leases", r"demised premises"]),
+    ]
+    for kind, pats in patterns:
+        for pat in pats:
+            hits = len(re.findall(pat, corpus, flags=re.I))
+            if hits > 0:
+                score[kind] += hits
+
+    # Prefer more specific document types over generic lease if both appear.
+    if score["counter"] > 0:
+        return "counter_proposal"
+    if score["amendment"] > 0:
+        return "amendment"
+    if score["renewal"] > 0 and score["proposal"] > 0:
+        return "renewal_proposal"
+    ordered = sorted(score.items(), key=lambda kv: kv[1], reverse=True)
+    if not ordered or ordered[0][1] <= 0:
+        return "unknown"
+    top = ordered[0][0]
+    return {
+        "rfp": "rfp",
+        "loi": "loi",
+        "proposal": "proposal",
+        "counter": "counter_proposal",
+        "amendment": "amendment",
+        "renewal": "renewal_or_extension",
+        "term_sheet": "term_sheet",
+        "lease": "lease",
+    }.get(top, "unknown")
+
+
+def _extract_sections_searched(text: str) -> list[str]:
+    if not text:
+        return []
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return []
+    sections: list[str] = []
+    section_rules: list[tuple[str, re.Pattern[str]]] = [
+        ("Premises/Property", re.compile(r"(?i)\b(premises|property|building|suite|address|location)\b")),
+        ("Term", re.compile(r"(?i)\b(term|commencement|expiration|expiration date|lease term)\b")),
+        ("Rent Schedule", re.compile(r"(?i)\b(base rent|rent schedule|rental rate|lease year|annual rent)\b")),
+        ("Operating Expenses", re.compile(r"(?i)\b(opex|operating expenses?|cam|common area maintenance|base year)\b")),
+        ("Concessions", re.compile(r"(?i)\b(free rent|abatement|concession)\b")),
+        ("Parking", re.compile(r"(?i)\b(parking|spaces per 1,?000|parking ratio)\b")),
+        ("Options/Rights", re.compile(r"(?i)\b(renewal|extension|rofr|rofo|termination option|right of first)\b")),
+    ]
+    scanned = lines[:1200]
+    for label, pat in section_rules:
+        if any(pat.search(ln) for ln in scanned):
+            sections.append(label)
+    return sections
+
+
+def _build_extraction_summary(
+    *,
+    text: str,
+    filename: str,
+    canonical: CanonicalLease,
+    missing_fields: list[str],
+    warnings: list[str],
+) -> dict:
+    doc_type = _detect_document_type(text, filename)
+    sections = _extract_sections_searched(text)
+    found: list[str] = []
+    if (canonical.building_name or "").strip():
+        found.append(f"Building: {canonical.building_name.strip()}")
+    if (canonical.suite or "").strip():
+        found.append(f"Suite: {canonical.suite.strip()}")
+    elif (canonical.floor or "").strip():
+        found.append(f"Floor: {canonical.floor.strip()}")
+    if float(canonical.rsf or 0.0) > 0:
+        found.append(f"RSF: {int(round(float(canonical.rsf))):,}")
+    if canonical.commencement_date:
+        found.append(f"Commencement: {canonical.commencement_date.isoformat()}")
+    if canonical.expiration_date:
+        found.append(f"Expiration: {canonical.expiration_date.isoformat()}")
+    if int(canonical.term_months or 0) > 0:
+        found.append(f"Term: {int(canonical.term_months)} months")
+    if canonical.rent_schedule:
+        found.append(f"Rent periods: {len(canonical.rent_schedule)}")
+    if float(canonical.opex_psf_year_1 or 0.0) > 0:
+        found.append(f"OpEx: ${float(canonical.opex_psf_year_1):.2f}/SF/yr")
+    if getattr(canonical, "opex_by_calendar_year", {}):
+        found.append(f"OpEx table years: {len(getattr(canonical, 'opex_by_calendar_year', {}))}")
+    if int(canonical.free_rent_months or 0) > 0:
+        found.append(f"Abatement: {int(canonical.free_rent_months)} months ({canonical.free_rent_scope})")
+
+    section_map: dict[str, list[str]] = {
+        "building_name": ["Premises/Property"],
+        "suite": ["Premises/Property"],
+        "rsf": ["Premises/Property", "Rent Schedule"],
+        "commencement_date": ["Term"],
+        "expiration_date": ["Term"],
+        "term_months": ["Term"],
+        "rent_schedule": ["Rent Schedule"],
+        "opex_psf_year_1": ["Operating Expenses"],
+        "opex_growth_rate": ["Operating Expenses"],
+        "parking_ratio": ["Parking"],
+        "parking_count": ["Parking"],
+    }
+    missing_pretty: list[str] = []
+    for field in missing_fields:
+        looked = section_map.get(field, sections or ["Document body"])
+        label = field.replace("_", " ").strip().title()
+        missing_pretty.append(f"{label} (searched: {', '.join(looked)})")
+    if not sections:
+        sections = ["Document body"]
+    if any("fallback" in str(w).lower() for w in warnings):
+        found.append("Extraction mode: fallback heuristics")
+    return {
+        "document_type_detected": doc_type,
+        "key_terms_found": found[:16],
+        "key_terms_missing": missing_pretty[:16],
+        "sections_searched": sections[:16],
+    }
+
+
 def _safe_extraction_warning(err: Exception | str) -> str:
     """
     Map low-level extraction errors to safe, actionable messages for UI warnings.
@@ -2412,10 +2619,13 @@ def _normalize_impl(
     confidence_score = 0.5
     missing: list = []
     questions: list = []
+    extraction_text_for_summary = ""
+    extraction_filename_for_summary = ""
 
     if source_upper in ("PDF", "WORD"):
         if not file or not file.filename:
             raise HTTPException(status_code=400, detail="File required for PDF/WORD")
+        extraction_filename_for_summary = file.filename or ""
         fn = file.filename.lower()
         if source_upper == "PDF" and not fn.endswith(".pdf"):
             raise HTTPException(status_code=400, detail="File must be PDF")
@@ -2450,6 +2660,7 @@ def _normalize_impl(
         except Exception as e:
             text = ""
             warnings.append(_safe_extraction_warning(e))
+        extraction_text_for_summary = text or ""
 
         extracted_hints = _extract_lease_hints(text, file.filename or "", rid)
         note_highlights = _extract_lease_note_highlights(text)
@@ -2667,6 +2878,18 @@ def _normalize_impl(
                 updates["lease_type"] = str(extracted_hints["lease_type"])
 
             hinted_opex = _coerce_float_token(extracted_hints.get("opex_psf_year_1"), 0.0)
+            hinted_opex_by_year_raw = extracted_hints.get("opex_by_calendar_year")
+            hinted_opex_by_year: dict[int, float] = {}
+            if isinstance(hinted_opex_by_year_raw, dict):
+                for y, v in hinted_opex_by_year_raw.items():
+                    y_i = _coerce_int_token(y, None)
+                    v_f = _coerce_float_token(v, None)
+                    if y_i is None or v_f is None:
+                        continue
+                    if 1900 <= y_i <= 2200 and v_f >= 0:
+                        hinted_opex_by_year[int(y_i)] = float(round(v_f, 4))
+            if hinted_opex_by_year:
+                updates["opex_by_calendar_year"] = dict(sorted(hinted_opex_by_year.items()))
             if hinted_opex > 0:
                 updates["opex_psf_year_1"] = hinted_opex
                 if _coerce_float_token(canonical.expense_stop_psf, 0.0) <= 0:
@@ -2674,7 +2897,30 @@ def _normalize_impl(
             opex_source_year = _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
             commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
             commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0
-            if hinted_opex > 0 and opex_source_year >= 1900 and commencement_year >= 1900 and opex_source_year < commencement_year:
+            if hinted_opex_by_year and commencement_year >= 1900:
+                if commencement_year in hinted_opex_by_year:
+                    year_rate = float(hinted_opex_by_year[commencement_year])
+                    updates["opex_psf_year_1"] = year_rate
+                    updates["expense_stop_psf"] = year_rate
+                else:
+                    prior_years = [y for y in hinted_opex_by_year if y <= commencement_year]
+                    if prior_years:
+                        prior_year = max(prior_years)
+                        year_rate = float(hinted_opex_by_year[prior_year])
+                        updates["opex_psf_year_1"] = year_rate
+                        updates["expense_stop_psf"] = year_rate
+                        if prior_year < commencement_year:
+                            extra_note_lines.append(
+                                f"OpEx table provided through {prior_year}; carried forward ${year_rate:,.2f}/SF "
+                                f"for {commencement_year}+ until updated values are provided."
+                            )
+            if (
+                hinted_opex > 0
+                and not hinted_opex_by_year
+                and opex_source_year >= 1900
+                and commencement_year >= 1900
+                and opex_source_year < commencement_year
+            ):
                 years_forward = commencement_year - opex_source_year
                 escalated_opex = round(hinted_opex * (1.03 ** years_forward), 4)
                 updates["opex_psf_year_1"] = escalated_opex
@@ -2859,6 +3105,7 @@ def _normalize_impl(
                 term_months=int(effective_term),
                 phase_in_schedule=list(effective_phase),
                 free_rent_periods=list(effective_free_periods),
+                commencement_date=updates.get("commencement_date", canonical.commencement_date),
             )
             if segmented_rent and not _rent_schedule_rows_equal(segmented_rent, list(effective_rent)):
                 updates["rent_schedule"] = [RentScheduleStep(**step) for step in segmented_rent]
@@ -2904,6 +3151,13 @@ def _normalize_impl(
                 missing_fields=missing,
                 clarification_questions=questions,
                 warnings=warnings,
+                extraction_summary=_build_extraction_summary(
+                    text=extraction_text_for_summary,
+                    filename=extraction_filename_for_summary,
+                    canonical=canonical,
+                    missing_fields=missing,
+                    warnings=warnings,
+                ),
             ),
             not used_fallback,
         )
@@ -2912,6 +3166,8 @@ def _normalize_impl(
         raw = (pasted_text or payload or "").strip()
         if not raw:
             raise HTTPException(status_code=400, detail="pasted_text or payload required for PASTED_TEXT")
+        extraction_text_for_summary = raw
+        extraction_filename_for_summary = "pasted_text.txt"
         # No try/except: let AI extraction failures propagate (503 from endpoint).
         extraction = extract_scenario_from_text(raw, "pasted_text")
         if extraction and extraction.scenario:
@@ -2934,6 +3190,13 @@ def _normalize_impl(
                 missing_fields=missing,
                 clarification_questions=questions,
                 warnings=warnings,
+                extraction_summary=_build_extraction_summary(
+                    text=extraction_text_for_summary,
+                    filename=extraction_filename_for_summary,
+                    canonical=canonical,
+                    missing_fields=missing,
+                    warnings=warnings,
+                ),
             ),
             True,  # used_ai
         )
@@ -2942,6 +3205,8 @@ def _normalize_impl(
     raw_payload = (payload or "").strip()
     if not raw_payload:
         raise HTTPException(status_code=400, detail="payload (JSON string) required for MANUAL/JSON")
+    extraction_text_for_summary = raw_payload
+    extraction_filename_for_summary = "manual.json"
     try:
         data = json.loads(raw_payload)
     except json.JSONDecodeError as e:
@@ -2958,6 +3223,13 @@ def _normalize_impl(
             missing_fields=missing,
             clarification_questions=questions,
             warnings=warnings,
+            extraction_summary=_build_extraction_summary(
+                text=extraction_text_for_summary,
+                filename=extraction_filename_for_summary,
+                canonical=canonical,
+                missing_fields=missing,
+                warnings=warnings,
+            ),
         ),
         False,  # used_ai: MANUAL/JSON does not use AI
     )

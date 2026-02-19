@@ -47,6 +47,10 @@ export function ScenarioForm({
     if (!cy || !cm || !cd || !ey || !em || !ed) return 1;
     let months = (ey - cy) * 12 + (em - cm);
     if (ed < cd) months -= 1;
+    if (cd === 1) {
+      const monthEnd = new Date(ey, em, 0).getDate();
+      if (ed === monthEnd) months += 1;
+    }
     return Math.max(1, months);
   };
 
@@ -79,6 +83,47 @@ export function ScenarioForm({
     if (!Number.isFinite(displayMonth)) return 0;
     return Math.max(0, Math.floor(displayMonth) - 1);
   };
+  const freeStart = Math.max(0, Math.floor(Number(scenario?.free_rent_start_month ?? 0) || 0));
+  const freeEndFallback = Math.max(freeStart, freeStart + Math.max(0, Math.floor(Number(scenario?.free_rent_months ?? 0) || 0)) - 1);
+  const freeEnd = Math.max(freeStart, Math.floor(Number(scenario?.free_rent_end_month ?? freeEndFallback) || freeEndFallback));
+  const hasFreeRent = (Number(scenario?.free_rent_months) || 0) > 0;
+  const parseDateParts = (iso: string): { year: number; month: number; day: number } | null => {
+    const [y, m, d] = String(iso || "").split("-").map(Number);
+    if (!y || !m || !d) return null;
+    return { year: y, month: m, day: d };
+  };
+  const calendarYearForMonthIndex = (monthIndex: number): number | null => {
+    if (!scenario) return null;
+    const parts = parseDateParts(scenario.commencement);
+    if (!parts) return null;
+    const total = (parts.month - 1) + Math.max(0, Math.floor(monthIndex));
+    return parts.year + Math.floor(total / 12);
+  };
+  const opexAnnualAtMonth = (monthIndex: number): number => {
+    if (!scenario) return 0;
+    const year = calendarYearForMonthIndex(monthIndex);
+    if (!year) return Math.max(0, Number(scenario.base_opex_psf_yr) || 0);
+    const commYear = calendarYearForMonthIndex(0) ?? year;
+    const growth = Math.max(0, Number(scenario.opex_growth) || 0);
+    const base = Math.max(0, Number(scenario.base_opex_psf_yr) || 0);
+    const escalated = base * ((1 + growth) ** Math.max(0, year - commYear));
+    if (scenario.opex_mode === "base_year") {
+      const baseYearStop = Math.max(0, Number(scenario.base_year_opex_psf_yr) || 0);
+      return Math.max(0, escalated - baseYearStop);
+    }
+    return escalated;
+  };
+  const isInFreeRange = (start: number, end: number): boolean => {
+    if (!hasFreeRent) return false;
+    return end >= freeStart && start <= freeEnd;
+  };
+  const formatCurrencyPsf = (value: number): string => `$${(Math.round(value * 100) / 100).toFixed(2)}`;
+  const opexRangeLabel = (startMonth: number, endMonth: number): string => {
+    const startVal = opexAnnualAtMonth(startMonth);
+    const endVal = opexAnnualAtMonth(endMonth);
+    if (Math.abs(startVal - endVal) < 0.01) return formatCurrencyPsf(startVal);
+    return `${formatCurrencyPsf(startVal)} -> ${formatCurrencyPsf(endVal)}`;
+  };
 
   const stepRsfLabel = (startMonth: number, endMonth: number): string => {
     if (!scenario) return "0 SF";
@@ -109,6 +154,65 @@ export function ScenarioForm({
     const yearLabel = startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
     return `${yearLabel} (M${startDisplayMonth}-${endDisplayMonth})`;
   };
+  const termMonths = scenario ? termMonthsFromDates(scenario.commencement, scenario.expiration) : 1;
+  type PeriodizedRow = {
+    start: number;
+    end: number;
+    baseRate: number;
+    opexRate: number;
+    rsfLabel: string;
+    yearsLabel: string;
+    abatementNote: string;
+  };
+  const periodizedRows: PeriodizedRow[] = (() => {
+    if (!scenario || scenario.rent_steps.length === 0) return [];
+    const boundaries = new Set<number>([0, Math.max(1, termMonths)]);
+    scenario.rent_steps.forEach((s) => {
+      boundaries.add(Math.max(0, Math.floor(Number(s.start) || 0)));
+      boundaries.add(Math.max(0, Math.floor(Number(s.end) || 0) + 1));
+    });
+    (scenario.phase_in_steps ?? []).forEach((p) => {
+      boundaries.add(Math.max(0, Math.floor(Number(p.start_month) || 0)));
+      boundaries.add(Math.max(0, Math.floor(Number(p.end_month) || 0) + 1));
+    });
+    if (hasFreeRent) {
+      boundaries.add(freeStart);
+      boundaries.add(freeEnd + 1);
+    }
+    let prevYear = calendarYearForMonthIndex(0);
+    for (let m = 1; m < termMonths; m += 1) {
+      const y = calendarYearForMonthIndex(m);
+      if (y != null && prevYear != null && y !== prevYear) boundaries.add(m);
+      if (y != null) prevYear = y;
+    }
+
+    const sorted = Array.from(boundaries)
+      .map((n) => Math.max(0, Math.floor(n)))
+      .filter((n) => n <= termMonths)
+      .sort((a, b) => a - b);
+    const rows: PeriodizedRow[] = [];
+    for (let i = 0; i < sorted.length - 1; i += 1) {
+      const start = sorted[i];
+      const endExclusive = sorted[i + 1];
+      if (endExclusive <= start) continue;
+      const end = Math.min(termMonths - 1, endExclusive - 1);
+      if (end < start) continue;
+      const source = scenario.rent_steps.find((s) => start >= s.start && start <= s.end);
+      if (!source) continue;
+      const abated = isInFreeRange(start, end);
+      const gross = abated && scenario.free_rent_abatement_type === "gross";
+      rows.push({
+        start,
+        end,
+        baseRate: abated ? 0 : Math.max(0, Number(source.rate_psf_yr) || 0),
+        opexRate: gross ? 0 : opexAnnualAtMonth(start),
+        rsfLabel: stepRsfLabel(start, end),
+        yearsLabel: leaseYearLabel(start, end),
+        abatementNote: abated ? (gross ? "Gross abatement" : "Base-rent abatement") : "",
+      });
+    }
+    return rows;
+  })();
 
   const update = <K extends keyof ScenarioInput>(
     key: K,
@@ -203,10 +307,6 @@ export function ScenarioForm({
 
   const inputClass = "mt-1 block w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm text-white focus:border-[#3b82f6] focus:outline-none focus:ring-1 focus:ring-[#3b82f6] placeholder:text-zinc-500";
   const btnSecondary = "rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] w-full sm:w-auto";
-  const freeStart = Math.max(0, Math.floor(Number(scenario?.free_rent_start_month ?? 0) || 0));
-  const freeEndFallback = Math.max(freeStart, freeStart + Math.max(0, Math.floor(Number(scenario?.free_rent_months ?? 0) || 0)) - 1);
-  const freeEnd = Math.max(freeStart, Math.floor(Number(scenario?.free_rent_end_month ?? freeEndFallback) || freeEndFallback));
-  const hasFreeRent = (Number(scenario?.free_rent_months) || 0) > 0;
 
   if (!scenario) {
     return (
@@ -463,18 +563,19 @@ export function ScenarioForm({
             </ul>
           </div>
         )}
-        <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_112px] gap-3 px-1 pb-1">
+        <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 px-1 pb-1">
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Step</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Rate ($/SF/yr)</span>
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Opex ($/SF/yr)</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">RSF</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Lease years</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Action</span>
         </div>
         {scenario.rent_steps.map((step, i) => (
           <div key={i} className="rounded-lg border border-white/10 bg-white/[0.015] p-3 mb-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_112px] gap-3 xl:gap-2 items-end">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 xl:gap-2 items-end">
               <div className="text-xs text-zinc-400 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] sm:col-span-2 xl:col-span-1">
                 #{i + 1}
               </div>
@@ -516,6 +617,10 @@ export function ScenarioForm({
                 />
               </label>
               <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
+                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden mr-2">Opex ($/SF/yr)</span>
+                {opexRangeLabel(step.start, step.end)}
+              </div>
+              <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
                 <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden mr-2">RSF</span>
                 {stepRsfLabel(step.start, step.end)}
               </div>
@@ -533,33 +638,36 @@ export function ScenarioForm({
             </div>
           </div>
         ))}
-        {hasFreeRent && (
-          <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 p-3 mb-1">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_112px] gap-3 xl:gap-2 items-end">
-              <div className="text-xs text-emerald-100 min-h-10 flex items-center px-2 rounded-lg border border-emerald-500/35 bg-emerald-500/15 sm:col-span-2 xl:col-span-1">
-                FREE
-              </div>
-              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
-                {toDisplayMonth(freeStart)}
-              </div>
-              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
-                {toDisplayMonth(freeEnd)}
-              </div>
-              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
-                {scenario.free_rent_abatement_type === "gross" ? "Gross abatement" : "Base-rent abatement"}
-              </div>
-              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
-                {stepRsfLabel(freeStart, freeEnd)}
-              </div>
-              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
-                {leaseYearLabel(freeStart, freeEnd)}
-              </div>
-              <div className="h-10 rounded-lg border border-emerald-500/35 bg-emerald-500/15 flex items-center justify-center text-xs text-emerald-100">
-                Auto
+        <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-3">
+          <p className="text-xs font-medium text-zinc-200 mb-2">Periodized schedule (output)</p>
+          <p className="text-[11px] text-zinc-500 mb-3">
+            Auto-split by calendar year, phase-in RSF changes, and abatement boundaries. Abated periods show zero cash-flow components.
+          </p>
+          <div className="hidden xl:grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 px-1 pb-1">
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Base rent ($/SF/yr)</span>
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Opex ($/SF/yr)</span>
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">RSF</span>
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Lease years</span>
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Note</span>
+          </div>
+          {periodizedRows.map((row, idx) => (
+            <div key={`${row.start}-${row.end}-${idx}`} className="rounded-lg border border-white/10 bg-white/[0.02] p-3 mb-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 xl:gap-2 items-center">
+                <div className="text-sm text-zinc-200">{toDisplayMonth(row.start)}</div>
+                <div className="text-sm text-zinc-200">{toDisplayMonth(row.end)}</div>
+                <div className="text-sm text-zinc-200">{formatCurrencyPsf(row.baseRate)}</div>
+                <div className="text-sm text-zinc-200">{formatCurrencyPsf(row.opexRate)}</div>
+                <div className="text-sm text-zinc-300">{row.rsfLabel}</div>
+                <div className="text-sm text-zinc-300">{row.yearsLabel}</div>
+                <div className={`text-xs ${row.abatementNote ? "text-emerald-300" : "text-zinc-500"}`}>
+                  {row.abatementNote || "Standard period"}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          ))}
+        </div>
       </div>
     </div>
   );

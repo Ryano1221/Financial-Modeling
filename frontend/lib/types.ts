@@ -251,6 +251,7 @@ export interface BackendCanonicalLease {
   rent_schedule: BackendRentScheduleStep[];
   phase_in_schedule?: BackendPhaseInStep[];
   opex_psf_year_1?: number;
+  opex_by_calendar_year?: Record<string, number>;
   opex_growth_rate?: number;
   expense_stop_psf?: number;
   expense_structure_type?: string;
@@ -261,6 +262,13 @@ export interface BackendCanonicalLease {
   [key: string]: unknown;
 }
 
+export interface ExtractionSummary {
+  document_type_detected: string;
+  key_terms_found: string[];
+  key_terms_missing: string[];
+  sections_searched: string[];
+}
+
 /** Response from POST /normalize. Enforce Review when confidence_score < 0.85 or missing_fields.length > 0. */
 export interface NormalizerResponse {
   canonical_lease: BackendCanonicalLease;
@@ -269,6 +277,7 @@ export interface NormalizerResponse {
   missing_fields: string[];
   clarification_questions: string[];
   warnings: string[];
+  extraction_summary?: ExtractionSummary;
 }
 
 /** One month from POST /compute-canonical monthly_rows. */
