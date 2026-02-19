@@ -318,3 +318,10 @@
     print-color-adjust: exact;
   }
 }
+
+/* Hard lock: enforce rectangle-only UI everywhere (including future components). */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
