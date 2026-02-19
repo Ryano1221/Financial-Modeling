@@ -38,6 +38,11 @@ export function ScenarioForm({
   onDeleteScenario,
   onAcceptChanges,
 }: ScenarioFormProps) {
+  const formatRsf = (value: number): string =>
+    new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
+      Math.max(0, Number(value) || 0)
+    );
+
   const toDisplayMonth = (monthIndex: number): number => {
     if (!Number.isFinite(monthIndex)) return 1;
     return Math.max(1, Math.floor(monthIndex) + 1);
@@ -45,6 +50,25 @@ export function ScenarioForm({
   const toInternalMonth = (displayMonth: number): number => {
     if (!Number.isFinite(displayMonth)) return 0;
     return Math.max(0, Math.floor(displayMonth) - 1);
+  };
+
+  const stepRsfLabel = (startMonth: number, endMonth: number): string => {
+    if (!scenario) return "0 SF";
+    const phase = (scenario.phase_in_steps ?? [])
+      .filter((p) => p.start_month <= endMonth && p.end_month >= startMonth)
+      .sort((a, b) => a.start_month - b.start_month);
+    if (phase.length === 0) return `${formatRsf(scenario.rsf)} SF`;
+    const unique = Array.from(
+      new Set(
+        phase
+          .map((p) => Math.round(Number(p.rsf) || 0))
+          .filter((v) => v > 0)
+      )
+    );
+    if (unique.length <= 1) return `${formatRsf(unique[0] ?? scenario.rsf)} SF`;
+    const min = Math.min(...unique);
+    const max = Math.max(...unique);
+    return `${formatRsf(min)} - ${formatRsf(max)} SF`;
   };
 
   const update = <K extends keyof ScenarioInput>(
@@ -356,17 +380,18 @@ export function ScenarioForm({
             </ul>
           </div>
         )}
-        <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.4fr)_112px] gap-3 px-1 pb-1">
+        <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_112px] gap-3 px-1 pb-1">
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Step</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Rate ($/SF/yr)</span>
+          <span className="text-[11px] uppercase tracking-wide text-zinc-500">RSF</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Lease years</span>
           <span className="text-[11px] uppercase tracking-wide text-zinc-500">Action</span>
         </div>
         {scenario.rent_steps.map((step, i) => (
           <div key={i} className="rounded-lg border border-white/10 bg-white/[0.015] p-3 mb-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.4fr)_112px] gap-3 xl:gap-2 items-end">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_112px] gap-3 xl:gap-2 items-end">
               <div className="text-xs text-zinc-400 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] sm:col-span-2 xl:col-span-1">
                 #{i + 1}
               </div>
@@ -407,6 +432,10 @@ export function ScenarioForm({
                   className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
                 />
               </label>
+              <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
+                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden mr-2">RSF</span>
+                {stepRsfLabel(step.start, step.end)}
+              </div>
               <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
                 {(() => {
                   const startMonth = Math.max(0, Math.floor(Number(step.start) || 0));
