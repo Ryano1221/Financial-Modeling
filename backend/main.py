@@ -40,6 +40,7 @@ from models import (
     GenerateScenariosResponse,
     LeaseExtraction,
     NormalizerResponse,
+    FreeRentPeriod,
     PhaseInStep,
     ReportRequest,
     RentScheduleStep,
@@ -1605,6 +1606,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "parking_rate_monthly": None,
         "opex_psf_year_1": None,
         "opex_source_year": None,
+        "free_rent_scope": None,
+        "free_rent_start_month": None,
+        "free_rent_end_month": None,
         "phase_in_schedule": [],
         "rent_schedule": [],
     }
@@ -1840,6 +1844,45 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             )
         except Exception:
             pass
+
+    # ---- Free rent / abatement scope + month range ----
+    lower_text = text.lower()
+    if re.search(r"(?i)\b(?:gross\s+rent\s+abatement|gross\s+abatement|abate\s+base\s+rent\s+and\s+operating\s+expenses|base\s+rent\s+and\s+operating\s+expenses\s+abated)\b", text):
+        hints["free_rent_scope"] = "gross"
+    elif re.search(r"(?i)\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement)\b", text):
+        hints["free_rent_scope"] = "base"
+
+    free_range_match = re.search(
+        r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,100}\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b",
+        text,
+    )
+    if not free_range_match:
+        free_range_match = re.search(
+            r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b[^\n]{0,80}\b(?:free\s+rent|rent\s+abatement|abatement)\b",
+            text,
+        )
+    if free_range_match:
+        start_1 = _coerce_int_token(free_range_match.group(1), 0)
+        end_1 = _coerce_int_token(free_range_match.group(2), 0)
+        if start_1 > 0 and end_1 >= start_1:
+            hints["free_rent_start_month"] = start_1 - 1
+            hints["free_rent_end_month"] = end_1 - 1
+    else:
+        free_count_match = re.search(
+            r"(?i)\b(\d{1,3})\s+months?\b[^\n]{0,60}\b(?:free\s+rent|rent\s+abatement|abatement)\b",
+            text,
+        )
+        if not free_count_match:
+            free_count_match = re.search(
+                r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,60}\b(\d{1,3})\s+months?\b",
+                text,
+            )
+        free_count = _coerce_int_token(free_count_match.group(1), 0) if free_count_match else 0
+        if free_count and free_count > 0:
+            hints["free_rent_start_month"] = 0
+            hints["free_rent_end_month"] = max(0, int(free_count) - 1)
+            if hints["free_rent_scope"] is None and ("gross" in lower_text):
+                hints["free_rent_scope"] = "gross"
 
     phase_schedule = _extract_phase_in_schedule(text, term_months_hint=_coerce_int_token(hints.get("term_months"), 0))
     if phase_schedule:
@@ -2312,6 +2355,27 @@ def _normalize_impl(
                             )
                         except Exception:
                             pass
+            hint_free_scope = str(extracted_hints.get("free_rent_scope") or "").strip().lower()
+            if hint_free_scope in {"base", "gross"}:
+                updates["free_rent_scope"] = hint_free_scope
+            hint_free_start = _coerce_int_token(extracted_hints.get("free_rent_start_month"), None)
+            hint_free_end = _coerce_int_token(extracted_hints.get("free_rent_end_month"), None)
+            term_for_free = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0
+            if hint_free_start is not None and hint_free_end is not None:
+                free_start = max(0, int(hint_free_start))
+                free_end = max(free_start, int(hint_free_end))
+                if term_for_free > 0:
+                    term_max = max(0, term_for_free - 1)
+                    free_start = min(free_start, term_max)
+                    free_end = min(free_end, term_max)
+                updates["free_rent_periods"] = [FreeRentPeriod(start_month=free_start, end_month=free_end)]
+                updates["free_rent_months"] = max(0, free_end - free_start + 1)
+            elif (not canonical.free_rent_periods) and _coerce_int_token(canonical.free_rent_months, 0) > 0:
+                existing_months = _coerce_int_token(canonical.free_rent_months, 0) or 0
+                existing_end = max(0, existing_months - 1)
+                if term_for_free > 0:
+                    existing_end = min(existing_end, max(0, term_for_free - 1))
+                updates["free_rent_periods"] = [FreeRentPeriod(start_month=0, end_month=existing_end)]
             suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
             if not suite_val:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))

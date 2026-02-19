@@ -116,12 +116,13 @@ function monthlyBaseRent(
     }
   }
   if (abatement && abatement.months > 0) {
-    const end = Math.min(abatement.months, termMonths);
+    const start = Math.max(0, Math.floor(Number(abatement.startMonth ?? 0) || 0));
+    const end = Math.min(termMonths, start + abatement.months);
     if (abatement.type === "full") {
-      for (let m = 0; m < end; m++) rent[m] = 0;
+      for (let m = start; m < end; m++) rent[m] = 0;
     } else {
       const factor = abatement.partialRate ?? 0;
-      for (let m = 0; m < end; m++) rent[m] = rent[m] * (1 - factor);
+      for (let m = start; m < end; m++) rent[m] = rent[m] * (1 - factor);
     }
   }
   return rent;
@@ -292,6 +293,14 @@ export function runMonthlyEngine(
     scenario.parkingSchedule.slots,
     scenario.parkingSchedule.annualEscalationPercent
   );
+  if (scenario.rentSchedule.abatement?.appliesTo === "gross" && (scenario.rentSchedule.abatement?.months ?? 0) > 0) {
+    const start = Math.max(0, Math.floor(Number(scenario.rentSchedule.abatement.startMonth ?? 0) || 0));
+    const end = Math.min(termMonths, start + (scenario.rentSchedule.abatement.months ?? 0));
+    for (let m = start; m < end; m += 1) {
+      opex[m] = 0;
+      parking[m] = 0;
+    }
+  }
   const ti = scenario.tiSchedule.amortizeOop && scenario.tiSchedule.outOfPocket > 0
     ? monthlyTiAmortization(
         scenario.tiSchedule.outOfPocket,

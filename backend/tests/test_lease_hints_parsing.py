@@ -138,6 +138,17 @@ def test_extract_hints_parses_opex_psf_without_year() -> None:
     assert hints["opex_source_year"] is None
 
 
+def test_extract_hints_parses_gross_rent_abatement_range() -> None:
+    text = (
+        "Base Rent: $48.00/RSF NNN. "
+        "Tenant shall receive gross rent abatement for months 1-6."
+    )
+    hints = main._extract_lease_hints(text, "lease.pdf", "test-rid")
+    assert hints["free_rent_scope"] == "gross"
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 5
+
+
 def test_extract_hints_parses_phase_rent_schedule() -> None:
     text = (
         "Term: 84 Months\n"

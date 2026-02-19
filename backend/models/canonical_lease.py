@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -167,6 +167,7 @@ class CanonicalLease(BaseModel):
     expiration_date: date = Field(description="Lease expiration (YYYY-MM-DD)")
     term_months: int = Field(ge=0, description="Lease term in months")
     free_rent_months: int = Field(ge=0, default=0)
+    free_rent_scope: Literal["base", "gross"] = "base"
     discount_rate_annual: float = Field(ge=0.0, le=1.0, default=0.08)
     notes: str = ""
 

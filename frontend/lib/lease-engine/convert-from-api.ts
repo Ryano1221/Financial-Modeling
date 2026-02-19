@@ -57,8 +57,10 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
         s.free_rent_months > 0
           ? {
               startDate: s.commencement,
+              startMonth: Math.max(0, Math.floor(Number(s.free_rent_start_month ?? 0) || 0)),
               months: s.free_rent_months,
               type: "full",
+              appliesTo: s.free_rent_abatement_type === "gross" ? "gross" : "base",
             }
           : undefined,
     },

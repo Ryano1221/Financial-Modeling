@@ -16,7 +16,7 @@ from models.canonical_response import (
     CanonicalMetrics,
     MonthlyRow,
 )
-from engine.compute import compute_cashflows_detailed, _monthly_discount_rate
+from engine.compute import _monthly_discount_rate
 
 
 def canonical_to_scenario(c: CanonicalLease) -> Scenario:
@@ -96,6 +96,30 @@ def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple
         val, w = _normalize_free_rent_months(data["free_rent_months"])
         data["free_rent_months"] = val
         warnings.extend(w)
+    free_scope = str(data.get("free_rent_scope", data.get("free_rent_abatement_type", "base")) or "base").strip().lower()
+    if free_scope not in {"base", "gross"}:
+        free_scope = "base"
+    data["free_rent_scope"] = free_scope
+    if not data.get("free_rent_periods"):
+        start_hint = data.get("free_rent_start_month")
+        end_hint = data.get("free_rent_end_month")
+        start = 0
+        end = None
+        try:
+            if start_hint is not None:
+                start = max(0, int(start_hint))
+        except (TypeError, ValueError):
+            start = 0
+        try:
+            if end_hint is not None:
+                end = max(start, int(end_hint))
+        except (TypeError, ValueError):
+            end = None
+        free_months = max(0, int(data.get("free_rent_months", 0) or 0))
+        if free_months > 0:
+            if end is None:
+                end = start + free_months - 1
+            data["free_rent_periods"] = [{"start_month": start, "end_month": end}]
 
     # Accept frontend alias
     if "phase_in_schedule" not in data and "phase_in_steps" in data:
@@ -163,6 +187,30 @@ def _effective_rsf_schedule(lease: CanonicalLease, term_months: int) -> List[flo
     return schedule
 
 
+def _free_rent_ranges(lease: CanonicalLease, term_months: int) -> List[tuple[int, int]]:
+    ranges: List[tuple[int, int]] = []
+    if term_months <= 0:
+        return ranges
+    if lease.free_rent_periods:
+        for period in lease.free_rent_periods:
+            start = max(0, int(period.start_month))
+            end = min(term_months - 1, max(start, int(period.end_month)))
+            ranges.append((start, end))
+    elif int(lease.free_rent_months or 0) > 0:
+        end = min(term_months - 1, int(lease.free_rent_months) - 1)
+        ranges.append((0, max(0, end)))
+    if not ranges:
+        return []
+    ranges.sort(key=lambda r: (r[0], r[1]))
+    merged: List[tuple[int, int]] = []
+    for start, end in ranges:
+        if not merged or start > merged[-1][1] + 1:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
 def _compute_phase_aware_monthly(
     lease: CanonicalLease,
     term_months: int,
@@ -186,9 +234,14 @@ def _compute_phase_aware_monthly(
         parking_mult = (1.0 + float(lease.parking_escalation_rate or 0.0)) ** (m // 12)
         parking[m] = parking_count * float(lease.parking_rate_monthly or 0.0) * parking_mult
 
-    free_months = max(0, int(lease.free_rent_months or 0))
-    for m in range(min(free_months, term_months)):
-        rent[m] = 0.0
+    free_ranges = _free_rent_ranges(lease, term_months)
+    scope = str(getattr(lease, "free_rent_scope", "base") or "base").strip().lower()
+    for start, end in free_ranges:
+        for m in range(start, end + 1):
+            rent[m] = 0.0
+            if scope == "gross":
+                opex[m] = 0.0
+                parking[m] = 0.0
 
     max_rsf = max(effective_rsf) if effective_rsf else 0.0
     allowance_rsf = max(max_rsf, float(lease.rsf or 0.0))
@@ -212,37 +265,23 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     term_months = int(scenario.term_months)
     phase_enabled = len(normalized.phase_in_schedule) > 0
 
-    if phase_enabled:
-        (
-            rent_series,
-            opex_series,
-            parking_series,
-            effective_rsf_series,
-            ti_at_0,
-            cashflows,
-        ) = _compute_phase_aware_monthly(normalized, term_months)
-        rent_nominal = float(sum(rent_series))
-        opex_nominal = float(sum(opex_series))
-        parking_nominal = float(sum(parking_series))
-        total_cost_nominal = float(sum(cashflows))
-        monthly_rate = _monthly_discount_rate(normalized.discount_rate_annual)
-        if monthly_rate > 0:
-            npv_cost = float(sum(cf / ((1.0 + monthly_rate) ** i) for i, cf in enumerate(cashflows)))
-        else:
-            npv_cost = total_cost_nominal
+    (
+        rent_series,
+        opex_series,
+        parking_series,
+        effective_rsf_series,
+        ti_at_0,
+        cashflows,
+    ) = _compute_phase_aware_monthly(normalized, term_months)
+    rent_nominal = float(sum(rent_series))
+    opex_nominal = float(sum(opex_series))
+    parking_nominal = float(sum(parking_series))
+    total_cost_nominal = float(sum(cashflows))
+    monthly_rate = _monthly_discount_rate(normalized.discount_rate_annual)
+    if monthly_rate > 0:
+        npv_cost = float(sum(cf / ((1.0 + monthly_rate) ** i) for i, cf in enumerate(cashflows)))
     else:
-        cashflows, result, details = compute_cashflows_detailed(scenario)
-        rent_series = [float(v) for v in details.rent]
-        opex_series = [float(v) for v in details.opex]
-        parking_series = [float(v) for v in details.parking]
-        effective_rsf_series = [float(normalized.rsf) for _ in range(term_months)]
-        ti_at_0 = float(details.ti_at_0)
-        rent_nominal = float(result.rent_nominal)
-        opex_nominal = float(result.opex_nominal)
-        parking_nominal = float(result.parking_nominal)
-        total_cost_nominal = float(result.total_cost_nominal)
-        npv_cost = float(result.npv_cost)
-        monthly_rate = _monthly_discount_rate(normalized.discount_rate_annual)
+        npv_cost = total_cost_nominal
 
     commencement = normalized.commencement_date
     rsf = float(normalized.rsf or 0.0)
@@ -331,6 +370,19 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         f"Discount rate {normalized.discount_rate_annual:.2%} applied monthly.",
         "Base rent and opex as provided; no amortization of TI in monthly view.",
     ]
+    free_scope = str(getattr(normalized, "free_rent_scope", "base") or "base").strip().lower()
+    if normalized.free_rent_periods:
+        period_labels = [
+            f"{int(p.start_month) + 1}-{int(p.end_month) + 1}"
+            for p in normalized.free_rent_periods
+        ]
+        assumptions.append(
+            f"Free-rent abatement applied for months {', '.join(period_labels)} as {free_scope}."
+        )
+    elif int(normalized.free_rent_months or 0) > 0:
+        assumptions.append(
+            f"Free-rent abatement applied for months 1-{int(normalized.free_rent_months)} as {free_scope}."
+        )
     if phase_enabled:
         assumptions.append("Phase-in RSF schedule applied to monthly base rent, OpEx, and parking calculations.")
 

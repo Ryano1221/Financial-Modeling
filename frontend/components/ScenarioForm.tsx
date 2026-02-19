@@ -22,6 +22,9 @@ const defaultScenarioInput: ScenarioInput = {
   expiration: "2031-01-01",
   rent_steps: [{ start: 0, end: 59, rate_psf_yr: 30 }],
   free_rent_months: 3,
+  free_rent_start_month: 0,
+  free_rent_end_month: 2,
+  free_rent_abatement_type: "base",
   ti_allowance_psf: 50,
   opex_mode: "nnn",
   base_opex_psf_yr: 10,
@@ -38,6 +41,31 @@ export function ScenarioForm({
   onDeleteScenario,
   onAcceptChanges,
 }: ScenarioFormProps) {
+  const termMonthsFromDates = (commencement: string, expiration: string): number => {
+    const [cy, cm, cd] = String(commencement || "").split("-").map(Number);
+    const [ey, em, ed] = String(expiration || "").split("-").map(Number);
+    if (!cy || !cm || !cd || !ey || !em || !ed) return 1;
+    let months = (ey - cy) * 12 + (em - cm);
+    if (ed < cd) months -= 1;
+    return Math.max(1, months);
+  };
+
+  const applyFreeRentConsistency = (nextScenario: ScenarioWithId): ScenarioWithId => {
+    const termMonths = termMonthsFromDates(nextScenario.commencement, nextScenario.expiration);
+    const start = Math.max(0, Math.floor(Number(nextScenario.free_rent_start_month ?? 0) || 0));
+    const months = Math.max(0, Math.floor(Number(nextScenario.free_rent_months ?? 0) || 0));
+    const maxMonth = Math.max(0, termMonths - 1);
+    const clampedStart = Math.min(start, maxMonth);
+    const derivedEnd = months > 0 ? Math.min(maxMonth, clampedStart + months - 1) : clampedStart;
+    return {
+      ...nextScenario,
+      free_rent_start_month: clampedStart,
+      free_rent_end_month: derivedEnd,
+      free_rent_months: months > 0 ? (derivedEnd - clampedStart + 1) : 0,
+      free_rent_abatement_type: nextScenario.free_rent_abatement_type === "gross" ? "gross" : "base",
+    };
+  };
+
   const formatRsf = (value: number): string =>
     new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
       Math.max(0, Number(value) || 0)
@@ -76,7 +104,10 @@ export function ScenarioForm({
     value: ScenarioInput[K]
   ) => {
     if (!scenario) return;
-    const next = { ...scenario, [key]: value };
+    let next = { ...scenario, [key]: value };
+    if (key === "commencement" || key === "expiration" || key === "free_rent_months" || key === "free_rent_start_month" || key === "free_rent_abatement_type") {
+      next = applyFreeRentConsistency(next);
+    }
     if (key === "building_name" || key === "suite" || key === "floor") {
       const label = buildPremisesName(next.building_name, next.suite, next.floor);
       if (label) next.name = label;
@@ -265,6 +296,16 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
+          <span className="text-sm text-zinc-400">Free rent start month</span>
+          <input
+            type="number"
+            min={1}
+            value={toDisplayMonth(scenario.free_rent_start_month ?? 0)}
+            onChange={(e) => update("free_rent_start_month", toInternalMonth(Number(e.target.value)))}
+            className={inputClass}
+          />
+        </label>
+        <label className="block">
           <span className="text-sm text-zinc-400">Free rent (months)</span>
           <input
             type="number"
@@ -275,6 +316,17 @@ export function ScenarioForm({
             }
             className={inputClass}
           />
+        </label>
+        <label className="block">
+          <span className="text-sm text-zinc-400">Abatement type</span>
+          <select
+            value={scenario.free_rent_abatement_type ?? "base"}
+            onChange={(e) => update("free_rent_abatement_type", (e.target.value === "gross" ? "gross" : "base"))}
+            className={inputClass}
+          >
+            <option value="base">Base rent abatement</option>
+            <option value="gross">Gross abatement (base + OpEx + parking)</option>
+          </select>
         </label>
         <label className="block">
           <span className="text-sm text-zinc-400">TI allowance ($/SF)</span>
@@ -369,6 +421,22 @@ export function ScenarioForm({
               Add rent step
             </button>
           </div>
+        </div>
+        <div className="mb-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+          {scenario.free_rent_months > 0 ? (
+            <>
+              Free rent applies to months{" "}
+              <span className="font-semibold">
+                {toDisplayMonth(scenario.free_rent_start_month ?? 0)}-{toDisplayMonth((scenario.free_rent_end_month ?? Math.max(0, (scenario.free_rent_start_month ?? 0) + scenario.free_rent_months - 1)))}
+              </span>{" "}
+              as{" "}
+              <span className="font-semibold">
+                {scenario.free_rent_abatement_type === "gross" ? "gross abatement" : "base-rent-only abatement"}
+              </span>.
+            </>
+          ) : (
+            "No free rent / abatement is applied."
+          )}
         </div>
         {rentStepIssues.length > 0 && (
           <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">

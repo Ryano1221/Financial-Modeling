@@ -25,8 +25,10 @@ export interface PhaseInStepCanonical {
 /** Abatement/free rent */
 export interface RentAbatement {
   startDate: string; // YYYY-MM-DD
+  startMonth?: number; // 0-based, preferred for lease timeline math
   months: number;
   type: "full" | "partial";
+  appliesTo?: "base" | "gross";
   /** If partial, effective rate as fraction of base (0-1) */
   partialRate?: number;
 }

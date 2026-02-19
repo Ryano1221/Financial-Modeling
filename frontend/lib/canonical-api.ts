@@ -114,6 +114,14 @@ export function scenarioInputToBackendCanonical(
 ): BackendCanonicalLease {
   const termMonths = monthDiff(s.commencement, s.expiration);
   const suite = (s.suite ?? "").trim();
+  const freeStart = Math.max(0, Math.floor(Number(s.free_rent_start_month ?? 0) || 0));
+  const fallbackEndFromMonths = Math.max(freeStart, freeStart + Math.max(0, Math.floor(Number(s.free_rent_months ?? 0) || 0)) - 1);
+  const freeEnd = Math.max(
+    freeStart,
+    Math.floor(Number(s.free_rent_end_month ?? fallbackEndFromMonths) || fallbackEndFromMonths)
+  );
+  const hasFreeRange = Number.isFinite(freeStart) && Number.isFinite(freeEnd) && freeEnd >= freeStart;
+  const freeRentMonths = hasFreeRange ? (freeEnd - freeStart + 1) : Math.max(0, Math.floor(Number(s.free_rent_months ?? 0) || 0));
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
@@ -127,7 +135,17 @@ export function scenarioInputToBackendCanonical(
     commencement_date: s.commencement,
     expiration_date: s.expiration,
     term_months: termMonths,
-    free_rent_months: s.free_rent_months ?? 0,
+    free_rent_months: freeRentMonths,
+    free_rent_scope: s.free_rent_abatement_type ?? "base",
+    free_rent_periods:
+      freeRentMonths > 0
+        ? [
+            {
+              start_month: freeStart,
+              end_month: freeEnd,
+            },
+          ]
+        : [],
     discount_rate_annual: s.discount_rate_annual ?? 0.08,
     rent_schedule: (s.rent_steps ?? []).map((step) => ({
       start_month: step.start,
@@ -170,6 +188,12 @@ export function backendCanonicalToScenarioInput(
     end_month: step.end_month,
     rsf: step.rsf,
   }));
+  const freePeriods = Array.isArray(c.free_rent_periods) ? c.free_rent_periods : [];
+  const period = freePeriods.length > 0 ? freePeriods[0] : null;
+  const fallbackMonths = typeof c.free_rent_months === "number" ? c.free_rent_months : 0;
+  const freeStart = period ? Math.max(0, Number(period.start_month) || 0) : 0;
+  const freeEnd = period ? Math.max(freeStart, Number(period.end_month) || freeStart) : Math.max(0, fallbackMonths - 1);
+  const computedMonths = period ? Math.max(0, freeEnd - freeStart + 1) : Math.max(0, fallbackMonths);
   const opexMode = c.expense_structure_type === "base_year" ? "base_year" : "nnn";
   const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
   return {
@@ -184,7 +208,10 @@ export function backendCanonicalToScenarioInput(
     expiration: c.expiration_date,
     rent_steps: rentSteps.length > 0 ? rentSteps : [{ start: 0, end: Math.max(0, (c.term_months ?? 0) - 1), rate_psf_yr: 0 }],
     phase_in_steps: phaseInSteps.length > 0 ? phaseInSteps : undefined,
-    free_rent_months: typeof c.free_rent_months === "number" ? c.free_rent_months : 0,
+    free_rent_months: computedMonths,
+    free_rent_start_month: freeStart,
+    free_rent_end_month: freeEnd,
+    free_rent_abatement_type: c.free_rent_scope === "gross" ? "gross" : "base",
     ti_allowance_psf: c.ti_allowance_psf ?? 0,
     opex_mode: opexMode,
     base_opex_psf_yr: c.opex_psf_year_1 ?? 0,

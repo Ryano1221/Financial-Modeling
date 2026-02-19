@@ -19,6 +19,7 @@ from models import (
     CanonicalLease,
     RentScheduleStep,
     PhaseInStep,
+    FreeRentPeriod,
     Scenario,
     LeaseType,
     EscalationType,
@@ -91,6 +92,7 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         expiration_date=scenario.expiration,
         term_months=term,
         free_rent_months=scenario.free_rent_months,
+        free_rent_scope="base",
         discount_rate_annual=scenario.discount_rate_annual,
         notes="",
         rent_schedule=rent_schedule,
@@ -112,7 +114,9 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         amortized_ti_flag=False,
         amortization_rate=0.0,
         amortization_term_months=0,
-        free_rent_periods=[],
+        free_rent_periods=[
+            FreeRentPeriod(start_month=0, end_month=max(0, scenario.free_rent_months - 1))
+        ] if scenario.free_rent_months > 0 else [],
         rent_abatements=[],
         moving_allowance=0.0,
         other_concessions=[],
@@ -149,6 +153,29 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         term = int(get("term_months", 60))
         rate = float(get("rate_psf_yr") or get("rent_psf_annual", 0))
         rent_schedule = [RentScheduleStep(start_month=0, end_month=max(0, term - 1), rent_psf_annual=rate)]
+
+    free_rent_months = int(get("free_rent_months", 0) or 0)
+    free_rent_start = int(get("free_rent_start_month", 0) or 0)
+    free_rent_end = int(get("free_rent_end_month", max(0, free_rent_start + free_rent_months - 1)) or max(0, free_rent_start + free_rent_months - 1))
+    free_rent_scope = str(get("free_rent_scope", get("free_rent_abatement_type", "base")) or "base").strip().lower()
+    if free_rent_scope not in {"base", "gross"}:
+        free_rent_scope = "base"
+    free_rent_periods: List[FreeRentPeriod] = []
+    raw_free_periods = data.get("free_rent_periods", [])
+    for step in raw_free_periods or []:
+        if isinstance(step, dict):
+            free_rent_periods.append(
+                FreeRentPeriod(
+                    start_month=int(step.get("start_month", 0)),
+                    end_month=int(step.get("end_month", 0)),
+                )
+            )
+        elif isinstance(step, FreeRentPeriod):
+            free_rent_periods.append(step)
+    if not free_rent_periods and free_rent_months > 0:
+        start = max(0, free_rent_start)
+        end = max(start, free_rent_end)
+        free_rent_periods = [FreeRentPeriod(start_month=start, end_month=end)]
 
     phase_in_schedule: List[PhaseInStep] = []
     raw_phase_in = data.get("phase_in_schedule", data.get("phase_in_steps", []))
@@ -197,7 +224,8 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         commencement_date=comm or date(2026, 1, 1),
         expiration_date=exp or date(2031, 1, 1),
         term_months=int(get("term_months", 60)),
-        free_rent_months=int(get("free_rent_months", 0) or 0),
+        free_rent_months=free_rent_months,
+        free_rent_scope=free_rent_scope,  # type: ignore[arg-type]
         discount_rate_annual=float(get("discount_rate_annual", 0.08) or 0.08),
         notes=str(get("notes", "")),
         rent_schedule=rent_schedule,
@@ -219,7 +247,7 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         amortized_ti_flag=bool(get("amortized_ti_flag", False)),
         amortization_rate=float(get("amortization_rate", 0) or 0),
         amortization_term_months=int(get("amortization_term_months", 0) or 0),
-        free_rent_periods=[],
+        free_rent_periods=free_rent_periods,
         rent_abatements=[],
         moving_allowance=float(get("moving_allowance", 0) or 0),
         other_concessions=list(get("other_concessions", []) or []),

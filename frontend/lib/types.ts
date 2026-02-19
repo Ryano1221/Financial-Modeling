@@ -14,6 +14,8 @@ export interface PhaseInStep {
   rsf: number;
 }
 
+export type FreeRentAbatementType = "base" | "gross";
+
 /** One-time cost item (backend). */
 export interface OneTimeCost {
   name: string;
@@ -35,6 +37,9 @@ export interface ScenarioInput {
   rent_steps: RentStep[];
   phase_in_steps?: PhaseInStep[];
   free_rent_months: number;
+  free_rent_start_month?: number; // 0-based
+  free_rent_end_month?: number; // 0-based, inclusive
+  free_rent_abatement_type?: FreeRentAbatementType;
   ti_allowance_psf: number;
   opex_mode: OpexMode;
   base_opex_psf_yr: number;
@@ -240,6 +245,8 @@ export interface BackendCanonicalLease {
   expiration_date: string;
   term_months: number;
   free_rent_months: number;
+  free_rent_scope?: FreeRentAbatementType;
+  free_rent_periods?: Array<{ start_month: number; end_month: number }>;
   discount_rate_annual: number;
   rent_schedule: BackendRentScheduleStep[];
   phase_in_schedule?: BackendPhaseInStep[];

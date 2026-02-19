@@ -2,7 +2,7 @@ from datetime import date
 
 from backend.engine.canonical_compute import compute_canonical
 from backend.main import _extract_phase_in_schedule, _extract_phase_rent_schedule
-from backend.models import CanonicalLease, PhaseInStep, RentScheduleStep
+from backend.models import CanonicalLease, PhaseInStep, RentScheduleStep, FreeRentPeriod
 
 
 def test_extract_phase_in_schedule_from_text_rows() -> None:
@@ -124,3 +124,41 @@ def test_compute_canonical_applies_phase_in_rsf_to_monthly_costs() -> None:
     # Total base rent should reflect phased occupancy, not full-term 5,900 RSF.
     assert round(out.metrics.base_rent_total, 2) == 706800.0
     assert any("Phase-in RSF schedule applied" in a for a in out.assumptions)
+
+
+def test_compute_canonical_gross_abatement_applies_to_rent_opex_and_parking() -> None:
+    lease = CanonicalLease(
+        scenario_id="gross-abate-1",
+        scenario_name="Gross abatement example",
+        premises_name="Test Suite 100",
+        building_name="Test Building",
+        suite="100",
+        rsf=10000,
+        commencement_date=date(2026, 1, 1),
+        expiration_date=date(2027, 12, 31),
+        term_months=24,
+        free_rent_months=3,
+        free_rent_scope="gross",
+        free_rent_periods=[FreeRentPeriod(start_month=3, end_month=5)],
+        rent_schedule=[RentScheduleStep(start_month=0, end_month=23, rent_psf_annual=36)],
+        opex_psf_year_1=12.0,
+        opex_growth_rate=0.0,
+        expense_structure_type="nnn",
+        parking_count=10,
+        parking_rate_monthly=100.0,
+        discount_rate_annual=0.08,
+    )
+    out = compute_canonical(lease)
+
+    # Months 4-6 (index 3-5) should be fully abated for gross.
+    for idx in (3, 4, 5):
+        row = out.monthly_rows[idx]
+        assert row.base_rent == 0
+        assert row.opex == 0
+        assert row.parking == 0
+
+    # Month 1 should still have all charges since abatement starts at month 4.
+    row0 = out.monthly_rows[0]
+    assert row0.base_rent > 0
+    assert row0.opex > 0
+    assert row0.parking > 0

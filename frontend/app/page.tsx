@@ -134,7 +134,17 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
   const raw = (rest as { free_rent_months?: number | number[] }).free_rent_months;
   const free_rent_months =
     Array.isArray(raw) ? Math.max(0, raw.length) : typeof raw === "number" ? Math.max(0, Math.floor(raw)) : rest.free_rent_months ?? 0;
-  const payload = { ...rest, free_rent_months };
+  const startMonthRaw = Math.max(0, Math.floor(Number((rest as { free_rent_start_month?: number }).free_rent_start_month ?? 0) || 0));
+  const endMonthDerived = free_rent_months > 0 ? startMonthRaw + free_rent_months - 1 : startMonthRaw;
+  const freeRentType: "base" | "gross" =
+    (rest as { free_rent_abatement_type?: string }).free_rent_abatement_type === "gross" ? "gross" : "base";
+  const payload: Omit<ScenarioWithId, "id"> = {
+    ...rest,
+    free_rent_months,
+    free_rent_start_month: startMonthRaw,
+    free_rent_end_month: Math.max(startMonthRaw, Math.floor(Number((rest as { free_rent_end_month?: number }).free_rent_end_month ?? endMonthDerived) || endMonthDerived)),
+    free_rent_abatement_type: freeRentType,
+  };
   if (process.env.NODE_ENV === "development") {
     if (typeof payload.free_rent_months !== "number" || !Number.isInteger(payload.free_rent_months)) {
       console.error("[scenarioToPayload] free_rent_months must be integer; got", payload.free_rent_months);
