@@ -106,6 +106,40 @@ function inferMarketFromAddress(address: string): string {
   return state ? `${city}, ${state}` : city;
 }
 
+function parseErrorPayloadText(raw: string): string {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown; error?: unknown; message?: unknown };
+    const detail = typeof parsed.detail === "string" ? parsed.detail.trim() : "";
+    const error = typeof parsed.error === "string" ? parsed.error.trim() : "";
+    const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+    return detail || error || message || text;
+  } catch {
+    return text;
+  }
+}
+
+function getBrandingDisplayErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  const msg = parseErrorPayloadText(raw);
+  if (!msg) return "We couldn't update your logo. Please try again.";
+  const lower = msg.toLowerCase();
+  if (lower.includes("png") || lower.includes("jpg") || lower.includes("jpeg") || lower.includes("svg")) {
+    return msg;
+  }
+  if (lower.includes("1.5mb") || lower.includes("exceeds")) {
+    return msg;
+  }
+  if (lower.includes("unauthorized") || lower.includes("forbidden") || lower.includes("permission")) {
+    return "Your account does not have permission to update company branding.";
+  }
+  if (lower.includes("unavailable")) {
+    return "Branding storage is temporarily unavailable. Please retry in a minute.";
+  }
+  return msg;
+}
+
 /** POST /compute-canonical with request id, lease_type normalization, and lifecycle logs. */
 async function fetchComputeCanonical(
   scenarioId: string,
@@ -315,13 +349,13 @@ export default function Home() {
           body: form,
         });
         if (!res.ok) {
-          const body = await res.text();
-          throw new Error(body || `Upload failed (${res.status})`);
+          const body = parseErrorPayloadText(await res.text());
+          throw new Error(body || `Logo upload failed (${res.status})`);
         }
         const data = (await res.json()) as OrganizationBrandingResponse;
         setOrganizationBranding(data);
       } catch (err) {
-        setBrandingError(getDisplayErrorMessage(err));
+        setBrandingError(getBrandingDisplayErrorMessage(err));
       } finally {
         setBrandingUploading(false);
       }
@@ -335,13 +369,13 @@ export default function Home() {
     try {
       const res = await fetchApiProxy("/api/v1/branding/logo", { method: "DELETE" });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(body || `Delete failed (${res.status})`);
+        const body = parseErrorPayloadText(await res.text());
+        throw new Error(body || `Logo delete failed (${res.status})`);
       }
       const data = (await res.json()) as OrganizationBrandingResponse;
       setOrganizationBranding(data);
     } catch (err) {
-      setBrandingError(getDisplayErrorMessage(err));
+      setBrandingError(getBrandingDisplayErrorMessage(err));
     } finally {
       setBrandingUploading(false);
     }

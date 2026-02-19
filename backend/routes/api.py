@@ -14,6 +14,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from auth import rbac_require_org, ClerkClaims
@@ -77,6 +78,19 @@ ALLOWED_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg
 MAX_LOGO_BYTES = 1_500_000
 
 
+def _ensure_branding_table(db: Session) -> None:
+    """
+    Self-heal guard for environments where the branding migration has not run yet.
+    Keeps branding endpoints functional without requiring a manual DB step.
+    """
+    try:
+        bind = db.get_bind()
+        OrganizationBrandingModel.__table__.create(bind=bind, checkfirst=True)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Branding storage is temporarily unavailable.") from exc
+
+
 def _branding_payload_for(row: OrganizationBrandingModel | None, org_id: str) -> dict[str, Any]:
     if not row or not row.logo_bytes:
         return {
@@ -112,6 +126,7 @@ def get_branding(
     db: Session = Depends(get_db),
 ):
     claims, org, _ = rbac
+    _ensure_branding_table(db)
     row = (
         db.query(OrganizationBrandingModel)
         .filter(OrganizationBrandingModel.organization_id == org.id)
@@ -127,6 +142,7 @@ async def upload_branding_logo(
     db: Session = Depends(get_db),
 ):
     claims, org, _ = rbac
+    _ensure_branding_table(db)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     filename_lower = file.filename.lower().strip()
@@ -190,6 +206,7 @@ def delete_branding_logo(
     db: Session = Depends(get_db),
 ):
     claims, org, _ = rbac
+    _ensure_branding_table(db)
     row = (
         db.query(OrganizationBrandingModel)
         .filter(OrganizationBrandingModel.organization_id == org.id)
@@ -451,11 +468,17 @@ def create_report(
     report_id = str(uuid.uuid4())
     branding_payload = dict(body.branding or {})
     branding_payload.setdefault("org_id", org.id)
-    row = (
-        db.query(OrganizationBrandingModel)
-        .filter(OrganizationBrandingModel.organization_id == org.id)
-        .first()
-    )
+    row: OrganizationBrandingModel | None = None
+    try:
+        _ensure_branding_table(db)
+        row = (
+            db.query(OrganizationBrandingModel)
+            .filter(OrganizationBrandingModel.organization_id == org.id)
+            .first()
+        )
+    except HTTPException:
+        # Keep report creation available even if branding storage is unavailable.
+        row = None
     if row and row.logo_bytes:
         logo_b64 = base64.b64encode(row.logo_bytes).decode("ascii")
         branding_payload.setdefault("logo_asset_bytes", logo_b64)
