@@ -41,12 +41,32 @@ export function SummaryMatrix({ results }: SummaryMatrixProps) {
                   const value = (r.metrics as OptionMetrics)[key];
                   const formatted = formatMetricValue(key, value);
                   const notesCell = key === "notes";
+                  const noteBullets = notesCell
+                    ? formatted
+                        .split(/\n+/)
+                        .map((line) => line.replace(/^\s*•\s*/, "").trim())
+                        .filter(Boolean)
+                    : [];
                   return (
                     <td
                       key={r.scenarioId}
-                      className={`py-2.5 px-4 text-zinc-400 align-top ${notesCell ? "text-left whitespace-pre-line" : "text-right"}`}
+                      className={`py-2.5 px-4 text-zinc-400 align-top ${notesCell ? "text-left" : "text-right"}`}
                     >
-                      {formatted}
+                      {notesCell ? (
+                        noteBullets.length > 0 ? (
+                          <ul className="list-disc pl-5 space-y-1">
+                            {noteBullets.map((item, index) => (
+                              <li key={`${r.scenarioId}-${index}`} className="break-words whitespace-normal">
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="whitespace-normal break-words">{formatted}</span>
+                        )
+                      ) : (
+                        formatted
+                      )}
                     </td>
                   );
                 })}

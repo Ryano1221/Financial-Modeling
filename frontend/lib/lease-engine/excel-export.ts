@@ -152,7 +152,7 @@ function formatNotesByCategory(raw: string): string {
     }
   }
   return Array.from(grouped.entries())
-    .map(([category, details]) => `${category}: ${details.join(" | ")}`)
+    .flatMap(([category, details]) => details.map((detail) => `• ${category}: ${detail}`))
     .join("\n");
 }
 
