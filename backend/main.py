@@ -579,13 +579,13 @@ def _coerce_int_token(value: object, default: Optional[int] = 0) -> Optional[int
         return int(default) if default is not None else None
 
 
-def _coerce_float_token(value: object, default: float = 0.0) -> float:
+def _coerce_float_token(value: object, default: Optional[float] = 0.0) -> Optional[float]:
     if value is None:
-        return float(default)
+        return float(default) if default is not None else None
     try:
         return float(str(value).replace(",", "").strip())
     except (TypeError, ValueError):
-        return float(default)
+        return float(default) if default is not None else None
 
 
 def _window_to_month_bounds(

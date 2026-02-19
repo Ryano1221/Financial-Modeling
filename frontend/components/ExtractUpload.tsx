@@ -20,6 +20,17 @@ interface ExtractUploadProps {
 }
 
 function formatNormalizeError(res: Response, body: unknown): string {
+  if (body && typeof body === "object" && "error" in body) {
+    const err = String((body as { error: unknown }).error || "").toLowerCase();
+    const detail = "details" in body ? String((body as { details?: unknown }).details ?? "") : "";
+    const rid = "rid" in body ? String((body as { rid?: unknown }).rid ?? "") : "";
+    if (err === "normalize_failed") {
+      const reason = classifyFailureReason(detail);
+      if (reason) return reason;
+      if (detail) return `Normalize failed: ${detail}${rid ? ` (request: ${rid})` : ""}`;
+      return `We could not auto-extract this file right now.${rid ? ` (request: ${rid})` : ""}`;
+    }
+  }
   const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : null;
   if (detail) return detail;
   if (res.status >= 500) {
@@ -139,7 +150,8 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
               }
             })();
             if (body && typeof body === "object" && "error" in body) {
-              throw new Error(String((body as { error: unknown }).error));
+              const pretty = formatNormalizeError(res, body);
+              throw new Error(pretty);
             }
             const reason = classifyFailureReason(body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null);
             if (res.status >= 500 || res.status === 503 || res.status === 429) {
