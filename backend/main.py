@@ -52,6 +52,7 @@ from scenario_extract import (
     extract_text_from_pdf_with_ocr,
     extract_text_from_docx,
     extract_scenario_from_text,
+    extract_prefill_hints,
     text_quality_requires_ocr,
 )
 from reports_store import load_report, save_report
@@ -569,13 +570,13 @@ def _expiration_from_term_months(commencement: date, term_months: int) -> date:
     return anniv - timedelta(days=1)
 
 
-def _coerce_int_token(value: object, default: int = 0) -> int:
+def _coerce_int_token(value: object, default: Optional[int] = 0) -> Optional[int]:
     if value is None:
-        return int(default)
+        return int(default) if default is not None else None
     try:
         return int(float(str(value).replace(",", "").strip()))
     except (TypeError, ValueError):
-        return int(default)
+        return int(default) if default is not None else None
 
 
 def _coerce_float_token(value: object, default: float = 0.0) -> float:
@@ -585,6 +586,174 @@ def _coerce_float_token(value: object, default: float = 0.0) -> float:
         return float(str(value).replace(",", "").strip())
     except (TypeError, ValueError):
         return float(default)
+
+
+def _window_to_month_bounds(
+    start_value: object,
+    end_value: object,
+    term_months: int,
+) -> tuple[Optional[int], Optional[int]]:
+    start = _coerce_int_token(start_value, None)
+    end = _coerce_int_token(end_value, start)
+    if start is None or end is None:
+        return None, None
+    start_i = max(0, int(start))
+    end_i = max(start_i, int(end))
+    if term_months > 0:
+        max_end = max(0, term_months - 1)
+        if start_i > max_end:
+            return None, None
+        end_i = min(end_i, max_end)
+    return start_i, end_i
+
+
+def _split_rent_schedule_by_boundaries(
+    rent_schedule: list,
+    term_months: int,
+    phase_in_schedule: list,
+    free_rent_periods: list,
+) -> list[dict]:
+    if not rent_schedule:
+        return []
+
+    boundaries: set[int] = set()
+    normalized_steps: list[tuple[int, int, float]] = []
+    for step in rent_schedule:
+        if isinstance(step, dict):
+            start_raw = step.get("start_month")
+            end_raw = step.get("end_month")
+            rate_raw = step.get("rent_psf_annual")
+        else:
+            start_raw = getattr(step, "start_month", None)
+            end_raw = getattr(step, "end_month", None)
+            rate_raw = getattr(step, "rent_psf_annual", None)
+        start_i, end_i = _window_to_month_bounds(start_raw, end_raw, term_months)
+        if start_i is None or end_i is None:
+            continue
+        normalized_steps.append((start_i, end_i, max(0.0, _coerce_float_token(rate_raw, 0.0))))
+        boundaries.add(start_i)
+        boundaries.add(end_i + 1)
+
+    for phase in phase_in_schedule or []:
+        if isinstance(phase, dict):
+            start_raw = phase.get("start_month")
+            end_raw = phase.get("end_month")
+        else:
+            start_raw = getattr(phase, "start_month", None)
+            end_raw = getattr(phase, "end_month", None)
+        start_i, end_i = _window_to_month_bounds(start_raw, end_raw, term_months)
+        if start_i is None or end_i is None:
+            continue
+        boundaries.add(start_i)
+        boundaries.add(end_i + 1)
+
+    for period in free_rent_periods or []:
+        if isinstance(period, dict):
+            start_raw = period.get("start_month")
+            end_raw = period.get("end_month")
+        else:
+            start_raw = getattr(period, "start_month", None)
+            end_raw = getattr(period, "end_month", None)
+        start_i, end_i = _window_to_month_bounds(start_raw, end_raw, term_months)
+        if start_i is None or end_i is None:
+            continue
+        boundaries.add(start_i)
+        boundaries.add(end_i + 1)
+
+    if term_months > 0:
+        boundaries.add(0)
+        boundaries.add(term_months)
+
+    if not normalized_steps:
+        return []
+    if len(boundaries) <= 2:
+        return [
+            {
+                "start_month": s,
+                "end_month": e,
+                "rent_psf_annual": round(r, 6),
+            }
+            for s, e, r in sorted(normalized_steps, key=lambda row: (row[0], row[1]))
+        ]
+
+    ordered_bounds = sorted(boundaries)
+    intervals: list[tuple[int, int]] = []
+    for idx in range(len(ordered_bounds) - 1):
+        lo = ordered_bounds[idx]
+        hi_exclusive = ordered_bounds[idx + 1]
+        if hi_exclusive <= lo:
+            continue
+        hi = hi_exclusive - 1
+        if term_months > 0:
+            max_end = term_months - 1
+            if lo > max_end:
+                continue
+            hi = min(hi, max_end)
+        if hi < lo:
+            continue
+        intervals.append((lo, hi))
+
+    split_rows: list[dict] = []
+    for start_i, end_i, rate in sorted(normalized_steps, key=lambda row: (row[0], row[1])):
+        for int_start, int_end in intervals:
+            if int_end < start_i or int_start > end_i:
+                continue
+            row_start = max(start_i, int_start)
+            row_end = min(end_i, int_end)
+            if row_end < row_start:
+                continue
+            split_rows.append(
+                {
+                    "start_month": int(row_start),
+                    "end_month": int(row_end),
+                    "rent_psf_annual": round(float(rate), 6),
+                }
+            )
+
+    if not split_rows:
+        return []
+
+    deduped: list[dict] = []
+    seen: set[tuple[int, int, float]] = set()
+    for row in sorted(split_rows, key=lambda r: (int(r["start_month"]), int(r["end_month"]))):
+        key = (
+            int(row["start_month"]),
+            int(row["end_month"]),
+            round(float(row["rent_psf_annual"]), 6),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _rent_schedule_rows_equal(left_rows: list, right_rows: list) -> bool:
+    def _normalize(rows: list) -> list[tuple[int, int, float]]:
+        normalized: list[tuple[int, int, float]] = []
+        for step in rows or []:
+            if isinstance(step, dict):
+                start_raw = step.get("start_month")
+                end_raw = step.get("end_month")
+                rate_raw = step.get("rent_psf_annual")
+            else:
+                start_raw = getattr(step, "start_month", None)
+                end_raw = getattr(step, "end_month", None)
+                rate_raw = getattr(step, "rent_psf_annual", None)
+            start_i = _coerce_int_token(start_raw, None)
+            end_i = _coerce_int_token(end_raw, None)
+            if start_i is None or end_i is None:
+                continue
+            normalized.append(
+                (
+                    int(start_i),
+                    int(end_i),
+                    round(_coerce_float_token(rate_raw, 0.0), 6),
+                )
+            )
+        return sorted(normalized, key=lambda row: (row[0], row[1], row[2]))
+
+    return _normalize(left_rows) == _normalize(right_rows)
 
 
 def _normalize_suite_candidate(raw: str) -> str:
@@ -1903,6 +2072,55 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         if not hints.get("term_months"):
             hints["term_months"] = int(phase_rent_schedule[-1]["end_month"]) + 1
 
+    # Reuse broad regex prefill rent-table parsing to support more lease/proposal formats.
+    try:
+        prefill_hints = extract_prefill_hints(text)
+    except Exception:
+        prefill_hints = {}
+    prefill_rent_steps = prefill_hints.get("rent_steps") if isinstance(prefill_hints.get("rent_steps"), list) else []
+    normalized_prefill_rent: list[dict] = []
+    for step in prefill_rent_steps:
+        if not isinstance(step, dict):
+            continue
+        start_m = _coerce_int_token(step.get("start"), None)
+        end_m = _coerce_int_token(step.get("end"), start_m)
+        rate = _coerce_float_token(step.get("rate_psf_yr"), 0.0)
+        if start_m is None or end_m is None:
+            continue
+        start_i = max(0, int(start_m))
+        end_i = max(start_i, int(end_m))
+        normalized_prefill_rent.append(
+            {
+                "start_month": start_i,
+                "end_month": end_i,
+                "rent_psf_annual": max(0.0, float(rate)),
+            }
+        )
+    if normalized_prefill_rent:
+        current = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
+        current_rate_count = len(
+            {
+                round(float(s.get("rent_psf_annual", 0.0)), 4)
+                for s in current
+                if isinstance(s, dict)
+            }
+        )
+        prefill_rate_count = len(
+            {
+                round(float(s.get("rent_psf_annual", 0.0)), 4)
+                for s in normalized_prefill_rent
+            }
+        )
+        should_replace = (
+            not current
+            or len(normalized_prefill_rent) > len(current)
+            or prefill_rate_count > current_rate_count
+        )
+        if should_replace:
+            hints["rent_schedule"] = normalized_prefill_rent
+            if not hints.get("term_months"):
+                hints["term_months"] = int(normalized_prefill_rent[-1]["end_month"]) + 1
+
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
         rid,
@@ -2260,9 +2478,34 @@ def _normalize_impl(
                 fallback_floor = str(extracted_hints.get("floor") or "").strip()
                 fallback_building = str(extracted_hints.get("building_name") or "").strip() or _fallback_building_from_filename(file.filename or "")
                 fallback_address = str(extracted_hints.get("address") or "").strip()
-                fallback_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 10000.0
+                fallback_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
                 fallback_loc = f"Suite {fallback_suite}" if fallback_suite else (f"Floor {fallback_floor}" if fallback_floor else "")
                 fallback_name = f"{fallback_building} {fallback_loc}".strip() if (fallback_building or fallback_loc) else "Extracted lease"
+                hinted_rent_schedule = extracted_hints.get("rent_schedule") if isinstance(extracted_hints.get("rent_schedule"), list) else []
+                fallback_rent_schedule: list[dict] = []
+                for step in hinted_rent_schedule:
+                    if not isinstance(step, dict):
+                        continue
+                    start_m = _coerce_int_token(step.get("start_month"), None)
+                    end_m = _coerce_int_token(step.get("end_month"), start_m)
+                    rate = _coerce_float_token(step.get("rent_psf_annual"), 0.0)
+                    if start_m is None or end_m is None:
+                        continue
+                    fallback_rent_schedule.append(
+                        {
+                            "start_month": max(0, int(start_m)),
+                            "end_month": max(max(0, int(start_m)), int(end_m)),
+                            "rent_psf_annual": max(0.0, float(rate)),
+                        }
+                    )
+                if not fallback_rent_schedule:
+                    fallback_rent_schedule = [
+                        {
+                            "start_month": 0,
+                            "end_month": max(0, fallback_term - 1),
+                            "rent_psf_annual": 0.0,
+                        }
+                    ]
                 fallback_payload = {
                     "scenario_name": fallback_name,
                     "building_name": fallback_building,
@@ -2274,10 +2517,10 @@ def _normalize_impl(
                     "commencement_date": fallback_comm,
                     "expiration_date": fallback_exp,
                     "term_months": fallback_term,
-                    "rent_schedule": [{"start_month": 0, "end_month": max(0, fallback_term - 1), "rent_psf_annual": 30.0}],
+                    "rent_schedule": fallback_rent_schedule,
                     "expense_structure_type": "nnn",
-                    "opex_psf_year_1": 10.0,
-                    "expense_stop_psf": 10.0,
+                    "opex_psf_year_1": 0.0,
+                    "expense_stop_psf": 0.0,
                     "opex_growth_rate": 0.03,
                     "discount_rate_annual": 0.08,
                 }
@@ -2288,7 +2531,7 @@ def _normalize_impl(
                     "rsf": 0.75 if extracted_hints.get("rsf") else 0.25,
                     "commencement_date": 0.75 if extracted_hints.get("commencement_date") else 0.25,
                     "expiration_date": 0.75 if extracted_hints.get("expiration_date") else 0.25,
-                    "rent_schedule": 0.65,
+                    "rent_schedule": 0.75 if hinted_rent_schedule else 0.25,
                     "building_name": 0.8 if fallback_building else 0.2,
                     "suite": 0.8 if fallback_suite else 0.2,
                     "floor": 0.8 if fallback_floor else 0.2,
@@ -2405,6 +2648,8 @@ def _normalize_impl(
                     updates["address"] = building_val
             if suite_val:
                 updates["suite"] = suite_val
+                # Floor is only a fallback when suite is unavailable.
+                updates["floor"] = ""
             location_label = f"Suite {suite_val}" if suite_val else (f"Floor {floor_val}" if floor_val else "")
             if building_val and location_label:
                 updates["premises_name"] = f"{building_val} {location_label}"
@@ -2550,7 +2795,7 @@ def _normalize_impl(
                         should_override_rent = True
                     elif len(current_rent_schedule) == 1:
                         only = next(iter(current_rates), 0.0)
-                        if abs(float(only) - 30.0) < 0.01 and len(normalized_hint) >= 1:
+                        if abs(float(only) - 0.0) < 0.01 and len(normalized_hint) >= 1:
                             should_override_rent = True
 
                     if should_override_rent:
@@ -2587,6 +2832,36 @@ def _normalize_impl(
                     if target_term_months <= 0:
                         updates["term_months"] = int(normalized_phase[-1]["end_month"]) + 1
                     warnings.append("Phase-in occupancy schedule detected and applied to monthly calculations.")
+            effective_term = _coerce_int_token(
+                updates.get("term_months"),
+                _coerce_int_token(canonical.term_months, 0),
+            ) or 0
+            effective_rent = updates.get("rent_schedule", canonical.rent_schedule) or []
+            effective_phase = updates.get("phase_in_schedule", canonical.phase_in_schedule) or []
+            effective_free_periods = updates.get("free_rent_periods", canonical.free_rent_periods) or []
+            if (
+                not effective_free_periods
+                and _coerce_int_token(updates.get("free_rent_months"), _coerce_int_token(canonical.free_rent_months, 0))
+            ):
+                free_months = _coerce_int_token(
+                    updates.get("free_rent_months"),
+                    _coerce_int_token(canonical.free_rent_months, 0),
+                ) or 0
+                if free_months > 0:
+                    free_start = _coerce_int_token(updates.get("free_rent_start_month"), 0) or 0
+                    free_end = max(free_start, free_start + free_months - 1)
+                    if effective_term > 0:
+                        free_end = min(free_end, max(0, effective_term - 1))
+                    effective_free_periods = [FreeRentPeriod(start_month=free_start, end_month=free_end)]
+
+            segmented_rent = _split_rent_schedule_by_boundaries(
+                rent_schedule=list(effective_rent),
+                term_months=int(effective_term),
+                phase_in_schedule=list(effective_phase),
+                free_rent_periods=list(effective_free_periods),
+            )
+            if segmented_rent and not _rent_schedule_rows_equal(segmented_rent, list(effective_rent)):
+                updates["rent_schedule"] = [RentScheduleStep(**step) for step in segmented_rent]
             if note_highlights:
                 updates["notes"] = " | ".join(note_highlights)[:1600]
             elif text.strip() and not (canonical.notes or "").strip():

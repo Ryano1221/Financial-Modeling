@@ -10,10 +10,12 @@ import logging
 import os
 import re
 import time
+import zipfile
 from calendar import monthrange
 from datetime import date, timedelta
 from io import BytesIO
 from typing import Any, BinaryIO
+import xml.etree.ElementTree as ET
 
 from models import ExtractionResponse, Scenario, RentStep, OpexMode
 
@@ -161,6 +163,8 @@ def extract_text_from_docx(file: BinaryIO) -> str:
     except ImportError:
         raise ImportError("python-docx required: pip install python-docx")
     try:
+        raw_bytes = file.read()
+        file.seek(0)
         doc = Document(file)
         parts = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
         # Proposal/LOI files often place key economics in tables. Include them in text payload.
@@ -170,6 +174,23 @@ def extract_text_from_docx(file: BinaryIO) -> str:
                 cells = [c for c in cells if c]
                 if cells:
                     parts.append(" | ".join(cells))
+        # Include tracked-change and hidden run text from raw WordprocessingML.
+        # This recovers economics that sometimes don't appear in python-docx paragraphs/tables.
+        try:
+            with zipfile.ZipFile(BytesIO(raw_bytes)) as zf:
+                xml = zf.read("word/document.xml")
+            root = ET.fromstring(xml)
+            w_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            xml_runs: list[str] = []
+            for tag in (f"{w_ns}t", f"{w_ns}delText"):
+                for node in root.iter(tag):
+                    txt = (node.text or "").strip()
+                    if txt:
+                        xml_runs.append(txt)
+            if xml_runs:
+                parts.append("\n".join(xml_runs))
+        except Exception:
+            pass
         return "\n\n".join(parts) if parts else ""
     except Exception as e:
         raise ValueError(f"Failed to read DOCX: {e}") from e
@@ -520,12 +541,13 @@ def _normalize_rent_steps(
 ) -> tuple[list[dict[str, float | int]], list[str]]:
     parsed: list[dict[str, float | int]] = []
     notes: list[str] = []
+    fallback_rate = max(0.0, float(_coerce_float_token((prefill or {}).get("rate_psf_yr"), 0.0) or 0.0))
     for step in raw_steps or []:
         if not isinstance(step, dict):
             continue
         start = _coerce_int_token(step.get("start"), 0)
         end = _coerce_int_token(step.get("end"), start)
-        rate = _coerce_float_token(step.get("rate_psf_yr"), 30.0)
+        rate = _coerce_float_token(step.get("rate_psf_yr"), fallback_rate)
         if start is None or end is None or rate is None:
             continue
         if end < start:
@@ -533,9 +555,14 @@ def _normalize_rent_steps(
         parsed.append({"start": start, "end": end, "rate_psf_yr": max(0.0, float(rate))})
 
     if not parsed:
+        missing_rate_note = (
+            "Rent steps missing; rate not found in document. Added placeholder step at $0.00 for review."
+            if fallback_rate <= 0
+            else "Rent steps missing; applied single step using extracted base rent."
+        )
         return (
-            [{"start": 0, "end": max(0, term_month_count - 1), "rate_psf_yr": 30.0}],
-            ["Rent steps missing; default single step applied."],
+            [{"start": 0, "end": max(0, term_month_count - 1), "rate_psf_yr": fallback_rate}],
+            [missing_rate_note],
         )
 
     basis = str((prefill or {}).get("_rent_steps_basis") or "").strip().lower()
@@ -1014,6 +1041,11 @@ def _regex_prefill(text: str) -> dict:
     return prefill
 
 
+def extract_prefill_hints(text: str) -> dict:
+    """Public wrapper used by main normalizer to reuse deterministic regex prefill extraction."""
+    return _regex_prefill(text or "")
+
+
 def _safe_date(s: str | None) -> date:
     if not s:
         return date(2026, 1, 1)
@@ -1170,7 +1202,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     low = text.lower()
     opex_mode = "base_year" if "base year" in low else "nnn"
     rsf = float(prefill.get("rsf", 10000.0) or 10000.0)
-    rate = float(prefill.get("rate_psf_yr", 30.0) or 30.0)
+    rate = float(prefill.get("rate_psf_yr", 0.0) or 0.0)
     commencement = str(prefill.get("commencement") or "2026-01-01")
     expiration = str(prefill.get("expiration") or "2031-01-31")
     term_month_hint = _coerce_int_token(prefill.get("term_months"), None)
@@ -1366,7 +1398,7 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
             rsf=10000.0,
             commencement=date(2026, 1, 1),
             expiration=date(2031, 1, 31),
-            rent_steps=[RentStep(start=0, end=59, rate_psf_yr=30.0)],
+            rent_steps=[RentStep(start=0, end=59, rate_psf_yr=0.0)],
             free_rent_months=0,
             ti_allowance_psf=0.0,
             opex_mode=OpexMode.NNN,

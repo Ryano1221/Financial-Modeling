@@ -99,6 +99,17 @@ export function ScenarioForm({
     return `${formatRsf(min)} - ${formatRsf(max)} SF`;
   };
 
+  const leaseYearLabel = (startMonthRaw: number, endMonthRaw: number): string => {
+    const startMonth = Math.max(0, Math.floor(Number(startMonthRaw) || 0));
+    const endMonth = Math.max(startMonth, Math.floor(Number(endMonthRaw) || 0));
+    const startDisplayMonth = startMonth + 1;
+    const endDisplayMonth = endMonth + 1;
+    const startYear = Math.floor((startDisplayMonth - 1) / 12) + 1;
+    const endYear = Math.floor((endDisplayMonth - 1) / 12) + 1;
+    const yearLabel = startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
+    return `${yearLabel} (M${startDisplayMonth}-${endDisplayMonth})`;
+  };
+
   const update = <K extends keyof ScenarioInput>(
     key: K,
     value: ScenarioInput[K]
@@ -192,6 +203,10 @@ export function ScenarioForm({
 
   const inputClass = "mt-1 block w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm text-white focus:border-[#3b82f6] focus:outline-none focus:ring-1 focus:ring-[#3b82f6] placeholder:text-zinc-500";
   const btnSecondary = "rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] w-full sm:w-auto";
+  const freeStart = Math.max(0, Math.floor(Number(scenario?.free_rent_start_month ?? 0) || 0));
+  const freeEndFallback = Math.max(freeStart, freeStart + Math.max(0, Math.floor(Number(scenario?.free_rent_months ?? 0) || 0)) - 1);
+  const freeEnd = Math.max(freeStart, Math.floor(Number(scenario?.free_rent_end_month ?? freeEndFallback) || freeEndFallback));
+  const hasFreeRent = (Number(scenario?.free_rent_months) || 0) > 0;
 
   if (!scenario) {
     return (
@@ -505,17 +520,7 @@ export function ScenarioForm({
                 {stepRsfLabel(step.start, step.end)}
               </div>
               <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
-                {(() => {
-                  const startMonth = Math.max(0, Math.floor(Number(step.start) || 0));
-                  const endMonthRaw = Math.max(0, Math.floor(Number(step.end) || 0));
-                  const endMonth = Math.max(startMonth, endMonthRaw);
-                  const startDisplayMonth = startMonth + 1;
-                  const endDisplayMonth = endMonth + 1;
-                  const startYear = Math.floor((startDisplayMonth - 1) / 12) + 1;
-                  const endYear = Math.floor((endDisplayMonth - 1) / 12) + 1;
-                  const yearLabel = startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
-                  return `${yearLabel} (M${startDisplayMonth}-${endDisplayMonth})`;
-                })()}
+                {leaseYearLabel(step.start, step.end)}
               </div>
               <button
                 type="button"
@@ -528,6 +533,33 @@ export function ScenarioForm({
             </div>
           </div>
         ))}
+        {hasFreeRent && (
+          <div className="rounded-lg border border-emerald-500/35 bg-emerald-500/10 p-3 mb-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_112px] gap-3 xl:gap-2 items-end">
+              <div className="text-xs text-emerald-100 min-h-10 flex items-center px-2 rounded-lg border border-emerald-500/35 bg-emerald-500/15 sm:col-span-2 xl:col-span-1">
+                FREE
+              </div>
+              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
+                {toDisplayMonth(freeStart)}
+              </div>
+              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
+                {toDisplayMonth(freeEnd)}
+              </div>
+              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
+                {scenario.free_rent_abatement_type === "gross" ? "Gross abatement" : "Base-rent abatement"}
+              </div>
+              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
+                {stepRsfLabel(freeStart, freeEnd)}
+              </div>
+              <div className="w-full rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-2 py-2 text-sm text-emerald-100">
+                {leaseYearLabel(freeStart, freeEnd)}
+              </div>
+              <div className="h-10 rounded-lg border border-emerald-500/35 bg-emerald-500/15 flex items-center justify-center text-xs text-emerald-100">
+                Auto
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
