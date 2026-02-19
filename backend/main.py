@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -10,7 +11,7 @@ import time
 import traceback
 import uuid
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -55,7 +56,7 @@ from scenario_extract import (
     extract_prefill_hints,
     text_quality_requires_ocr,
 )
-from reports_store import load_report, save_report
+from reports_store import load_report, save_report, REPORTS_DIR
 from routes.api import router as api_router
 from routes.webhooks import router as webhooks_router
 from brands import get_brand, list_brands
@@ -113,6 +114,58 @@ REPORT_BASE_URL = os.environ.get(
 
 # Version for /health and BOOT log (Render sets RENDER_GIT_COMMIT)
 VERSION = (os.environ.get("RENDER_GIT_COMMIT") or "").strip() or "unknown"
+PUBLIC_BRANDING_ORG_ID = "public"
+PUBLIC_BRANDING_MAX_LOGO_BYTES = 1_500_000
+PUBLIC_BRANDING_ALLOWED_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
+
+
+def _public_branding_path() -> Path:
+    configured = (os.environ.get("PUBLIC_BRANDING_PATH") or "").strip()
+    if configured:
+        return Path(configured)
+    return REPORTS_DIR / "public_branding.json"
+
+
+def _load_public_branding_state() -> dict[str, str | None]:
+    path = _public_branding_path()
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        "logo_content_type": str(raw.get("logo_content_type") or "").strip() or None,
+        "logo_filename": str(raw.get("logo_filename") or "").strip() or None,
+        "logo_asset_bytes": str(raw.get("logo_asset_bytes") or "").strip() or None,
+        "logo_sha256": str(raw.get("logo_sha256") or "").strip() or None,
+        "logo_updated_at": str(raw.get("logo_updated_at") or "").strip() or None,
+    }
+
+
+def _save_public_branding_state(state: dict[str, str | None]) -> None:
+    path = _public_branding_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _public_branding_payload() -> dict[str, str | bool | None]:
+    state = _load_public_branding_state()
+    logo_b64 = (state.get("logo_asset_bytes") or "").strip()
+    content_type = (state.get("logo_content_type") or "image/png").strip() or "image/png"
+    has_logo = bool(logo_b64)
+    return {
+        "organization_id": PUBLIC_BRANDING_ORG_ID,
+        "has_logo": has_logo,
+        "logo_content_type": content_type if has_logo else None,
+        "logo_filename": state.get("logo_filename") if has_logo else None,
+        "logo_data_url": f"data:{content_type};base64,{logo_b64}" if has_logo else None,
+        "logo_asset_bytes": logo_b64 if has_logo else None,
+        "theme_hash": state.get("logo_sha256") if has_logo else None,
+        "logo_updated_at": state.get("logo_updated_at") if has_logo else None,
+    }
 
 
 def _ai_enabled() -> bool:
@@ -259,6 +312,64 @@ def version():
     }
     print("VERSION", payload, flush=True)
     return payload
+
+
+@app.get("/branding")
+def get_public_branding():
+    """
+    Unauthenticated single-tenant branding fallback.
+    Used when org auth is unavailable so brokerage logo upload still works.
+    """
+    return _public_branding_payload()
+
+
+@app.post("/branding/logo")
+async def upload_public_branding_logo(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    filename = file.filename.strip()
+    filename_lower = filename.lower()
+    content_type = (file.content_type or "").lower().strip()
+    if content_type not in PUBLIC_BRANDING_ALLOWED_TYPES:
+        if filename_lower.endswith(".png"):
+            content_type = "image/png"
+        elif filename_lower.endswith(".jpg") or filename_lower.endswith(".jpeg"):
+            content_type = "image/jpeg"
+        elif filename_lower.endswith(".svg"):
+            content_type = "image/svg+xml"
+    if content_type not in PUBLIC_BRANDING_ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="Logo must be PNG, JPG, or SVG")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > PUBLIC_BRANDING_MAX_LOGO_BYTES:
+        raise HTTPException(status_code=413, detail="Logo exceeds 1.5MB")
+    logo_b64 = base64.b64encode(raw).decode("ascii")
+    logo_sha = hashlib.sha256(raw).hexdigest()
+    _save_public_branding_state(
+        {
+            "logo_content_type": content_type,
+            "logo_filename": filename,
+            "logo_asset_bytes": logo_b64,
+            "logo_sha256": logo_sha,
+            "logo_updated_at": datetime.utcnow().isoformat(),
+        }
+    )
+    return _public_branding_payload()
+
+
+@app.delete("/branding/logo")
+def delete_public_branding_logo():
+    _save_public_branding_state(
+        {
+            "logo_content_type": None,
+            "logo_filename": None,
+            "logo_asset_bytes": None,
+            "logo_sha256": None,
+            "logo_updated_at": None,
+        }
+    )
+    return _public_branding_payload()
 
 
 @app.post("/extract", response_model=ExtractionResponse)

@@ -231,3 +231,39 @@ def test_post_report_unknown_brand_400():
         json={"brand_id": "nonexistent", "scenario": scenario.model_dump(mode="json")},
     )
     assert response.status_code == 400
+
+
+def test_public_brokerage_logo_upload_get_delete(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBLIC_BRANDING_PATH", str(tmp_path / "public_branding.json"))
+    client = TestClient(app)
+
+    upload = client.post(
+        "/branding/logo",
+        files={"file": ("brokerage.svg", b"<svg xmlns='http://www.w3.org/2000/svg'></svg>", "image/svg+xml")},
+    )
+    assert upload.status_code == 200
+    uploaded = upload.json()
+    assert uploaded["has_logo"] is True
+    assert uploaded["logo_filename"] == "brokerage.svg"
+    assert str(uploaded["logo_data_url"]).startswith("data:image/svg+xml;base64,")
+
+    get_resp = client.get("/branding")
+    assert get_resp.status_code == 200
+    got = get_resp.json()
+    assert got["has_logo"] is True
+    assert got["theme_hash"]
+
+    delete_resp = client.delete("/branding/logo")
+    assert delete_resp.status_code == 200
+    deleted = delete_resp.json()
+    assert deleted["has_logo"] is False
+
+
+def test_public_brokerage_logo_rejects_invalid_file_type(tmp_path, monkeypatch):
+    monkeypatch.setenv("PUBLIC_BRANDING_PATH", str(tmp_path / "public_branding_invalid.json"))
+    client = TestClient(app)
+    response = client.post(
+        "/branding/logo",
+        files={"file": ("brokerage.txt", b"not an image", "text/plain")},
+    )
+    assert response.status_code == 400

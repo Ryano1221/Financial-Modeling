@@ -31,7 +31,7 @@ export function BrandingLogoUploader({
 
   const helperText = useMemo(() => {
     if (branding?.logo_filename) {
-      return `Current logo: ${branding.logo_filename}`;
+      return `Current brokerage logo: ${branding.logo_filename}`;
     }
     return "PNG, SVG, or JPG. Used on cover, page header, and prepared-by section.";
   }, [branding?.logo_filename]);
@@ -89,7 +89,7 @@ export function BrandingLogoUploader({
   return (
     <section className="mb-5 border-t border-slate-300/20 pt-4">
       <p className="heading-kicker mb-2">Branding</p>
-      <h3 className="text-base font-semibold text-white mb-2">Company logo</h3>
+      <h3 className="text-base font-semibold text-white mb-2">Brokerage logo</h3>
       <div
         onDrop={onDrop}
         onDragOver={onDragOver}
@@ -114,7 +114,7 @@ export function BrandingLogoUploader({
             <div className="border border-slate-300/25 bg-black/50 p-3">
               <Image
                 src={previewSrc}
-                alt="Company logo preview"
+                alt="Brokerage logo preview"
                 className="max-h-24 w-auto object-contain"
                 width={240}
                 height={96}
@@ -143,7 +143,7 @@ export function BrandingLogoUploader({
         ) : (
           <div className="text-center">
             <p className="text-sm text-slate-200 mb-3">
-              Drag and drop logo here, or click to upload.
+              Drag and drop brokerage logo here, or click to upload.
             </p>
             <button
               type="button"

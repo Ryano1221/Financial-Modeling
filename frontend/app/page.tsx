@@ -318,7 +318,11 @@ export default function Home() {
   const loadOrganizationBranding = useCallback(async () => {
     setBrandingLoading(true);
     try {
-      const res = await fetchApiProxy("/api/v1/branding", { method: "GET" });
+      let res = await fetchApiProxy("/api/v1/branding", { method: "GET" });
+      if ([401, 403, 404].includes(res.status)) {
+        // Fallback for single-tenant mode when org auth is not configured.
+        res = await fetchApiProxy("/branding", { method: "GET" });
+      }
       if (!res.ok) {
         if (res.status === 401 || res.status === 403 || res.status === 404) {
           setOrganizationBranding(null);
@@ -344,10 +348,16 @@ export default function Home() {
       try {
         const form = new FormData();
         form.append("file", file);
-        const res = await fetchApiProxy("/api/v1/branding/logo", {
+        let res = await fetchApiProxy("/api/v1/branding/logo", {
           method: "POST",
           body: form,
         });
+        if ([401, 403, 404].includes(res.status)) {
+          res = await fetchApiProxy("/branding/logo", {
+            method: "POST",
+            body: form,
+          });
+        }
         if (!res.ok) {
           const body = parseErrorPayloadText(await res.text());
           throw new Error(body || `Logo upload failed (${res.status})`);
@@ -367,7 +377,10 @@ export default function Home() {
     setBrandingUploading(true);
     setBrandingError(null);
     try {
-      const res = await fetchApiProxy("/api/v1/branding/logo", { method: "DELETE" });
+      let res = await fetchApiProxy("/api/v1/branding/logo", { method: "DELETE" });
+      if ([401, 403, 404].includes(res.status)) {
+        res = await fetchApiProxy("/branding/logo", { method: "DELETE" });
+      }
       if (!res.ok) {
         const body = parseErrorPayloadText(await res.text());
         throw new Error(body || `Logo delete failed (${res.status})`);
