@@ -17,11 +17,11 @@
     --accent: #ffffff;
     --accent-strong: #d4d4d4;
     --accent-glow: rgba(255, 255, 255, 0.15);
-    --radius-xs: 4px;
-    --radius-sm: 6px;
-    --radius-md: 8px;
-    --radius-lg: 10px;
-    --radius-xl: 12px;
+    --radius-xs: 0px;
+    --radius-sm: 0px;
+    --radius-md: 0px;
+    --radius-lg: 0px;
+    --radius-xl: 0px;
     --shadow-soft: none;
     --shadow-medium: none;
     --shadow-strong: none;
@@ -71,6 +71,11 @@
   }
   p {
     color: var(--text-secondary);
+  }
+
+  /* Enforce rectangular geometry across the UI (no pills/ovals/rounded corners). */
+  [class*="rounded"] {
+    border-radius: 0 !important;
   }
 }
 
