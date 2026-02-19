@@ -7,6 +7,7 @@ export interface ChartRow {
   avg_cost_psf_year: number;
   npv_cost: number;
   avg_cost_year: number;
+  total_obligation: number;
 }
 
 interface ChartsProps {
@@ -48,9 +49,9 @@ function MetricCard({
                 </span>
                 <span className="text-xs text-slate-300">{format(value)}</span>
               </div>
-              <div className="h-2 rounded-full bg-slate-600/35 overflow-hidden">
+              <div className="h-2 bg-slate-600/35 overflow-hidden">
                 <div
-                  className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-blue-400 to-blue-600"
+                  className="h-full transition-all duration-500 bg-gradient-to-r from-blue-400 to-blue-600"
                   style={{ width: `${widthPct}%` }}
                 />
               </div>
@@ -69,12 +70,13 @@ export function Charts({ data }: ChartsProps) {
     (d) =>
       Number.isFinite(d.avg_cost_psf_year) &&
       Number.isFinite(d.npv_cost) &&
-      Number.isFinite(d.avg_cost_year)
+      Number.isFinite(d.avg_cost_year) &&
+      Number.isFinite(d.total_obligation)
   );
   if (rows.length === 0) return null;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 sm:gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
       <MetricCard
         title="Avg cost $/SF/year by scenario"
         rows={rows}
@@ -91,6 +93,12 @@ export function Charts({ data }: ChartsProps) {
         title="Avg cost/year by scenario"
         rows={rows}
         getValue={(r) => r.avg_cost_year}
+        format={(v) => formatCurrency(v)}
+      />
+      <MetricCard
+        title="Total obligation by scenario"
+        rows={rows}
+        getValue={(r) => r.total_obligation}
         format={(v) => formatCurrency(v)}
       />
     </div>

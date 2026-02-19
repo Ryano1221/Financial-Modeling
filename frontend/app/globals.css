@@ -77,6 +77,12 @@
   [class*="rounded"] {
     border-radius: 0 !important;
   }
+  button,
+  input,
+  select,
+  textarea {
+    border-radius: 0 !important;
+  }
 }
 
 @layer components {

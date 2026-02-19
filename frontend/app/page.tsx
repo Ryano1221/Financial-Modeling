@@ -715,12 +715,14 @@ export default function Home() {
       avg_cost_psf_year: Number(r.metrics.avgCostPsfYr),
       npv_cost: Number(r.metrics.npvAtDiscount),
       avg_cost_year: Number(r.metrics.avgAllInCostPerYear),
+      total_obligation: Number(r.metrics.totalObligation),
     }))
     .filter(
       (row) =>
         Number.isFinite(row.avg_cost_psf_year) &&
         Number.isFinite(row.npv_cost) &&
-        Number.isFinite(row.avg_cost_year)
+        Number.isFinite(row.avg_cost_year) &&
+        Number.isFinite(row.total_obligation)
     );
 
   const resultErrors = scenarios
