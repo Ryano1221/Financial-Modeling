@@ -330,35 +330,6 @@ export function ScenarioForm({
     });
   };
 
-  const autoFixRentSteps = () => {
-    if (!scenario) return;
-    const sorted = [...scenario.rent_steps]
-      .map((s) => ({
-        start: Math.max(0, Math.floor(Number(s.start) || 0)),
-        end: Math.max(0, Math.floor(Number(s.end) || 0)),
-        rate_psf_yr: Math.max(0, Number(s.rate_psf_yr) || 0),
-      }))
-      .sort((a, b) => (a.start - b.start) || (a.end - b.end));
-
-    const normalized: RentStep[] = [];
-    sorted.forEach((step, idx) => {
-      const prev = normalized[normalized.length - 1];
-      let start = step.start;
-      if (idx === 0 && start !== 0) start = 0;
-      if (prev) start = Math.max(start, prev.end + 1);
-      const end = Math.max(start, step.end);
-      const rate = step.rate_psf_yr;
-
-      if (prev && start === prev.end + 1 && Math.abs(prev.rate_psf_yr - rate) < 0.005) {
-        prev.end = end;
-      } else {
-        normalized.push({ start, end, rate_psf_yr: rate });
-      }
-    });
-
-    onUpdate({ ...scenario, rent_steps: normalized.length > 0 ? normalized : [{ start: 0, end: 11, rate_psf_yr: 0 }] });
-  };
-
   const rentStepIssues = (() => {
     if (!scenario || scenario.rent_steps.length === 0) return ["Add at least one rent step."];
     const issues: string[] = [];
@@ -607,14 +578,8 @@ export function ScenarioForm({
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-2">
           <div>
             <h3 className="text-base font-semibold text-slate-100 tracking-tight">Rent schedule</h3>
-            <p className="text-xs text-slate-300 mt-1">
-              Month `1` is lease start. Steps must be continuous with no overlap. Example: `1-12`, `13-24`, `25-36`.
-            </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
-            <button type="button" onClick={autoFixRentSteps} className={btnSecondary}>
-              Auto-fix steps
-            </button>
             <button type="button" onClick={addRentStep} className={btnSecondary}>
               Add rent step
             </button>

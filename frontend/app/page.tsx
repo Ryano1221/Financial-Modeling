@@ -1027,7 +1027,7 @@ export default function Home() {
 
   return (
     <>
-      <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-tech-grid">
+      <section className="relative z-10 section-shell pt-28 sm:pt-32">
         <div className="app-container">
           <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
             <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25 reveal-on-scroll">
@@ -1097,7 +1097,7 @@ export default function Home() {
 
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24">
-        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 bg-tech-grid border border-white/15 p-3 sm:p-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 border border-white/15 p-3 sm:p-4">
           {/* Left column: upload & extract */}
           <div className="space-y-5 sm:space-y-6">
             <div id="upload-section" className="reveal-on-scroll">

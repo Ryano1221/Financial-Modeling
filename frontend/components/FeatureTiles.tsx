@@ -36,7 +36,7 @@ const trustedBy = ["JLL", "CBRE", "Cushman", "Newmark"];
 
 export function FeatureTiles() {
   return (
-    <section className="relative z-10 section-shell bg-tech-grid">
+    <section className="relative z-10 section-shell">
       <div className="app-container">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
           {features.map((feature, i) => (

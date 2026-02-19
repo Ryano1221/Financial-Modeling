@@ -43,7 +43,14 @@
   }
   body {
     font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-    background: linear-gradient(180deg, var(--bg-canvas-alt), var(--bg-canvas));
+    background-image:
+      linear-gradient(180deg, var(--bg-canvas-alt), var(--bg-canvas)),
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 100% 100%, 42px 42px, 42px 42px, 42px 42px;
+    background-position: center top, center top, center top, center top;
+    background-repeat: repeat, repeat, repeat, repeat;
     color: var(--text-primary);
     text-rendering: optimizeLegibility;
   }
