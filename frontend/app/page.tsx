@@ -571,15 +571,15 @@ export default function Home() {
     for (const s of ordered) {
       const cached = canonicalComputeCache[s.id];
       const normalized = (cached?.normalized_canonical_lease ?? {}) as Record<string, unknown>;
-      const metrics = (cached?.metrics ?? {}) as Record<string, unknown>;
+      const metrics = cached?.metrics;
       marketCandidates.push(cleanMaybeString(normalized.market));
-      marketCandidates.push(cleanMaybeString(metrics.market));
+      marketCandidates.push(cleanMaybeString(metrics?.market));
       marketCandidates.push(cleanMaybeString((s as unknown as Record<string, unknown>).market));
       submarketCandidates.push(cleanMaybeString(normalized.submarket));
-      submarketCandidates.push(cleanMaybeString(metrics.submarket));
+      submarketCandidates.push(cleanMaybeString(metrics?.submarket));
       submarketCandidates.push(cleanMaybeString((s as unknown as Record<string, unknown>).submarket));
       addressCandidates.push(cleanMaybeString(normalized.address));
-      addressCandidates.push(cleanMaybeString(metrics.address));
+      addressCandidates.push(cleanMaybeString(metrics?.address));
       addressCandidates.push(cleanMaybeString(s.address));
     }
 

@@ -313,6 +313,8 @@ export interface CanonicalAnnualRow {
 export interface CanonicalMetrics {
   premises_name: string;
   address?: string;
+  market?: string;
+  submarket?: string;
   building_name?: string;
   suite?: string;
   floor?: string;
