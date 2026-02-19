@@ -811,10 +811,29 @@ def ScenarioDetailSection(entry: dict[str, Any]) -> str:
     """
 
 
+def _cover_option_reason(entry: dict[str, Any], *, is_best: bool) -> str:
+    result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
+    scenario = entry.get("scenario") if isinstance(entry.get("scenario"), dict) else {}
+    reason_bits: list[str] = []
+    if is_best:
+        reason_bits.append("Lowest NPV profile")
+    avg_psf = _fmt_psf(result.get("avg_cost_psf_year"))
+    if avg_psf != "—":
+        reason_bits.append(f"{avg_psf} avg cost/SF/year")
+    total = _fmt_currency(result.get("total_cost_nominal"))
+    if total != "—":
+        reason_bits.append(f"{total} total obligation")
+    lease_type = str(scenario.get("opex_mode") or "").strip().upper()
+    if lease_type:
+        reason_bits.append(f"{lease_type} rent structure")
+    return " · ".join(reason_bits[:3]) or "Financially competitive under current assumptions."
+
+
 def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
     ranking = sorted(entries, key=lambda e: _safe_float(e["result"].get("npv_cost"), 0.0))
     winner_name = ranking[0]["name"] if ranking else "N/A"
     winner_npv = _fmt_currency((ranking[0]["result"] if ranking else {}).get("npv_cost"))
+    top_options = ranking[: min(3, len(ranking))]
 
     logo = (
         f'<img class="cover-logo" src="{_esc(theme.logo_src)}" alt="{_esc(theme.brand_name)}" />'
@@ -851,13 +870,27 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
         else f"<strong>{prepared_by_html}</strong>"
     )
 
+    top_options_html = "".join(
+        f"""
+        <div class="cover-option-strip">
+          <div class="cover-option-rank">#{i + 1}</div>
+          <div class="cover-option-name">{_esc(_truncate_text(entry["name"], 68))}</div>
+          <div class="cover-option-metrics">{_esc(_fmt_currency(entry["result"].get("npv_cost")))} NPV · {_esc(_fmt_psf(entry["result"].get("avg_cost_psf_year")))}</div>
+          <div class="cover-option-why">{_esc(_truncate_text(_cover_option_reason(entry, is_best=(i == 0)), 94))}</div>
+        </div>
+        """
+        for i, entry in enumerate(top_options)
+    )
+
     return f"""
     <div class="cover-wrap">
       {cover_media}
       <div class="cover-content">
-        <p class="kicker">Investor Financial Analysis</p>
-        <h1>Lease Economics Comparison Deck</h1>
-        <p class="cover-subtitle">Institutional-grade multi-scenario comparison prepared for client decision-making.</p>
+        <div class="cover-hero-strip">
+          <p class="kicker">Investor Financial Analysis</p>
+          <h1>Lease Economics Comparison Deck</h1>
+          <p class="cover-subtitle">Institutional-grade multi-scenario comparison prepared for client decision-making.</p>
+        </div>
         <div class="cover-brand-row">
           <div>{logo}</div>
           <div>{client_logo}</div>
@@ -870,10 +903,13 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
           <div><span>Submarket</span><strong>{_esc(theme.submarket or "N/A")}</strong></div>
           <div><span>Scenarios</span><strong>{len(entries)}</strong></div>
         </div>
-        <div class="winner-callout">
+        <div class="cover-winner-strip">
           <span>Best Financial Outcome by NPV</span>
           <strong>{_esc(winner_name)}</strong>
           <p>{_esc(winner_npv)} NPV cost</p>
+        </div>
+        <div class="cover-options-stack">
+          {top_options_html}
         </div>
       </div>
     </div>
@@ -1344,10 +1380,13 @@ def _deck_css(primary_color: str) -> str:
     }}
     .cover-wrap {{
       position: relative;
-      min-height: 186mm;
+      height: 100%;
+      min-height: 0;
       border: 1px solid #111;
       overflow: hidden;
       background: #fff;
+      display: flex;
+      flex-direction: column;
     }}
     .cover-pattern {{
       position: absolute;
@@ -1367,47 +1406,59 @@ def _deck_css(primary_color: str) -> str:
     .cover-content {{
       position: relative;
       z-index: 2;
-      padding: 8mm;
+      padding: 6mm;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 2.2mm;
+    }}
+    .cover-hero-strip {{
+      border: 1px solid #111;
+      background: #111;
+      color: #fff;
+      padding: 3mm 3.5mm;
+    }}
+    .cover-hero-strip .kicker {{
+      color: #cfcfcf;
+      margin-bottom: 1.2mm;
     }}
     .cover-content h1 {{
       margin: 0;
-      font-size: 44px;
-      line-height: 1.02;
-      letter-spacing: -0.02em;
-      color: #111;
+      font-size: 27px;
+      line-height: 1.04;
+      letter-spacing: -0.015em;
+      color: #fff;
     }}
     .cover-subtitle {{
-      margin: 3mm 0 5mm 0;
-      font-size: 12px;
-      max-width: 180mm;
-      color: #2f2f2f;
-      line-height: 1.45;
+      margin: 1.4mm 0 0 0;
+      font-size: 10px;
+      max-width: 182mm;
+      color: #e8e8e8;
+      line-height: 1.35;
     }}
     .cover-brand-row {{
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      gap: 8mm;
-      margin-bottom: 4mm;
+      gap: 6mm;
     }}
-    .cover-logo {{ max-height: 16mm; max-width: 52mm; object-fit: contain; }}
+    .cover-logo {{ max-height: 13mm; max-width: 54mm; object-fit: contain; }}
     .cover-brand-wordmark {{
       font-size: 16px;
       font-weight: 700;
       letter-spacing: 0.12em;
       text-transform: uppercase;
     }}
-    .cover-client-logo {{ max-height: 14mm; max-width: 52mm; object-fit: contain; }}
+    .cover-client-logo {{ max-height: 12mm; max-width: 54mm; object-fit: contain; }}
     .cover-meta-grid {{
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 2mm;
-      margin-bottom: 4mm;
     }}
     .cover-meta-grid > div {{
       border: 1px solid #111;
-      padding: 2.5mm;
-      min-height: 15mm;
+      padding: 1.8mm 2.2mm;
+      min-height: 12mm;
       background: rgba(255,255,255,0.88);
       display: flex;
       flex-direction: column;
@@ -1422,8 +1473,8 @@ def _deck_css(primary_color: str) -> str:
       margin-bottom: 1mm;
     }}
     .cover-meta-grid strong {{
-      font-size: 10px;
-      line-height: 1.3;
+      font-size: 9px;
+      line-height: 1.25;
       color: #111;
       word-break: break-word;
     }}
@@ -1439,28 +1490,73 @@ def _deck_css(primary_color: str) -> str:
       flex: 0 0 auto;
       margin-top: 0.2mm;
     }}
-    .winner-callout {{
+    .cover-winner-strip {{
       border: 1px solid #111;
       background: #111;
       color: #fff;
-      padding: 3mm;
-      max-width: 120mm;
+      padding: 2mm 2.6mm;
+      display: grid;
+      grid-template-columns: 1.4fr 1.7fr 1.1fr;
+      align-items: center;
+      gap: 2mm;
     }}
-    .winner-callout span {{
-      display: block;
+    .cover-winner-strip span {{
       font-size: 8px;
       letter-spacing: 0.1em;
       text-transform: uppercase;
-      opacity: 0.85;
-      margin-bottom: 0.8mm;
+      opacity: 0.9;
     }}
-    .winner-callout strong {{
-      display: block;
-      font-size: 18px;
-      line-height: 1.15;
-      margin-bottom: 0.8mm;
+    .cover-winner-strip strong {{
+      font-size: 12px;
+      line-height: 1.2;
+      text-align: center;
     }}
-    .winner-callout p {{ margin: 0; font-size: 11px; opacity: 0.9; }}
+    .cover-winner-strip p {{
+      margin: 0;
+      font-size: 10px;
+      opacity: 0.95;
+      text-align: right;
+      white-space: nowrap;
+    }}
+    .cover-options-stack {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5mm;
+    }}
+    .cover-option-strip {{
+      border: 1px solid #111;
+      background: rgba(255,255,255,0.94);
+      padding: 1.6mm 2mm;
+      display: grid;
+      grid-template-columns: 8mm 1.55fr 1fr 1.7fr;
+      gap: 2mm;
+      align-items: center;
+      min-height: 12mm;
+    }}
+    .cover-option-rank {{
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .cover-option-name {{
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }}
+    .cover-option-metrics {{
+      font-size: 8.5px;
+      line-height: 1.2;
+      color: #222;
+      white-space: nowrap;
+    }}
+    .cover-option-why {{
+      font-size: 8.2px;
+      line-height: 1.2;
+      color: #333;
+      overflow-wrap: anywhere;
+    }}
     @media print {{
       .pdf-page:last-child {{ break-after: auto; page-break-after: auto; }}
     }}
