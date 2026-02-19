@@ -154,10 +154,38 @@ export function ScenarioForm({
     const yearLabel = startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
     return `${yearLabel} (M${startDisplayMonth}-${endDisplayMonth})`;
   };
+  const formatDateDDMMYYYY = (value: Date): string => {
+    const dd = String(value.getUTCDate()).padStart(2, "0");
+    const mm = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const yyyy = value.getUTCFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  };
+  const leaseMonthStartDate = (monthIndexRaw: number): Date | null => {
+    if (!scenario) return null;
+    const parts = parseDateParts(scenario.commencement);
+    if (!parts) return null;
+    const monthIndex = Math.max(0, Math.floor(Number(monthIndexRaw) || 0));
+    const totalMonths = (parts.month - 1) + monthIndex;
+    const year = parts.year + Math.floor(totalMonths / 12);
+    const month = (totalMonths % 12) + 1;
+    const daysInTargetMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const day = Math.min(parts.day, daysInTargetMonth);
+    return new Date(Date.UTC(year, month - 1, day));
+  };
+  const leaseStepDateLabel = (startMonthRaw: number, endMonthRaw: number): string => {
+    const startMonth = Math.max(0, Math.floor(Number(startMonthRaw) || 0));
+    const endMonth = Math.max(startMonth, Math.floor(Number(endMonthRaw) || 0));
+    const startDate = leaseMonthStartDate(startMonth);
+    const nextStart = leaseMonthStartDate(endMonth + 1);
+    if (!startDate || !nextStart) return "N/A";
+    const endDate = new Date(nextStart.getTime() - 24 * 60 * 60 * 1000);
+    return `${formatDateDDMMYYYY(startDate)} - ${formatDateDDMMYYYY(endDate)}`;
+  };
   const termMonths = scenario ? termMonthsFromDates(scenario.commencement, scenario.expiration) : 1;
   type PeriodizedRow = {
     start: number;
     end: number;
+    dateLabel: string;
     baseRate: number;
     opexRate: number;
     rsfLabel: string;
@@ -204,6 +232,7 @@ export function ScenarioForm({
       rows.push({
         start,
         end,
+        dateLabel: leaseStepDateLabel(start, end),
         baseRate: abated ? 0 : Math.max(0, Number(source.rate_psf_yr) || 0),
         opexRate: gross ? 0 : opexAnnualAtMonth(start),
         rsfLabel: stepRsfLabel(start, end),
@@ -563,10 +592,11 @@ export function ScenarioForm({
             </ul>
           </div>
         )}
-        <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 px-1 pb-1">
+        <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 px-1 pb-1">
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Step</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Start month</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">End month</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Dates (dd/mm/yyyy)</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Rate ($/SF/yr)</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Opex ($/SF/yr)</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">RSF</span>
@@ -575,7 +605,7 @@ export function ScenarioForm({
         </div>
         {scenario.rent_steps.map((step, i) => (
           <div key={i} className="rounded-xl border border-slate-300/20 bg-slate-900/28 p-3 mb-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 xl:gap-2 items-end">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 xl:gap-2 items-end">
               <div className="text-xs text-slate-300 min-h-10 flex items-center px-2 rounded-lg border border-slate-300/20 bg-slate-900/40 sm:col-span-2 xl:col-span-1">
                 #{i + 1}
               </div>
@@ -603,6 +633,10 @@ export function ScenarioForm({
                   className="input-premium w-full px-2 py-2"
                 />
               </label>
+              <div className="text-xs text-slate-200 min-h-10 flex items-center px-2 rounded-lg border border-slate-300/20 bg-slate-900/40 sm:col-span-2 xl:col-span-1">
+                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden mr-2">Dates (dd/mm/yyyy)</span>
+                {leaseStepDateLabel(step.start, step.end)}
+              </div>
               <label className="col-span-1">
                 <span className="text-[11px] text-slate-400 mb-1 block xl:hidden">Rate ($/SF/yr)</span>
                 <input
@@ -643,9 +677,10 @@ export function ScenarioForm({
           <p className="text-[11px] text-slate-400 mb-3">
             Auto-split by calendar year, phase-in RSF changes, and abatement boundaries. Abated periods show zero cash-flow components.
           </p>
-          <div className="hidden xl:grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 px-1 pb-1">
+          <div className="hidden xl:grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 px-1 pb-1">
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Start month</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">End month</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Dates (dd/mm/yyyy)</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Base rent ($/SF/yr)</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Opex ($/SF/yr)</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">RSF</span>
@@ -654,9 +689,10 @@ export function ScenarioForm({
           </div>
           {periodizedRows.map((row, idx) => (
             <div key={`${row.start}-${row.end}-${idx}`} className="rounded-lg border border-slate-300/20 bg-slate-900/35 p-3 mb-2">
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 xl:gap-2 items-center">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 xl:gap-2 items-center">
                 <div className="text-sm text-slate-200">{toDisplayMonth(row.start)}</div>
                 <div className="text-sm text-slate-200">{toDisplayMonth(row.end)}</div>
+                <div className="text-sm text-slate-200">{row.dateLabel}</div>
                 <div className="text-sm text-slate-200">{formatCurrencyPsf(row.baseRate)}</div>
                 <div className="text-sm text-slate-200">{formatCurrencyPsf(row.opexRate)}</div>
                 <div className="text-sm text-slate-300">{row.rsfLabel}</div>
