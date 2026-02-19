@@ -30,32 +30,6 @@ export function TopNav() {
             TheCREmodel
           </span>
         </Link>
-        <nav className="flex items-center gap-3 sm:gap-6 shrink-0 min-w-0">
-          <Link
-            href="/#extract"
-            className="text-xs sm:text-sm font-medium text-white/85 hover:text-white transition-colors whitespace-nowrap border-b border-transparent hover:border-white/75"
-          >
-            Upload lease
-          </Link>
-          <Link
-            href="/example"
-            className="hidden sm:inline text-xs sm:text-sm font-medium text-white/85 hover:text-white transition-colors whitespace-nowrap border-b border-transparent hover:border-white/75"
-          >
-            Example report
-          </Link>
-          <Link
-            href="/#extract"
-            className="hidden md:inline-flex btn-premium btn-premium-secondary !min-h-[2.2rem]"
-          >
-            Try it live
-          </Link>
-          <Link
-            href="/example"
-            className="hidden md:inline-flex btn-premium btn-premium-primary !min-h-[2.2rem]"
-          >
-            View report
-          </Link>
-        </nav>
       </div>
     </header>
   );
