@@ -271,6 +271,35 @@ export default function Home() {
     }
   }, [brandId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const revealTargets = Array.from(document.querySelectorAll<HTMLElement>(".reveal-on-scroll"));
+    if (!prefersReduced) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) entry.target.classList.add("is-visible");
+          });
+        },
+        { threshold: 0.16, rootMargin: "0px 0px -8% 0px" }
+      );
+      revealTargets.forEach((el) => observer.observe(el));
+      const onScroll = () => {
+        const y = window.scrollY * 0.12;
+        document.documentElement.style.setProperty("--hero-scroll-y", `${Math.max(-64, Math.min(64, y))}px`);
+      };
+      onScroll();
+      window.addEventListener("scroll", onScroll, { passive: true });
+      return () => {
+        observer.disconnect();
+        window.removeEventListener("scroll", onScroll);
+      };
+    }
+    revealTargets.forEach((el) => el.classList.add("is-visible"));
+    return undefined;
+  }, []);
+
   const runComputeForScenario = useCallback(
     async (scenario: ScenarioWithId) => {
       const canonical = scenarioInputToBackendCanonical(scenario, scenario.id, scenario.name);
@@ -976,33 +1005,68 @@ export default function Home() {
 
   return (
     <>
-      <section className="relative z-10 section-shell pt-28 sm:pt-32">
-        <div className="app-container text-center">
-          <div className="mx-auto max-w-4xl">
-            <h1 className="heading-display">
-              The Commercial Real Estate Model
-            </h1>
+      <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-tech-grid">
+        <div className="app-container">
+          <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
+            <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25 reveal-on-scroll">
+              <p className="heading-kicker mb-4">Platform</p>
+              <h1 className="heading-display max-w-3xl">
+                The Commercial Real Estate Model
+              </h1>
 
-            <p className="body-lead mt-6 max-w-2xl mx-auto">
-              Transform any lease into a structured, branded financial analysis in minutes.
-              Built for brokerages, investment firms, and enterprise real estate teams.
-            </p>
-          </div>
+              <p className="body-lead mt-6 max-w-xl">
+                Transform any lease into a structured, branded financial analysis in minutes.
+                Built for brokerages, investment firms, and enterprise real estate teams.
+              </p>
 
-          <div className="flex gap-4 sm:gap-6 mt-10 flex-wrap justify-center w-full sm:w-auto">
-          <a
-            href="/example"
-            className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
-          >
-            View Example Report
-          </a>
+              <div className="flex gap-3 sm:gap-4 mt-8 flex-wrap">
+                <a
+                  href="/example"
+                  className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
+                >
+                  View Example Report
+                </a>
 
-          <a
-            href="#extract"
-            className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
-          >
-            Try It Live
-          </a>
+                <a
+                  href="#extract"
+                  className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
+                >
+                  Try It Live
+                </a>
+              </div>
+            </div>
+            <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll">
+              <div className="border border-white/25 bg-black/65">
+                <div className="grid grid-cols-12">
+                  <div className="col-span-8 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.2)" }}>
+                    <p className="heading-kicker mb-2">Scenarios</p>
+                    <p className="text-4xl sm:text-5xl tracking-tight text-white leading-none">
+                      {Math.max(1, scenarios.length)}
+                    </p>
+                  </div>
+                  <div className="col-span-4 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
+                    <p className="heading-kicker mb-2">Status</p>
+                    <p className="text-lg text-white/90 leading-tight">{loading ? "Running" : "Ready"}</p>
+                  </div>
+                  <div className="col-span-5 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
+                    <p className="heading-kicker mb-2">Brand</p>
+                    <p className="text-base text-white/90 leading-tight">{brandId || "default"}</p>
+                  </div>
+                  <div className="col-span-7 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.15)" }}>
+                    <p className="heading-kicker mb-2">Discount rate</p>
+                    <p className="text-3xl tracking-tight text-white leading-none">{(globalDiscountRate * 100).toFixed(2)}%</p>
+                  </div>
+                  <div className="col-span-12 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
+                    <p className="heading-kicker mb-2">Document pipeline</p>
+                    <div className="grid grid-cols-3 gap-2 text-[11px] uppercase tracking-[0.12em] text-white/75">
+                      <span className="border border-white/20 px-2 py-1">Upload</span>
+                      <span className="border border-white/20 px-2 py-1">Extract</span>
+                      <span className="border border-white/20 px-2 py-1">Compare</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1011,10 +1075,10 @@ export default function Home() {
 
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24">
-        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10">
+        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 bg-tech-grid border border-white/15 p-3 sm:p-4">
           {/* Left column: renewal/relocate + upload & extract */}
           <div className="space-y-5 sm:space-y-6">
-            <section className="surface-card p-5 sm:p-6">
+            <section className="surface-card p-5 sm:p-6 reveal-on-scroll">
               <button
                 type="button"
                 onClick={() => setRenewalRelocateExpanded((b) => !b)}
@@ -1049,7 +1113,7 @@ export default function Home() {
               )}
             </section>
 
-            <div id="upload-section">
+            <div id="upload-section" className="reveal-on-scroll">
               <UploadExtractCard>
                 <p className="heading-kicker mb-2">Extract from document</p>
                 <h2 className="heading-section mb-3">
