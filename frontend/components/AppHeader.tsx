@@ -13,7 +13,7 @@ export function AppHeader() {
           aria-label="TheCREmodel home"
         >
           <Image
-            src="/logo.png"
+            src="/logo.svg"
             alt="The Commercial Real Estate Model logo"
             width={120}
             height={32}
