@@ -174,21 +174,37 @@ def extract_text_from_docx(file: BinaryIO) -> str:
                 cells = [c for c in cells if c]
                 if cells:
                     parts.append(" | ".join(cells))
-        # Include tracked-change and hidden run text from raw WordprocessingML.
-        # This recovers economics that sometimes don't appear in python-docx paragraphs/tables.
+        # Build "accepted changes" text directly from WordprocessingML.
+        # Keep inserted/current text, ignore deleted text so redlined LOIs parse the final terms.
         try:
             with zipfile.ZipFile(BytesIO(raw_bytes)) as zf:
                 xml = zf.read("word/document.xml")
             root = ET.fromstring(xml)
             w_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-            xml_runs: list[str] = []
-            for tag in (f"{w_ns}t", f"{w_ns}delText"):
-                for node in root.iter(tag):
-                    txt = (node.text or "").strip()
+
+            def collect_text_nodes(node: ET.Element, in_deleted: bool = False) -> list[str]:
+                current_deleted = in_deleted or node.tag == f"{w_ns}del"
+                out: list[str] = []
+                if node.tag == f"{w_ns}t" and not current_deleted:
+                    txt = node.text or ""
                     if txt:
-                        xml_runs.append(txt)
-            if xml_runs:
-                parts.append("\n".join(xml_runs))
+                        out.append(txt)
+                for child in list(node):
+                    out.extend(collect_text_nodes(child, current_deleted))
+                return out
+
+            xml_lines: list[str] = []
+            for p_node in root.iter(f"{w_ns}p"):
+                tokens = collect_text_nodes(p_node, False)
+                if not tokens:
+                    continue
+                line = "".join(tokens)
+                line = re.sub(r"\s+", " ", line).strip()
+                if line:
+                    xml_lines.append(line)
+
+            if xml_lines:
+                parts.extend(xml_lines)
         except Exception:
             pass
         return "\n\n".join(parts) if parts else ""
@@ -295,6 +311,9 @@ _RE_BASE_RENT = re.compile(
     r"\b(?:base\s+rent|rental\s+rate|annual\s+rent)\b[^\n$]{0,40}\$?\s*([\d,]+\.?\d*)",
     re.I,
 )
+_RE_BASE_RENT_FLEX = re.compile(
+    r"(?is)\b(?:initial\s+)?(?:base\s+rent|rental\s+rate|annual\s+rent)\b.{0,240}?\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)\b"
+)
 _RE_YEAR_RATE_INLINE = re.compile(
     r"(?i)\b(?:lease\s*)?years?\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?"
     r"\b[^\n$]{0,120}\$?\s*([\d,]+(?:\.\d{1,4})?)"
@@ -318,6 +337,9 @@ _RE_MONTH_RANGE_RATE = re.compile(
 )
 _RE_ANNUAL_ESCALATION = re.compile(
     r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+escalat(?:ion|ions)\b[^\n]{0,80}\bstarting\s+in\s+month\s*(\d{1,3})\b"
+)
+_RE_ANNUAL_ESCALATION_GENERIC = re.compile(
+    r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+(?:escalat(?:ion|ions)|increase(?:s)?)\b"
 )
 
 
@@ -965,16 +987,32 @@ def _regex_prefill(text: str) -> dict:
                 prefill["base_opex_psf_yr"] = float(amount_match.group(1).replace(",", ""))
             except ValueError:
                 pass
-    # Base rent ($/sf/yr)
-    m = _RE_BASE_RENT.search(text)
-    if m:
-        try:
-            v = float(m.group(1).replace(",", ""))
-            # Keep plausible psf/year range
-            if 5 <= v <= 500:
-                prefill["rate_psf_yr"] = v
-        except ValueError:
-            pass
+    # Base rent ($/sf/yr) — prefer explicit $/SF context and avoid non-rent numeric matches.
+    base_rate_candidates: list[tuple[int, float]] = []
+    for pat in (_RE_BASE_RENT_FLEX, _RE_BASE_RENT):
+        for m in pat.finditer(text):
+            try:
+                v = float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            if not (5 <= v <= 500):
+                continue
+            seg = (m.group(0) or "").lower()
+            score = 0
+            if any(tok in seg for tok in ("/rsf", "/sf", "/psf", "per rsf", "per sf", "psf")):
+                score += 5
+            if "initial base rent" in seg:
+                score += 4
+            if "base rent" in seg:
+                score += 2
+            if any(tok in seg for tok in ("annual increase", "annual escalation")):
+                score += 1
+            if any(tok in seg for tok in ("operating", "opex", "cam", "parking", "allowance", "ti allowance")):
+                score -= 4
+            base_rate_candidates.append((score, v))
+    if base_rate_candidates:
+        base_rate_candidates.sort(key=lambda x: (-x[0], x[1]))
+        prefill["rate_psf_yr"] = float(base_rate_candidates[0][1])
     if "rate_psf_yr" not in prefill:
         inferred_rate = _infer_rate_psf_from_monthly_rent(text, _coerce_float_token(prefill.get("rsf"), None))
         if inferred_rate is not None:
@@ -1001,6 +1039,41 @@ def _regex_prefill(text: str) -> dict:
             prefill["rent_steps"] = month_phrase_steps
             prefill["_rent_steps_basis"] = "month_index"
             prefill["_rent_steps_source"] = "month_phrase_regex"
+
+    # If only base rate + annual escalation language exists, synthesize yearly steps.
+    if "rent_steps" not in prefill and "rate_psf_yr" in prefill:
+        esc_generic = _RE_ANNUAL_ESCALATION_GENERIC.search(text)
+        esc_rate = _coerce_float_token(esc_generic.group(1), None) if esc_generic else None
+        inferred_term = _coerce_int_token(prefill.get("term_months"), None)
+        if inferred_term is None and comm and exp:
+            inferred_term = _term_month_count(_safe_date(comm), _safe_date(exp))
+        if (
+            esc_rate is not None
+            and inferred_term is not None
+            and inferred_term > 1
+            and 0 < float(esc_rate) <= 25.0
+        ):
+            annual = float(esc_rate) / 100.0
+            base_rate = float(prefill["rate_psf_yr"])
+            term = int(inferred_term)
+            synth_steps: list[dict[str, float | int]] = []
+            start = 0
+            year_idx = 0
+            while start < term:
+                end = min(term - 1, start + 11)
+                synth_steps.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "rate_psf_yr": round(base_rate * ((1.0 + annual) ** year_idx), 4),
+                    }
+                )
+                start = end + 1
+                year_idx += 1
+            if synth_steps:
+                prefill["rent_steps"] = synth_steps
+                prefill["_rent_steps_basis"] = "month_index"
+                prefill["_rent_steps_source"] = "base_rate_plus_escalation_regex"
     # Opex mode
     low = text.lower()
     if "base year" in low or "expense stop" in low:
