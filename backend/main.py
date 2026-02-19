@@ -71,6 +71,8 @@ try:
         set_cached_extraction,
         get_cached_report,
         set_cached_report,
+        get_cached_report_deck,
+        set_cached_report_deck,
     )
 except ModuleNotFoundError:
     try:
@@ -79,6 +81,8 @@ except ModuleNotFoundError:
             set_cached_extraction,
             get_cached_report,
             set_cached_report,
+            get_cached_report_deck,
+            set_cached_report_deck,
         )
     except ModuleNotFoundError:
         # Last-resort fallback so container startup is never blocked by optional cache packaging.
@@ -92,6 +96,12 @@ except ModuleNotFoundError:
             return None
 
         def set_cached_report(*args, **kwargs) -> None:
+            return None
+
+        def get_cached_report_deck(*args, **kwargs):
+            return None
+
+        def set_cached_report_deck(*args, **kwargs) -> None:
             return None
 
 print("BOOT_VERSION", "health_v_2026_02_16_2055", flush=True)
@@ -3313,9 +3323,16 @@ def create_report(req: CreateReportRequest) -> CreateReportResponse:
     """
     Store a report (scenarios + results + optional branding) and return reportId.
     """
+    branding = req.branding.model_dump(exclude_none=True) if req.branding else {}
+    org_id = str(branding.get("org_id") or branding.get("orgId") or "").strip()
+    if org_id:
+        branding["org_id"] = org_id
+    if not branding.get("theme_hash"):
+        branding["theme_hash"] = _branding_theme_hash(branding)
+
     data = {
         "scenarios": [{"scenario": e.scenario, "result": e.result.model_dump()} for e in req.scenarios],
-        "branding": req.branding.model_dump(exclude_none=True) if req.branding else {},
+        "branding": branding,
     }
     report_id = save_report(data)
     return CreateReportResponse(report_id=report_id)
@@ -3689,6 +3706,20 @@ def _pdf_filename(meta_dict: dict) -> str:
     return f"{name}.pdf"
 
 
+def _branding_theme_hash(branding: dict) -> str:
+    payload = {
+        "org_id": branding.get("org_id") or branding.get("orgId") or "",
+        "brand_name": branding.get("brand_name") or branding.get("brandName") or "",
+        "logo_asset_bytes": branding.get("logo_asset_bytes") or branding.get("logoAssetBytes") or "",
+        "logo_asset_url": branding.get("logo_asset_url") or branding.get("logoAssetUrl") or branding.get("logo_url") or "",
+        "primary_color": branding.get("primary_color") or branding.get("primaryColor") or "",
+        "header_text": branding.get("header_text") or branding.get("headerText") or "",
+        "footer_text": branding.get("footer_text") or branding.get("footerText") or "",
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 @app.post("/report")
 def build_report_pdf_endpoint(req: ReportRequest) -> Response:
     """
@@ -3789,6 +3820,20 @@ def get_report_pdf(report_id: str):
     data = load_report(report_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Report not found")
+    branding = data.get("branding") if isinstance(data, dict) and isinstance(data.get("branding"), dict) else {}
+    org_id = str(branding.get("org_id") or branding.get("orgId") or "public")
+    theme_hash = str(branding.get("theme_hash") or branding.get("themeHash") or _branding_theme_hash(branding))
+
+    cached_deck_pdf = get_cached_report_deck(data, org_id, theme_hash)
+    if cached_deck_pdf is not None:
+        return Response(
+            content=cached_deck_pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="lease-deck-{report_id[:8]}.pdf"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     try:
         from reporting.deck_builder import render_report_deck_pdf
@@ -3823,6 +3868,8 @@ def get_report_pdf(report_id: str):
             status_code=500,
             detail="Deck PDF generation failed. Use /reports/{report_id}/preview to inspect rendered HTML.",
         ) from e
+
+    set_cached_report_deck(data, org_id, theme_hash, pdf_bytes)
 
     return Response(
         content=pdf_bytes,

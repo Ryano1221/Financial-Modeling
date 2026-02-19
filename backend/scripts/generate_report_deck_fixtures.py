@@ -24,6 +24,7 @@ from reporting.deck_builder import build_report_deck_html, render_report_deck_pd
 
 
 OUT_DIR = Path(__file__).resolve().parents[1] / "reports" / "fixtures"
+SAMPLE_LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7YqXQAAAAASUVORK5CYII="
 
 
 def _entry(name: str, rsf: float, rates: list[float], notes: str, doc_type: str) -> dict:
@@ -118,6 +119,7 @@ def main() -> None:
         **base,
         "branding": {
             "brandName": "Summit Brokerage",
+            "logoAssetBytes": SAMPLE_LOGO_B64,
             "client_name": "Harbor Capital",
             "preparedByName": "Taylor Smith",
             "preparedByTitle": "Executive Managing Director",
@@ -137,6 +139,7 @@ def main() -> None:
         **base,
         "branding": {
             "brandName": "Harbor Capital",
+            "logoAssetBytes": SAMPLE_LOGO_B64,
             "client_name": "Harbor Capital Investment Committee",
             "preparedByName": "Jordan Lee",
             "preparedByTitle": "Portfolio Strategy",

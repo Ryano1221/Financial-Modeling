@@ -125,6 +125,8 @@ export interface CashflowResult {
 
 /** Report branding for PDF deck */
 export interface ReportBranding {
+  org_id?: string;
+  theme_hash?: string;
   client_name?: string;
   logo_url?: string;
   logo_asset_url?: string;
@@ -147,6 +149,17 @@ export interface ReportBranding {
   cover_photo?: string;
   confidentiality_line?: string;
   report_title?: string;
+}
+
+export interface OrganizationBrandingResponse {
+  organization_id: string;
+  has_logo: boolean;
+  logo_content_type?: string | null;
+  logo_filename?: string | null;
+  logo_data_url?: string | null;
+  logo_asset_bytes?: string | null;
+  theme_hash?: string | null;
+  logo_updated_at?: string | null;
 }
 
 /** Brand config for white-label report (GET /brands item). */

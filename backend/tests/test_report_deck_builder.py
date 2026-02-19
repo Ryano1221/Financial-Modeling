@@ -66,7 +66,23 @@ def test_build_report_deck_html_includes_required_sections():
     assert "Client Holdings" in html
 
 
-def test_comparison_matrix_paginates_for_many_options():
+def test_build_report_deck_uses_logo_in_cover_header_and_prepared_by():
+    logo_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7YqXQAAAAASUVORK5CYII="
+    payload = {
+        "scenarios": [_entry("Logo Validation Scenario", 5000, 40.0)],
+        "branding": {
+            "client_name": "Test Client",
+            "preparedByName": "Brand User",
+            "logoAssetBytes": logo_b64,
+        },
+    }
+    html = build_report_deck_html(payload)
+    assert "class=\"cover-logo\"" in html
+    assert "class=\"brand-logo\"" in html
+    assert "class=\"prepared-by-logo\"" in html
+
+
+def test_comparison_matrix_supports_ten_options_on_one_page():
     payload = {
         "scenarios": [
             _entry(f"Long Building Name Scenario {i} With Additional Descriptor", 8000 + i * 10, 35 + (i % 3))
@@ -75,9 +91,8 @@ def test_comparison_matrix_paginates_for_many_options():
         "branding": {"client_name": "Portfolio Client", "broker_name": "theCREmodel"},
     }
     html = build_report_deck_html(payload)
-    # Should produce multiple matrix pages for 10 options.
-    assert html.count("Comparison Matrix") >= 4
-    assert "Options 1-3 of 10" in html
+    assert html.count("Comparison Matrix") == 1
+    assert "Options 1-10 of 10" in html
 
 
 def test_resolve_theme_defaults_to_thecremodel():
@@ -112,3 +127,11 @@ def test_report_branding_rejects_invalid_media_inputs():
     with pytest.raises(ValidationError):
         ReportBranding(logoAssetBytes="not-base64")
 
+
+def test_report_dates_are_rendered_dd_mm_yyyy():
+    payload = {
+        "scenarios": [_entry("Date Format Scenario", 4500, 36.0)],
+        "branding": {"reportDate": "02/19/2026"},
+    }
+    html = build_report_deck_html(payload)
+    assert "19/02/2026" in html

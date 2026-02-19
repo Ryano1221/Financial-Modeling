@@ -20,12 +20,21 @@ async function proxyOnce(req: NextRequest, upstreamUrl: string) {
 
   try {
     const contentType = req.headers.get("content-type");
+    const accept = req.headers.get("accept");
+    const authorization = req.headers.get("authorization");
+    const cookie = req.headers.get("cookie");
+    const xInternalSecret = req.headers.get("x-internal-secret");
+    const xRequestId = req.headers.get("x-request-id");
 
     const fetchInit: RequestInit & { duplex?: "half" } = {
       method: req.method,
       headers: {
         ...(contentType ? { "content-type": contentType } : {}),
-        ...(req.headers.get("accept") ? { accept: req.headers.get("accept") ?? "" } : {}),
+        ...(accept ? { accept } : {}),
+        ...(authorization ? { authorization } : {}),
+        ...(cookie ? { cookie } : {}),
+        ...(xInternalSecret ? { "x-internal-secret": xInternalSecret } : {}),
+        ...(xRequestId ? { "x-request-id": xRequestId } : {}),
       },
       body: req.body,
       duplex: "half",

@@ -167,6 +167,8 @@ class GenerateScenariosResponse(BaseModel):
 class ReportBranding(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
+    org_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("org_id", "orgId"))
+    theme_hash: Optional[str] = Field(default=None, validation_alias=AliasChoices("theme_hash", "themeHash"))
     client_name: Optional[str] = None
     logo_url: Optional[str] = None
     date: Optional[str] = None
@@ -192,6 +194,8 @@ class ReportBranding(BaseModel):
 
     @field_validator(
         "brand_name",
+        "org_id",
+        "theme_hash",
         "client_name",
         "broker_name",
         "market",

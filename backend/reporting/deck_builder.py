@@ -10,9 +10,11 @@ import base64
 import binascii
 import html
 import math
+import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 
@@ -46,13 +48,31 @@ class DeckTheme:
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
+    parsed = _numeric_or_none(value)
+    if parsed is None:
+        return default
+    return parsed
+
+
+def _numeric_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
         parsed = float(value)
         if math.isnan(parsed):
-            return default
+            return None
         return parsed
-    except (TypeError, ValueError):
-        return default
+    text = str(value).strip()
+    if not text:
+        return None
+    # Handles common display forms: "$1,234.56", "8%", "45/SF"
+    match = re.search(r"-?\d+(?:,\d{3})*(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -67,25 +87,37 @@ def _esc(value: Any) -> str:
 
 
 def _fmt_currency(value: Any, precision: int = 0) -> str:
-    v = _safe_float(value, 0.0)
+    n = _numeric_or_none(value)
+    if n is None:
+        return "—"
+    v = n
     if precision <= 0:
         return f"${v:,.0f}"
     return f"${v:,.{precision}f}"
 
 
 def _fmt_number(value: Any, precision: int = 0) -> str:
-    v = _safe_float(value, 0.0)
+    n = _numeric_or_none(value)
+    if n is None:
+        return "—"
+    v = n
     if precision <= 0:
         return f"{v:,.0f}"
     return f"{v:,.{precision}f}"
 
 
 def _fmt_psf(value: Any, precision: int = 2) -> str:
-    return f"{_fmt_currency(value, precision=precision)}/SF"
+    money = _fmt_currency(value, precision=precision)
+    if money == "—":
+        return "—"
+    return f"{money}/SF"
 
 
 def _fmt_percent(value: Any, precision: int = 2) -> str:
-    v = _safe_float(value, 0.0) * 100.0
+    n = _numeric_or_none(value)
+    if n is None:
+        return "—"
+    v = n * 100.0
     return f"{v:,.{precision}f}%"
 
 
@@ -102,14 +134,26 @@ def _parse_date(value: Any) -> date | None:
             return datetime.fromisoformat(candidate).date()
         except ValueError:
             continue
+    for fmt in ("%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
     return None
 
 
 def _fmt_date(value: Any) -> str:
     d = _parse_date(value)
     if d is None:
-        return str(value or "—")
+        return "—"
     return d.strftime("%d/%m/%Y")
+
+
+def _truncate_text(value: str, max_len: int = 88) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
 
 
 def _add_months(d: date, months: int) -> date:
@@ -177,6 +221,29 @@ def _logo_src_from_base64(logo_b64: str) -> str:
     return f"data:{mime};base64,{text}"
 
 
+def _default_thecremodel_logo_src() -> str:
+    env_logo = _safe_media_url(os.environ.get("DEFAULT_BRAND_LOGO_URL", ""))
+    if env_logo:
+        return env_logo
+    root = Path(__file__).resolve().parents[2]
+    candidates = [
+        root / "frontend" / "public" / "logo.svg",
+        root / "frontend" / "public" / "brand" / "logo.svg",
+    ]
+    for path in candidates:
+        try:
+            if not path.exists() or not path.is_file():
+                continue
+            raw = path.read_bytes()
+            if not raw:
+                continue
+            encoded = base64.b64encode(raw).decode("ascii")
+            return f"data:image/svg+xml;base64,{encoded}"
+        except Exception:
+            continue
+    return ""
+
+
 def resolve_theme(branding: dict[str, Any]) -> DeckTheme:
     prepared_by_name = _pick(
         branding,
@@ -200,6 +267,7 @@ def resolve_theme(branding: dict[str, Any]) -> DeckTheme:
     logo_src = (
         _logo_src_from_base64(_pick(branding, "logo_asset_bytes", "logoAssetBytes", "logoAssetBase64"))
         or _safe_media_url(_pick(branding, "logo_asset_url", "logoAssetUrl", "logo_url"))
+        or _default_thecremodel_logo_src()
     )
     client_logo_src = _safe_media_url(_pick(branding, "client_logo_asset_url", "clientLogoAssetUrl", "client_logo_url"))
     cover_photo = _safe_media_url(_pick(branding, "cover_photo", "coverPhoto"))
@@ -373,11 +441,16 @@ def ComparisonMatrixTable(
     metric_rows: list[tuple[str, list[str], str]],
 ) -> str:
     option_count = max(1, len(entries))
-    col_width = f"{76 / option_count:.2f}%"
-    colgroup = f'<col style="width:24%"/>' + "".join(
+    metric_width = 18 if option_count >= 8 else 24
+    col_width = f"{(100 - metric_width) / option_count:.2f}%"
+    colgroup = f'<col style="width:{metric_width}%"/>' + "".join(
         f'<col style="width:{col_width}"/>' for _ in entries
     )
-    head_cells = "".join(f"<th>{_esc(e['name'])}</th>" for e in entries)
+    table_class = "matrix-table matrix-compact" if option_count > 6 else "matrix-table"
+    head_cells = "".join(
+        f"<th><span class='matrix-head-text'>{_esc(_truncate_text(e['name'], 42))}</span></th>"
+        for e in entries
+    )
 
     body_parts: list[str] = []
     for label, values, style in metric_rows:
@@ -385,14 +458,14 @@ def ComparisonMatrixTable(
         for value in values:
             if style == "bullets":
                 bullets = [v.strip() for v in value.split(" | ") if v.strip()]
-                cell = "<ul class='bullet-mini'>" + "".join(f"<li>{_esc(b)}</li>" for b in bullets[:8]) + "</ul>"
+                cell = "<ul class='bullet-mini'>" + "".join(f"<li>{_esc(_truncate_text(b, 120))}</li>" for b in bullets[:3]) + "</ul>"
             else:
-                cell = _esc(value)
+                cell = f"<span class='matrix-cell-text'>{_esc(_truncate_text(value, 60))}</span>"
             tds.append(f"<td>{cell}</td>")
-        body_parts.append(f"<tr><th>{_esc(label)}</th>{''.join(tds)}</tr>")
+        body_parts.append(f"<tr><th><span class='matrix-row-label'>{_esc(label)}</span></th>{''.join(tds)}</tr>")
 
     return f"""
-    <table class="matrix-table">
+    <table class="{table_class}">
       <colgroup>{colgroup}</colgroup>
       <thead>
         <tr>
@@ -586,7 +659,7 @@ def _split_by_calendar_year(
     return ranges
 
 
-def _scenario_rent_rows(entry: dict[str, Any], max_rows: int = 18) -> tuple[list[dict[str, str]], int]:
+def _scenario_rent_rows(entry: dict[str, Any], max_rows: int = 14) -> tuple[list[dict[str, str]], int]:
     scenario = entry["scenario"]
     steps = _extract_rent_steps(scenario)
     if not steps:
@@ -767,6 +840,16 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
     ]
     prepared_by_lines = [line for line in prepared_by_lines if line]
     prepared_by_html = "<br/>".join(_esc(line) for line in prepared_by_lines) or _esc(theme.prepared_by_name)
+    prepared_by_logo = (
+        f'<img class="prepared-by-logo" src="{_esc(theme.logo_src)}" alt="{_esc(theme.brand_name)}" />'
+        if theme.logo_src
+        else ""
+    )
+    prepared_by_block = (
+        f'<div class="prepared-by-block">{prepared_by_logo}<strong>{prepared_by_html}</strong></div>'
+        if prepared_by_logo
+        else f"<strong>{prepared_by_html}</strong>"
+    )
 
     return f"""
     <div class="cover-wrap">
@@ -781,7 +864,7 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
         </div>
         <div class="cover-meta-grid">
           <div><span>Prepared for</span><strong>{_esc(theme.prepared_for)}</strong></div>
-          <div><span>Prepared by</span><strong>{prepared_by_html}</strong></div>
+          <div><span>Prepared by</span>{prepared_by_block}</div>
           <div><span>Report date</span><strong>{_esc(theme.report_date)}</strong></div>
           <div><span>Market</span><strong>{_esc(theme.market or "N/A")}</strong></div>
           <div><span>Submarket</span><strong>{_esc(theme.submarket or "N/A")}</strong></div>
@@ -824,7 +907,7 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
             scenario = e["scenario"]
             result = e["result"]
             if metric_label == "Document type":
-                values.append(e["doc_type"])
+                values.append(str(e["doc_type"] or "Unknown").replace("_", " ").title())
             elif metric_label == "Building name":
                 values.append(str(scenario.get("building_name") or "—"))
             elif metric_label == "Suite / Floor":
@@ -861,9 +944,9 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
                 categorized = _notes_by_category(note_text)
                 note_bullets: list[str] = []
                 for category, lines in categorized.items():
-                    for line in lines[:2]:
-                        note_bullets.append(f"{category}: {line}")
-                values.append(" | ".join(note_bullets[:6]) if note_bullets else "General: Review lease clauses manually.")
+                    for line in lines[:1]:
+                        note_bullets.append(f"{category}: {_truncate_text(line, 82)}")
+                values.append(" | ".join(note_bullets[:3]) if note_bullets else "General: Review lease clauses manually.")
         rows.append((metric_label, values, style))
     return rows
 
@@ -875,17 +958,21 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
         return [items[i : i + size] for i in range(0, len(items), size)]
 
     pages: list[str] = []
-    option_chunks = chunk(entries, 3)
+    # Keep up to 10 scenarios side-by-side per matrix page.
+    option_chunks = chunk(entries, 10)
     for idx, option_chunk in enumerate(option_chunks):
         metric_rows = _metric_rows_for(option_chunk)
-        metric_chunks = _chunk_rows_by_estimated_height(metric_rows, max_units=24)
+        metric_chunks = [metric_rows]
         for midx, metrics_chunk in enumerate(metric_chunks):
+            start = idx * 10 + 1
+            end = idx * 10 + len(option_chunk)
+            suffix = "" if len(metric_chunks) == 1 else f" · Table segment {midx + 1}/{len(metric_chunks)}"
             pages.append(
                 f"""
                 {SectionTitle(
                     "Portfolio comparison",
                     "Comparison Matrix",
-                    f"Options {idx*3 + 1}-{idx*3 + len(option_chunk)} of {len(entries)}",
+                    f"Options {start}-{end} of {len(entries)}{suffix}",
                 )}
                 {ComparisonMatrixTable(option_chunk, metrics_chunk)}
                 <p class="matrix-footnote">Table headers repeat across pages. Numeric units are normalized for side-by-side review.</p>
@@ -1116,6 +1203,12 @@ def _deck_css(primary_color: str) -> str:
       border: 1px solid #111;
       font-size: 9px;
     }}
+    .matrix-table {{
+      margin-top: 1mm;
+    }}
+    .matrix-table.matrix-compact {{
+      font-size: 7px;
+    }}
     .matrix-table thead th, .detail-table thead th {{
       background: #f2f2f2;
       border: 1px solid #111;
@@ -1132,6 +1225,32 @@ def _deck_css(primary_color: str) -> str:
       vertical-align: top;
       line-height: 1.35;
       word-break: break-word;
+    }}
+    .matrix-table.matrix-compact thead th {{
+      padding: 1.1mm 0.9mm;
+      font-size: 6.5px;
+      letter-spacing: 0.04em;
+      line-height: 1.2;
+    }}
+    .matrix-table.matrix-compact tbody th,
+    .matrix-table.matrix-compact tbody td {{
+      padding: 1mm 0.9mm;
+      line-height: 1.2;
+    }}
+    .matrix-head-text,
+    .matrix-row-label,
+    .matrix-cell-text {{
+      display: block;
+      overflow-wrap: anywhere;
+      hyphens: auto;
+    }}
+    .matrix-head-text {{
+      white-space: normal;
+      word-break: break-word;
+      font-weight: 700;
+    }}
+    .matrix-row-label {{
+      font-weight: 700;
     }}
     .matrix-table tbody tr:nth-child(even),
     .detail-table tbody tr:nth-child(even) {{
@@ -1150,6 +1269,13 @@ def _deck_css(primary_color: str) -> str:
     .bullet-mini li {{
       margin: 0 0 1mm 0;
       line-height: 1.3;
+    }}
+    .matrix-table.matrix-compact .bullet-mini {{
+      padding-left: 2.8mm;
+    }}
+    .matrix-table.matrix-compact .bullet-mini li {{
+      margin: 0 0 0.5mm 0;
+      line-height: 1.15;
     }}
     .axis-note {{
       margin: 0 0 2mm 0;
@@ -1301,6 +1427,18 @@ def _deck_css(primary_color: str) -> str:
       color: #111;
       word-break: break-word;
     }}
+    .prepared-by-block {{
+      display: flex;
+      align-items: flex-start;
+      gap: 2mm;
+    }}
+    .prepared-by-logo {{
+      width: 12mm;
+      max-height: 8mm;
+      object-fit: contain;
+      flex: 0 0 auto;
+      margin-top: 0.2mm;
+    }}
     .winner-callout {{
       border: 1px solid #111;
       background: #111;
@@ -1390,8 +1528,8 @@ def render_report_deck_pdf(data: dict[str, Any]) -> bytes:
             format="A4",
             landscape=True,
             print_background=True,
-            margin={"top": "0.3in", "bottom": "0.3in", "left": "0.3in", "right": "0.3in"},
+            prefer_css_page_size=True,
+            margin={"top": "0in", "bottom": "0in", "left": "0in", "right": "0in"},
         )
         browser.close()
     return pdf_bytes
-

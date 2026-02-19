@@ -23,6 +23,7 @@ const Diagnostics = showDiagnostics
 import { UploadExtractCard } from "@/components/UploadExtractCard";
 import { ResultsActionsCard } from "@/components/ResultsActionsCard";
 import { Footer } from "@/components/Footer";
+import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
 import type {
   ScenarioWithId,
   CashflowResult,
@@ -31,6 +32,7 @@ import type {
   ScenarioInput,
   BackendCanonicalLease,
   ExtractionSummary,
+  OrganizationBrandingResponse,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
@@ -197,6 +199,10 @@ export default function Home() {
     market: "",
     submarket: "",
   });
+  const [organizationBranding, setOrganizationBranding] = useState<OrganizationBrandingResponse | null>(null);
+  const [brandingLoading, setBrandingLoading] = useState(false);
+  const [brandingUploading, setBrandingUploading] = useState(false);
+  const [brandingError, setBrandingError] = useState<string | null>(null);
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
@@ -274,6 +280,76 @@ export default function Home() {
       localStorage.setItem(BRAND_ID_STORAGE_KEY, brandId);
     }
   }, [brandId]);
+
+  const loadOrganizationBranding = useCallback(async () => {
+    setBrandingLoading(true);
+    try {
+      const res = await fetchApiProxy("/api/v1/branding", { method: "GET" });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          setOrganizationBranding(null);
+          return;
+        }
+        const body = await res.text();
+        throw new Error(body || `Branding request failed (${res.status})`);
+      }
+      const data = (await res.json()) as OrganizationBrandingResponse;
+      setOrganizationBranding(data);
+    } catch (err) {
+      setOrganizationBranding(null);
+      console.warn("[branding] unable to load org branding", err);
+    } finally {
+      setBrandingLoading(false);
+    }
+  }, []);
+
+  const uploadOrganizationLogo = useCallback(
+    async (file: File) => {
+      setBrandingUploading(true);
+      setBrandingError(null);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetchApiProxy("/api/v1/branding/logo", {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(body || `Upload failed (${res.status})`);
+        }
+        const data = (await res.json()) as OrganizationBrandingResponse;
+        setOrganizationBranding(data);
+      } catch (err) {
+        setBrandingError(getDisplayErrorMessage(err));
+      } finally {
+        setBrandingUploading(false);
+      }
+    },
+    []
+  );
+
+  const deleteOrganizationLogo = useCallback(async () => {
+    setBrandingUploading(true);
+    setBrandingError(null);
+    try {
+      const res = await fetchApiProxy("/api/v1/branding/logo", { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `Delete failed (${res.status})`);
+      }
+      const data = (await res.json()) as OrganizationBrandingResponse;
+      setOrganizationBranding(data);
+    } catch (err) {
+      setBrandingError(getDisplayErrorMessage(err));
+    } finally {
+      setBrandingUploading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOrganizationBranding();
+  }, [loadOrganizationBranding]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -660,11 +736,14 @@ export default function Home() {
           body: JSON.stringify({
             scenarios: scenariosForDeck,
             branding: {
+              org_id: organizationBranding?.organization_id || undefined,
+              theme_hash: organizationBranding?.theme_hash || undefined,
+              logo_asset_bytes: organizationBranding?.logo_asset_bytes || undefined,
               brand_name: "theCREmodel",
               client_name: meta.prepared_for || "Client",
               broker_name: meta.prepared_by || "theCREmodel",
               prepared_by_name: meta.prepared_by || "theCREmodel",
-              prepared_by_company: "theCREmodel",
+              prepared_by_company: meta.prepared_by || "theCREmodel",
               date: meta.report_date || new Date().toISOString().slice(0, 10),
               market: meta.market || "",
               submarket: meta.submarket || "",
@@ -725,7 +804,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1025,6 +1104,14 @@ export default function Home() {
             />
             <span>%</span>
           </label>
+          <BrandingLogoUploader
+            branding={organizationBranding}
+            loading={brandingLoading}
+            uploading={brandingUploading}
+            error={brandingError}
+            onUpload={uploadOrganizationLogo}
+            onDelete={deleteOrganizationLogo}
+          />
           <div className="mb-5 border-t border-slate-300/20 pt-4">
             <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

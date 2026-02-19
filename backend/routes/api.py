@@ -4,6 +4,10 @@ Uses rbac_require_org, audit log, Stripe usage, S3, background jobs.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+from datetime import datetime
 import uuid
 from typing import Any, Optional
 
@@ -23,6 +27,7 @@ from db.models import (
     Report as ReportModel,
     File as FileModel,
     Job as JobModel,
+    OrganizationBranding as OrganizationBrandingModel,
     Role,
     JobType,
     JobStatus,
@@ -68,7 +73,137 @@ class ReportCreate(BaseModel):
     branding: Optional[dict] = None
 
 
+ALLOWED_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
+MAX_LOGO_BYTES = 1_500_000
+
+
+def _branding_payload_for(row: OrganizationBrandingModel | None, org_id: str) -> dict[str, Any]:
+    if not row or not row.logo_bytes:
+        return {
+            "organization_id": org_id,
+            "has_logo": False,
+            "logo_content_type": None,
+            "logo_filename": None,
+            "logo_data_url": None,
+            "logo_asset_bytes": None,
+            "theme_hash": None,
+            "logo_updated_at": None,
+        }
+    content_type = (row.logo_content_type or "image/png").strip() or "image/png"
+    logo_b64 = base64.b64encode(row.logo_bytes).decode("ascii")
+    theme_hash = (row.logo_sha256 or "").strip() or hashlib.sha256(row.logo_bytes).hexdigest()
+    return {
+        "organization_id": org_id,
+        "has_logo": True,
+        "logo_content_type": content_type,
+        "logo_filename": row.logo_filename,
+        "logo_data_url": f"data:{content_type};base64,{logo_b64}",
+        "logo_asset_bytes": logo_b64,
+        "theme_hash": theme_hash,
+        "logo_updated_at": row.logo_updated_at.isoformat() if row.logo_updated_at else None,
+    }
+
+
 # --- Deals ---
+
+@router.get("/branding")
+def get_branding(
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    claims, org, _ = rbac
+    row = (
+        db.query(OrganizationBrandingModel)
+        .filter(OrganizationBrandingModel.organization_id == org.id)
+        .first()
+    )
+    return _branding_payload_for(row, org.id)
+
+
+@router.post("/branding/logo")
+async def upload_branding_logo(
+    file: UploadFile = File(...),
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    claims, org, _ = rbac
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    filename_lower = file.filename.lower().strip()
+    content_type = (file.content_type or "").lower().strip()
+    if content_type not in ALLOWED_LOGO_CONTENT_TYPES:
+        if filename_lower.endswith(".png"):
+            content_type = "image/png"
+        elif filename_lower.endswith(".jpg") or filename_lower.endswith(".jpeg"):
+            content_type = "image/jpeg"
+        elif filename_lower.endswith(".svg"):
+            content_type = "image/svg+xml"
+    if content_type not in ALLOWED_LOGO_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Logo must be PNG, JPG, or SVG")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > MAX_LOGO_BYTES:
+        raise HTTPException(status_code=413, detail="Logo exceeds 1.5MB")
+
+    logo_sha = hashlib.sha256(data).hexdigest()
+    row = (
+        db.query(OrganizationBrandingModel)
+        .filter(OrganizationBrandingModel.organization_id == org.id)
+        .first()
+    )
+    now = datetime.utcnow()
+    if row is None:
+        row = OrganizationBrandingModel(
+            id=str(uuid.uuid4()),
+            organization_id=org.id,
+            logo_bytes=data,
+            logo_content_type=content_type,
+            logo_filename=file.filename,
+            logo_sha256=logo_sha,
+            logo_updated_at=now,
+        )
+        db.add(row)
+    else:
+        row.logo_bytes = data
+        row.logo_content_type = content_type
+        row.logo_filename = file.filename
+        row.logo_sha256 = logo_sha
+        row.logo_updated_at = now
+    db.commit()
+    audit_log(
+        db,
+        org.id,
+        claims.sub,
+        "update",
+        "branding",
+        row.id,
+        {"filename": file.filename, "content_type": content_type},
+    )
+    return _branding_payload_for(row, org.id)
+
+
+@router.delete("/branding/logo")
+def delete_branding_logo(
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    claims, org, _ = rbac
+    row = (
+        db.query(OrganizationBrandingModel)
+        .filter(OrganizationBrandingModel.organization_id == org.id)
+        .first()
+    )
+    if row:
+        row.logo_bytes = None
+        row.logo_content_type = None
+        row.logo_filename = None
+        row.logo_sha256 = None
+        row.logo_updated_at = None
+        db.commit()
+        audit_log(db, org.id, claims.sub, "delete", "branding", row.id, {"logo_deleted": True})
+    return _branding_payload_for(row, org.id)
 
 @router.get("/deals")
 def list_deals(
@@ -314,7 +449,30 @@ def create_report(
 ):
     claims, org, _ = rbac
     report_id = str(uuid.uuid4())
-    payload = {"scenarios": body.scenarios, "branding": body.branding or {}}
+    branding_payload = dict(body.branding or {})
+    branding_payload.setdefault("org_id", org.id)
+    row = (
+        db.query(OrganizationBrandingModel)
+        .filter(OrganizationBrandingModel.organization_id == org.id)
+        .first()
+    )
+    if row and row.logo_bytes:
+        logo_b64 = base64.b64encode(row.logo_bytes).decode("ascii")
+        branding_payload.setdefault("logo_asset_bytes", logo_b64)
+        branding_payload.setdefault("logo_url", f"data:{(row.logo_content_type or 'image/png')};base64,{logo_b64}")
+        branding_payload["theme_hash"] = (row.logo_sha256 or "").strip() or hashlib.sha256(row.logo_bytes).hexdigest()
+    if not branding_payload.get("theme_hash"):
+        theme_payload = {
+            "org_id": branding_payload.get("org_id"),
+            "logo_asset_bytes": branding_payload.get("logo_asset_bytes"),
+            "logo_url": branding_payload.get("logo_url"),
+            "brand_name": branding_payload.get("brand_name"),
+            "primary_color": branding_payload.get("primary_color"),
+        }
+        branding_payload["theme_hash"] = hashlib.sha256(
+            json.dumps(theme_payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+    payload = {"scenarios": body.scenarios, "branding": branding_payload}
     # Persist to DB
     report = ReportModel(
         id=report_id,

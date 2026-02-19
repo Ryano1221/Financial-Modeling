@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Enum as SQLEnum, JSON
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, LargeBinary
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -41,6 +41,7 @@ class Organization(Base):
     members = relationship("OrganizationMember", back_populates="organization")
     deals = relationship("Deal", back_populates="organization")
     audit_logs = relationship("AuditLog", back_populates="organization")
+    branding = relationship("OrganizationBranding", back_populates="organization", uselist=False)
 
 
 class User(Base):
@@ -160,3 +161,25 @@ class AuditLog(Base):
     created_at = Column("created_at", DateTime, default=datetime.utcnow)
 
     organization = relationship("Organization", back_populates="audit_logs")
+
+
+class OrganizationBranding(Base):
+    __tablename__ = "organization_branding"
+
+    id = Column(String, primary_key=True)
+    organization_id = Column(
+        "organization_id",
+        String,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    logo_bytes = Column("logo_bytes", LargeBinary, nullable=True)
+    logo_content_type = Column("logo_content_type", String, nullable=True)
+    logo_filename = Column("logo_filename", String, nullable=True)
+    logo_sha256 = Column("logo_sha256", String, nullable=True)
+    logo_updated_at = Column("logo_updated_at", DateTime, nullable=True)
+    created_at = Column("created_at", DateTime, default=datetime.utcnow)
+    updated_at = Column("updated_at", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    organization = relationship("Organization", back_populates="branding")
