@@ -385,7 +385,7 @@ def _build_page_shell(
     return f"""
     <section class="pdf-page">
       {header}
-      <div class="page-content">{body_html}</div>
+      <div class="page-content"><div class="page-content-inner">{body_html}</div></div>
       {footer}
     </section>
     """.strip()
@@ -549,8 +549,8 @@ def LeaseAbstractBlock(entry: dict[str, Any]) -> str:
     ]
 
     section_blocks = []
-    for category, lines in categorized.items():
-        lis = "".join(f"<li>{_esc(line)}</li>" for line in lines[:4])
+    for category, lines in list(categorized.items())[:4]:
+        lis = "".join(f"<li>{_esc(_truncate_text(line, 180))}</li>" for line in lines[:2])
         section_blocks.append(f"<div class='abstract-category'><h4>{_esc(category)}</h4><ul>{lis}</ul></div>")
 
     if not section_blocks:
@@ -998,7 +998,8 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
     option_chunks = chunk(entries, 10)
     for idx, option_chunk in enumerate(option_chunks):
         metric_rows = _metric_rows_for(option_chunk)
-        metric_chunks = [metric_rows]
+        max_units = 16 if len(option_chunk) >= 8 else 24
+        metric_chunks = _chunk_rows_by_estimated_height(metric_rows, max_units=max_units)
         for midx, metrics_chunk in enumerate(metric_chunks):
             start = idx * 10 + 1
             end = idx * 10 + len(option_chunk)
@@ -1039,8 +1040,25 @@ def _cost_visuals_page(entries: list[dict[str, Any]]) -> str:
     """
 
 
+def _cost_visuals_pages(entries: list[dict[str, Any]]) -> list[str]:
+    if not entries:
+        return [_cost_visuals_page(entries)]
+    chunk_size = 5
+    pages: list[str] = []
+    for i in range(0, len(entries), chunk_size):
+        subset = entries[i : i + chunk_size]
+        pages.append(
+            _cost_visuals_page(subset).replace(
+                "Horizontal bars use a shared per-metric scale to support clean visual ranking.",
+                f"Options {i + 1}-{i + len(subset)} of {len(entries)}. Horizontal bars use a shared per-metric scale to support clean visual ranking.",
+            )
+        )
+    return pages
+
+
 def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
     ranking = sorted(entries, key=lambda e: _safe_float(e["result"].get("npv_cost"), 0.0))
+    ranking_display = ranking[:8]
     ranking_items = "".join(
         f"""
         <li>
@@ -1049,14 +1067,17 @@ def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
           <span>{_esc(_fmt_psf(e['result'].get('avg_cost_psf_year')))} avg cost/SF/year</span>
         </li>
         """
-        for e in ranking
+        for e in ranking_display
     )
+    omitted = max(0, len(ranking) - len(ranking_display))
+    omitted_line = f"<p class='matrix-footnote'>+ {omitted} additional option(s) are ranked in the comparison matrix.</p>" if omitted else ""
     return f"""
     {SectionTitle("Executive summary", "Decision Snapshot", "Ranking is based on lowest NPV cost (tenant cost perspective).")}
     <div class="summary-grid">
       <article class="panel">
         <h3>Ranking by NPV</h3>
         <ol class="ranking-list">{ranking_items}</ol>
+        {omitted_line}
       </article>
       <article class="panel">
         <h3>Key decision points</h3>
@@ -1077,6 +1098,23 @@ def _lease_abstracts_page(entries: list[dict[str, Any]]) -> str:
     {SectionTitle("Lease abstracts", "Lease Abstract Highlights", "Categorized clause notes and financial context per option.")}
     <div class="abstract-stack">{cards}</div>
     """
+
+
+def _lease_abstract_pages(entries: list[dict[str, Any]]) -> list[str]:
+    if not entries:
+        return [_lease_abstracts_page(entries)]
+    pages: list[str] = []
+    per_page = 2
+    for i in range(0, len(entries), per_page):
+        subset = entries[i : i + per_page]
+        cards = "".join(LeaseAbstractBlock(entry) for entry in subset)
+        pages.append(
+            f"""
+            {SectionTitle("Lease abstracts", "Lease Abstract Highlights", f"Options {i + 1}-{i + len(subset)} of {len(entries)}. Categorized clause notes and financial context per option.")}
+            <div class="abstract-stack">{cards}</div>
+            """
+        )
+    return pages
 
 
 def DisclaimerPage(theme: DeckTheme) -> str:
@@ -1116,11 +1154,13 @@ def _deck_css(primary_color: str) -> str:
     .pdf-page {{
       break-after: page;
       page-break-after: always;
-      min-height: 190mm;
+      height: 190mm;
+      max-height: 190mm;
       display: flex;
       flex-direction: column;
       border: 1px solid #111;
       background: #fff;
+      overflow: hidden;
     }}
     .page-header {{
       height: 18mm;
@@ -1141,6 +1181,13 @@ def _deck_css(primary_color: str) -> str:
       padding: 6mm;
       display: block;
       flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      position: relative;
+    }}
+    .page-content-inner {{
+      width: 100%;
+      transform-origin: top left;
     }}
     .page-footer {{
       height: 12mm;
@@ -1575,8 +1622,10 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
     page_payloads.append((_executive_summary_page(entries), "Executive summary", True))
     for matrix_html in _matrix_pages(entries):
         page_payloads.append((matrix_html, "Comparison matrix", True))
-    page_payloads.append((_cost_visuals_page(entries), "Cost visuals", True))
-    page_payloads.append((_lease_abstracts_page(entries), "Lease abstract highlights", True))
+    for visuals_html in _cost_visuals_pages(entries):
+        page_payloads.append((visuals_html, "Cost visuals", True))
+    for abstracts_html in _lease_abstract_pages(entries):
+        page_payloads.append((abstracts_html, "Lease abstract highlights", True))
     for entry in entries:
         page_payloads.append((ScenarioDetailSection(entry), "Scenario detail", True))
     page_payloads.append((DisclaimerPage(theme), "Disclaimer", True))
@@ -1606,6 +1655,31 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
 </head>
 <body>
   {''.join(page_html)}
+  <script>
+    (function () {{
+      try {{
+        const pages = Array.from(document.querySelectorAll(".pdf-page"));
+        for (const page of pages) {{
+          const content = page.querySelector(".page-content");
+          const inner = page.querySelector(".page-content-inner");
+          if (!content || !inner) continue;
+          const rawHeight = inner.scrollHeight || 0;
+          const limitHeight = content.clientHeight || 0;
+          if (!rawHeight || !limitHeight) continue;
+          if (rawHeight <= limitHeight) continue;
+          const targetScale = Math.max(0.76, Math.min(1, (limitHeight - 1) / rawHeight));
+          if (targetScale < 0.999) {{
+            inner.style.transform = `scale(${{targetScale}})`;
+            inner.style.width = `${{(100 / targetScale).toFixed(4)}}%`;
+          }}
+        }}
+      }} catch (_err) {{
+        // no-op; static layout still renders
+      }} finally {{
+        window.__deckLayoutReady = true;
+      }}
+    }})();
+  </script>
 </body>
 </html>
     """.strip()
@@ -1619,6 +1693,11 @@ def render_report_deck_pdf(data: dict[str, Any]) -> bytes:
         browser = p.chromium.launch()
         page = browser.new_page()
         page.set_content(html_str, wait_until="networkidle")
+        try:
+            page.wait_for_function("window.__deckLayoutReady === true", timeout=2500)
+        except Exception:
+            # Layout guard is best-effort; continue with static output if script timing fails.
+            pass
         page.emulate_media(media="print")
         pdf_bytes = page.pdf(
             format="A4",

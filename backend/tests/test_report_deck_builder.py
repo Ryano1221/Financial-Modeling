@@ -91,8 +91,23 @@ def test_comparison_matrix_supports_ten_options_on_one_page():
         "branding": {"client_name": "Portfolio Client", "broker_name": "theCREmodel"},
     }
     html = build_report_deck_html(payload)
-    assert html.count("Comparison Matrix") == 1
+    assert html.count("Comparison Matrix") >= 1
     assert "Options 1-10 of 10" in html
+
+
+def test_cost_visuals_and_abstracts_paginate_for_large_sets():
+    payload = {
+        "scenarios": [
+            _entry(f"Portfolio Scenario {i}", 7000 + i * 100, 33 + (i % 4), doc_type="proposal")
+            for i in range(10)
+        ],
+        "branding": {"client_name": "Large Portfolio Client"},
+    }
+    html = build_report_deck_html(payload)
+    assert html.count("Scenario Cost Comparison") >= 2
+    assert "Options 1-5 of 10" in html
+    assert "Options 6-10 of 10" in html
+    assert html.count("Lease Abstract Highlights") >= 3
 
 
 def test_resolve_theme_defaults_to_thecremodel():
