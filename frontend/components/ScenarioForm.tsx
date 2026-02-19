@@ -305,21 +305,21 @@ export function ScenarioForm({
     return issues;
   })();
 
-  const inputClass = "mt-1 block w-full rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-sm text-white focus:border-[#3b82f6] focus:outline-none focus:ring-1 focus:ring-[#3b82f6] placeholder:text-zinc-500";
-  const btnSecondary = "rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] w-full sm:w-auto";
+  const inputClass = "input-premium mt-1 block";
+  const btnSecondary = "btn-premium btn-premium-secondary w-full sm:w-auto";
 
   if (!scenario) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 md:p-6">
-        <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Scenario editor</p>
-        <h2 className="text-lg font-semibold text-white mb-2">Scenario editor</h2>
-        <p className="text-sm text-zinc-400 mb-4">
+      <div className="surface-card p-4 sm:p-5 md:p-6">
+        <p className="heading-kicker mb-2">Scenario editor</p>
+        <h2 className="heading-section mb-2">Scenario editor</h2>
+        <p className="text-sm text-slate-300 mb-4">
           Select a scenario from the list or add a new one.
         </p>
         <button
           type="button"
           onClick={onAddScenario}
-          className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b]"
+          className="btn-premium btn-premium-primary"
         >
           Add scenario
         </button>
@@ -328,11 +328,11 @@ export function ScenarioForm({
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 md:p-6">
+    <div className="surface-card p-4 sm:p-5 md:p-6">
       <div className="mb-4">
         <div>
-          <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-1">Scenario editor</p>
-          <h2 className="text-lg font-semibold text-white">Scenario editor</h2>
+          <p className="heading-kicker mb-1">Scenario editor</p>
+          <h2 className="heading-section">Scenario editor</h2>
         </div>
       </div>
 
@@ -340,7 +340,7 @@ export function ScenarioForm({
         <button
           type="button"
           onClick={onAcceptChanges}
-          className="rounded-full bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-auto"
+          className="btn-premium btn-premium-success w-full sm:w-auto"
           title="Save edits and close the scenario editor"
         >
           Accept changes
@@ -358,7 +358,7 @@ export function ScenarioForm({
               onDeleteScenario(scenario.id);
             }
           }}
-          className="rounded-full border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-500/20 focus:outline-none focus:ring-2 focus:ring-red-500 w-full sm:w-auto"
+          className="btn-premium btn-premium-danger w-full sm:w-auto"
         >
           Delete scenario
         </button>
@@ -366,23 +366,23 @@ export function ScenarioForm({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         <label className="block">
-          <span className="text-sm text-zinc-400">Building name</span>
+          <span className="text-sm text-slate-300">Building name</span>
           <input type="text" value={scenario.building_name ?? ""} onChange={(e) => update("building_name", e.target.value)} className={inputClass} placeholder="e.g. Capital View Center" />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Suite</span>
+          <span className="text-sm text-slate-300">Suite</span>
           <input type="text" value={scenario.suite ?? ""} onChange={(e) => update("suite", e.target.value)} className={inputClass} placeholder="e.g. 220" />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Floor (optional)</span>
+          <span className="text-sm text-slate-300">Floor (optional)</span>
           <input type="text" value={scenario.floor ?? ""} onChange={(e) => update("floor", e.target.value)} className={inputClass} placeholder="e.g. 2" />
         </label>
         <label className="block sm:col-span-2 xl:col-span-2">
-          <span className="text-sm text-zinc-400">Street address (optional)</span>
+          <span className="text-sm text-slate-300">Street address (optional)</span>
           <input type="text" value={scenario.address ?? ""} onChange={(e) => update("address", e.target.value)} className={inputClass} placeholder="e.g. 123 Main St, City, State" />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">RSF</span>
+          <span className="text-sm text-slate-300">RSF</span>
           <input
             type="number"
             min={0.01}
@@ -393,7 +393,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Commencement</span>
+          <span className="text-sm text-slate-300">Commencement</span>
           <input
             type="date"
             value={scenario.commencement}
@@ -402,7 +402,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Expiration</span>
+          <span className="text-sm text-slate-300">Expiration</span>
           <input
             type="date"
             value={scenario.expiration}
@@ -411,7 +411,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Free rent start month</span>
+          <span className="text-sm text-slate-300">Free rent start month</span>
           <input
             type="number"
             min={1}
@@ -421,7 +421,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Free rent (months)</span>
+          <span className="text-sm text-slate-300">Free rent (months)</span>
           <input
             type="number"
             min={0}
@@ -433,7 +433,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Abatement type</span>
+          <span className="text-sm text-slate-300">Abatement type</span>
           <select
             value={scenario.free_rent_abatement_type ?? "base"}
             onChange={(e) => update("free_rent_abatement_type", (e.target.value === "gross" ? "gross" : "base"))}
@@ -444,7 +444,7 @@ export function ScenarioForm({
           </select>
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">TI allowance ($/SF)</span>
+          <span className="text-sm text-slate-300">TI allowance ($/SF)</span>
           <input
             type="number"
             min={0}
@@ -457,7 +457,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Opex mode</span>
+          <span className="text-sm text-slate-300">Opex mode</span>
           <select
             value={scenario.opex_mode}
             onChange={(e) => update("opex_mode", e.target.value as OpexMode)}
@@ -468,7 +468,7 @@ export function ScenarioForm({
           </select>
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Base opex ($/SF/yr)</span>
+          <span className="text-sm text-slate-300">Base opex ($/SF/yr)</span>
           <input
             type="number"
             min={0}
@@ -481,7 +481,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Base year opex ($/SF/yr)</span>
+          <span className="text-sm text-slate-300">Base year opex ($/SF/yr)</span>
           <input
             type="number"
             min={0}
@@ -494,7 +494,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Opex growth (e.g. 0.03)</span>
+          <span className="text-sm text-slate-300">Opex growth (e.g. 0.03)</span>
           <input
             type="number"
             min={0}
@@ -505,7 +505,7 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-zinc-400">Discount rate (annual; override for this option, e.g. 0.08 = 8%)</span>
+          <span className="text-sm text-slate-300">Discount rate (annual; override for this option, e.g. 0.08 = 8%)</span>
           <input
             type="number"
             min={0}
@@ -520,11 +520,11 @@ export function ScenarioForm({
         </label>
       </div>
 
-      <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-3 sm:p-4">
+      <div className="mt-6 rounded-2xl border border-slate-300/20 bg-slate-900/36 p-3 sm:p-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-2">
           <div>
-            <h3 className="text-sm font-semibold text-white">Rent schedule</h3>
-            <p className="text-xs text-zinc-400 mt-1">
+            <h3 className="text-base font-semibold text-slate-100 tracking-tight">Rent schedule</h3>
+            <p className="text-xs text-slate-300 mt-1">
               Month `1` is lease start. Steps must be continuous with no overlap. Example: `1-12`, `13-24`, `25-36`.
             </p>
           </div>
@@ -555,7 +555,7 @@ export function ScenarioForm({
         </div>
         {rentStepIssues.length > 0 && (
           <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-            <p className="text-xs font-medium text-amber-200 mb-1">Rent step warnings</p>
+            <p className="text-xs font-medium text-amber-100 mb-1">Rent step warnings</p>
             <ul className="list-disc list-inside text-xs text-amber-100/90 space-y-0.5">
               {rentStepIssues.map((issue) => (
                 <li key={issue}>{issue}</li>
@@ -564,23 +564,23 @@ export function ScenarioForm({
           </div>
         )}
         <div className="hidden xl:grid grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 px-1 pb-1">
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Step</span>
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Rate ($/SF/yr)</span>
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Opex ($/SF/yr)</span>
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">RSF</span>
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Lease years</span>
-          <span className="text-[11px] uppercase tracking-wide text-zinc-500">Action</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Step</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Start month</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">End month</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Rate ($/SF/yr)</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Opex ($/SF/yr)</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">RSF</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Lease years</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Action</span>
         </div>
         {scenario.rent_steps.map((step, i) => (
-          <div key={i} className="rounded-lg border border-white/10 bg-white/[0.015] p-3 mb-3">
+          <div key={i} className="rounded-xl border border-slate-300/20 bg-slate-900/28 p-3 mb-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_112px] gap-3 xl:gap-2 items-end">
-              <div className="text-xs text-zinc-400 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02] sm:col-span-2 xl:col-span-1">
+              <div className="text-xs text-slate-300 min-h-10 flex items-center px-2 rounded-lg border border-slate-300/20 bg-slate-900/40 sm:col-span-2 xl:col-span-1">
                 #{i + 1}
               </div>
               <label className="col-span-1">
-                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">Start month</span>
+                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden">Start month</span>
                 <input
                   type="number"
                   min={1}
@@ -588,11 +588,11 @@ export function ScenarioForm({
                   onChange={(e) =>
                     updateRentStep(i, "start", toInternalMonth(Number(e.target.value)))
                   }
-                  className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                  className="input-premium w-full px-2 py-2"
                 />
               </label>
               <label className="col-span-1">
-                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">End month</span>
+                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden">End month</span>
                 <input
                   type="number"
                   min={1}
@@ -600,11 +600,11 @@ export function ScenarioForm({
                   onChange={(e) =>
                     updateRentStep(i, "end", toInternalMonth(Number(e.target.value)))
                   }
-                  className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                  className="input-premium w-full px-2 py-2"
                 />
               </label>
               <label className="col-span-1">
-                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden">Rate ($/SF/yr)</span>
+                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden">Rate ($/SF/yr)</span>
                 <input
                   type="number"
                   min={0}
@@ -613,55 +613,55 @@ export function ScenarioForm({
                   onChange={(e) =>
                     updateRentStep(i, "rate_psf_yr", Number(e.target.value))
                   }
-                  className="w-full rounded-lg border border-white/20 bg-white/5 px-2 py-2 text-sm text-white focus:ring-1 focus:ring-[#3b82f6] focus:outline-none"
+                  className="input-premium w-full px-2 py-2"
                 />
               </label>
-              <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
-                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden mr-2">Opex ($/SF/yr)</span>
+              <div className="text-xs text-slate-200 min-h-10 flex items-center px-2 rounded-lg border border-slate-300/20 bg-slate-900/40">
+                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden mr-2">Opex ($/SF/yr)</span>
                 {opexRangeLabel(step.start, step.end)}
               </div>
-              <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
-                <span className="text-[11px] text-zinc-500 mb-1 block xl:hidden mr-2">RSF</span>
+              <div className="text-xs text-slate-200 min-h-10 flex items-center px-2 rounded-lg border border-slate-300/20 bg-slate-900/40">
+                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden mr-2">RSF</span>
                 {stepRsfLabel(step.start, step.end)}
               </div>
-              <div className="text-xs text-zinc-300 min-h-10 flex items-center px-2 rounded-lg border border-white/10 bg-white/[0.02]">
+              <div className="text-xs text-slate-200 min-h-10 flex items-center px-2 rounded-lg border border-slate-300/20 bg-slate-900/40">
                 {leaseYearLabel(step.start, step.end)}
               </div>
               <button
                 type="button"
                 onClick={() => removeRentStep(i)}
                 disabled={scenario.rent_steps.length <= 1}
-                className="h-10 rounded-lg border border-red-500/40 text-red-300 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed w-full"
+                className="h-10 rounded-lg border border-red-500/45 text-red-200 text-xs font-medium hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed w-full"
               >
                 Remove
               </button>
             </div>
           </div>
         ))}
-        <div className="mt-4 rounded-lg border border-white/10 bg-black/20 p-3">
-          <p className="text-xs font-medium text-zinc-200 mb-2">Periodized schedule (output)</p>
-          <p className="text-[11px] text-zinc-500 mb-3">
+        <div className="mt-4 rounded-lg border border-slate-300/20 bg-slate-950/35 p-3">
+          <p className="text-xs font-medium text-slate-100 mb-2">Periodized schedule (output)</p>
+          <p className="text-[11px] text-slate-400 mb-3">
             Auto-split by calendar year, phase-in RSF changes, and abatement boundaries. Abated periods show zero cash-flow components.
           </p>
           <div className="hidden xl:grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 px-1 pb-1">
-            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Start month</span>
-            <span className="text-[11px] uppercase tracking-wide text-zinc-500">End month</span>
-            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Base rent ($/SF/yr)</span>
-            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Opex ($/SF/yr)</span>
-            <span className="text-[11px] uppercase tracking-wide text-zinc-500">RSF</span>
-            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Lease years</span>
-            <span className="text-[11px] uppercase tracking-wide text-zinc-500">Note</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Start month</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">End month</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Base rent ($/SF/yr)</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Opex ($/SF/yr)</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">RSF</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Lease years</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Note</span>
           </div>
           {periodizedRows.map((row, idx) => (
-            <div key={`${row.start}-${row.end}-${idx}`} className="rounded-lg border border-white/10 bg-white/[0.02] p-3 mb-2">
+            <div key={`${row.start}-${row.end}-${idx}`} className="rounded-lg border border-slate-300/20 bg-slate-900/35 p-3 mb-2">
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 xl:gap-2 items-center">
-                <div className="text-sm text-zinc-200">{toDisplayMonth(row.start)}</div>
-                <div className="text-sm text-zinc-200">{toDisplayMonth(row.end)}</div>
-                <div className="text-sm text-zinc-200">{formatCurrencyPsf(row.baseRate)}</div>
-                <div className="text-sm text-zinc-200">{formatCurrencyPsf(row.opexRate)}</div>
-                <div className="text-sm text-zinc-300">{row.rsfLabel}</div>
-                <div className="text-sm text-zinc-300">{row.yearsLabel}</div>
-                <div className={`text-xs ${row.abatementNote ? "text-emerald-300" : "text-zinc-500"}`}>
+                <div className="text-sm text-slate-200">{toDisplayMonth(row.start)}</div>
+                <div className="text-sm text-slate-200">{toDisplayMonth(row.end)}</div>
+                <div className="text-sm text-slate-200">{formatCurrencyPsf(row.baseRate)}</div>
+                <div className="text-sm text-slate-200">{formatCurrencyPsf(row.opexRate)}</div>
+                <div className="text-sm text-slate-300">{row.rsfLabel}</div>
+                <div className="text-sm text-slate-300">{row.yearsLabel}</div>
+                <div className={`text-xs ${row.abatementNote ? "text-emerald-300" : "text-slate-400"}`}>
                   {row.abatementNote || "Standard period"}
                 </div>
               </div>

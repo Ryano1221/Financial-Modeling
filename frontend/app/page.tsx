@@ -976,60 +976,65 @@ export default function Home() {
 
   return (
     <>
-      <div className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex flex-col justify-center items-center text-center px-4 sm:px-6 pt-24">
-        <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-tight">
-          The Commercial Real Estate Model
-        </h1>
+      <section className="relative z-10 section-shell pt-28 sm:pt-32">
+        <div className="app-container text-center">
+          <div className="mx-auto max-w-4xl">
+            <p className="heading-kicker mb-4">Financial intelligence for CRE teams</p>
+            <h1 className="heading-display">
+              The Commercial Real Estate Model
+            </h1>
 
-        <p className="text-zinc-400 text-base sm:text-lg mt-6 max-w-2xl">
-          Transform any lease into a structured, branded financial analysis in minutes.
-          Built for brokerages, investment firms, and enterprise real estate teams.
-        </p>
+            <p className="body-lead mt-6 max-w-2xl mx-auto">
+              Transform any lease into a structured, branded financial analysis in minutes.
+              Built for brokerages, investment firms, and enterprise real estate teams.
+            </p>
+          </div>
 
-        <div className="flex gap-4 sm:gap-6 mt-10 flex-wrap justify-center w-full sm:w-auto">
+          <div className="flex gap-4 sm:gap-6 mt-10 flex-wrap justify-center w-full sm:w-auto">
           <a
             href="/example"
-            className="w-full sm:w-auto px-8 py-4 bg-white text-black font-semibold rounded-full hover:scale-105 transition-transform duration-300"
+            className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
           >
             View Example Report
           </a>
 
           <a
             href="#extract"
-            className="w-full sm:w-auto px-8 py-4 border border-zinc-600 text-white rounded-full hover:bg-zinc-800 transition-colors duration-300"
+            className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
           >
             Try It Live
           </a>
+          </div>
         </div>
-      </div>
+      </section>
 
       <FeatureTiles />
 
-      <main className="relative z-10 mx-auto w-full max-w-[120rem] px-4 py-10 sm:px-6 md:py-14 lg:px-8 lg:py-16 2xl:px-10">
+      <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24">
-        <div className="grid grid-cols-1 xl:grid-cols-[0.9fr_1.1fr] 2xl:grid-cols-[0.85fr_1.15fr] gap-6 lg:gap-8 2xl:gap-10">
+        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10">
           {/* Left column: renewal/relocate + upload & extract */}
           <div className="space-y-5 sm:space-y-6">
-            <section className="rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-5 shadow-xl">
+            <section className="surface-card p-5 sm:p-6">
               <button
                 type="button"
                 onClick={() => setRenewalRelocateExpanded((b) => !b)}
-                className="flex items-center justify-between w-full text-left focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] rounded-lg"
+                className="flex items-center justify-between w-full text-left rounded-lg focus:outline-none focus-ring"
               >
-                <h2 className="text-xs uppercase tracking-widest text-zinc-500 font-medium">
+                <h2 className="heading-kicker">
                   Build renewal vs relocate
                 </h2>
-                <span className="text-zinc-400">
+                <span className="text-slate-400">
                   {renewalRelocateExpanded ? "▼" : "▶"}
                 </span>
               </button>
               {renewalRelocateExpanded && (
-                <div className="mt-4 pt-4 border-t border-white/10">
-                  <p className="text-sm text-zinc-400 mb-4">
+                <div className="mt-4 pt-4 border-t border-slate-300/20">
+                  <p className="text-sm text-slate-300 mb-4">
                     Generate two scenarios (Renewal and Relocation) and load them into the list for comparison.
                   </p>
                   {generateError && (
-                    <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg text-sm">
+                    <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200 text-sm">
                       {generateError}
                     </div>
                   )}
@@ -1037,7 +1042,7 @@ export default function Home() {
                     type="button"
                     onClick={buildRenewalVsRelocate}
                     disabled={generateLoading}
-                    className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98]"
+                    className="btn-premium btn-premium-primary disabled:opacity-50 focus:ring-0"
                   >
                     {generateLoading ? "Generating…" : "Generate renewal & relocation scenarios"}
                   </button>
@@ -1047,22 +1052,22 @@ export default function Home() {
 
             <div id="upload-section">
               <UploadExtractCard>
-                <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Extract from document</p>
-                <h2 className="text-lg font-semibold text-white mb-4">
+                <p className="heading-kicker mb-2">Extract from document</p>
+                <h2 className="heading-section mb-3">
                   Upload & extract
                 </h2>
-                <p className="text-sm text-zinc-400 mb-4">
+                <p className="text-sm text-slate-300 mb-5 leading-relaxed">
                   Upload a PDF or DOCX lease. We extract text (OCR runs automatically for scanned PDFs), then normalize to a lease option. If confidence is low or fields are missing, you’ll review and confirm before adding.
                 </p>
                 <div className="mb-4 flex flex-wrap items-center gap-2">
-                  <label htmlFor="brand-select" className="text-sm font-medium text-zinc-400">
+                  <label htmlFor="brand-select" className="text-sm font-medium text-slate-300">
                     Report brand
                   </label>
                   <select
                     id="brand-select"
                     value={brandId}
                     onChange={(e) => setBrandId(e.target.value)}
-                    className="rounded-lg border border-white/20 bg-white/5 text-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
+                    className="select-premium max-w-[16rem]"
                   >
                     {brands.length === 0 && (
                       <option value="default">default</option>
@@ -1087,14 +1092,14 @@ export default function Home() {
                       onCancel={handleNormalizeCancel}
                     />
                     {pendingNormalizeQueue.length > 1 && (
-                      <p className="mt-2 text-xs text-zinc-400">
+                      <p className="mt-2 text-xs text-slate-400">
                         {pendingNormalizeQueue.length - 1} more extracted file{pendingNormalizeQueue.length - 1 === 1 ? "" : "s"} waiting for review.
                       </p>
                     )}
                   </div>
                 )}
                 {extractError && (
-                  <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300">
+                  <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-200">
                     {extractError}
                   </div>
                 )}
@@ -1104,9 +1109,9 @@ export default function Home() {
                   </div>
                 )}
                 {lastExtractWarnings && lastExtractWarnings.length > 0 && (
-                  <div className="mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm">
-                    <p className="font-medium text-amber-300 mb-1">Warnings from extraction</p>
-                    <ul className="list-disc list-inside text-amber-200/90 space-y-0.5">
+                  <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm">
+                    <p className="font-medium text-amber-200 mb-1">Warnings from extraction</p>
+                    <ul className="list-disc list-inside text-amber-100/90 space-y-0.5">
                       {lastExtractWarnings.map((w, i) => (
                         <li key={i}>{w}</li>
                       ))}
@@ -1114,17 +1119,17 @@ export default function Home() {
                   </div>
                 )}
                 {lastExtractionSummary && (
-                  <div className="mt-3 p-3 bg-white/[0.03] border border-white/10 rounded-lg text-sm">
-                    <p className="font-medium text-white mb-2">Extraction summary</p>
-                    <div className="space-y-1 text-zinc-300 text-xs">
+                  <div className="mt-3 p-3 rounded-lg bg-slate-900/45 border border-slate-300/20 text-sm">
+                    <p className="font-medium text-slate-100 mb-2">Extraction summary</p>
+                    <div className="space-y-1 text-slate-300 text-xs">
                       <p>
-                        <span className="text-zinc-400">Document type detected:</span>{" "}
+                        <span className="text-slate-400">Document type detected:</span>{" "}
                         {lastExtractionSummary.document_type_detected || "unknown"}
                       </p>
                       {lastExtractionSummary.key_terms_found.length > 0 && (
                         <div>
-                          <p className="text-zinc-400">Key terms found</p>
-                          <ul className="list-disc list-inside text-zinc-300">
+                          <p className="text-slate-400">Key terms found</p>
+                          <ul className="list-disc list-inside text-slate-300">
                             {lastExtractionSummary.key_terms_found.map((item, i) => (
                               <li key={`${item}-${i}`}>{item}</li>
                             ))}
@@ -1133,8 +1138,8 @@ export default function Home() {
                       )}
                       {lastExtractionSummary.key_terms_missing.length > 0 && (
                         <div>
-                          <p className="text-zinc-400">Key terms missing</p>
-                          <ul className="list-disc list-inside text-zinc-300">
+                          <p className="text-slate-400">Key terms missing</p>
+                          <ul className="list-disc list-inside text-slate-300">
                             {lastExtractionSummary.key_terms_missing.map((item, i) => (
                               <li key={`${item}-${i}`}>{item}</li>
                             ))}
@@ -1143,7 +1148,7 @@ export default function Home() {
                       )}
                       {lastExtractionSummary.sections_searched.length > 0 && (
                         <p>
-                          <span className="text-zinc-400">Sections searched:</span>{" "}
+                          <span className="text-slate-400">Sections searched:</span>{" "}
                           {lastExtractionSummary.sections_searched.join(", ")}
                         </p>
                       )}
@@ -1180,13 +1185,13 @@ export default function Home() {
           onAcceptChanges={acceptScenarioChanges}
         />
 
-        <section className="pt-6 border-t border-white/10">
-          <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-2">Exports</p>
-          <h2 className="text-lg font-semibold text-white mb-2">Compute & report</h2>
-          <p className="text-sm text-zinc-400 mb-4">
+        <section className="pt-7 border-t border-slate-300/20">
+          <p className="heading-kicker mb-2">Exports</p>
+          <h2 className="heading-section mb-2">Compute & report</h2>
+          <p className="text-sm text-slate-300 mb-4">
             Export Excel or PDF directly from your current scenarios. Analysis refresh is optional.
           </p>
-          <label className="flex items-center gap-2 text-sm text-zinc-400 mb-3">
+          <label className="flex items-center gap-2 text-sm text-slate-300 mb-4">
             <span>Discount rate (default 8%):</span>
             <input
               type="number"
@@ -1195,7 +1200,7 @@ export default function Home() {
               step={0.25}
               value={globalDiscountRate * 100}
               onChange={(e) => setGlobalDiscountRate(Number(e.target.value) / 100)}
-              className="w-20 rounded-lg border border-white/20 bg-white/5 text-white px-2 py-1 text-sm"
+              className="input-premium w-24 !min-h-0 py-1.5"
             />
             <span>%</span>
           </label>
@@ -1204,7 +1209,7 @@ export default function Home() {
               type="button"
               onClick={exportExcelDeck}
               disabled={exportExcelLoading || scenarios.length === 0}
-              className="rounded-full bg-emerald-600/90 text-white px-5 py-2.5 text-sm font-medium hover:bg-emerald-600 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
+              className="btn-premium btn-premium-success w-full sm:w-auto disabled:opacity-50"
             >
               {exportExcelLoading ? "Exporting…" : "Export Excel"}
             </button>
@@ -1212,19 +1217,19 @@ export default function Home() {
               type="button"
               onClick={exportPdfDeck}
               disabled={exportPdfLoading || scenarios.length === 0}
-              className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
+              className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
             >
               {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
             </button>
           </div>
-          <details className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
-            <summary className="cursor-pointer text-sm text-zinc-300">Advanced report actions</summary>
+          <details className="mt-4 rounded-xl border border-slate-300/20 bg-slate-900/30 px-4 py-3">
+            <summary className="cursor-pointer text-sm text-slate-200">Advanced report actions</summary>
             <div className="mt-3 flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={runAnalysis}
                 disabled={loading || scenarios.length === 0}
-                className="rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
+                className="btn-premium btn-premium-primary w-full sm:w-auto disabled:opacity-50"
               >
                 {loading ? "Running…" : "Run analysis"}
               </button>
@@ -1232,7 +1237,7 @@ export default function Home() {
                 type="button"
                 onClick={generateReport}
                 disabled={reportLoading || !selectedScenario}
-                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
+                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
               >
                 {reportLoading ? "Generating…" : "Generate Report"}
               </button>
@@ -1240,52 +1245,52 @@ export default function Home() {
                 type="button"
                 onClick={previewReport}
                 disabled={previewLoading || !selectedScenario}
-                className="rounded-full border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 transition-all disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#0a0a0b] active:scale-[0.98] w-full sm:w-auto"
+                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
               >
                 {previewLoading ? "Opening…" : "Preview Report"}
               </button>
             </div>
           </details>
-          <div className="mt-6 pt-4 border-t border-white/10">
-            <h3 className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-3">Report meta (for PDF cover)</h3>
+          <div className="mt-6 pt-4 border-t border-slate-300/20">
+            <h3 className="heading-kicker mb-3">Report meta (for PDF cover)</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <label className="flex flex-col gap-1">
-                <span className="text-zinc-500">Prepared for</span>
+                <span className="text-slate-400">Prepared for</span>
                 <input
                   type="text"
                   value={reportMeta.prepared_for}
                   onChange={(e) => setReportMeta((m) => ({ ...m, prepared_for: e.target.value }))}
-                  className="rounded-lg border border-white/20 bg-white/5 text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent placeholder:text-zinc-500"
+                  className="input-premium"
                   placeholder="Client or recipient"
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-zinc-500">Prepared by</span>
+                <span className="text-slate-400">Prepared by</span>
                 <input
                   type="text"
                   value={reportMeta.prepared_by}
                   onChange={(e) => setReportMeta((m) => ({ ...m, prepared_by: e.target.value }))}
-                  className="rounded-lg border border-white/20 bg-white/5 text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent placeholder:text-zinc-500"
+                  className="input-premium"
                   placeholder="Analyst or firm"
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-zinc-500">Proposal name</span>
+                <span className="text-slate-400">Proposal name</span>
                 <input
                   type="text"
                   value={reportMeta.proposal_name}
                   onChange={(e) => setReportMeta((m) => ({ ...m, proposal_name: e.target.value }))}
-                  className="rounded-lg border border-white/20 bg-white/5 text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent placeholder:text-zinc-500"
+                  className="input-premium"
                   placeholder="Used in PDF filename"
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-zinc-500">Property name</span>
+                <span className="text-slate-400">Property name</span>
                 <input
                   type="text"
                   value={reportMeta.property_name}
                   onChange={(e) => setReportMeta((m) => ({ ...m, property_name: e.target.value }))}
-                  className="rounded-lg border border-white/20 bg-white/5 text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent placeholder:text-zinc-500"
+                  className="input-premium"
                   placeholder="Building or address"
                 />
               </label>
@@ -1296,7 +1301,7 @@ export default function Home() {
                   onChange={(e) => setReportMeta((m) => ({ ...m, confidential: e.target.checked }))}
                   className="rounded border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6] focus:ring-offset-0"
                 />
-                <span className="text-zinc-400">Mark report as Confidential in footer</span>
+                <span className="text-slate-300">Mark report as Confidential in footer</span>
               </label>
             </div>
           </div>
@@ -1316,11 +1321,11 @@ export default function Home() {
         </section>
 
             {resultErrors.length > 0 && (
-              <div className="rounded-lg bg-red-500/10 border border-red-500/30 p-4">
-                <h3 className="text-sm font-medium text-red-300 mb-2">
+              <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4">
+                <h3 className="text-sm font-medium text-red-200 mb-2">
                   Errors by scenario
                 </h3>
-                <ul className="text-sm text-red-200 space-y-1">
+                <ul className="text-sm text-red-100/90 space-y-1">
                   {resultErrors.map(({ name, error }) => (
                     <li key={name}>
                       <strong>{name}:</strong> {error}

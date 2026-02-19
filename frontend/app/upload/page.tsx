@@ -112,17 +112,17 @@ export default function UploadPage() {
   }, [extraction, edits, router]);
 
   return (
-    <main className="max-w-4xl mx-auto p-6">
+    <main className="app-container pt-24 pb-14 max-w-5xl">
       <div className="flex items-center gap-4 mb-6">
-        <Link href="/" className="text-stone-600 hover:text-stone-900 text-sm">
+        <Link href="/" className="text-slate-400 hover:text-slate-100 text-sm">
           ← Back to scenarios
         </Link>
-        <h1 className="text-2xl font-semibold text-stone-800">Lease intake (AI)</h1>
+        <h1 className="text-2xl font-semibold text-slate-100 tracking-tight">Lease intake (AI)</h1>
       </div>
 
-      <section className="bg-white rounded-lg border border-stone-200 p-5 shadow-sm mb-6">
-        <h2 className="text-lg font-medium text-stone-700 mb-4">Upload lease PDF</h2>
-        <p className="text-sm text-stone-500 mb-4">
+      <section className="surface-card p-5 mb-6">
+        <h2 className="heading-section mb-4">Upload lease PDF</h2>
+        <p className="text-sm text-slate-300 mb-4">
           Upload a lease document to extract key terms. Review and edit the extracted fields, then create a scenario.
         </p>
         <div className="flex flex-wrap items-center gap-4">
@@ -130,25 +130,25 @@ export default function UploadPage() {
             type="file"
             accept=".pdf,application/pdf"
             onChange={onFileChange}
-            className="text-sm"
+            className="text-sm text-slate-300"
           />
           <button
             type="button"
             onClick={upload}
             disabled={!file || loading}
-            className="rounded bg-stone-800 text-white px-4 py-2 text-sm font-medium hover:bg-stone-700 disabled:opacity-50"
+            className="btn-premium btn-premium-primary disabled:opacity-50"
           >
             {loading ? "Extracting…" : "Extract"}
           </button>
         </div>
         {error && (
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <p className="text-sm text-red-600 flex-1">{error}</p>
+            <p className="text-sm text-red-200 flex-1">{error}</p>
             <button
               type="button"
               onClick={upload}
               disabled={!file || loading}
-              className="min-h-[44px] px-4 py-2 rounded bg-stone-800 text-white text-sm font-medium hover:bg-stone-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-2"
+              className="btn-premium btn-premium-primary disabled:opacity-50"
             >
               Retry
             </button>
@@ -157,9 +157,9 @@ export default function UploadPage() {
       </section>
 
       {extraction && (
-        <section className="bg-white rounded-lg border border-stone-200 p-5 shadow-sm mb-6">
-          <h2 className="text-lg font-medium text-stone-700 mb-4">Review & edit</h2>
-          <p className="text-sm text-stone-500 mb-4">
+        <section className="surface-card p-5 mb-6">
+          <h2 className="heading-section mb-4">Review & edit</h2>
+          <p className="text-sm text-slate-300 mb-4">
             Edit any field below, then click &quot;Create scenario from extraction&quot; to add this as a scenario on the main page.
           </p>
 
@@ -175,37 +175,37 @@ export default function UploadPage() {
               { key: "opex_growth", label: "Opex growth", ext: null, type: "number" as const, default: 0.03 },
               { key: "discount_rate_annual", label: "Discount rate (annual)", ext: null, type: "number" as const, default: 0.06 },
             ].map(({ key, label, ext, type, default: def }) => (
-              <div key={key} className="grid grid-cols-1 md:grid-cols-2 gap-4 border-b border-stone-100 pb-4">
+              <div key={key} className="grid grid-cols-1 md:grid-cols-2 gap-4 border-b border-slate-300/20 pb-4">
                 <div>
-                  <p className="text-xs font-medium text-stone-500 uppercase mb-1">Extracted</p>
-                  <p className="text-sm text-stone-700">
+                  <p className="text-xs font-medium text-slate-400 uppercase mb-1">Extracted</p>
+                  <p className="text-sm text-slate-200">
                     {ext?.value != null ? formatExtractedDisplay(key, ext.value) : "—"}
                     {ext?.confidence != null && (
-                      <span className="ml-2 text-stone-400">({Math.round((ext.confidence ?? 0) * 100)}%)</span>
+                      <span className="ml-2 text-slate-400">({Math.round((ext.confidence ?? 0) * 100)}%)</span>
                     )}
                   </p>
                   {ext?.citation && (
-                    <p className="text-xs text-stone-500 mt-1 italic">&quot;{ext.citation.slice(0, 120)}…&quot;</p>
+                    <p className="text-xs text-slate-400 mt-1 italic">&quot;{ext.citation.slice(0, 120)}…&quot;</p>
                   )}
                 </div>
                 <div>
-                  <p className="text-xs font-medium text-stone-500 uppercase mb-1">Your value</p>
+                  <p className="text-xs font-medium text-slate-400 uppercase mb-1">Your value</p>
                   <input
                     type={type}
                     value={edits[key] !== undefined ? edits[key] : (ext?.value ?? def ?? "")}
                     onChange={(e) => setEdit(key, type === "number" ? (e.target.value === "" ? (def as number) ?? 0 : Number(e.target.value)) : e.target.value)}
-                    className="w-full rounded border border-stone-300 px-3 py-2 text-sm"
+                    className="input-premium"
                   />
                 </div>
               </div>
             ))}
 
             {/* Rent steps table */}
-            <div className="border-b border-stone-100 pb-4">
-              <p className="text-xs font-medium text-stone-500 uppercase mb-1">Rent steps (table)</p>
+            <div className="border-b border-slate-300/20 pb-4">
+              <p className="text-xs font-medium text-slate-400 uppercase mb-1">Rent steps (table)</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-stone-700">
+                  <p className="text-sm text-slate-200">
                     {Array.isArray(extraction.rent_steps_table?.value) && extraction.rent_steps_table.value.length > 0
                       ? JSON.stringify(extraction.rent_steps_table.value)
                       : extraction.rent_steps_table?.value != null
@@ -213,11 +213,11 @@ export default function UploadPage() {
                         : "—"}
                   </p>
                   {extraction.rent_steps_table?.citation && (
-                    <p className="text-xs text-stone-500 mt-1 italic">&quot;{extraction.rent_steps_table.citation.slice(0, 120)}…&quot;</p>
+                    <p className="text-xs text-slate-400 mt-1 italic">&quot;{extraction.rent_steps_table.citation.slice(0, 120)}…&quot;</p>
                   )}
                 </div>
                 <div>
-                  <p className="text-xs text-stone-500">Use as-is in scenario. Edit on main page if needed.</p>
+                  <p className="text-xs text-slate-400">Use as-is in scenario. Edit on main page if needed.</p>
                 </div>
               </div>
             </div>
@@ -230,10 +230,10 @@ export default function UploadPage() {
               { key: "options", label: "Options", ext: extraction.options },
               { key: "termination_clauses", label: "Termination clauses", ext: extraction.termination_clauses },
             ].map(({ key, label, ext }) => (
-              <div key={key} className="border-b border-stone-100 pb-4">
-                <p className="text-xs font-medium text-stone-500 uppercase mb-1">{label}</p>
-                <p className="text-sm text-stone-700">{ext?.value != null ? String(ext.value) : "—"}</p>
-                {ext?.citation && <p className="text-xs text-stone-500 mt-1 italic">&quot;{ext.citation.slice(0, 150)}…&quot;</p>}
+              <div key={key} className="border-b border-slate-300/20 pb-4">
+                <p className="text-xs font-medium text-slate-400 uppercase mb-1">{label}</p>
+                <p className="text-sm text-slate-200">{ext?.value != null ? String(ext.value) : "—"}</p>
+                {ext?.citation && <p className="text-xs text-slate-400 mt-1 italic">&quot;{ext.citation.slice(0, 150)}…&quot;</p>}
               </div>
             ))}
           </div>
@@ -242,7 +242,7 @@ export default function UploadPage() {
             <button
               type="button"
               onClick={createScenario}
-              className="rounded bg-stone-800 text-white px-4 py-2 text-sm font-medium hover:bg-stone-700"
+              className="btn-premium btn-premium-primary"
             >
               Create scenario from extraction
             </button>

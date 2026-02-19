@@ -11,21 +11,21 @@ export function SummaryMatrix({ results }: SummaryMatrixProps) {
   if (results.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
-      <div className="px-5 py-4 border-b border-white/10">
-        <p className="text-xs uppercase tracking-widest text-zinc-500 font-medium mb-1">Portfolio comparison</p>
-        <h2 className="text-lg font-semibold text-white">Comparison matrix</h2>
-        <p className="text-xs text-zinc-500 mt-1">
+    <div className="table-shell">
+      <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
+        <p className="heading-kicker mb-1">Portfolio comparison</p>
+        <h2 className="heading-section">Comparison matrix</h2>
+        <p className="text-xs text-slate-400 mt-1">
           Metrics from lease engine. Each option uses its own discount rate when set, otherwise the global default. Export Excel for the full workbook.
         </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[780px] text-xs sm:text-sm">
           <thead>
-            <tr className="bg-white/[0.04] border-b border-white/10">
-              <th className="text-left py-2.5 px-4 font-medium text-zinc-400 w-48">Metric</th>
+            <tr className="bg-slate-900/35 border-b border-slate-300/20">
+              <th className="text-left py-2.5 px-4 font-medium text-slate-300 w-48">Metric</th>
               {results.map((r) => (
-                <th key={r.scenarioId} className="text-right py-2.5 px-4 font-medium text-zinc-400 min-w-[10rem]">
+                <th key={r.scenarioId} className="text-right py-2.5 px-4 font-medium text-slate-300 min-w-[10rem]">
                   {r.scenarioName}
                 </th>
               ))}
@@ -33,8 +33,8 @@ export function SummaryMatrix({ results }: SummaryMatrixProps) {
           </thead>
           <tbody>
             {METRIC_LABELS.map((key) => (
-              <tr key={key} className="border-b border-white/5 hover:bg-white/[0.04]">
-                <td className="py-2.5 px-4 font-medium text-zinc-300">
+              <tr key={key} className="border-b border-slate-300/10 hover:bg-slate-400/10">
+                <td className="py-2.5 px-4 font-medium text-slate-200">
                   {METRIC_DISPLAY_NAMES[key] ?? key}
                 </td>
                 {results.map((r) => {
@@ -50,7 +50,7 @@ export function SummaryMatrix({ results }: SummaryMatrixProps) {
                   return (
                     <td
                       key={r.scenarioId}
-                      className={`py-2.5 px-4 text-zinc-400 align-top ${notesCell ? "text-left" : "text-right"}`}
+                      className={`py-2.5 px-4 text-slate-300 align-top ${notesCell ? "text-left" : "text-right"}`}
                     >
                       {notesCell ? (
                         noteBullets.length > 0 ? (

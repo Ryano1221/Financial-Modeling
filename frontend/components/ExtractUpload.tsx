@@ -280,13 +280,16 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         className={`
-          border-2 border-dashed rounded-xl p-5 sm:p-8 text-center transition-colors
-          ${dragOver ? "border-[#3b82f6]/50 bg-[#3b82f6]/10" : "border-white/20 bg-white/[0.03]"}
+          border-2 border-dashed rounded-2xl p-6 sm:p-10 text-center transition-all duration-200
+          ${dragOver ? "border-blue-300/70 bg-blue-500/12 shadow-[0_0_0_1px_rgba(147,197,253,0.4),0_16px_45px_rgba(30,64,175,0.2)]" : "border-slate-300/30 bg-slate-900/30"}
           ${loading ? "pointer-events-none opacity-70" : ""}
         `}
       >
-        <p className="text-sm text-zinc-400 mb-2 leading-relaxed">
-          Drag and drop one or more <strong className="text-zinc-300">.pdf</strong> or <strong className="text-zinc-300">.docx</strong> lease documents here, or click to choose.
+        <p className="text-lg md:text-[1.8rem] font-semibold tracking-tight text-slate-100 mb-2">
+          Drag and drop one or more <strong className="text-slate-50">.pdf</strong> or <strong className="text-slate-50">.docx</strong> lease documents here, or click to choose.
+        </p>
+        <p className="text-sm text-slate-400 mb-5 leading-relaxed">
+          We preserve your existing extraction workflow and process each uploaded file in sequence.
         </p>
         <input
           type="file"
@@ -299,11 +302,11 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         />
         <label
           htmlFor="extract-file-input"
-          className="inline-block rounded-full bg-[#3b82f6] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#2563eb] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)] transition-all cursor-pointer focus-within:ring-2 focus-within:ring-[#3b82f6] focus-within:ring-offset-2 focus-within:ring-offset-[#0a0a0b] active:scale-[0.98]"
+          className="btn-premium btn-premium-primary inline-flex items-center justify-center cursor-pointer focus-within:focus-ring"
         >
           {loading ? "Extracting…" : "Choose files"}
         </label>
-        {batchStatus && <p className="mt-3 text-xs text-zinc-400">{batchStatus}</p>}
+        {batchStatus && <p className="mt-3 text-xs text-slate-400">{batchStatus}</p>}
       </div>
     </div>
   );

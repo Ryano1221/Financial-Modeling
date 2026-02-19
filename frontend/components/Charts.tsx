@@ -34,8 +34,8 @@ function MetricCard({
   const values = rows.map(getValue).map((v) => (Number.isFinite(v) ? v : 0));
   const max = Math.max(1, ...values);
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
-      <h3 className="text-sm font-medium text-white mb-4">{title}</h3>
+    <div className="surface-card p-4 sm:p-5">
+      <h3 className="text-base font-semibold text-slate-100 mb-4 tracking-tight">{title}</h3>
       <div className="space-y-3">
         {rows.map((row) => {
           const value = Number.isFinite(getValue(row)) ? getValue(row) : 0;
@@ -43,14 +43,14 @@ function MetricCard({
           return (
             <div key={`${title}-${row.name}`} className="space-y-1.5">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-zinc-300 truncate max-w-[58%] sm:max-w-[65%]" title={row.name}>
+                <span className="text-xs text-slate-200 truncate max-w-[58%] sm:max-w-[65%]" title={row.name}>
                   {row.name}
                 </span>
-                <span className="text-xs text-zinc-400">{format(value)}</span>
+                <span className="text-xs text-slate-300">{format(value)}</span>
               </div>
-              <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+              <div className="h-2 rounded-full bg-slate-600/35 overflow-hidden">
                 <div
-                  className="h-full bg-[#3b82f6] rounded-full transition-all duration-500"
+                  className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-blue-400 to-blue-600"
                   style={{ width: `${widthPct}%` }}
                 />
               </div>

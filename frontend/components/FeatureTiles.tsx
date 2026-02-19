@@ -36,8 +36,12 @@ const trustedBy = ["JLL", "CBRE", "Cushman", "Newmark"];
 
 export function FeatureTiles() {
   return (
-    <section className="relative z-10 px-6 py-16 md:py-24">
-      <div className="max-w-6xl mx-auto">
+    <section className="relative z-10 section-shell">
+      <div className="app-container">
+        <div className="mb-8 sm:mb-10">
+          <p className="heading-kicker mb-3">Platform capabilities</p>
+          <h2 className="heading-section">Institutional analysis workflows, packaged for daily deal execution</h2>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
           {features.map((feature, i) => (
             <motion.div
@@ -46,11 +50,13 @@ export function FeatureTiles() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-40px" }}
               transition={{ duration: 0.5, delay: i * 0.1, ease: [0.22, 1, 0.36, 1] }}
-              className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 md:p-8 hover:border-white/15 hover:bg-white/[0.05] transition-all duration-300"
+              className="surface-card surface-card-hover p-6 md:p-8"
             >
-              <div className="text-[#3b82f6] mb-4">{feature.icon}</div>
-              <h3 className="text-lg font-semibold text-white mb-2">{feature.title}</h3>
-              <p className="text-sm text-zinc-400 leading-relaxed">{feature.description}</p>
+              <div className="mb-5 inline-flex h-11 w-11 items-center justify-center rounded-xl border border-blue-300/30 bg-blue-500/10 text-blue-300">
+                {feature.icon}
+              </div>
+              <h3 className="text-xl font-semibold text-slate-100 tracking-tight mb-2">{feature.title}</h3>
+              <p className="text-sm text-slate-300 leading-relaxed">{feature.description}</p>
             </motion.div>
           ))}
         </div>
@@ -61,23 +67,23 @@ export function FeatureTiles() {
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5, delay: 0.3 }}
-          className="mt-20 pt-16 border-t border-white/10"
+          className="mt-16 sm:mt-20 pt-10 sm:pt-12 border-t border-slate-400/20"
         >
-          <p className="text-xs uppercase tracking-widest text-zinc-500 text-center mb-6">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-400 text-center mb-6">
             Trusted by leading firms
           </p>
           <div className="flex flex-wrap items-center justify-center gap-10 md:gap-16">
             {trustedBy.map((name) => (
               <span
                 key={name}
-                className="text-zinc-500 text-sm font-medium grayscale opacity-70"
+                className="text-slate-400 text-sm font-semibold tracking-wide grayscale opacity-70"
                 aria-hidden
               >
                 {name}
               </span>
             ))}
           </div>
-          <p className="text-xs text-zinc-600 text-center mt-4">
+          <p className="text-xs text-slate-500 text-center mt-4">
             Placeholder logos — no endorsement implied
           </p>
         </motion.div>
