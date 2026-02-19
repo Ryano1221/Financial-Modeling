@@ -21,9 +21,6 @@ export function AppHeader() {
             priority
             sizes="(max-width: 640px) 100px, 120px"
           />
-          <span className="text-base font-semibold text-stone-800 whitespace-nowrap sm:text-lg">
-            TheCREmodel
-          </span>
         </Link>
         <nav className="flex items-center gap-3">
           <Link href="/upload" className="text-sm text-stone-600 hover:text-stone-900">

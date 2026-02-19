@@ -26,9 +26,6 @@ export function TopNav() {
             priority
             sizes="(max-width: 640px) 112px, 140px"
           />
-          <span className="hidden sm:inline text-base font-semibold text-white whitespace-nowrap sm:text-lg tracking-tight">
-            TheCREmodel
-          </span>
         </Link>
       </div>
     </header>
