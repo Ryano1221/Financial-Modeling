@@ -138,6 +138,23 @@ def test_extract_hints_parses_opex_psf_without_year() -> None:
     assert hints["opex_source_year"] is None
 
 
+def test_extract_hints_parses_phase_rent_schedule() -> None:
+    text = (
+        "Term: 84 Months\n"
+        "Phase I - Initial Occupancy (Months 1-18)\n"
+        "Base Rent: $48.00/RSF NNN\n"
+        "Phase II - Expansion Premises (Month 19)\n"
+        "Base Rent: $50.00/RSF NNN\n"
+        "Phase III - Optional Future Expansion (Months 24-48)\n"
+        "Rent set at 95% of Market Rate\n"
+    )
+    hints = main._extract_lease_hints(text, "phase-rent.pdf", "test-rid")
+    assert hints["rent_schedule"] == [
+        {"start_month": 0, "end_month": 17, "rent_psf_annual": 48.0},
+        {"start_month": 18, "end_month": 83, "rent_psf_annual": 50.0},
+    ]
+
+
 def test_note_highlights_include_parking_ratio() -> None:
     text = "Parking ratio shall be 4.0 spaces per 1,000 RSF for the Premises."
     notes = main._extract_lease_note_highlights(text)

@@ -1,7 +1,7 @@
 from datetime import date
 
 from backend.engine.canonical_compute import compute_canonical
-from backend.main import _extract_phase_in_schedule
+from backend.main import _extract_phase_in_schedule, _extract_phase_rent_schedule
 from backend.models import CanonicalLease, PhaseInStep, RentScheduleStep
 
 
@@ -59,6 +59,23 @@ def test_extract_phase_in_schedule_from_ocrish_phase_lines() -> None:
         {"start_month": 0, "end_month": 17, "rsf": 12500.0},
         {"start_month": 18, "end_month": 22, "rsf": 21000.0},
         {"start_month": 23, "end_month": 83, "rsf": 31000.0},
+    ]
+
+
+def test_extract_phase_rent_schedule_from_phase_blocks() -> None:
+    text = """
+    Term: 84 Months
+    Phase I - Initial Occupancy (Months 1-18)
+    Base Rent: $48.00/RSF NNN
+    Phase II - Expansion Premises (Month 19)
+    Base Rent: $50.00/RSF NNN
+    Phase III - Optional Future Expansion (Months 24-48)
+    Rent set at 95% of Market Rate
+    """
+    steps = _extract_phase_rent_schedule(text, term_months_hint=84)
+    assert steps == [
+        {"start_month": 0, "end_month": 17, "rent_psf_annual": 48.0},
+        {"start_month": 18, "end_month": 83, "rent_psf_annual": 50.0},
     ]
 
 

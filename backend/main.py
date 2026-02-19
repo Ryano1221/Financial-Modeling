@@ -40,7 +40,9 @@ from models import (
     GenerateScenariosResponse,
     LeaseExtraction,
     NormalizerResponse,
+    PhaseInStep,
     ReportRequest,
+    RentScheduleStep,
     Scenario,
 )
 from engine.canonical_compute import compute_canonical, normalize_canonical_lease
@@ -1396,6 +1398,191 @@ def _extract_phase_in_schedule(text: str, term_months_hint: Optional[int] = None
     return deduped
 
 
+def _extract_phase_rent_schedule(text: str, term_months_hint: Optional[int] = None) -> list[dict]:
+    """
+    Extract base-rent schedule from phase blocks such as:
+      "Phase I ... (Months 1-18) ... Base Rent: $48.00/RSF"
+      "Phase II ... (Month 19) ... Base Rent: $50.00/RSF"
+    Returns canonical month-index steps (0-based).
+    """
+    if not text:
+        return []
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return []
+
+    phase_header_pat = re.compile(r"(?i)^\s*phase\s+(?:[ivx]+|\d+)\b")
+    month_range_pat = re.compile(
+        r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b"
+    )
+    month_single_pat = re.compile(r"(?i)\bmonth\s*(\d{1,3})\b")
+    rent_rate_patterns = [
+        re.compile(
+            r"(?i)\b(?:base\s+rent|rental\s+rate)\b[^\n$]{0,70}\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf)\b"
+        ),
+        re.compile(r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf)\b"),
+    ]
+
+    def _month_window_from_text(s: str) -> tuple[Optional[int], Optional[int]]:
+        m = month_range_pat.search(s)
+        if m:
+            start_1 = _coerce_int_token(m.group(1), 0)
+            end_1 = _coerce_int_token(m.group(2), 0)
+            if start_1 > 0 and end_1 >= start_1:
+                return int(start_1), int(end_1)
+        m = month_single_pat.search(s)
+        if m:
+            start_1 = _coerce_int_token(m.group(1), 0)
+            if start_1 > 0:
+                return int(start_1), None
+        return None, None
+
+    def _extract_rate_from_block(block_lines: list[str]) -> Optional[float]:
+        candidates: list[tuple[int, int, float]] = []
+        for idx, ln in enumerate(block_lines):
+            low = ln.lower()
+            if any(
+                bad in low
+                for bad in (
+                    "security deposit",
+                    "letter of credit",
+                    "ti allowance",
+                    "tenant improvement allowance",
+                    "parking",
+                    "operating expense",
+                    "cam",
+                    "market rate",
+                )
+            ):
+                continue
+            for pat_idx, pat in enumerate(rent_rate_patterns):
+                for m in pat.finditer(ln):
+                    rate = _coerce_float_token(m.group(1), 0.0)
+                    if not (2.0 <= rate <= 500.0):
+                        continue
+                    score = 1
+                    if "base rent" in low or "rental rate" in low:
+                        score += 4
+                    if pat_idx == 0:
+                        score += 2
+                    candidates.append((score, idx, float(rate)))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+        return candidates[0][2]
+
+    phase_indices: list[int] = []
+    for i, ln in enumerate(lines):
+        if not phase_header_pat.search(ln):
+            continue
+        low_ln = ln.lower()
+        if any(
+            bad in low_ln
+            for bad in (
+                "security deposit",
+                "letter of credit",
+                "burn down",
+                "performance",
+                "accelerat",
+            )
+        ):
+            continue
+        phase_indices.append(i)
+    if not phase_indices:
+        return []
+
+    phase_blocks: list[dict] = []
+    for pos, idx in enumerate(phase_indices):
+        next_idx = phase_indices[pos + 1] if pos + 1 < len(phase_indices) else len(lines)
+        block = lines[idx:next_idx]
+        if not block:
+            continue
+        start_1, end_1 = _month_window_from_text(block[0])
+        if start_1 is None:
+            for ln in block[:6]:
+                start_1, end_1 = _month_window_from_text(ln)
+                if start_1 is not None:
+                    break
+        if start_1 is None:
+            continue
+        phase_blocks.append(
+            {
+                "start_1": int(start_1),
+                "end_1": int(end_1) if end_1 is not None else None,
+                "block": block,
+            }
+        )
+    if not phase_blocks:
+        return []
+
+    rated_steps: list[dict] = []
+    for i, phase in enumerate(phase_blocks):
+        rate = _extract_rate_from_block(phase["block"])
+        if rate is None:
+            continue
+        start_1 = int(phase["start_1"])
+        end_1_val = phase["end_1"]
+        next_start_1 = int(phase_blocks[i + 1]["start_1"]) if i + 1 < len(phase_blocks) else None
+        if end_1_val is not None:
+            end_1 = int(end_1_val)
+        elif next_start_1 is not None and next_start_1 > start_1:
+            end_1 = next_start_1 - 1
+        elif term_months_hint and term_months_hint > 0:
+            end_1 = int(term_months_hint)
+        else:
+            end_1 = start_1
+        if next_start_1 is not None and end_1 >= next_start_1:
+            end_1 = max(start_1, next_start_1 - 1)
+        start = max(0, start_1 - 1)
+        end = max(start, end_1 - 1)
+        if term_months_hint and term_months_hint > 0:
+            if start >= term_months_hint:
+                continue
+            end = min(end, term_months_hint - 1)
+        rated_steps.append(
+            {
+                "start_month": int(start),
+                "end_month": int(end),
+                "rent_psf_annual": float(round(rate, 4)),
+            }
+        )
+    if not rated_steps:
+        return []
+
+    rated_steps = sorted(rated_steps, key=lambda s: (int(s["start_month"]), int(s["end_month"])))
+    normalized: list[dict] = []
+    expected = 0
+    for step in rated_steps:
+        start = int(step["start_month"])
+        end = int(step["end_month"])
+        rate = float(step["rent_psf_annual"])
+        if not normalized and start > 0:
+            start = 0
+        if start > expected and normalized:
+            normalized[-1] = {**normalized[-1], "end_month": start - 1}
+        if start < expected:
+            start = expected
+        if end < start:
+            end = start
+        normalized.append({"start_month": start, "end_month": end, "rent_psf_annual": rate})
+        expected = end + 1
+
+    if term_months_hint and term_months_hint > 0 and normalized[-1]["end_month"] < (term_months_hint - 1):
+        normalized[-1] = {**normalized[-1], "end_month": int(term_months_hint - 1)}
+
+    merged: list[dict] = []
+    for step in normalized:
+        if (
+            merged
+            and round(float(merged[-1]["rent_psf_annual"]), 4) == round(float(step["rent_psf_annual"]), 4)
+            and int(step["start_month"]) <= int(merged[-1]["end_month"]) + 1
+        ):
+            merged[-1] = {**merged[-1], "end_month": max(int(merged[-1]["end_month"]), int(step["end_month"]))}
+        else:
+            merged.append(step)
+    return merged
+
+
 def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     """
     Heuristic extraction: RSF (prefer premises/suite and avoid ratio/table values), term dates
@@ -1419,6 +1606,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "opex_psf_year_1": None,
         "opex_source_year": None,
         "phase_in_schedule": [],
+        "rent_schedule": [],
     }
     if not text:
         return hints
@@ -1662,6 +1850,15 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["_rsf_score"] = max(int(hints.get("_rsf_score", -999) or -999), 10)
         if not hints.get("term_months"):
             hints["term_months"] = int(phase_schedule[-1]["end_month"]) + 1
+
+    phase_rent_schedule = _extract_phase_rent_schedule(
+        text,
+        term_months_hint=_coerce_int_token(hints.get("term_months"), 0),
+    )
+    if phase_rent_schedule:
+        hints["rent_schedule"] = phase_rent_schedule
+        if not hints.get("term_months"):
+            hints["term_months"] = int(phase_rent_schedule[-1]["end_month"]) + 1
 
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
@@ -2228,6 +2425,73 @@ def _normalize_impl(
                     if last_end != target_end:
                         trimmed[-1] = last.model_copy(update={"end_month": target_end})
                     updates["rent_schedule"] = trimmed
+            hinted_rent_schedule = extracted_hints.get("rent_schedule")
+            if isinstance(hinted_rent_schedule, list) and hinted_rent_schedule:
+                normalized_hint: list[dict] = []
+                expected = 0
+                hint_steps = [s for s in hinted_rent_schedule if isinstance(s, dict)]
+                for raw_step in sorted(
+                    hint_steps,
+                    key=lambda s: (
+                        int(_coerce_int_token((s or {}).get("start_month"), 0) or 0),
+                        int(_coerce_int_token((s or {}).get("end_month"), 0) or 0),
+                    ),
+                ):
+                    start_m = _coerce_int_token(raw_step.get("start_month"), 0)
+                    end_m = _coerce_int_token(raw_step.get("end_month"), start_m)
+                    rate = _coerce_float_token(raw_step.get("rent_psf_annual"), 0.0)
+                    if start_m is None or end_m is None or rate is None:
+                        continue
+                    start_m = max(0, int(start_m))
+                    end_m = max(start_m, int(end_m))
+                    if start_m > expected and normalized_hint:
+                        normalized_hint[-1] = {**normalized_hint[-1], "end_month": start_m - 1}
+                    if start_m < expected:
+                        start_m = expected
+                    if end_m < start_m:
+                        end_m = start_m
+                    normalized_hint.append(
+                        {
+                            "start_month": start_m,
+                            "end_month": end_m,
+                            "rent_psf_annual": max(0.0, float(rate)),
+                        }
+                    )
+                    expected = end_m + 1
+
+                if normalized_hint:
+                    if target_term_months > 0:
+                        target_end = max(0, target_term_months - 1)
+                        normalized_hint = [s for s in normalized_hint if int(s["start_month"]) <= target_end]
+                        if normalized_hint:
+                            normalized_hint[-1] = {
+                                **normalized_hint[-1],
+                                "end_month": target_end,
+                            }
+                    current_rent_schedule = updates.get("rent_schedule", canonical.rent_schedule) or []
+                    current_rates: set[float] = set()
+                    for step in current_rent_schedule:
+                        if isinstance(step, dict):
+                            current_rates.add(round(_coerce_float_token(step.get("rent_psf_annual"), 0.0) or 0.0, 4))
+                        else:
+                            current_rates.add(round(float(getattr(step, "rent_psf_annual", 0.0) or 0.0), 4))
+                    hinted_rates = {round(float(s["rent_psf_annual"]), 4) for s in normalized_hint}
+
+                    should_override_rent = False
+                    if not current_rent_schedule:
+                        should_override_rent = True
+                    elif len(current_rent_schedule) == 1 and len(normalized_hint) > 1:
+                        should_override_rent = True
+                    elif len(current_rates) <= 1 and len(hinted_rates) > len(current_rates) and len(normalized_hint) > 1:
+                        should_override_rent = True
+                    elif len(current_rent_schedule) == 1:
+                        only = next(iter(current_rates), 0.0)
+                        if abs(float(only) - 30.0) < 0.01 and len(normalized_hint) >= 1:
+                            should_override_rent = True
+
+                    if should_override_rent:
+                        updates["rent_schedule"] = [RentScheduleStep(**step) for step in normalized_hint]
+                        warnings.append("Rent schedule extracted from phased rent terms in the uploaded document.")
             phase_schedule_hint = extracted_hints.get("phase_in_schedule")
             if isinstance(phase_schedule_hint, list) and phase_schedule_hint:
                 normalized_phase = []
@@ -2247,7 +2511,7 @@ def _normalize_impl(
                         }
                     )
                 if normalized_phase:
-                    updates["phase_in_schedule"] = normalized_phase
+                    updates["phase_in_schedule"] = [PhaseInStep(**step) for step in normalized_phase]
                     max_phase_rsf = max(float(s["rsf"]) for s in normalized_phase)
                     if _should_override_rsf(
                         _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0),
