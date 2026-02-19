@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import calendar
+import base64
+import binascii
+import re
 from datetime import date
 from enum import Enum
 from typing import Any, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class OpexMode(str, Enum):
@@ -206,12 +209,117 @@ class GenerateScenariosResponse(BaseModel):
 
 class ReportBranding(BaseModel):
     """Optional branding for PDF report."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     client_name: Optional[str] = None
     logo_url: Optional[str] = None
     date: Optional[str] = None
     market: Optional[str] = None
     submarket: Optional[str] = None
     broker_name: Optional[str] = None
+    # White-label theme inputs (snake_case and camelCase aliases accepted)
+    brand_name: Optional[str] = Field(default=None, validation_alias=AliasChoices("brand_name", "brandName"))
+    logo_asset_url: Optional[str] = Field(default=None, validation_alias=AliasChoices("logo_asset_url", "logoAssetUrl"))
+    logo_asset_bytes: Optional[str] = Field(default=None, validation_alias=AliasChoices("logo_asset_bytes", "logoAssetBytes", "logoAssetBase64"))
+    primary_color: Optional[str] = Field(default=None, validation_alias=AliasChoices("primary_color", "primaryColor"))
+    header_text: Optional[str] = Field(default=None, validation_alias=AliasChoices("header_text", "headerText"))
+    footer_text: Optional[str] = Field(default=None, validation_alias=AliasChoices("footer_text", "footerText"))
+    prepared_by_name: Optional[str] = Field(default=None, validation_alias=AliasChoices("prepared_by_name", "preparedByName"))
+    prepared_by_title: Optional[str] = Field(default=None, validation_alias=AliasChoices("prepared_by_title", "preparedByTitle"))
+    prepared_by_company: Optional[str] = Field(default=None, validation_alias=AliasChoices("prepared_by_company", "preparedByCompany"))
+    prepared_by_email: Optional[str] = Field(default=None, validation_alias=AliasChoices("prepared_by_email", "preparedByEmail"))
+    prepared_by_phone: Optional[str] = Field(default=None, validation_alias=AliasChoices("prepared_by_phone", "preparedByPhone"))
+    disclaimer_override: Optional[str] = Field(default=None, validation_alias=AliasChoices("disclaimer_override", "disclaimerOverride"))
+    cover_photo: Optional[str] = Field(default=None, validation_alias=AliasChoices("cover_photo", "coverPhoto"))
+    client_logo_asset_url: Optional[str] = Field(default=None, validation_alias=AliasChoices("client_logo_asset_url", "clientLogoAssetUrl"))
+    confidentiality_line: Optional[str] = Field(default=None, validation_alias=AliasChoices("confidentiality_line", "confidentialityLine"))
+    report_title: Optional[str] = Field(default=None, validation_alias=AliasChoices("report_title", "reportTitle"))
+
+    @field_validator(
+        "brand_name",
+        "client_name",
+        "broker_name",
+        "market",
+        "submarket",
+        "header_text",
+        "footer_text",
+        "prepared_by_name",
+        "prepared_by_title",
+        "prepared_by_company",
+        "prepared_by_email",
+        "prepared_by_phone",
+        "confidentiality_line",
+        "report_title",
+        mode="before",
+    )
+    @classmethod
+    def _trim_text_fields(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return text[:400]
+
+    @field_validator("disclaimer_override", mode="before")
+    @classmethod
+    def _trim_disclaimer(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return text[:3000]
+
+    @field_validator(
+        "logo_url",
+        "logo_asset_url",
+        "cover_photo",
+        "client_logo_asset_url",
+        mode="before",
+    )
+    @classmethod
+    def _validate_media_urls(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if len(text) > 4096:
+            raise ValueError("media URL is too long")
+        if text.startswith(("https://", "http://", "data:image/")):
+            return text
+        raise ValueError("media URL must start with https://, http://, or data:image/")
+
+    @field_validator("primary_color", mode="before")
+    @classmethod
+    def _validate_primary_color(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if re.fullmatch(r"#[0-9a-fA-F]{3,8}", text):
+            return text
+        raise ValueError("primary_color must be a valid hex color (e.g. #111111)")
+
+    @field_validator("logo_asset_bytes", mode="before")
+    @classmethod
+    def _validate_logo_asset_bytes(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if len(text) > 2_000_000:
+            raise ValueError("logo_asset_bytes is too large")
+        try:
+            decoded = base64.b64decode(text, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise ValueError("logo_asset_bytes must be valid base64") from e
+        if len(decoded) > 1_500_000:
+            raise ValueError("decoded logo_asset_bytes exceeds 1.5MB")
+        return text
 
 
 class ReportScenarioEntry(BaseModel):

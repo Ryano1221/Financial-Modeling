@@ -127,10 +127,26 @@ export interface CashflowResult {
 export interface ReportBranding {
   client_name?: string;
   logo_url?: string;
+  logo_asset_url?: string;
+  logo_asset_bytes?: string;
+  client_logo_asset_url?: string;
   date?: string;
   market?: string;
   submarket?: string;
   broker_name?: string;
+  brand_name?: string;
+  primary_color?: string;
+  header_text?: string;
+  footer_text?: string;
+  prepared_by_name?: string;
+  prepared_by_title?: string;
+  prepared_by_company?: string;
+  prepared_by_email?: string;
+  prepared_by_phone?: string;
+  disclaimer_override?: string;
+  cover_photo?: string;
+  confidentiality_line?: string;
+  report_title?: string;
 }
 
 /** Brand config for white-label report (GET /brands item). */

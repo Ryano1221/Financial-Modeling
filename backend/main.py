@@ -3315,7 +3315,7 @@ def create_report(req: CreateReportRequest) -> CreateReportResponse:
     """
     data = {
         "scenarios": [{"scenario": e.scenario, "result": e.result.model_dump()} for e in req.scenarios],
-        "branding": req.branding.model_dump() if req.branding else {},
+        "branding": req.branding.model_dump(exclude_none=True) if req.branding else {},
     }
     report_id = save_report(data)
     return CreateReportResponse(report_id=report_id)
@@ -3341,7 +3341,12 @@ def get_report_preview(report_id: str):
     data = load_report(report_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Report not found")
-    return HTMLResponse(_build_report_deck_preview_html(data))
+    from reporting.deck_builder import build_report_deck_html
+
+    return HTMLResponse(
+        build_report_deck_html(data),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -3374,6 +3379,10 @@ def _build_report_deck_preview_html(data: dict) -> str:
     Build a print-friendly multi-scenario deck HTML from stored /reports payload.
     This does not depend on frontend runtime JS, so Playwright can render it reliably.
     """
+    from reporting.deck_builder import build_report_deck_html
+
+    return build_report_deck_html(data)
+
     entries = data.get("scenarios") if isinstance(data, dict) else []
     if not isinstance(entries, list):
         entries = []
@@ -3775,36 +3784,20 @@ def build_report_preview(req: ReportRequest) -> str:
 @app.get("/reports/{report_id}/pdf")
 def get_report_pdf(report_id: str):
     """
-    Load report page in Playwright and return PDF stream.
+    Render a deterministic, template-based multi-scenario deck PDF.
     """
     data = load_report(report_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Report not found")
 
     try:
-        from playwright.sync_api import sync_playwright
+        from reporting.deck_builder import render_report_deck_pdf
+        pdf_bytes = render_report_deck_pdf(data)
     except ImportError:
         raise HTTPException(
             status_code=503,
             detail="Playwright not installed. Run: pip install playwright && playwright install chromium",
         )
-
-    url = f"{REPORT_BASE_URL}/report?reportId={report_id}"
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            page.emulate_media(media="print")
-            page.wait_for_timeout(2800)  # allow charts and tables to render before PDF snapshot
-            pdf_bytes = page.pdf(
-                format="A4",
-                landscape=True,
-                print_background=True,
-                margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
-            )
-            browser.close()
     except Exception as e:
         launch_msg = str(e).lower()
         missing_runtime_libs = any(
@@ -3823,39 +3816,21 @@ def get_report_pdf(report_id: str):
                 status_code=503,
                 detail=(
                     "PDF runtime dependencies are missing on backend. "
-                    "Install Playwright system libraries in Docker image, "
-                    "or use /reports/{report_id}/preview as fallback."
+                    "Install Playwright system libraries in Docker image."
                 ),
             )
-        # Fallback: render multi-scenario deck from stored payload HTML (still side-by-side).
-        try:
-            html_str = _build_report_deck_preview_html(data)
-            with sync_playwright() as p:
-                browser = p.chromium.launch()
-                page = browser.new_page()
-                page.set_content(html_str, wait_until="load", timeout=30000)
-                page.emulate_media(media="print")
-                page.wait_for_timeout(400)
-                pdf_bytes = page.pdf(
-                    format="A4",
-                    landscape=True,
-                    print_background=True,
-                    margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
-                )
-                browser.close()
-        except Exception:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Deck PDF generation failed in both URL render and HTML render paths. "
-                    "Use /reports/{report_id}/preview to download HTML and print to PDF."
-                ),
-            )
+        raise HTTPException(
+            status_code=500,
+            detail="Deck PDF generation failed. Use /reports/{report_id}/preview to inspect rendered HTML.",
+        ) from e
 
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="lease-deck-{report_id[:8]}.pdf"'},
+        headers={
+            "Content-Disposition": f'inline; filename="lease-deck-{report_id[:8]}.pdf"',
+            "Cache-Control": "no-store",
+        },
     )
 
 

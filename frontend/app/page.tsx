@@ -660,11 +660,15 @@ export default function Home() {
           body: JSON.stringify({
             scenarios: scenariosForDeck,
             branding: {
+              brand_name: "theCREmodel",
               client_name: meta.prepared_for || "Client",
               broker_name: meta.prepared_by || "theCREmodel",
+              prepared_by_name: meta.prepared_by || "theCREmodel",
+              prepared_by_company: "theCREmodel",
               date: meta.report_date || new Date().toISOString().slice(0, 10),
               market: meta.market || "",
               submarket: meta.submarket || "",
+              confidentiality_line: meta.confidential ? "Confidential" : "",
             },
           }),
         });
