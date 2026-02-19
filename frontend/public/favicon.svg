@@ -1,27 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 512 512">
-  <!-- Generator: Adobe Illustrator 30.0.0, SVG Export Plug-In . SVG Version: 2.1.1 Build 123)  -->
-  <defs>
-    <style>
-      .st0 {
-        fill: none;
-        stroke: #000;
-        stroke-miterlimit: 4.8;
-        stroke-width: 16.8px;
-      }
-
-      .st1 {
-        fill: #fff;
-      }
-    </style>
-  </defs>
-  <rect class="st1" x="88" y="162.42" width="284.02" height="273.89"/>
-  <g>
-    <rect x="96" y="312" width="48" height="120"/>
-    <rect x="168" y="264" width="48" height="168"/>
-    <rect x="240" y="216" width="48" height="216"/>
-    <rect x="312" y="168" width="48" height="264"/>
-    <path class="st0" d="M96,360c96-60,168-120,264-180"/>
-    <polygon points="360 180 336 189.6 350.4 210 360 180"/>
-  </g>
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="128" cy="128" r="124" fill="#000"/>
+  <!-- Solid stepped silhouette with exaggerated taper -->
+  <rect x="28" y="188" width="200" height="24" fill="#fff"/>
+  <rect x="44" y="164" width="168" height="24" fill="#fff"/>
+  <rect x="62" y="140" width="132" height="24" fill="#fff"/>
+  <rect x="80" y="116" width="96" height="24" fill="#fff"/>
+  <rect x="98" y="92" width="60" height="24" fill="#fff"/>
+  <rect x="110" y="68" width="36" height="24" fill="#fff"/>
+  <!-- Subtle notch crown -->
+  <rect x="120" y="68" width="16" height="18" fill="#000"/>
 </svg>
