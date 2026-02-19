@@ -112,13 +112,36 @@ function parseErrorPayloadText(raw: string): string {
   if (!text) return "";
   try {
     const parsed = JSON.parse(text) as { detail?: unknown; error?: unknown; message?: unknown };
-    const detail = typeof parsed.detail === "string" ? parsed.detail.trim() : "";
+    let detail = "";
+    if (typeof parsed.detail === "string") {
+      detail = parsed.detail.trim();
+    } else if (Array.isArray(parsed.detail)) {
+      const parts = parsed.detail
+        .map((item) => {
+          if (typeof item === "string") return item.trim();
+          if (item && typeof item === "object" && "msg" in item) {
+            const msg = (item as { msg?: unknown }).msg;
+            return typeof msg === "string" ? msg.trim() : "";
+          }
+          return "";
+        })
+        .filter(Boolean);
+      detail = parts.join("; ");
+    }
     const error = typeof parsed.error === "string" ? parsed.error.trim() : "";
     const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
     return detail || error || message || text;
   } catch {
     return text;
   }
+}
+
+function extractDataUrlBase64(dataUrl: string | null | undefined): string | null {
+  const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^data:image\/[A-Za-z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) return null;
+  return match[1].replace(/\s+/g, "");
 }
 
 function getBrandingDisplayErrorMessage(error: unknown): string {
@@ -847,6 +870,11 @@ export default function Home() {
     setExportPdfLoading(true);
     setExportPdfError(null);
     try {
+      const clientLogoBase64 = extractDataUrlBase64(clientLogoDataUrl);
+      const clientLogoUrl =
+        clientLogoBase64 || !clientLogoDataUrl || clientLogoDataUrl.startsWith("data:image/")
+          ? undefined
+          : clientLogoDataUrl;
       const scenariosForDeck = scenarios.map((s) => ({
         scenario: scenarioToPayload(s),
         result: getScenarioResultForExport(s),
@@ -871,7 +899,8 @@ export default function Home() {
               date: meta.report_date || formatDateDdMmYyyy(new Date()),
               market: meta.market || "",
               submarket: meta.submarket || "",
-              client_logo_asset_url: clientLogoDataUrl || undefined,
+              client_logo_asset_url: clientLogoUrl,
+              client_logo_asset_bytes: clientLogoBase64 || undefined,
               confidentiality_line: meta.confidential ? "Confidential" : "",
             },
           }),
@@ -925,7 +954,7 @@ export default function Home() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[exportPdfDeck] fatal export error:", msg.slice(0, 600));
-      setExportPdfError("PDF export failed on backend. Please retry after backend redeploy is complete.");
+      setExportPdfError(parseErrorPayloadText(msg) || "PDF export failed on backend. Please try again.");
     } finally {
       setExportPdfLoading(false);
     }

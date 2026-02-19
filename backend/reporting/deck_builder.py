@@ -276,7 +276,12 @@ def resolve_theme(branding: dict[str, Any]) -> DeckTheme:
         or _safe_media_url(_pick(branding, "logo_asset_url", "logoAssetUrl", "logo_url"))
         or _default_thecremodel_logo_src()
     )
-    client_logo_src = _safe_media_url(_pick(branding, "client_logo_asset_url", "clientLogoAssetUrl", "client_logo_url"))
+    client_logo_src = (
+        _logo_src_from_base64(
+            _pick(branding, "client_logo_asset_bytes", "clientLogoAssetBytes", "clientLogoAssetBase64")
+        )
+        or _safe_media_url(_pick(branding, "client_logo_asset_url", "clientLogoAssetUrl", "client_logo_url"))
+    )
     cover_photo = _safe_media_url(_pick(branding, "cover_photo", "coverPhoto"))
 
     return DeckTheme(

@@ -189,6 +189,7 @@ class ReportBranding(BaseModel):
     disclaimer_override: Optional[str] = Field(default=None, validation_alias=AliasChoices("disclaimer_override", "disclaimerOverride"))
     cover_photo: Optional[str] = Field(default=None, validation_alias=AliasChoices("cover_photo", "coverPhoto"))
     client_logo_asset_url: Optional[str] = Field(default=None, validation_alias=AliasChoices("client_logo_asset_url", "clientLogoAssetUrl"))
+    client_logo_asset_bytes: Optional[str] = Field(default=None, validation_alias=AliasChoices("client_logo_asset_bytes", "clientLogoAssetBytes", "clientLogoAssetBase64"))
     confidentiality_line: Optional[str] = Field(default=None, validation_alias=AliasChoices("confidentiality_line", "confidentialityLine"))
     report_title: Optional[str] = Field(default=None, validation_alias=AliasChoices("report_title", "reportTitle"))
 
@@ -262,22 +263,22 @@ class ReportBranding(BaseModel):
             return text
         raise ValueError("primary_color must be a valid hex color (e.g. #111111)")
 
-    @field_validator("logo_asset_bytes", mode="before")
+    @field_validator("logo_asset_bytes", "client_logo_asset_bytes", mode="before")
     @classmethod
-    def _validate_logo_asset_bytes(cls, value: Optional[str]) -> Optional[str]:
+    def _validate_image_asset_bytes(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         text = str(value).strip()
         if not text:
             return None
         if len(text) > 2_000_000:
-            raise ValueError("logo_asset_bytes is too large")
+            raise ValueError("image asset bytes are too large")
         try:
             decoded = base64.b64decode(text, validate=True)
         except (binascii.Error, ValueError) as e:
-            raise ValueError("logo_asset_bytes must be valid base64") from e
+            raise ValueError("image asset bytes must be valid base64") from e
         if len(decoded) > 1_500_000:
-            raise ValueError("decoded logo_asset_bytes exceeds 1.5MB")
+            raise ValueError("decoded image asset bytes exceeds 1.5MB")
         return text
 
 
