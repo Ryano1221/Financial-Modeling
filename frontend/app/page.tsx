@@ -803,10 +803,10 @@ export default function Home() {
 
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24">
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 sm:gap-5 lg:gap-6 bg-tech-grid border border-white/15 p-3 sm:p-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 bg-tech-grid border border-white/15 p-3 sm:p-4">
           {/* Left column: upload & extract */}
-          <div className="space-y-5 sm:space-y-6 xl:col-span-3 2xl:col-span-3">
-            <div id="upload-section" className="reveal-on-scroll xl:sticky xl:top-24">
+          <div className="space-y-5 sm:space-y-6">
+            <div id="upload-section" className="reveal-on-scroll">
               <UploadExtractCard>
                 <p className="heading-kicker mb-2">Extract from document</p>
                 <h2 className="heading-section mb-3">
@@ -893,34 +893,28 @@ export default function Home() {
           </div>
 
           {/* Right column: scenarios + form + actions */}
-          <div className="space-y-5 sm:space-y-6 xl:col-span-9 2xl:col-span-9 min-w-0">
+          <div className="space-y-5 sm:space-y-6">
             <ResultsActionsCard>
-              <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 sm:gap-5 lg:gap-6">
-                <div className="xl:col-span-5 min-w-0">
-                  <ScenarioList
-                    scenarios={scenarios}
-                    selectedId={selectedId}
-                    onSelect={setSelectedId}
-                    onDuplicate={duplicateFromList}
-                    onDelete={deleteScenario}
-                    onRename={renameScenario}
-                    onReorder={reorderScenario}
-                    onToggleIncludeInSummary={toggleIncludeInSummary}
-                    includedInSummary={includedInSummary}
-                  />
-                </div>
+        <ScenarioList
+          scenarios={scenarios}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onDuplicate={duplicateFromList}
+          onDelete={deleteScenario}
+          onRename={renameScenario}
+          onReorder={reorderScenario}
+          onToggleIncludeInSummary={toggleIncludeInSummary}
+          includedInSummary={includedInSummary}
+        />
 
-                <div className="xl:col-span-7 min-w-0">
-                  <ScenarioForm
-                    scenario={selectedScenario}
-                    onUpdate={updateScenario}
-                    onAddScenario={addScenario}
-                    onDuplicateScenario={duplicateScenario}
-                    onDeleteScenario={deleteScenario}
-                    onAcceptChanges={acceptScenarioChanges}
-                  />
-                </div>
-              </div>
+        <ScenarioForm
+          scenario={selectedScenario}
+          onUpdate={updateScenario}
+          onAddScenario={addScenario}
+          onDuplicateScenario={duplicateScenario}
+          onDeleteScenario={deleteScenario}
+          onAcceptChanges={acceptScenarioChanges}
+        />
 
         <section className="pt-7 border-t border-slate-300/20">
           <p className="heading-kicker mb-2">Exports</p>

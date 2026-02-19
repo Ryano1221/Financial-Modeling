@@ -280,12 +280,12 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         className={`
-          border-2 border-dashed rounded-2xl p-5 sm:p-7 text-center transition-all duration-200
+          border-2 border-dashed rounded-2xl p-6 sm:p-10 text-center transition-all duration-200
           ${dragOver ? "border-blue-300/70 bg-blue-500/12 shadow-[0_0_0_1px_rgba(147,197,253,0.4),0_16px_45px_rgba(30,64,175,0.2)]" : "border-slate-300/30 bg-slate-900/30"}
           ${loading ? "pointer-events-none opacity-70" : ""}
         `}
       >
-        <p className="text-xs sm:text-sm font-semibold tracking-tight text-slate-100 mb-4">
+        <p className="text-sm sm:text-base font-semibold tracking-tight text-slate-100 mb-5">
           Drag and drop one or more <strong className="text-slate-50">.pdf</strong> or <strong className="text-slate-50">.docx</strong> lease documents here, or click to choose.
         </p>
         <input
