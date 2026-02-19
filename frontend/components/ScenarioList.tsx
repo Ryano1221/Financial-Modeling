@@ -57,7 +57,7 @@ export function ScenarioList({
         <h2 className="heading-section mb-2">Scenario manager</h2>
         <p className="text-xs text-slate-400">Rename, drag to reorder, include in summary. State is saved locally.</p>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-auto xl:max-h-[42vh]">
         <table className="w-full min-w-[980px] text-xs sm:text-sm">
           <thead>
             <tr className="bg-slate-900/35 border-b border-slate-300/20">
