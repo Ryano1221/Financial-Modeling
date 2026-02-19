@@ -11,10 +11,8 @@ interface ScenarioListProps {
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onRename?: (id: string, newName: string) => void;
-  onMove?: (id: string, direction: "up" | "down") => void;
+  onReorder?: (fromId: string, toId: string) => void;
   onToggleIncludeInSummary?: (id: string) => void;
-  onLockBaseline?: (id: string) => void;
-  baselineId?: string | null;
   includedInSummary?: Record<string, boolean>;
 }
 
@@ -25,14 +23,13 @@ export function ScenarioList({
   onDuplicate,
   onDelete,
   onRename,
-  onMove,
+  onReorder,
   onToggleIncludeInSummary,
-  onLockBaseline,
-  baselineId = null,
   includedInSummary = {},
 }: ScenarioListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [dragId, setDragId] = useState<string | null>(null);
 
   const startRename = (s: ScenarioWithId) => {
     setEditingId(s.id);
@@ -58,7 +55,7 @@ export function ScenarioList({
       <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
         <p className="heading-kicker mb-1">Scenarios</p>
         <h2 className="heading-section mb-2">Scenario manager</h2>
-        <p className="text-xs text-slate-400">Rename, reorder, include in summary, or set baseline. State is saved locally.</p>
+        <p className="text-xs text-slate-400">Rename, drag to reorder, include in summary. State is saved locally.</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[980px] text-xs sm:text-sm">
@@ -75,12 +72,25 @@ export function ScenarioList({
             </tr>
           </thead>
           <tbody>
-            {scenarios.map((s, index) => (
+            {scenarios.map((s) => (
               <tr
                 key={s.id}
+                draggable={!!onReorder}
+                onDragStart={() => setDragId(s.id)}
+                onDragOver={(e) => {
+                  if (!onReorder || !dragId || dragId === s.id) return;
+                  e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (!onReorder || !dragId || dragId === s.id) return;
+                  onReorder(dragId, s.id);
+                  setDragId(null);
+                }}
+                onDragEnd={() => setDragId(null)}
                 className={`border-b border-slate-300/10 hover:bg-slate-400/10 ${
                   selectedId === s.id ? "bg-[#3b82f6]/14" : ""
-                } ${baselineId === s.id ? "ring-l-2 ring-[#3b82f6]" : ""}`}
+                } ${dragId === s.id ? "opacity-60" : ""}`}
               >
                 <td className="py-2.5 px-4">
                   {editingId === s.id ? (
@@ -105,10 +115,8 @@ export function ScenarioList({
                       className="text-left font-medium text-slate-100 hover:underline focus:outline-none focus-ring rounded inline-flex items-center gap-1 max-w-[20rem] min-w-0"
                       title={s.name}
                     >
+                      <span className="text-slate-500 cursor-grab" aria-hidden>{onReorder ? "⋮⋮" : ""}</span>
                       <span className="truncate">{s.name}</span>
-                      {baselineId === s.id && (
-                        <span className="text-[10px] uppercase text-slate-400 font-normal">(baseline)</span>
-                      )}
                     </button>
                   )}
                 </td>
@@ -143,40 +151,6 @@ export function ScenarioList({
                         className="text-slate-300 hover:text-slate-100 text-xs font-medium focus:outline-none focus-ring rounded"
                       >
                         Rename
-                      </button>
-                    )}
-                    {onMove && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => onMove(s.id, "up")}
-                          disabled={index === 0}
-                          className="text-slate-300 hover:text-slate-100 text-xs font-medium disabled:opacity-40 focus:outline-none focus-ring rounded"
-                          aria-label="Move up"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onMove(s.id, "down")}
-                          disabled={index === scenarios.length - 1}
-                          className="text-slate-300 hover:text-slate-100 text-xs font-medium disabled:opacity-40 focus:outline-none focus-ring rounded"
-                          aria-label="Move down"
-                        >
-                          ↓
-                        </button>
-                      </>
-                    )}
-                    {onLockBaseline && (
-                      <button
-                        type="button"
-                        onClick={() => onLockBaseline(s.id)}
-                        className={`text-xs font-medium focus:outline-none focus-ring rounded ${
-                          baselineId === s.id ? "text-[#3b82f6]" : "text-slate-300 hover:text-slate-100"
-                        }`}
-                        title={baselineId === s.id ? "Unlock baseline" : "Lock as baseline"}
-                      >
-                        {baselineId === s.id ? "✓ Baseline" : "Baseline"}
                       </button>
                     )}
                     <button

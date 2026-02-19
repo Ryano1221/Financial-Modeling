@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
 import { Charts, type ChartRow } from "@/components/Charts";
-import { getApiUrl, fetchApi, fetchApiProxy, getAuthHeaders, getDisplayErrorMessage } from "@/lib/api";
+import { getApiUrl, fetchApiProxy, getAuthHeaders, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
 
@@ -27,8 +27,6 @@ import type {
   ScenarioWithId,
   CashflowResult,
   NormalizerResponse,
-  GenerateScenariosRequest,
-  GenerateScenariosResponse,
   ScenarioInput,
   BackendCanonicalLease,
   ExtractionSummary,
@@ -155,9 +153,6 @@ export default function Home() {
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
-  const [renewalRelocateExpanded, setRenewalRelocateExpanded] = useState(false);
-  const [generateLoading, setGenerateLoading] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
@@ -168,7 +163,6 @@ export default function Home() {
   const [globalDiscountRate, setGlobalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [exportExcelError, setExportExcelError] = useState<string | null>(null);
-  const [baselineId, setBaselineId] = useState<string | null>(null);
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
@@ -185,12 +179,11 @@ export default function Home() {
         setHasRestored(true);
         return;
       }
-      const data = JSON.parse(raw) as { scenarios?: ScenarioWithId[]; baselineId?: string | null; includedInSummary?: Record<string, boolean> };
+      const data = JSON.parse(raw) as { scenarios?: ScenarioWithId[]; includedInSummary?: Record<string, boolean> };
       if (Array.isArray(data.scenarios) && data.scenarios.length > 0) {
         setScenarios(data.scenarios);
         if (data.scenarios[0]) setSelectedId(data.scenarios[0].id);
       }
-      if (data.baselineId != null) setBaselineId(data.baselineId);
       if (data.includedInSummary && typeof data.includedInSummary === "object") setIncludedInSummary(data.includedInSummary);
       setHasRestored(true);
     } catch {
@@ -207,12 +200,12 @@ export default function Home() {
     try {
       localStorage.setItem(
         SCENARIOS_STATE_KEY,
-        JSON.stringify({ scenarios, baselineId, includedInSummary: included })
+        JSON.stringify({ scenarios, includedInSummary: included })
       );
     } catch {
       // ignore
     }
-  }, [scenarios, baselineId, includedInSummary, hasRestored]);
+  }, [scenarios, includedInSummary, hasRestored]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !isProduction || scenarios.length === 0) return;
@@ -517,24 +510,20 @@ export default function Home() {
     );
   }, []);
 
-  const moveScenario = useCallback((id: string, direction: "up" | "down") => {
+  const reorderScenario = useCallback((fromId: string, toId: string) => {
     setScenarios((prev) => {
-      const i = prev.findIndex((s) => s.id === id);
-      if (i < 0) return prev;
-      const j = direction === "up" ? i - 1 : i + 1;
-      if (j < 0 || j >= prev.length) return prev;
+      const fromIndex = prev.findIndex((s) => s.id === fromId);
+      const toIndex = prev.findIndex((s) => s.id === toId);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return prev;
       const next = [...prev];
-      [next[i], next[j]] = [next[j], next[i]];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
       return next;
     });
   }, []);
 
   const toggleIncludeInSummary = useCallback((id: string) => {
     setIncludedInSummary((prev) => ({ ...prev, [id]: !(prev[id] !== false) }));
-  }, []);
-
-  const setLockBaseline = useCallback((id: string) => {
-    setBaselineId((prev) => (prev === id ? null : id));
   }, []);
 
   const buildReportMeta = useCallback(() => ({
@@ -649,70 +638,6 @@ export default function Home() {
       setExportPdfLoading(false);
     }
   }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob]);
-
-  const buildRenewalVsRelocate = useCallback(async () => {
-    setGenerateLoading(true);
-    setGenerateError(null);
-    const term = 60;
-    const req: GenerateScenariosRequest = {
-      rsf: 10000,
-      target_term_months: term,
-      discount_rate_annual: 0.06,
-      commencement: "2026-01-01",
-      renewal: {
-        rent_steps: [{ start: 0, end: term - 1, rate_psf_yr: 30 }],
-        free_rent_months: 3,
-        ti_allowance_psf: 50,
-        opex_mode: "nnn",
-        base_opex_psf_yr: 10,
-        base_year_opex_psf_yr: 10,
-        opex_growth: 0.03,
-        parking_spaces: 0,
-        parking_cost_monthly_per_space: 0,
-      },
-      relocation: {
-        rent_steps: [{ start: 0, end: term - 1, rate_psf_yr: 32 }],
-        free_rent_months: 0,
-        ti_allowance_psf: 40,
-        moving_costs_total: 100000,
-        it_cabling_cost: 25000,
-        signage_cost: 5000,
-        ffe_cost: 75000,
-        legal_cost: 15000,
-        downtime_months: 2,
-        overlap_months: 1,
-        broker_fee: 25000,
-        parking_spaces: 0,
-        parking_cost_monthly_per_space: 0,
-        opex_mode: "nnn",
-        base_opex_psf_yr: 10,
-        base_year_opex_psf_yr: 10,
-        opex_growth: 0.03,
-      },
-    };
-    try {
-      const headers = getAuthHeaders();
-      const res = await fetchApi("/generate_scenarios", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(req),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
-      }
-      const data: GenerateScenariosResponse = await res.json();
-      const renewalWithId: ScenarioWithId = { id: nextId(), ...data.renewal };
-      const relocationWithId: ScenarioWithId = { id: nextId(), ...data.relocation };
-      setScenarios([renewalWithId, relocationWithId]);
-      setSelectedId(renewalWithId.id);
-      setResults({});
-    } catch (err) {
-      setGenerateError(getDisplayErrorMessage(err));
-    } finally {
-      setGenerateLoading(false);
-    }
-  }, []);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -849,7 +774,7 @@ export default function Home() {
                   </div>
                   <div className="col-span-4 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
                     <p className="heading-kicker mb-2">Status</p>
-                    <p className="text-lg text-white/90 leading-tight">{(generateLoading || exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
+                    <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
                   </div>
                   <div className="col-span-5 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
                     <p className="heading-kicker mb-2">Brand</p>
@@ -879,43 +804,8 @@ export default function Home() {
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24">
         <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 bg-tech-grid border border-white/15 p-3 sm:p-4">
-          {/* Left column: renewal/relocate + upload & extract */}
+          {/* Left column: upload & extract */}
           <div className="space-y-5 sm:space-y-6">
-            <section className="surface-card p-5 sm:p-6 reveal-on-scroll">
-              <button
-                type="button"
-                onClick={() => setRenewalRelocateExpanded((b) => !b)}
-                className="flex items-center justify-between w-full text-left rounded-lg focus:outline-none focus-ring"
-              >
-                <h2 className="heading-kicker">
-                  Build renewal vs relocate
-                </h2>
-                <span className="text-slate-400">
-                  {renewalRelocateExpanded ? "▼" : "▶"}
-                </span>
-              </button>
-              {renewalRelocateExpanded && (
-                <div className="mt-4 pt-4 border-t border-slate-300/20">
-                  <p className="text-sm text-slate-300 mb-4">
-                    Generate two scenarios (Renewal and Relocation) and load them into the list for comparison.
-                  </p>
-                  {generateError && (
-                    <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200 text-sm">
-                      {generateError}
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={buildRenewalVsRelocate}
-                    disabled={generateLoading}
-                    className="btn-premium btn-premium-primary disabled:opacity-50 focus:ring-0"
-                  >
-                    {generateLoading ? "Generating…" : "Generate renewal & relocation scenarios"}
-                  </button>
-                </div>
-              )}
-            </section>
-
             <div id="upload-section" className="reveal-on-scroll">
               <UploadExtractCard>
                 <p className="heading-kicker mb-2">Extract from document</p>
@@ -1012,10 +902,8 @@ export default function Home() {
           onDuplicate={duplicateFromList}
           onDelete={deleteScenario}
           onRename={renameScenario}
-          onMove={moveScenario}
+          onReorder={reorderScenario}
           onToggleIncludeInSummary={toggleIncludeInSummary}
-          onLockBaseline={setLockBaseline}
-          baselineId={baselineId}
           includedInSummary={includedInSummary}
         />
 
