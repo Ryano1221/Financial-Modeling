@@ -38,10 +38,6 @@ export function FeatureTiles() {
   return (
     <section className="relative z-10 section-shell">
       <div className="app-container">
-        <div className="mb-8 sm:mb-10">
-          <p className="heading-kicker mb-3">Platform capabilities</p>
-          <h2 className="heading-section">Institutional analysis workflows, packaged for daily deal execution</h2>
-        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
           {features.map((feature, i) => (
             <motion.div

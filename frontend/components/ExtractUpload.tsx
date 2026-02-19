@@ -285,11 +285,8 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
           ${loading ? "pointer-events-none opacity-70" : ""}
         `}
       >
-        <p className="text-lg md:text-[1.8rem] font-semibold tracking-tight text-slate-100 mb-2">
+        <p className="text-lg md:text-[1.8rem] font-semibold tracking-tight text-slate-100 mb-5">
           Drag and drop one or more <strong className="text-slate-50">.pdf</strong> or <strong className="text-slate-50">.docx</strong> lease documents here, or click to choose.
-        </p>
-        <p className="text-sm text-slate-400 mb-5 leading-relaxed">
-          We preserve your existing extraction workflow and process each uploaded file in sequence.
         </p>
         <input
           type="file"

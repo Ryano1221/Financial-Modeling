@@ -979,7 +979,6 @@ export default function Home() {
       <section className="relative z-10 section-shell pt-28 sm:pt-32">
         <div className="app-container text-center">
           <div className="mx-auto max-w-4xl">
-            <p className="heading-kicker mb-4">Financial intelligence for CRE teams</p>
             <h1 className="heading-display">
               The Commercial Real Estate Model
             </h1>
