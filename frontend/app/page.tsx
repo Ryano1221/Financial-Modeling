@@ -52,6 +52,8 @@ const NOISY_WARNING_PATTERNS = [
   /automatic extraction failed due to a backend processing issue/i,
   /automatic extraction failed\.\s*heuristic review template loaded/i,
   /rent_schedule was empty; added single step at \$0/i,
+  /automatic extraction fallback was used for this upload/i,
+  /expiration inferred from \d+-month lease term and commencement date/i,
 ];
 const HARD_REVIEW_WARNING_PATTERNS = [
   /automatic extraction failed/i,
