@@ -334,7 +334,7 @@ function ReportContent() {
   const metricChunks = chunkArray(matrixRows, 11);
   const chartChunks = chunkArray(chartRows, 8);
 
-  const reportDate = branding?.date || new Date().toISOString().slice(0, 10);
+  const reportDate = formatDateISO(branding?.date || new Date().toISOString().slice(0, 10));
   const pageBreak = "page-break";
 
   return (
@@ -361,14 +361,18 @@ function ReportContent() {
               <p className="text-stone-500">Report date</p>
               <p className="font-semibold mt-0.5">{reportDate}</p>
             </div>
-            <div className="rounded-xl border border-stone-200 bg-white p-3">
-              <p className="text-stone-500">Market</p>
-              <p className="font-semibold mt-0.5">{branding?.market || "N/A"}</p>
-            </div>
-            <div className="rounded-xl border border-stone-200 bg-white p-3">
-              <p className="text-stone-500">Submarket</p>
-              <p className="font-semibold mt-0.5">{branding?.submarket || "N/A"}</p>
-            </div>
+            {branding?.market ? (
+              <div className="rounded-xl border border-stone-200 bg-white p-3">
+                <p className="text-stone-500">Market</p>
+                <p className="font-semibold mt-0.5">{branding.market}</p>
+              </div>
+            ) : null}
+            {branding?.submarket ? (
+              <div className="rounded-xl border border-stone-200 bg-white p-3">
+                <p className="text-stone-500">Submarket</p>
+                <p className="font-semibold mt-0.5">{branding.submarket}</p>
+              </div>
+            ) : null}
           </div>
 
           {best ? (

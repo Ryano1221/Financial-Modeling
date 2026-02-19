@@ -4,6 +4,7 @@ Memo-quality narrative, risk/observations, notes/limitations, optional confidenc
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from models import CashflowResult, OpexMode, Scenario
@@ -18,6 +19,20 @@ def _year_ranges(term_months: int) -> list[tuple[int, int, int]]:
         if start <= end:
             years.append((y + 1, start, end))
     return years
+
+
+def _fmt_date(value: Any) -> str:
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%Y")
+    text = str(value or "").strip()
+    if not text:
+        return "—"
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text[:10], fmt).date().strftime("%d/%m/%Y")
+        except ValueError:
+            continue
+    return text
 
 
 def _rent_for_year(scenario: Scenario, year_1: int, start_m: int, end_m: int) -> float:
@@ -76,8 +91,8 @@ def build_report_data(
     key_terms = [
         ("Scenario", scenario.name),
         ("RSF", f"{rsf:,.0f}"),
-        ("Commencement", str(scenario.commencement)),
-        ("Expiration", str(scenario.expiration)),
+        ("Commencement", _fmt_date(scenario.commencement)),
+        ("Expiration", _fmt_date(scenario.expiration)),
         ("Term (months)", str(compute_result.term_months)),
         ("Free rent (months)", str(scenario.free_rent_months)),
         ("TI allowance ($/SF)", f"{scenario.ti_allowance_psf:,.2f}"),
@@ -108,7 +123,7 @@ def build_report_data(
     # Assumptions list (raw strings; numbers formatted in builder if we pass formatted later, or keep pre-formatted here)
     assumptions = [
         f"Rentable area: {rsf:,.0f} SF",
-        f"Lease term: {scenario.commencement} to {scenario.expiration}",
+        f"Lease term: {_fmt_date(scenario.commencement)} to {_fmt_date(scenario.expiration)}",
         f"Free rent: {scenario.free_rent_months} months",
         f"TI allowance: ${scenario.ti_allowance_psf:,.2f}/SF",
         f"Opex mode: {scenario.opex_mode.value}",

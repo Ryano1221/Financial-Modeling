@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { ScenarioWithId, ScenarioInput, RentStep, OpexMode } from "@/lib/types";
 import { buildPremisesName } from "@/lib/canonical-api";
 
@@ -41,6 +42,47 @@ export function ScenarioForm({
   onDeleteScenario,
   onAcceptChanges,
 }: ScenarioFormProps) {
+  const [commencementInput, setCommencementInput] = useState("");
+  const [expirationInput, setExpirationInput] = useState("");
+
+  const isoToDisplayDate = (value: string): string => {
+    const match = String(value || "").trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (!match) return "";
+    const yyyy = match[1];
+    const mm = String(Number(match[2])).padStart(2, "0");
+    const dd = String(Number(match[3])).padStart(2, "0");
+    return `${dd}/${mm}/${yyyy}`;
+  };
+
+  const displayToIsoDate = (value: string): string | null => {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (iso) {
+      const yyyy = Number(iso[1]);
+      const mm = Number(iso[2]);
+      const dd = Number(iso[3]);
+      const parsed = new Date(yyyy, mm - 1, dd);
+      if (parsed.getFullYear() === yyyy && parsed.getMonth() + 1 === mm && parsed.getDate() === dd) {
+        return `${String(yyyy)}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+      }
+      return null;
+    }
+    const dmy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!dmy) return null;
+    const dd = Number(dmy[1]);
+    const mm = Number(dmy[2]);
+    const yyyy = Number(dmy[3]);
+    const parsed = new Date(yyyy, mm - 1, dd);
+    if (parsed.getFullYear() !== yyyy || parsed.getMonth() + 1 !== mm || parsed.getDate() !== dd) return null;
+    return `${String(yyyy)}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+  };
+
+  useEffect(() => {
+    setCommencementInput(isoToDisplayDate(scenario?.commencement ?? ""));
+    setExpirationInput(isoToDisplayDate(scenario?.expiration ?? ""));
+  }, [scenario?.id, scenario?.commencement, scenario?.expiration]);
+
   const termMonthsFromDates = (commencement: string, expiration: string): number => {
     const [cy, cm, cd] = String(commencement || "").split("-").map(Number);
     const [ey, em, ed] = String(expiration || "").split("-").map(Number);
@@ -424,19 +466,31 @@ export function ScenarioForm({
         <label className="block">
           <span className="text-sm text-slate-300">Commencement</span>
           <input
-            type="date"
-            value={scenario.commencement}
-            onChange={(e) => update("commencement", e.target.value)}
+            type="text"
+            value={commencementInput}
+            onChange={(e) => setCommencementInput(e.target.value)}
+            onBlur={() => {
+              const iso = displayToIsoDate(commencementInput);
+              if (iso) update("commencement", iso);
+              setCommencementInput(isoToDisplayDate(iso || scenario.commencement));
+            }}
             className={inputClass}
+            placeholder="dd/mm/yyyy"
           />
         </label>
         <label className="block">
           <span className="text-sm text-slate-300">Expiration</span>
           <input
-            type="date"
-            value={scenario.expiration}
-            onChange={(e) => update("expiration", e.target.value)}
+            type="text"
+            value={expirationInput}
+            onChange={(e) => setExpirationInput(e.target.value)}
+            onBlur={() => {
+              const iso = displayToIsoDate(expirationInput);
+              if (iso) update("expiration", iso);
+              setExpirationInput(isoToDisplayDate(iso || scenario.expiration));
+            }}
             className={inputClass}
+            placeholder="dd/mm/yyyy"
           />
         </label>
         <label className="block">

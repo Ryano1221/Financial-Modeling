@@ -24,6 +24,7 @@ import { UploadExtractCard } from "@/components/UploadExtractCard";
 import { ResultsActionsCard } from "@/components/ResultsActionsCard";
 import { Footer } from "@/components/Footer";
 import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
+import { ClientLogoUploader } from "@/components/ClientLogoUploader";
 import type {
   ScenarioWithId,
   CashflowResult,
@@ -132,12 +133,55 @@ function getBrandingDisplayErrorMessage(error: unknown): string {
     return msg;
   }
   if (lower.includes("unauthorized") || lower.includes("forbidden") || lower.includes("permission")) {
-    return "Your account does not have permission to update company branding.";
+    return "Your account does not have permission to update brokerage branding.";
   }
   if (lower.includes("unavailable")) {
     return "Branding storage is temporarily unavailable. Please retry in a minute.";
   }
   return msg;
+}
+
+function formatDateDdMmYyyy(dateValue: Date): string {
+  const dd = String(dateValue.getDate()).padStart(2, "0");
+  const mm = String(dateValue.getMonth() + 1).padStart(2, "0");
+  const yyyy = dateValue.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function normalizeDateDdMmYyyy(raw: string): string {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    const yyyy = Number(iso[1]);
+    const mm = Number(iso[2]);
+    const dd = Number(iso[3]);
+    const parsed = new Date(yyyy, mm - 1, dd);
+    if (parsed.getFullYear() === yyyy && parsed.getMonth() + 1 === mm && parsed.getDate() === dd) {
+      return `${String(dd).padStart(2, "0")}/${String(mm).padStart(2, "0")}/${yyyy}`;
+    }
+  }
+  const dmy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmy) {
+    const dd = Number(dmy[1]);
+    const mm = Number(dmy[2]);
+    const yyyy = Number(dmy[3]);
+    const parsed = new Date(yyyy, mm - 1, dd);
+    if (parsed.getFullYear() === yyyy && parsed.getMonth() + 1 === mm && parsed.getDate() === dd) {
+      return `${String(dd).padStart(2, "0")}/${String(mm).padStart(2, "0")}/${yyyy}`;
+    }
+  }
+  return "";
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  await file.arrayBuffer(); // Touch the file first so file read failures reject early.
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read file."));
+    reader.readAsDataURL(file);
+  });
 }
 
 /** POST /compute-canonical with request id, lease_type normalization, and lifecycle logs. */
@@ -237,6 +281,10 @@ export default function Home() {
   const [brandingLoading, setBrandingLoading] = useState(false);
   const [brandingUploading, setBrandingUploading] = useState(false);
   const [brandingError, setBrandingError] = useState<string | null>(null);
+  const [clientLogoDataUrl, setClientLogoDataUrl] = useState<string | null>(null);
+  const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
+  const [clientLogoUploading, setClientLogoUploading] = useState(false);
+  const [clientLogoError, setClientLogoError] = useState<string | null>(null);
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
@@ -397,6 +445,35 @@ export default function Home() {
   useEffect(() => {
     void loadOrganizationBranding();
   }, [loadOrganizationBranding]);
+
+  const uploadClientLogo = useCallback(async (file: File) => {
+    const mime = (file.type || "").toLowerCase();
+    if (!["image/png", "image/jpeg", "image/jpg", "image/svg+xml"].includes(mime)) {
+      setClientLogoError("Client logo must be PNG, SVG, or JPG.");
+      return;
+    }
+    if (file.size > 1_500_000) {
+      setClientLogoError("Client logo must be 1.5MB or smaller.");
+      return;
+    }
+    setClientLogoUploading(true);
+    setClientLogoError(null);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setClientLogoDataUrl(dataUrl || null);
+      setClientLogoFileName(file.name || null);
+    } catch (err) {
+      setClientLogoError(getDisplayErrorMessage(err));
+    } finally {
+      setClientLogoUploading(false);
+    }
+  }, []);
+
+  const clearClientLogo = useCallback(() => {
+    setClientLogoDataUrl(null);
+    setClientLogoFileName(null);
+    setClientLogoError(null);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -720,11 +797,11 @@ export default function Home() {
   }, [selectedScenario, scenarios, canonicalComputeCache]);
 
   const buildReportMeta = useCallback((): ReportMeta => {
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayDmy = formatDateDdMmYyyy(new Date());
     return {
       prepared_for: reportMeta.prepared_for.trim() || "Client",
       prepared_by: reportMeta.prepared_by.trim() || "theCREmodel",
-      report_date: reportMeta.report_date || todayIso,
+      report_date: normalizeDateDdMmYyyy(reportMeta.report_date) || todayDmy,
       market: reportMeta.market.trim() || inferredReportLocation.market || "",
       submarket: reportMeta.submarket.trim() || inferredReportLocation.submarket || "",
       confidential: true,
@@ -791,9 +868,10 @@ export default function Home() {
               broker_name: meta.prepared_by || "theCREmodel",
               prepared_by_name: meta.prepared_by || "theCREmodel",
               prepared_by_company: meta.prepared_by || "theCREmodel",
-              date: meta.report_date || new Date().toISOString().slice(0, 10),
+              date: meta.report_date || formatDateDdMmYyyy(new Date()),
               market: meta.market || "",
               submarket: meta.submarket || "",
+              client_logo_asset_url: clientLogoDataUrl || undefined,
               confidentiality_line: meta.confidential ? "Confidential" : "",
             },
           }),
@@ -851,7 +929,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1161,6 +1239,16 @@ export default function Home() {
           />
           <div className="mb-5 border-t border-slate-300/20 pt-4">
             <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
+            <div className="mb-3">
+              <ClientLogoUploader
+                logoDataUrl={clientLogoDataUrl}
+                fileName={clientLogoFileName}
+                uploading={clientLogoUploading}
+                error={clientLogoError}
+                onUpload={uploadClientLogo}
+                onClear={clearClientLogo}
+              />
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="text-xs text-slate-400">Prepared for</span>
@@ -1185,10 +1273,17 @@ export default function Home() {
               <label className="block">
                 <span className="text-xs text-slate-400">Report date</span>
                 <input
-                  type="date"
+                  type="text"
                   value={reportMeta.report_date}
                   onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
+                  onBlur={(e) =>
+                    setReportMeta((prev) => ({
+                      ...prev,
+                      report_date: normalizeDateDdMmYyyy(e.target.value),
+                    }))
+                  }
                   className="input-premium mt-1"
+                  placeholder="dd/mm/yyyy"
                 />
               </label>
               <label className="block">
@@ -1213,7 +1308,7 @@ export default function Home() {
               </label>
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today. Market/Submarket use API extracted values when available.
+              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (dd/mm/yyyy). Market/Submarket use API extracted values when available.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

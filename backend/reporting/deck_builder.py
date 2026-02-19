@@ -176,6 +176,13 @@ def _pick(branding: dict[str, Any], *keys: str, default: str = "") -> str:
     return default
 
 
+def _blank_if_na(value: str) -> str:
+    text = str(value or "").strip()
+    if text.lower() in {"n/a", "na", "none", "null", "-", "—"}:
+        return ""
+    return text
+
+
 def _hex_color_or_default(color: str, default: str = DEFAULT_MONOCHROME) -> str:
     raw = (color or "").strip()
     if re.fullmatch(r"#[0-9a-fA-F]{3,8}", raw):
@@ -296,8 +303,8 @@ def resolve_theme(branding: dict[str, Any]) -> DeckTheme:
         cover_photo=cover_photo,
         prepared_for=_pick(branding, "client_name", "prepared_for", "preparedFor", default="Client"),
         report_date=_fmt_date(_pick(branding, "date", "report_date", "reportDate", default=date.today().isoformat())),
-        market=_pick(branding, "market"),
-        submarket=_pick(branding, "submarket"),
+        market=_blank_if_na(_pick(branding, "market")),
+        submarket=_blank_if_na(_pick(branding, "submarket")),
         report_title=_pick(branding, "report_title", "reportTitle", default=DEFAULT_REPORT_TITLE),
         confidentiality_line=_pick(branding, "confidentiality_line", "confidentialityLine", default=DEFAULT_CONFIDENTIALITY),
     )
@@ -833,7 +840,7 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
     ranking = sorted(entries, key=lambda e: _safe_float(e["result"].get("npv_cost"), 0.0))
     winner_name = ranking[0]["name"] if ranking else "N/A"
     winner_npv = _fmt_currency((ranking[0]["result"] if ranking else {}).get("npv_cost"))
-    top_options = ranking[: min(3, len(ranking))]
+    top_options = ranking[1 : min(3, len(ranking))]
 
     logo = (
         f'<img class="cover-logo" src="{_esc(theme.logo_src)}" alt="{_esc(theme.brand_name)}" />'
@@ -857,7 +864,18 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
         theme.prepared_by_email,
         theme.prepared_by_phone,
     ]
-    prepared_by_lines = [line for line in prepared_by_lines if line]
+    prepared_by_unique: list[str] = []
+    seen_prepared_by: set[str] = set()
+    for line in prepared_by_lines:
+        text = str(line or "").strip()
+        if not text:
+            continue
+        dedupe_key = text.lower()
+        if dedupe_key in seen_prepared_by:
+            continue
+        seen_prepared_by.add(dedupe_key)
+        prepared_by_unique.append(text)
+    prepared_by_lines = prepared_by_unique
     prepared_by_html = "<br/>".join(_esc(line) for line in prepared_by_lines) or _esc(theme.prepared_by_name)
     prepared_by_logo = (
         f'<img class="prepared-by-logo" src="{_esc(theme.logo_src)}" alt="{_esc(theme.brand_name)}" />'
@@ -873,13 +891,28 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
     top_options_html = "".join(
         f"""
         <div class="cover-option-strip">
-          <div class="cover-option-rank">#{i + 1}</div>
+          <div class="cover-option-rank">#{i + 2}</div>
           <div class="cover-option-name">{_esc(_truncate_text(entry["name"], 68))}</div>
           <div class="cover-option-metrics">{_esc(_fmt_currency(entry["result"].get("npv_cost")))} NPV · {_esc(_fmt_psf(entry["result"].get("avg_cost_psf_year")))}</div>
-          <div class="cover-option-why">{_esc(_truncate_text(_cover_option_reason(entry, is_best=(i == 0)), 94))}</div>
+          <div class="cover-option-why">{_esc(_truncate_text(_cover_option_reason(entry, is_best=False), 94))}</div>
         </div>
         """
         for i, entry in enumerate(top_options)
+    )
+
+    cover_meta_cards: list[tuple[str, str]] = [
+        ("Prepared for", f"<strong>{_esc(theme.prepared_for)}</strong>"),
+        ("Prepared by", prepared_by_block),
+        ("Report date", f"<strong>{_esc(theme.report_date)}</strong>"),
+    ]
+    if theme.market:
+        cover_meta_cards.append(("Market", f"<strong>{_esc(theme.market)}</strong>"))
+    if theme.submarket:
+        cover_meta_cards.append(("Submarket", f"<strong>{_esc(theme.submarket)}</strong>"))
+    cover_meta_cards.append(("Scenarios", f"<strong>{len(entries)}</strong>"))
+    cover_meta_html = "".join(
+        f"<div><span>{_esc(label)}</span>{value}</div>"
+        for label, value in cover_meta_cards
     )
 
     return f"""
@@ -896,21 +929,14 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
           <div>{client_logo}</div>
         </div>
         <div class="cover-meta-grid">
-          <div><span>Prepared for</span><strong>{_esc(theme.prepared_for)}</strong></div>
-          <div><span>Prepared by</span>{prepared_by_block}</div>
-          <div><span>Report date</span><strong>{_esc(theme.report_date)}</strong></div>
-          <div><span>Market</span><strong>{_esc(theme.market or "N/A")}</strong></div>
-          <div><span>Submarket</span><strong>{_esc(theme.submarket or "N/A")}</strong></div>
-          <div><span>Scenarios</span><strong>{len(entries)}</strong></div>
+          {cover_meta_html}
         </div>
         <div class="cover-winner-strip">
           <span>Best Financial Outcome by NPV</span>
           <strong>{_esc(winner_name)}</strong>
           <p>{_esc(winner_npv)} NPV cost</p>
         </div>
-        <div class="cover-options-stack">
-          {top_options_html}
-        </div>
+        {"<div class='cover-options-stack'>" + top_options_html + "</div>" if top_options_html else ""}
       </div>
     </div>
     """

@@ -71,20 +71,32 @@ export function formatRSF(value: number | null | undefined): string {
   return `${formatNumber(value, { decimals: 0 })} RSF`;
 }
 
-/** Format date: string YYYY-MM-DD returned as-is; Date converted to YYYY-MM-DD; else "". */
+/** Format date as dd/mm/yyyy. Accepts Date, YYYY-MM-DD, or dd/mm/yyyy inputs. */
 export function formatDateISO(value: string | Date | null | undefined): string {
   if (value == null) return "";
   if (value instanceof Date) {
-    const y = value.getFullYear();
-    const m = value.getMonth() + 1;
-    const d = value.getDate();
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${y}-${pad(m)}-${pad(d)}`;
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(value.getUTCDate()).padStart(2, "0");
+    return `${d}/${m}/${y}`;
   }
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
   if (!trimmed) return "";
-  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(trimmed)) return trimmed;
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const yyyy = isoMatch[1];
+    const mm = String(Number(isoMatch[2])).padStart(2, "0");
+    const dd = String(Number(isoMatch[3])).padStart(2, "0");
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  const dmyMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmyMatch) {
+    const dd = String(Number(dmyMatch[1])).padStart(2, "0");
+    const mm = String(Number(dmyMatch[2])).padStart(2, "0");
+    const yyyy = dmyMatch[3];
+    return `${dd}/${mm}/${yyyy}`;
+  }
   return "";
 }
 
