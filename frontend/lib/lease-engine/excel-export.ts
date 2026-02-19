@@ -103,8 +103,62 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   notes: "Notes",
 };
 
+const NOTE_CATEGORY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
+  { label: "Renewal / extension", regex: /\brenew(al)?\b|\bextend\b/i },
+  { label: "ROFR / ROFO", regex: /\brofr\b|\brofo\b|right of first refusal|right of first offer/i },
+  { label: "Expansion / contraction", regex: /\bexpansion\b|\bcontraction\b|\bgive[- ]?back\b/i },
+  { label: "Termination", regex: /\btermination\b|\bearly termination\b/i },
+  { label: "Assignment / sublease", regex: /\bassignment\b|\bsublease\b/i },
+  { label: "Operating expenses", regex: /\bopex\b|\boperating expense\b|\bexpense stop\b|\bbase year\b/i },
+  { label: "Expense caps / exclusions", regex: /\bcap\b|\bexcluded\b|\bexclusion\b|\bcontrollable\b/i },
+  { label: "Parking", regex: /\bparking\b|\bspace(s)?\b|\bratio\b/i },
+  { label: "Use / restrictions", regex: /\bpermitted use\b|\buse restriction\b|\bexclusive use\b|\buse shall be\b/i },
+  { label: "Holdover", regex: /\bholdover\b/i },
+];
+
+function splitNoteFragments(raw: string): string[] {
+  const text = (raw || "").replace(/\r/g, "\n").replace(/\u2022/g, "\n").trim();
+  if (!text) return [];
+  const normalized = text.replace(/\n{2,}/g, "\n");
+  const primary = normalized
+    .split(/\s*\|\s*|\n+|;\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (primary.length > 1) return primary;
+  return normalized
+    .split(/\.\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function classifyNoteCategory(detail: string): string {
+  for (const pattern of NOTE_CATEGORY_PATTERNS) {
+    if (pattern.regex.test(detail)) return pattern.label;
+  }
+  return "General";
+}
+
+function formatNotesByCategory(raw: string): string {
+  const fragments = splitNoteFragments(raw);
+  if (fragments.length === 0) return "";
+  const grouped = new Map<string, string[]>();
+  for (const fragment of fragments) {
+    const category = classifyNoteCategory(fragment);
+    const existing = grouped.get(category) ?? [];
+    const compact = fragment.replace(/\s+/g, " ").trim();
+    if (!existing.some((item) => item.toLowerCase() === compact.toLowerCase())) {
+      existing.push(compact);
+      grouped.set(category, existing);
+    }
+  }
+  return Array.from(grouped.entries())
+    .map(([category, details]) => `${category}: ${details.join(" | ")}`)
+    .join("\n");
+}
+
 export function formatMetricValue(key: string, value: unknown): string {
   if (value == null) return "";
+  if (key === "notes") return formatNotesByCategory(String(value));
   if (typeof value === "number") {
     if (key === "discountRateUsed") return formatPercent(value, { decimals: 1 });
     if (key === "escalationPercent" || key === "opexEscalationPercent") return formatPercent(value);
@@ -154,6 +208,13 @@ export async function buildWorkbook(
       summarySheet.getCell(row, colIndex + 2).value = formatMetricValue(key, val);
     });
   });
+  const notesRow = METRIC_LABELS.indexOf("notes") + 2;
+  if (notesRow >= 2) {
+    summarySheet.getRow(notesRow).height = 90;
+    for (let col = 2; col <= results.length + 1; col++) {
+      summarySheet.getCell(notesRow, col).alignment = { vertical: "top", horizontal: "left", wrapText: true };
+    }
+  }
 
   // ---- One sheet per option ----
   for (let idx = 0; idx < scenarios.length; idx++) {

@@ -68,16 +68,17 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
   right: { style: "thin", color: { argb: "FFD1D5DB" } },
 };
 
-const CLAUSE_PATTERNS: Array<{ label: string; regex: RegExp }> = [
-  { label: "Renewal option", regex: /\brenew(al)?\b|\bextend\b/i },
-  { label: "ROFR", regex: /\brofr\b|right of first refusal/i },
-  { label: "ROFO", regex: /\brofo\b|right of first offer/i },
-  { label: "Expansion right", regex: /\bexpansion\b|\bexpansion right\b/i },
-  { label: "Contraction right", regex: /\bcontraction\b|\bgive[- ]?back\b/i },
-  { label: "Termination right", regex: /\btermination\b|\bearly termination\b/i },
-  { label: "Assignment/Sublease", regex: /\bassignment\b|\bsublease\b/i },
-  { label: "OpEx exclusions", regex: /\bopex exclusion\b|\boperating expense exclusion\b|\bexcluded from opex\b/i },
-  { label: "Expense cap", regex: /\bcap on controllable\b|\bexpense cap\b|\bcontrollable\b/i },
+const NOTE_CATEGORY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
+  { label: "Renewal / extension", regex: /\brenew(al)?\b|\bextend\b/i },
+  { label: "ROFR / ROFO", regex: /\brofr\b|\brofo\b|right of first refusal|right of first offer/i },
+  { label: "Expansion / contraction", regex: /\bexpansion\b|\bcontraction\b|\bgive[- ]?back\b/i },
+  { label: "Termination", regex: /\btermination\b|\bearly termination\b/i },
+  { label: "Assignment / sublease", regex: /\bassignment\b|\bsublease\b/i },
+  { label: "Operating expenses", regex: /\bopex\b|\boperating expense\b|\bexpense stop\b|\bbase year\b/i },
+  { label: "Expense caps / exclusions", regex: /\bcap\b|\bexcluded\b|\bexclusion\b|\bcontrollable\b/i },
+  { label: "Parking", regex: /\bparking\b|\bspace(s)?\b|\bratio\b/i },
+  { label: "Use / restrictions", regex: /\bpermitted use\b|\buse restriction\b|\bexclusive use\b|\buse shall be\b/i },
+  { label: "Holdover", regex: /\bholdover\b/i },
 ];
 
 function safeDiv(numerator: number, denominator: number): number {
@@ -90,6 +91,46 @@ function canonicalSuiteOrFloor(suite?: string | null, floor?: string | null): st
   if (su) return su;
   const fl = (floor ?? "").trim();
   return fl ? `Floor ${fl}` : "";
+}
+
+function splitNoteFragments(raw: string): string[] {
+  const text = (raw || "").replace(/\r/g, "\n").replace(/\u2022/g, "\n").trim();
+  if (!text) return [];
+  const normalized = text.replace(/\n{2,}/g, "\n");
+  const primary = normalized
+    .split(/\s*\|\s*|\n+|;\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (primary.length > 1) return primary;
+  return normalized
+    .split(/\.\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function classifyNoteCategory(detail: string): string {
+  for (const pattern of NOTE_CATEGORY_PATTERNS) {
+    if (pattern.regex.test(detail)) return pattern.label;
+  }
+  return "General";
+}
+
+function buildCategorizedNoteSummary(rawNotes: string): string {
+  const fragments = splitNoteFragments(rawNotes);
+  if (fragments.length === 0) return "";
+  const grouped = new Map<string, string[]>();
+  for (const fragment of fragments) {
+    const category = classifyNoteCategory(fragment);
+    const existing = grouped.get(category) ?? [];
+    const compact = fragment.replace(/\s+/g, " ").trim();
+    if (!existing.some((item) => item.toLowerCase() === compact.toLowerCase())) {
+      existing.push(compact);
+      grouped.set(category, existing);
+    }
+  }
+  return Array.from(grouped.entries())
+    .map(([category, details]) => `${category}: ${details.join(" | ")}`)
+    .join("\n");
 }
 
 function sanitizeSheetName(name: string, fallback: string): string {
@@ -150,21 +191,14 @@ function applyValueFormat(cell: ExcelJS.Cell, format: ValueFormat): void {
 }
 
 function extractClauseHighlights(rawNotes: string): Array<{ category: string; detail: string }> {
-  const notes = (rawNotes || "").trim();
-  if (!notes) return [];
-  const flat = notes.replace(/\r/g, " ").replace(/\s+/g, " ").trim();
-  const parts = flat.split(/(?:\.\s+)|(?:;\s+)|(?:\|\s*)|(?:\n+)/).map((p) => p.trim()).filter(Boolean);
+  const parts = splitNoteFragments(rawNotes);
+  if (parts.length === 0) return [];
   const rows: Array<{ category: string; detail: string }> = [];
   for (const part of parts) {
-    for (const pattern of CLAUSE_PATTERNS) {
-      if (pattern.regex.test(part)) {
-        rows.push({ category: pattern.label, detail: part });
-        break;
-      }
-    }
+    rows.push({ category: classifyNoteCategory(part), detail: part });
   }
   if (rows.length > 0) return rows;
-  return [{ category: "General note", detail: flat }];
+  return [{ category: "General", detail: (rawNotes || "").trim() }];
 }
 
 function styleSummaryMatrixGrid(sheet: ExcelJS.Worksheet, rows: number, cols: number): void {
@@ -185,6 +219,16 @@ function styleSummaryMatrixGrid(sheet: ExcelJS.Worksheet, rows: number, cols: nu
   }
   sheet.getCell(1, 1).font = { bold: true };
   sheet.getCell(1, 2).font = { bold: true };
+}
+
+function styleWrappedNotesRow(sheet: ExcelJS.Worksheet, row: number, cols: number): void {
+  if (row <= 0) return;
+  const notesRow = sheet.getRow(row);
+  notesRow.height = 90;
+  for (let col = 2; col <= cols; col++) {
+    const cell = sheet.getCell(row, col);
+    cell.alignment = { vertical: "top", horizontal: "left", wrapText: true };
+  }
 }
 
 function addMonthlyComparisonSheet(
@@ -354,7 +398,7 @@ export async function buildBrokerWorkbook(
     { label: "Total obligation", format: "currency", get: (m) => m.totalObligation },
     { label: "Equalized avg cost/RSF/yr", format: "currency_psf", get: (m) => m.equalizedAvgCostPsfYr },
     { label: "Discount rate used", format: "percent", get: (m) => m.discountRateUsed },
-    { label: "Notes", format: "text", get: (m) => m.notes },
+    { label: "Notes", format: "text", get: (m) => buildCategorizedNoteSummary(m.notes ?? "") },
   ];
   metricRows.forEach(({ label, get, format }, rowIndex) => {
     const row = rowIndex + 3;
@@ -427,6 +471,10 @@ export async function buildBrokerWorkbook(
     });
   });
   styleSummaryMatrixGrid(summarySheet, supplementalStart + supplementalRows.length - 1, results.length + 1);
+  const notesRowIndex = metricRows.findIndex((row) => row.label === "Notes");
+  if (notesRowIndex >= 0) {
+    styleWrappedNotesRow(summarySheet, 3 + notesRowIndex, results.length + 1);
+  }
 
   // ---- Sheet 2+: Individual scenario sheets ----
   for (let idx = 0; idx < scenarios.length; idx++) {
@@ -725,7 +773,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     { label: "Total obligation", format: "currency", get: (m) => m.total_obligation_nominal ?? 0 },
     { label: "Equalized avg cost/RSF/yr", format: "currency_psf", get: (m) => m.equalized_avg_cost_psf_year ?? 0 },
     { label: "Discount rate used", format: "percent", get: (m) => m.discount_rate_annual ?? 0.08 },
-    { label: "Notes", format: "text", get: (m) => m.notes ?? "" },
+    { label: "Notes", format: "text", get: (m) => buildCategorizedNoteSummary(m.notes ?? "") },
   ];
 
   metricRows.forEach(({ label, get, format }, rowIndex) => {
@@ -792,6 +840,10 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     });
   });
   styleSummaryMatrixGrid(summarySheet, supplementalStart + supplementalRows.length - 1, items.length + 1);
+  const notesRowIndex = metricRows.findIndex((row) => row.label === "Notes");
+  if (notesRowIndex >= 0) {
+    styleWrappedNotesRow(summarySheet, 3 + notesRowIndex, items.length + 1);
+  }
 
   for (let idx = 0; idx < items.length; idx++) {
     const { response, scenarioName } = items[idx];
@@ -839,7 +891,11 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
       { label: "Average gross rent/year", value: grossAnnual, format: "currency" },
       { label: "Total obligation", value: m.total_obligation_nominal ?? 0, format: "currency" },
       { label: "NPV", value: m.npv_cost ?? 0, format: "currency" },
-      { label: "Notes", value: `${m.notes ?? ""} ${String(c.notes ?? "")}`.trim(), format: "text" },
+      {
+        label: "Notes",
+        value: buildCategorizedNoteSummary(`${m.notes ?? ""}\n${String(c.notes ?? "")}`.trim()),
+        format: "text",
+      },
     ];
     inputRows.forEach(({ label, value, format }) => {
       sheet.getCell(row, 1).value = label;

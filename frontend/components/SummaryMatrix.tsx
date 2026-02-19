@@ -39,9 +39,14 @@ export function SummaryMatrix({ results }: SummaryMatrixProps) {
                 </td>
                 {results.map((r) => {
                   const value = (r.metrics as OptionMetrics)[key];
+                  const formatted = formatMetricValue(key, value);
+                  const notesCell = key === "notes";
                   return (
-                    <td key={r.scenarioId} className="py-2.5 px-4 text-right text-zinc-400">
-                      {formatMetricValue(key, value)}
+                    <td
+                      key={r.scenarioId}
+                      className={`py-2.5 px-4 text-zinc-400 align-top ${notesCell ? "text-left whitespace-pre-line" : "text-right"}`}
+                    >
+                      {formatted}
                     </td>
                   );
                 })}
