@@ -143,16 +143,17 @@
     text-align: center;
     vertical-align: middle;
     white-space: nowrap;
-    border-radius: var(--radius-sm);
-    min-height: 2.6rem;
-    padding-block: 0.54rem;
-    padding-inline: 1rem;
-    font-size: 0.78rem;
+    border-radius: 0;
+    min-height: 2.5rem;
+    padding-block: 0.68rem;
+    padding-inline: 1.35rem;
+    font-size: 0.72rem;
     line-height: 1.1;
-    font-weight: 600;
-    letter-spacing: 0.08em;
+    font-weight: 650;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    transition: transform 180ms ease, background-color 220ms ease, border-color 220ms ease, color 220ms ease;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    transition: transform 160ms ease, background-color 180ms ease, border-color 180ms ease, color 180ms ease;
   }
 
   .btn-premium:active {
@@ -160,37 +161,44 @@
   }
 
   .btn-premium-primary {
-    color: #070707;
-    border: 1px solid rgba(255, 255, 255, 0.9);
-    background: #ffffff;
+    color: #f6f6f6;
+    border-color: rgba(255, 255, 255, 0.82);
+    background: #050505;
   }
 
   .btn-premium-primary:hover {
-    background: #ebebeb;
-    border-color: #ebebeb;
+    background: #111111;
+    border-color: #ffffff;
   }
 
   .btn-premium-secondary {
-    color: var(--text-primary);
-    border: 1px solid var(--border-subtle);
-    background: rgba(10, 10, 10, 0.9);
+    color: #0a0a0a;
+    border-color: rgba(255, 255, 255, 0.92);
+    background: #f5f5f5;
   }
 
   .btn-premium-secondary:hover {
-    border-color: var(--border-strong);
-    background: rgba(24, 24, 24, 0.92);
+    color: #050505;
+    background: #ffffff;
+    border-color: #ffffff;
   }
 
   .btn-premium-success {
+    color: #0a0a0a;
+    border-color: rgba(255, 255, 255, 0.92);
+    background: #f5f5f5;
+  }
+
+  .btn-premium-success:hover {
     color: #050505;
-    border: 1px solid rgba(255, 255, 255, 0.9);
     background: #ffffff;
+    border-color: #ffffff;
   }
 
   .btn-premium-danger {
     color: #ffd8d8;
-    border: 1px solid rgba(248, 113, 113, 0.6);
-    background: rgba(62, 10, 10, 0.3);
+    border-color: rgba(248, 113, 113, 0.72);
+    background: #160808;
   }
 
   .btn-premium-danger:hover {
