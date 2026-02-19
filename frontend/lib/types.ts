@@ -129,6 +129,7 @@ export interface ReportBranding {
   logo_url?: string;
   date?: string;
   market?: string;
+  submarket?: string;
   broker_name?: string;
 }
 
@@ -165,6 +166,8 @@ export interface ReportMeta {
   prepared_for?: string;
   prepared_by?: string;
   report_date?: string;
+  market?: string;
+  submarket?: string;
   confidential?: boolean;
 }
 

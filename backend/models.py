@@ -210,6 +210,7 @@ class ReportBranding(BaseModel):
     logo_url: Optional[str] = None
     date: Optional[str] = None
     market: Optional[str] = None
+    submarket: Optional[str] = None
     broker_name: Optional[str] = None
 
 
@@ -309,6 +310,8 @@ class ReportMeta(BaseModel):
     prepared_for: str = "—"
     prepared_by: str = "—"
     report_date: str = ""
+    market: Optional[str] = None
+    submarket: Optional[str] = None
     confidential: bool = True
 
 

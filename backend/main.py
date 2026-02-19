@@ -3380,6 +3380,13 @@ def _build_report_deck_preview_html(data: dict) -> str:
     if not entries:
         return """<!doctype html><html><body><h1>No scenarios found</h1></body></html>"""
 
+    branding = data.get("branding") if isinstance(data, dict) and isinstance(data.get("branding"), dict) else {}
+    prepared_for = str(branding.get("client_name") or "Client")
+    prepared_by = str(branding.get("broker_name") or "The CRE Model")
+    report_date = str(branding.get("date") or date.today().isoformat())
+    market = str(branding.get("market") or "N/A")
+    submarket = str(branding.get("submarket") or "N/A")
+
     scenario_rows: list[dict] = []
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict):
@@ -3569,7 +3576,7 @@ def _build_report_deck_preview_html(data: dict) -> str:
     h2 {{ font-size: 24px; margin: 0 0 6px 0; }}
     h3 {{ font-size: 15px; margin: 0 0 5px 0; }}
     p {{ color: #374151; margin: 0 0 10px 0; }}
-    .kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }}
+    .kpis {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }}
     .kpi {{ border: 1px solid #d1d5db; border-radius: 8px; background: #fff; padding: 8px; }}
     .kpi-label {{ color: #6b7280; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 4px 0; }}
     .kpi-value {{ color: #111827; font-size: 13px; font-weight: 700; margin: 0; }}
@@ -3592,9 +3599,11 @@ def _build_report_deck_preview_html(data: dict) -> str:
     <h1>Lease Economics Comparison Deck</h1>
     <p>Institutional-grade side-by-side comparison across {len(scenario_rows)} scenario{"s" if len(scenario_rows) != 1 else ""}, designed for client presentation and investment committee review.</p>
     <div class="kpis">
-      <div class="kpi"><p class="kpi-label">Prepared for</p><p class="kpi-value">Client</p></div>
-      <div class="kpi"><p class="kpi-label">Prepared by</p><p class="kpi-value">The CRE Model</p></div>
-      <div class="kpi"><p class="kpi-label">Report date</p><p class="kpi-value">{date.today().isoformat()}</p></div>
+      <div class="kpi"><p class="kpi-label">Prepared for</p><p class="kpi-value">{html.escape(prepared_for)}</p></div>
+      <div class="kpi"><p class="kpi-label">Prepared by</p><p class="kpi-value">{html.escape(prepared_by)}</p></div>
+      <div class="kpi"><p class="kpi-label">Report date</p><p class="kpi-value">{html.escape(report_date)}</p></div>
+      <div class="kpi"><p class="kpi-label">Market</p><p class="kpi-value">{html.escape(market)}</p></div>
+      <div class="kpi"><p class="kpi-label">Submarket</p><p class="kpi-value">{html.escape(submarket)}</p></div>
       <div class="kpi"><p class="kpi-label">Scenarios</p><p class="kpi-value">{len(scenario_rows)}</p></div>
     </div>
     <div class="winner">

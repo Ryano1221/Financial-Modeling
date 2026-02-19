@@ -168,6 +168,8 @@ def build_report_html(
         prepared_for = meta.get("prepared_for", "—")
         prepared_by = meta.get("prepared_by", "—")
         report_date = meta.get("report_date", "")
+        market = meta.get("market", "")
+        submarket = meta.get("submarket", "")
         report_date_str = format_date(report_date) if report_date else report_date
         logo_block = f'<img src="{_escape(logo_url)}" alt="{_escape(company_name)}" />' if logo_url else f'<div class="company-text">{_escape(company_name)}</div>'
         cover_html = f"""<div class="cover">
@@ -179,6 +181,8 @@ def build_report_html(
     <p class="meta"><strong>Prepared for:</strong> {_escape(prepared_for)}</p>
     <p class="meta"><strong>Prepared by:</strong> {_escape(prepared_by)}</p>
     <p class="meta"><strong>Date:</strong> {_escape(report_date_str)}</p>
+    {f'<p class="meta"><strong>Market:</strong> {_escape(market)}</p>' if market else ''}
+    {f'<p class="meta"><strong>Submarket:</strong> {_escape(submarket)}</p>' if submarket else ''}
   </div>"""
     else:
         cover_html = ""

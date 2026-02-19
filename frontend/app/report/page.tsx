@@ -348,7 +348,7 @@ function ReportContent() {
             with risk-focused lease abstract notes and valuation metrics optimized for client decision-making.
           </p>
 
-          <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="mt-8 grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
             <div className="rounded-xl border border-stone-200 bg-white p-3">
               <p className="text-stone-500">Prepared for</p>
               <p className="font-semibold mt-0.5">{branding?.client_name || "Client"}</p>
@@ -364,6 +364,10 @@ function ReportContent() {
             <div className="rounded-xl border border-stone-200 bg-white p-3">
               <p className="text-stone-500">Market</p>
               <p className="font-semibold mt-0.5">{branding?.market || "N/A"}</p>
+            </div>
+            <div className="rounded-xl border border-stone-200 bg-white p-3">
+              <p className="text-stone-500">Submarket</p>
+              <p className="font-semibold mt-0.5">{branding?.submarket || "N/A"}</p>
             </div>
           </div>
 

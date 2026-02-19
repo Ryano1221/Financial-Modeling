@@ -27,6 +27,7 @@ import type {
   ScenarioWithId,
   CashflowResult,
   NormalizerResponse,
+  ReportMeta,
   ScenarioInput,
   BackendCanonicalLease,
   ExtractionSummary,
@@ -81,6 +82,26 @@ function sanitizeExtractionWarnings(warnings?: string[] | null): string[] {
     deduped.push(msg);
   }
   return deduped;
+}
+
+function cleanMaybeString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function inferMarketFromAddress(address: string): string {
+  const raw = String(address || "").trim();
+  if (!raw) return "";
+  const parts = raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return "";
+  const city = parts.length >= 3 ? parts[parts.length - 2] : parts[parts.length - 1];
+  const statePart = parts[parts.length - 1] || "";
+  const stateMatch = statePart.match(/\b([A-Z]{2}|[A-Za-z]{4,})\b/);
+  const state = stateMatch ? stateMatch[1].trim() : "";
+  if (!city) return "";
+  return state ? `${city}, ${state}` : city;
 }
 
 /** POST /compute-canonical with request id, lease_type normalization, and lifecycle logs. */
@@ -163,6 +184,19 @@ export default function Home() {
   const [globalDiscountRate, setGlobalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [exportExcelError, setExportExcelError] = useState<string | null>(null);
+  const [reportMeta, setReportMeta] = useState<{
+    prepared_for: string;
+    prepared_by: string;
+    report_date: string;
+    market: string;
+    submarket: string;
+  }>({
+    prepared_for: "",
+    prepared_by: "",
+    report_date: "",
+    market: "",
+    submarket: "",
+  });
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
@@ -526,10 +560,53 @@ export default function Home() {
     setIncludedInSummary((prev) => ({ ...prev, [id]: !(prev[id] !== false) }));
   }, []);
 
-  const buildReportMeta = useCallback(() => ({
-    report_date: new Date().toISOString().slice(0, 10),
-    confidential: true,
-  }), []);
+  const inferredReportLocation = useMemo(() => {
+    const ordered = selectedScenario
+      ? [selectedScenario, ...scenarios.filter((s) => s.id !== selectedScenario.id)]
+      : [...scenarios];
+    const marketCandidates: string[] = [];
+    const submarketCandidates: string[] = [];
+    const addressCandidates: string[] = [];
+
+    for (const s of ordered) {
+      const cached = canonicalComputeCache[s.id];
+      const normalized = (cached?.normalized_canonical_lease ?? {}) as Record<string, unknown>;
+      const metrics = (cached?.metrics ?? {}) as Record<string, unknown>;
+      marketCandidates.push(cleanMaybeString(normalized.market));
+      marketCandidates.push(cleanMaybeString(metrics.market));
+      marketCandidates.push(cleanMaybeString((s as unknown as Record<string, unknown>).market));
+      submarketCandidates.push(cleanMaybeString(normalized.submarket));
+      submarketCandidates.push(cleanMaybeString(metrics.submarket));
+      submarketCandidates.push(cleanMaybeString((s as unknown as Record<string, unknown>).submarket));
+      addressCandidates.push(cleanMaybeString(normalized.address));
+      addressCandidates.push(cleanMaybeString(metrics.address));
+      addressCandidates.push(cleanMaybeString(s.address));
+    }
+
+    const marketFromApi = marketCandidates.find((v) => v.length > 0) || "";
+    const submarketFromApi = submarketCandidates.find((v) => v.length > 0) || "";
+    const marketFromAddress =
+      addressCandidates
+        .map((addr) => inferMarketFromAddress(addr))
+        .find((v) => v.length > 0) || "";
+
+    return {
+      market: marketFromApi || marketFromAddress || "",
+      submarket: submarketFromApi || "",
+    };
+  }, [selectedScenario, scenarios, canonicalComputeCache]);
+
+  const buildReportMeta = useCallback((): ReportMeta => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    return {
+      prepared_for: reportMeta.prepared_for.trim() || "Client",
+      prepared_by: reportMeta.prepared_by.trim() || "theCREmodel",
+      report_date: reportMeta.report_date || todayIso,
+      market: reportMeta.market.trim() || inferredReportLocation.market || "",
+      submarket: reportMeta.submarket.trim() || inferredReportLocation.submarket || "",
+      confidential: true,
+    };
+  }, [reportMeta, inferredReportLocation.market, inferredReportLocation.submarket]);
 
   const downloadBlob = useCallback((blob: Blob, fileName: string) => {
     const url = URL.createObjectURL(blob);
@@ -574,6 +651,7 @@ export default function Home() {
         scenario: scenarioToPayload(s),
         result: getScenarioResultForExport(s),
       }));
+      const meta = buildReportMeta();
       const headers = getAuthHeaders();
       try {
         const res = await fetchApiProxy("/reports", {
@@ -581,7 +659,13 @@ export default function Home() {
           headers,
           body: JSON.stringify({
             scenarios: scenariosForDeck,
-            branding: {},
+            branding: {
+              client_name: meta.prepared_for || "Client",
+              broker_name: meta.prepared_by || "theCREmodel",
+              date: meta.report_date || new Date().toISOString().slice(0, 10),
+              market: meta.market || "",
+              submarket: meta.submarket || "",
+            },
           }),
         });
         if (!res.ok) {
@@ -614,7 +698,7 @@ export default function Home() {
             body: JSON.stringify({
               brand_id: brandId,
               scenario: scenarioToPayload(fallbackScenario),
-              meta: buildReportMeta(),
+              meta,
             }),
           });
           if (direct.ok) {
@@ -937,6 +1021,63 @@ export default function Home() {
             />
             <span>%</span>
           </label>
+          <div className="mb-5 border-t border-slate-300/20 pt-4">
+            <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-xs text-slate-400">Prepared for</span>
+                <input
+                  type="text"
+                  value={reportMeta.prepared_for}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
+                  className="input-premium mt-1"
+                  placeholder="Client"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-400">Prepared by</span>
+                <input
+                  type="text"
+                  value={reportMeta.prepared_by}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
+                  className="input-premium mt-1"
+                  placeholder="theCREmodel"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-400">Report date</span>
+                <input
+                  type="date"
+                  value={reportMeta.report_date}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
+                  className="input-premium mt-1"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-400">Market</span>
+                <input
+                  type="text"
+                  value={reportMeta.market}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, market: e.target.value }))}
+                  className="input-premium mt-1"
+                  placeholder={inferredReportLocation.market || "Auto from document/API"}
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="text-xs text-slate-400">Submarket</span>
+                <input
+                  type="text"
+                  value={reportMeta.submarket}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, submarket: e.target.value }))}
+                  className="input-premium mt-1"
+                  placeholder={inferredReportLocation.submarket || "Auto from document/API when available"}
+                />
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today. Market/Submarket use API extracted values when available.
+            </p>
+          </div>
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
