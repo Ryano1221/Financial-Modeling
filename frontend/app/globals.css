@@ -137,11 +137,18 @@
   }
 
   .btn-premium {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
     border-radius: var(--radius-sm);
     min-height: 2.6rem;
+    padding-block: 0.54rem;
     padding-inline: 1rem;
     font-size: 0.78rem;
-    line-height: 1;
+    line-height: 1.1;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
