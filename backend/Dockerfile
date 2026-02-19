@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    MALLOC_ARENA_MAX=2
 
 # OCR + PDF utilities for scanned lease extraction + Playwright runtime libs
 RUN apt-get update && apt-get install -y --no-install-recommends \

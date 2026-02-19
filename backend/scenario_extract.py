@@ -109,20 +109,45 @@ def _run_ocr_on_pdf(file: BinaryIO, max_pages: int = DEFAULT_OCR_PAGES) -> str:
     t0 = time.perf_counter()
     try:
         pdf_bytes = file.read()
-        images = pdf2image.convert_from_bytes(
-            pdf_bytes,
-            first_page=1,
-            last_page=max_pages,
-        )
     except Exception as e:
         raise ValueError(f"OCR failed (is poppler installed?): {e}") from e
+
+    # Process one page at a time to avoid holding many rendered images in memory.
+    total_pages = max_pages
+    try:
+        info = pdf2image.pdfinfo_from_bytes(pdf_bytes)
+        detected_pages = int(info.get("Pages", max_pages))
+        total_pages = max(0, min(max_pages, detected_pages))
+    except Exception:
+        # If page count probing fails, fall back to requested page limit.
+        total_pages = max_pages
+
     texts = []
-    for img in images:
+    processed_pages = 0
+    for page_num in range(1, total_pages + 1):
+        try:
+            images = pdf2image.convert_from_bytes(
+                pdf_bytes,
+                first_page=page_num,
+                last_page=page_num,
+                thread_count=1,
+            )
+        except Exception:
+            break
+        if not images:
+            break
+        img = images[0]
         text = pytesseract.image_to_string(img)
         if text:
             texts.append(text)
+        try:
+            img.close()
+        except Exception:
+            pass
+        del images
+        processed_pages += 1
     elapsed = time.perf_counter() - t0
-    logger.info("[extract] OCR duration=%.2fs pages=%d", elapsed, len(images))
+    logger.info("[extract] OCR duration=%.2fs pages=%d", elapsed, processed_pages)
     return "\n\n".join(texts) if texts else ""
 
 

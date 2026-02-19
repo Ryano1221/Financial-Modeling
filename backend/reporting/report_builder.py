@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -19,10 +20,10 @@ from .report_data import build_report_data
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _REPORT_HTML = (_TEMPLATE_DIR / "report.html").read_text(encoding="utf-8")
 
-# In-memory cache for report_data (speeds preview). Max 100 entries.
+# In-memory cache for report_data (speeds preview). Capped by REPORT_DATA_CACHE_MAX.
 _REPORT_DATA_CACHE: dict[str, dict[str, Any]] = {}
 _REPORT_DATA_CACHE_ORDER: list[str] = []
-_MAX_REPORT_DATA_CACHE = 100
+_MAX_REPORT_DATA_CACHE = max(1, int(os.getenv("REPORT_DATA_CACHE_MAX", "16")))
 
 
 def _report_data_cache_key(scenario_dict: dict, brand_id: str, meta: dict) -> str:
