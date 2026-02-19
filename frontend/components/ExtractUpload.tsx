@@ -285,7 +285,7 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
           ${loading ? "pointer-events-none opacity-70" : ""}
         `}
       >
-        <p className="text-lg md:text-[1.8rem] font-semibold tracking-tight text-slate-100 mb-5">
+        <p className="text-sm sm:text-base font-semibold tracking-tight text-slate-100 mb-5">
           Drag and drop one or more <strong className="text-slate-50">.pdf</strong> or <strong className="text-slate-50">.docx</strong> lease documents here, or click to choose.
         </p>
         <input

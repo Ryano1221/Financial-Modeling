@@ -1119,29 +1119,6 @@ export default function Home() {
                 <h2 className="heading-section mb-3">
                   Upload & extract
                 </h2>
-                <p className="text-sm text-slate-300 mb-5 leading-relaxed">
-                  Upload a PDF or DOCX lease. We extract text (OCR runs automatically for scanned PDFs), then normalize to a lease option. If confidence is low or fields are missing, you’ll review and confirm before adding.
-                </p>
-                <div className="mb-4 flex flex-wrap items-center gap-2">
-                  <label htmlFor="brand-select" className="text-sm font-medium text-slate-300">
-                    Report brand
-                  </label>
-                  <select
-                    id="brand-select"
-                    value={brandId}
-                    onChange={(e) => setBrandId(e.target.value)}
-                    className="select-premium max-w-[16rem]"
-                  >
-                    {brands.length === 0 && (
-                      <option value="default">default</option>
-                    )}
-                    {brands.map((b) => (
-                      <option key={b.brand_id} value={b.brand_id} className="bg-[#111113] text-white">
-                        {b.company_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
                 <ExtractUpload
                   showAdvancedOptions={showDiagnostics}
                   onSuccess={handleNormalizeSuccess}
