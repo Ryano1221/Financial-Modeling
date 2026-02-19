@@ -75,7 +75,7 @@ export function NormalizeReviewCard({ data, onConfirm, onCancel }: NormalizeRevi
           )}
         </div>
       )}
-      <div className="grid gap-3 max-h-80 overflow-y-auto">
+      <div className="grid gap-3">
         {REVIEW_FIELDS.map(({ key, label, type, placeholder }) => {
           const val = edited[key];
           const displayVal = val === undefined || val === null ? "" : String(val);
