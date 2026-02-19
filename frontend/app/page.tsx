@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
 import { Charts, type ChartRow } from "@/components/Charts";
-import { getApiUrl, getBaseUrl, fetchApi, fetchApiProxy, getAuthHeaders, CONNECTION_MESSAGE, getDisplayErrorMessage } from "@/lib/api";
+import { getApiUrl, fetchApi, fetchApiProxy, getAuthHeaders, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
 
@@ -30,7 +30,6 @@ import type {
   GenerateScenariosRequest,
   GenerateScenariosResponse,
   ScenarioInput,
-  BrandConfig,
   BackendCanonicalLease,
   ExtractionSummary,
 } from "@/lib/types";
@@ -65,8 +64,6 @@ const HARD_REVIEW_WARNING_PATTERNS = [
   /could not confidently parse/i,
   /lease normalization failed/i,
 ];
-
-type ReportErrorState = { statusCode: number; message: string; reportId?: string } | null;
 
 function nextId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -158,7 +155,6 @@ export default function Home() {
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
-  const [loading, setLoading] = useState(false);
   const [renewalRelocateExpanded, setRenewalRelocateExpanded] = useState(false);
   const [generateLoading, setGenerateLoading] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -168,19 +164,7 @@ export default function Home() {
   const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
   const [lastExtractionSummary, setLastExtractionSummary] = useState<ExtractionSummary | null>(null);
   const [pendingNormalizeQueue, setPendingNormalizeQueue] = useState<NormalizerResponse[]>([]);
-  const [brands, setBrands] = useState<BrandConfig[]>([]);
   const [brandId, setBrandId] = useState<string>("default");
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportError, setReportError] = useState<ReportErrorState>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState<ReportErrorState>(null);
-  const [reportMeta, setReportMeta] = useState({
-    prepared_for: "",
-    prepared_by: "",
-    proposal_name: "",
-    property_name: "",
-    confidential: true,
-  });
   const [globalDiscountRate, setGlobalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [exportExcelError, setExportExcelError] = useState<string | null>(null);
@@ -247,13 +231,6 @@ export default function Home() {
         .catch(() => {});
     });
   }, [scenarios, isProduction, canonicalComputeCache]);
-
-  useEffect(() => {
-    fetchApi("/brands", { method: "GET" })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: BrandConfig[]) => setBrands(Array.isArray(data) ? data : []))
-      .catch(() => setBrands([]));
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -560,88 +537,10 @@ export default function Home() {
     setBaselineId((prev) => (prev === id ? null : id));
   }, []);
 
-  const runAnalysis = useCallback(async () => {
-    if (scenarios.length === 0) return;
-    setLoading(true);
-    setResults({});
-
-    const headers = getAuthHeaders();
-
-    if (isProduction) {
-      const canonicalPayloads = scenarios.map((s) => ({
-        id: s.id,
-        name: s.name,
-        canonical: scenarioInputToBackendCanonical(s, s.id, s.name),
-      }));
-      const settled = await Promise.allSettled(
-        canonicalPayloads.map(async ({ id, name, canonical }) => {
-          const res = await fetchComputeCanonical(id, canonical);
-          if (!res.ok) throw new Error("Compute failed");
-          const data: CanonicalComputeResponse = await res.json();
-          return { id, name, data };
-        })
-      );
-      const nextCache: Record<string, CanonicalComputeResponse> = {};
-      const nextResults: Record<string, CashflowResult | { error: string }> = {};
-      settled.forEach((outcome, i) => {
-        const { id, name } = canonicalPayloads[i];
-        if (outcome.status === "fulfilled") {
-          nextCache[id] = outcome.value.data;
-          nextResults[id] = {
-            term_months: outcome.value.data.metrics.term_months,
-            rent_nominal: outcome.value.data.metrics.base_rent_total,
-            opex_nominal: outcome.value.data.metrics.opex_total,
-            total_cost_nominal: outcome.value.data.metrics.total_obligation_nominal,
-            npv_cost: outcome.value.data.metrics.npv_cost,
-            avg_cost_year: outcome.value.data.metrics.total_obligation_nominal / (outcome.value.data.metrics.term_months / 12 || 1),
-            avg_cost_psf_year: outcome.value.data.metrics.avg_all_in_cost_psf_year,
-          };
-        } else {
-          nextResults[id] = { error: getDisplayErrorMessage(outcome.reason) };
-        }
-      });
-      setCanonicalComputeCache(nextCache);
-      setResults(nextResults);
-    } else {
-      const payloads = scenarios.map((s) => ({ id: s.id, payload: scenarioToPayload(s) }));
-      const settled = await Promise.allSettled(
-        payloads.map(async ({ id, payload }) => {
-          const res = await fetchApi("/compute", {
-            method: "POST",
-            headers,
-            body: JSON.stringify(payload),
-          });
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(text || `HTTP ${res.status}`);
-          }
-          return { id, data: (await res.json()) as CashflowResult };
-        })
-      );
-      const nextResults: Record<string, CashflowResult | { error: string }> = {};
-      settled.forEach((outcome, i) => {
-        const { id } = payloads[i];
-        if (outcome.status === "fulfilled") {
-          nextResults[id] = outcome.value.data;
-        } else {
-          nextResults[id] = {
-            error: outcome.reason?.message === CONNECTION_MESSAGE ? CONNECTION_MESSAGE : "Request failed",
-          };
-        }
-      });
-      setResults(nextResults);
-    }
-    setLoading(false);
-  }, [scenarios, isProduction]);
-
   const buildReportMeta = useCallback(() => ({
-    prepared_for: reportMeta.prepared_for || undefined,
-    prepared_by: reportMeta.prepared_by || undefined,
-    proposal_name: reportMeta.proposal_name || undefined,
-    property_name: reportMeta.property_name || undefined,
     report_date: new Date().toISOString().slice(0, 10),
-    confidential: reportMeta.confidential,
-  }), [reportMeta]);
+    confidential: true,
+  }), []);
 
   const downloadBlob = useCallback((blob: Blob, fileName: string) => {
     const url = URL.createObjectURL(blob);
@@ -750,102 +649,6 @@ export default function Home() {
       setExportPdfLoading(false);
     }
   }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob]);
-
-  const generateReport = useCallback(async () => {
-    if (!selectedScenario) {
-      setReportError({ statusCode: 0, message: "Select a scenario first." });
-      return;
-    }
-    setReportLoading(true);
-    setReportError(null);
-    try {
-      const res = await fetchApi("/report", {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          brand_id: brandId,
-          scenario: scenarioToPayload(selectedScenario),
-          meta: buildReportMeta(),
-        }),
-      });
-      const reportId = res.headers.get("X-Report-ID") ?? undefined;
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : res.statusText;
-        if (res.status === 503) {
-          const previewRes = await fetchApi("/report/preview", {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({
-              brand_id: brandId,
-              scenario: scenarioToPayload(selectedScenario),
-              meta: buildReportMeta(),
-            }),
-          });
-          if (previewRes.ok) {
-            const html = await previewRes.text();
-            const w = window.open("", "_blank", "noopener,noreferrer");
-            if (w) {
-              w.document.write(html);
-              w.document.close();
-            }
-            setReportError({ statusCode: 503, message: "PDF service unavailable, opened HTML preview instead.", reportId });
-            return;
-          }
-        }
-        setReportError({ statusCode: res.status, message: detail || `HTTP ${res.status}`, reportId });
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "lease-financial-analysis.pdf";
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setReportError({ statusCode: 0, message: getDisplayErrorMessage(err) });
-    } finally {
-      setReportLoading(false);
-    }
-  }, [selectedScenario, brandId, buildReportMeta]);
-
-  const previewReport = useCallback(async () => {
-    if (!selectedScenario) {
-      setPreviewError({ statusCode: 0, message: "Select a scenario first." });
-      return;
-    }
-    setPreviewLoading(true);
-    setPreviewError(null);
-    try {
-      const res = await fetchApi("/report/preview", {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          brand_id: brandId,
-          scenario: scenarioToPayload(selectedScenario),
-          meta: buildReportMeta(),
-        }),
-      });
-      const reportId = res.headers.get("X-Report-ID") ?? undefined;
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        const detail = body && typeof body === "object" && "detail" in body ? String((body as { detail: unknown }).detail) : res.statusText;
-        setPreviewError({ statusCode: res.status, message: detail || `HTTP ${res.status}`, reportId });
-        return;
-      }
-      const html = await res.text();
-      const w = window.open("", "_blank", "noopener,noreferrer");
-      if (w) {
-        w.document.write(html);
-        w.document.close();
-      }
-    } catch (err) {
-      setPreviewError({ statusCode: 0, message: getDisplayErrorMessage(err) });
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, [selectedScenario, brandId, buildReportMeta]);
 
   const buildRenewalVsRelocate = useCallback(async () => {
     setGenerateLoading(true);
@@ -1046,7 +849,7 @@ export default function Home() {
                   </div>
                   <div className="col-span-4 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
                     <p className="heading-kicker mb-2">Status</p>
-                    <p className="text-lg text-white/90 leading-tight">{loading ? "Running" : "Ready"}</p>
+                    <p className="text-lg text-white/90 leading-tight">{(generateLoading || exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
                   </div>
                   <div className="col-span-5 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
                     <p className="heading-kicker mb-2">Brand</p>
@@ -1262,101 +1065,8 @@ export default function Home() {
               {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
             </button>
           </div>
-          <details className="mt-4 rounded-xl border border-slate-300/20 bg-slate-900/30 px-4 py-3">
-            <summary className="cursor-pointer text-sm text-slate-200">Advanced report actions</summary>
-            <div className="mt-3 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={runAnalysis}
-                disabled={loading || scenarios.length === 0}
-                className="btn-premium btn-premium-primary w-full sm:w-auto disabled:opacity-50"
-              >
-                {loading ? "Running…" : "Run analysis"}
-              </button>
-              <button
-                type="button"
-                onClick={generateReport}
-                disabled={reportLoading || !selectedScenario}
-                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
-              >
-                {reportLoading ? "Generating…" : "Generate Report"}
-              </button>
-              <button
-                type="button"
-                onClick={previewReport}
-                disabled={previewLoading || !selectedScenario}
-                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
-              >
-                {previewLoading ? "Opening…" : "Preview Report"}
-              </button>
-            </div>
-          </details>
-          <div className="mt-6 pt-4 border-t border-slate-300/20">
-            <h3 className="heading-kicker mb-3">Report meta (for PDF cover)</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <label className="flex flex-col gap-1">
-                <span className="text-slate-400">Prepared for</span>
-                <input
-                  type="text"
-                  value={reportMeta.prepared_for}
-                  onChange={(e) => setReportMeta((m) => ({ ...m, prepared_for: e.target.value }))}
-                  className="input-premium"
-                  placeholder="Client or recipient"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-slate-400">Prepared by</span>
-                <input
-                  type="text"
-                  value={reportMeta.prepared_by}
-                  onChange={(e) => setReportMeta((m) => ({ ...m, prepared_by: e.target.value }))}
-                  className="input-premium"
-                  placeholder="Analyst or firm"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-slate-400">Proposal name</span>
-                <input
-                  type="text"
-                  value={reportMeta.proposal_name}
-                  onChange={(e) => setReportMeta((m) => ({ ...m, proposal_name: e.target.value }))}
-                  className="input-premium"
-                  placeholder="Used in PDF filename"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-slate-400">Property name</span>
-                <input
-                  type="text"
-                  value={reportMeta.property_name}
-                  onChange={(e) => setReportMeta((m) => ({ ...m, property_name: e.target.value }))}
-                  className="input-premium"
-                  placeholder="Building or address"
-                />
-              </label>
-              <label className="flex items-center gap-2 sm:col-span-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={reportMeta.confidential}
-                  onChange={(e) => setReportMeta((m) => ({ ...m, confidential: e.target.checked }))}
-                  className="rounded border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6] focus:ring-offset-0"
-                />
-                <span className="text-slate-300">Mark report as Confidential in footer</span>
-              </label>
-            </div>
-          </div>
           {(exportPdfError || exportExcelError) && (
             <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError}</p>
-          )}
-          {(reportError || previewError) && (
-            <div className="mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300">
-              {reportError && (
-                <p><strong>Report:</strong> {reportError.statusCode ? `HTTP ${reportError.statusCode} — ` : ""}{reportError.message}{reportError.reportId ? ` (Report ID: ${reportError.reportId})` : ""}</p>
-              )}
-              {previewError && (
-                <p><strong>Preview:</strong> {previewError.statusCode ? `HTTP ${previewError.statusCode} — ` : ""}{previewError.message}{previewError.reportId ? ` (Report ID: ${previewError.reportId})` : ""}</p>
-              )}
-            </div>
           )}
         </section>
 
