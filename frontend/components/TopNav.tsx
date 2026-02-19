@@ -18,7 +18,7 @@ export function TopNav() {
           aria-label="TheCREmodel home"
         >
           <Image
-            src="/brand/logo.svg"
+            src="/brand/logo-white.svg"
             alt="The Commercial Real Estate Model logo"
             width={140}
             height={32}
