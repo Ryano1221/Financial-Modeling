@@ -166,6 +166,23 @@ def test_extract_hints_parses_phase_rent_schedule() -> None:
     ]
 
 
+def test_extract_hints_phase_rent_prefers_base_rent_over_opex_like_values() -> None:
+    text = (
+        "Term: 60 months\n"
+        "Phase I (Months 1-12)\n"
+        "Base Rent: $42.00/RSF/YR\n"
+        "Operating Expenses: $5.10/RSF/YR\n"
+        "Phase II (Months 13-60)\n"
+        "Base Rent: $43.26/RSF/YR\n"
+        "Operating Expenses: $5.25/RSF/YR\n"
+    )
+    hints = main._extract_lease_hints(text, "phase-opex-vs-rent.pdf", "test-rid")
+    assert hints["rent_schedule"] == [
+        {"start_month": 0, "end_month": 11, "rent_psf_annual": 42.0},
+        {"start_month": 12, "end_month": 59, "rent_psf_annual": 43.26},
+    ]
+
+
 def test_note_highlights_include_parking_ratio() -> None:
     text = "Parking ratio shall be 4.0 spaces per 1,000 RSF for the Premises."
     notes = main._extract_lease_note_highlights(text)

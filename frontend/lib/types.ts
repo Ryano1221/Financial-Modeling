@@ -26,6 +26,7 @@ export interface OneTimeCost {
 /** Backend Scenario schema (no id). */
 export interface ScenarioInput {
   name: string;
+  document_type_detected?: string;
   building_name?: string;
   suite?: string;
   floor?: string;
@@ -259,6 +260,7 @@ export interface BackendCanonicalLease {
   parking_rate_monthly?: number;
   ti_allowance_psf?: number;
   notes?: string;
+  document_type_detected?: string;
   [key: string]: unknown;
 }
 

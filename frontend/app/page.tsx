@@ -331,32 +331,42 @@ export default function Home() {
       }
 
       const canonical = data.canonical_lease;
+      const documentTypeDetected = (data.extraction_summary?.document_type_detected || "unknown").trim();
+      const canonicalWithDocType: BackendCanonicalLease = {
+        ...canonical,
+        document_type_detected: documentTypeDetected || "unknown",
+      };
       const criticalMissing = new Set(["rsf", "rent_schedule", "term_months", "commencement_date", "expiration_date"]);
       const hasCriticalMissing = (data.missing_fields ?? []).some((f) => criticalMissing.has(String(f)));
       const hasHardReviewWarning = warnings.some((w) =>
         HARD_REVIEW_WARNING_PATTERNS.some((p) => p.test(w))
       );
       const hasInvalidCoreValues =
-        !canonical ||
-        !Number.isFinite(Number(canonical.rsf)) ||
-        Number(canonical.rsf) <= 0 ||
-        !Number.isFinite(Number(canonical.term_months)) ||
-        Number(canonical.term_months) <= 0 ||
-        !Array.isArray(canonical.rent_schedule) ||
-        canonical.rent_schedule.length === 0;
+        !canonicalWithDocType ||
+        !Number.isFinite(Number(canonicalWithDocType.rsf)) ||
+        Number(canonicalWithDocType.rsf) <= 0 ||
+        !Number.isFinite(Number(canonicalWithDocType.term_months)) ||
+        Number(canonicalWithDocType.term_months) <= 0 ||
+        !Array.isArray(canonicalWithDocType.rent_schedule) ||
+        canonicalWithDocType.rent_schedule.length === 0;
       const needsReview = hasCriticalMissing || hasHardReviewWarning || hasInvalidCoreValues;
 
       if (needsReview) {
         const queued: NormalizerResponse = {
           ...data,
+          canonical_lease: canonicalWithDocType,
           warnings,
         };
         setPendingNormalizeQueue((prev) => [...prev, queued]);
         return;
       }
 
-      addScenarioFromCanonical(canonical, (newScenario) => {
-        console.log("[compute] about to run", { scenarioId: newScenario.id, lease_type: (canonical as { lease_type?: string })?.lease_type ?? "NNN" });
+      addScenarioFromCanonical(canonicalWithDocType, (newScenario) => {
+        console.log("[compute] about to run", {
+          scenarioId: newScenario.id,
+          lease_type: (canonicalWithDocType as { lease_type?: string })?.lease_type ?? "NNN",
+          document_type_detected: (canonicalWithDocType as { document_type_detected?: string })?.document_type_detected ?? "unknown",
+        });
         runComputeForScenario(newScenario);
       });
     },
@@ -365,15 +375,26 @@ export default function Home() {
 
   const handleNormalizeConfirm = useCallback(
     (canonical: BackendCanonicalLease) => {
-      addScenarioFromCanonical(canonical, (newScenario) => {
-        console.log("[compute] about to run (confirm)", { scenarioId: newScenario.id, lease_type: (canonical as { lease_type?: string })?.lease_type ?? "NNN" });
+      const canonicalWithDocType: BackendCanonicalLease = {
+        ...canonical,
+        document_type_detected:
+          ((canonical as { document_type_detected?: string })?.document_type_detected || lastExtractionSummary?.document_type_detected || "unknown")
+            .toString()
+            .trim() || "unknown",
+      };
+      addScenarioFromCanonical(canonicalWithDocType, (newScenario) => {
+        console.log("[compute] about to run (confirm)", {
+          scenarioId: newScenario.id,
+          lease_type: (canonicalWithDocType as { lease_type?: string })?.lease_type ?? "NNN",
+          document_type_detected: (canonicalWithDocType as { document_type_detected?: string })?.document_type_detected ?? "unknown",
+        });
         runComputeForScenario(newScenario);
       });
       setLastExtractWarnings(null);
       setLastExtractionSummary(null);
       setPendingNormalizeQueue((prev) => prev.slice(1));
     },
-    [addScenarioFromCanonical, runComputeForScenario]
+    [addScenarioFromCanonical, runComputeForScenario, lastExtractionSummary]
   );
 
   const handleNormalizeCancel = useCallback(() => {

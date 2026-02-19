@@ -125,6 +125,7 @@ export function scenarioInputToBackendCanonical(
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
+    document_type_detected: s.document_type_detected ?? "",
     premises_name: buildPremisesName(s.building_name, s.suite, s.floor) || s.name,
     address: s.address ?? "",
     building_name: s.building_name ?? "",
@@ -198,6 +199,7 @@ export function backendCanonicalToScenarioInput(
   const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
   return {
     name: displayName,
+    document_type_detected: (c.document_type_detected ?? "").toString().trim() || undefined,
     building_name: c.building_name ?? "",
     suite,
     floor: c.floor ?? "",

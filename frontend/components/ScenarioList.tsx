@@ -65,6 +65,7 @@ export function ScenarioList({
           <thead>
             <tr className="bg-white/[0.04] border-b border-white/10">
               <th className="text-left py-2.5 px-4 font-medium text-zinc-400">Name</th>
+              <th className="text-left py-2.5 px-4 font-medium text-zinc-400">Doc type</th>
               <th className="text-right py-2.5 px-4 font-medium text-zinc-400">RSF</th>
               <th className="text-left py-2.5 px-4 font-medium text-zinc-400">Commencement</th>
               <th className="text-left py-2.5 px-4 font-medium text-zinc-400">Expiration</th>
@@ -110,6 +111,9 @@ export function ScenarioList({
                       )}
                     </button>
                   )}
+                </td>
+                <td className="py-2.5 px-4 text-zinc-400 capitalize">
+                  {(s.document_type_detected || "unknown").replace(/_/g, " ")}
                 </td>
                 <td className="py-2.5 px-4 text-right text-zinc-400">{formatRSF(s.rsf)}</td>
                 <td className="py-2.5 px-4 text-zinc-400">{formatDateISO(s.commencement)}</td>

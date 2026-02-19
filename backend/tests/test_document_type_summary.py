@@ -46,6 +46,16 @@ def test_detect_document_type_across_five_plus_formats() -> None:
             "amendment",
         ),
         (
+            "SUBLEASE AGREEMENT\nSublessor hereby subleases the Premises to Sublessee.",
+            "project-sublease.pdf",
+            "sublease",
+        ),
+        (
+            "SUB-SUBLEASE AGREEMENT\nSubsublessor and Subsublessee agree to the following terms.",
+            "project-subsublease.pdf",
+            "subsublease",
+        ),
+        (
             "LEASE AGREEMENT\nLandlord hereby leases to Tenant the Premises described below.",
             "master-lease.pdf",
             "lease",

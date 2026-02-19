@@ -998,7 +998,7 @@ def _regex_prefill(text: str) -> dict:
                 v = float(m.group(1).replace(",", ""))
             except ValueError:
                 continue
-            if not (5 <= v <= 500):
+            if not (3 <= v <= 500):
                 continue
             seg = (m.group(0) or "").lower()
             score = 0
@@ -1012,9 +1012,14 @@ def _regex_prefill(text: str) -> dict:
                 score += 1
             if any(tok in seg for tok in ("operating", "opex", "cam", "parking", "allowance", "ti allowance")):
                 score -= 4
+            # Tie-break toward realistic base rent over low OpEx-like values when context score is similar.
+            if v >= 15:
+                score += 1
+            elif v < 8:
+                score -= 1
             base_rate_candidates.append((score, v))
     if base_rate_candidates:
-        base_rate_candidates.sort(key=lambda x: (-x[0], x[1]))
+        base_rate_candidates.sort(key=lambda x: (-x[0], -x[1]))
         prefill["rate_psf_yr"] = float(base_rate_candidates[0][1])
     if "rate_psf_yr" not in prefill:
         inferred_rate = _infer_rate_psf_from_monthly_rent(text, _coerce_float_token(prefill.get("rsf"), None))

@@ -1668,7 +1668,7 @@ def _extract_phase_rent_schedule(text: str, term_months_hint: Optional[int] = No
         return None, None
 
     def _extract_rate_from_block(block_lines: list[str]) -> Optional[float]:
-        candidates: list[tuple[int, int, float]] = []
+        candidates: list[tuple[int, float, int]] = []
         for idx, ln in enumerate(block_lines):
             low = ln.lower()
             if any(
@@ -1695,11 +1695,17 @@ def _extract_phase_rent_schedule(text: str, term_months_hint: Optional[int] = No
                         score += 4
                     if pat_idx == 0:
                         score += 2
-                    candidates.append((score, idx, float(rate)))
+                    if rate >= 15:
+                        score += 1
+                    elif rate < 8:
+                        score -= 1
+                    candidates.append((score, float(rate), idx))
         if not candidates:
             return None
-        candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
-        return candidates[0][2]
+        # If score ties, prefer higher rate to avoid selecting OpEx-like values
+        # over base-rent values from the same phase block.
+        candidates.sort(key=lambda x: (-x[0], -x[1], x[2]))
+        return candidates[0][1]
 
     phase_indices: list[int] = []
     for i, ln in enumerate(lines):
@@ -2139,6 +2145,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     except Exception:
         prefill_hints = {}
     prefill_rent_steps = prefill_hints.get("rent_steps") if isinstance(prefill_hints.get("rent_steps"), list) else []
+    prefill_base_rate = _coerce_float_token(prefill_hints.get("rate_psf_yr"), 0.0) or 0.0
     normalized_prefill_rent: list[dict] = []
     for step in prefill_rent_steps:
         if not isinstance(step, dict):
@@ -2159,12 +2166,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         )
     if normalized_prefill_rent:
         current = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
+        current_rates_raw = [
+            round(float(s.get("rent_psf_annual", 0.0)), 4)
+            for s in current
+            if isinstance(s, dict)
+        ]
         current_rate_count = len(
-            {
-                round(float(s.get("rent_psf_annual", 0.0)), 4)
-                for s in current
-                if isinstance(s, dict)
-            }
+            set(current_rates_raw)
         )
         prefill_rate_count = len(
             {
@@ -2172,15 +2180,37 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 for s in normalized_prefill_rent
             }
         )
+        current_rate_max = max(current_rates_raw) if current_rates_raw else 0.0
+        low_flat_schedule = bool(current_rates_raw) and current_rate_max <= 10.0 and current_rate_count <= 1
+        prefill_has_stronger_base = prefill_base_rate >= 12.0 and prefill_base_rate > (current_rate_max + 4.0)
         should_replace = (
             not current
             or len(normalized_prefill_rent) > len(current)
             or prefill_rate_count > current_rate_count
+            or (low_flat_schedule and prefill_has_stronger_base)
         )
         if should_replace:
             hints["rent_schedule"] = normalized_prefill_rent
             if not hints.get("term_months"):
                 hints["term_months"] = int(normalized_prefill_rent[-1]["end_month"]) + 1
+    elif prefill_base_rate >= 12.0:
+        current = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
+        current_rates = [
+            round(float(s.get("rent_psf_annual", 0.0)), 4)
+            for s in current
+            if isinstance(s, dict)
+        ]
+        current_rate_max = max(current_rates) if current_rates else 0.0
+        if current_rates and len(set(current_rates)) <= 1 and current_rate_max <= 10.0:
+            term_hint = _coerce_int_token(hints.get("term_months"), 0) or 0
+            if term_hint > 0:
+                hints["rent_schedule"] = [
+                    {
+                        "start_month": 0,
+                        "end_month": max(0, term_hint - 1),
+                        "rent_psf_annual": float(round(prefill_base_rate, 4)),
+                    }
+                ]
 
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
@@ -2405,6 +2435,8 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         "loi": 0,
         "proposal": 0,
         "counter": 0,
+        "subsublease": 0,
+        "sublease": 0,
         "amendment": 0,
         "renewal": 0,
         "term_sheet": 0,
@@ -2415,6 +2447,8 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         ("loi", [r"\bloi\b", r"letter of intent"]),
         ("proposal", [r"\bproposal\b", r"economic proposal", r"business terms proposal"]),
         ("counter", [r"\bcounter\b", r"counter proposal", r"redline"]),
+        ("subsublease", [r"\bsub[- ]?sublease\b", r"\bsubsublease\b"]),
+        ("sublease", [r"\bsublease\b", r"\bsublessor\b", r"\bsublessee\b"]),
         ("amendment", [r"\bamendment\b", r"first amendment", r"second amendment", r"addendum"]),
         ("renewal", [r"\brenewal\b", r"renewal term", r"extension term", r"exercise (?:its )?option"]),
         ("term_sheet", [r"term sheet", r"deal points", r"summary of terms"]),
@@ -2429,6 +2463,10 @@ def _detect_document_type(text: str, filename: str = "") -> str:
     # Prefer more specific document types over generic lease if both appear.
     if score["counter"] > 0:
         return "counter_proposal"
+    if score["subsublease"] > 0:
+        return "subsublease"
+    if score["sublease"] > 0:
+        return "sublease"
     if score["amendment"] > 0:
         return "amendment"
     if score["renewal"] > 0 and score["proposal"] > 0:
@@ -2442,6 +2480,8 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         "loi": "loi",
         "proposal": "proposal",
         "counter": "counter_proposal",
+        "subsublease": "subsublease",
+        "sublease": "sublease",
         "amendment": "amendment",
         "renewal": "renewal_or_extension",
         "term_sheet": "term_sheet",
@@ -3143,6 +3183,17 @@ def _normalize_impl(
                 ]
         else:
             confidence_score = max(confidence_score, conf_from_missing)
+        extraction_summary = _build_extraction_summary(
+            text=extraction_text_for_summary,
+            filename=extraction_filename_for_summary,
+            canonical=canonical,
+            missing_fields=missing,
+            warnings=warnings,
+        )
+        doc_type = str(extraction_summary.get("document_type_detected") or "unknown")
+        doc_type_note = f"Document type detected: {doc_type}."
+        if not any("document type detected:" in str(w).lower() for w in warnings):
+            warnings.insert(0, doc_type_note)
         return (
             NormalizerResponse(
                 canonical_lease=canonical,
@@ -3151,13 +3202,7 @@ def _normalize_impl(
                 missing_fields=missing,
                 clarification_questions=questions,
                 warnings=warnings,
-                extraction_summary=_build_extraction_summary(
-                    text=extraction_text_for_summary,
-                    filename=extraction_filename_for_summary,
-                    canonical=canonical,
-                    missing_fields=missing,
-                    warnings=warnings,
-                ),
+                extraction_summary=extraction_summary,
             ),
             not used_fallback,
         )
@@ -3182,6 +3227,17 @@ def _normalize_impl(
         warnings.extend(norm_warnings)
         conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
         confidence_score = max(confidence_score, conf_from_missing)
+        extraction_summary = _build_extraction_summary(
+            text=extraction_text_for_summary,
+            filename=extraction_filename_for_summary,
+            canonical=canonical,
+            missing_fields=missing,
+            warnings=warnings,
+        )
+        doc_type = str(extraction_summary.get("document_type_detected") or "unknown")
+        doc_type_note = f"Document type detected: {doc_type}."
+        if not any("document type detected:" in str(w).lower() for w in warnings):
+            warnings.insert(0, doc_type_note)
         return (
             NormalizerResponse(
                 canonical_lease=canonical,
@@ -3190,13 +3246,7 @@ def _normalize_impl(
                 missing_fields=missing,
                 clarification_questions=questions,
                 warnings=warnings,
-                extraction_summary=_build_extraction_summary(
-                    text=extraction_text_for_summary,
-                    filename=extraction_filename_for_summary,
-                    canonical=canonical,
-                    missing_fields=missing,
-                    warnings=warnings,
-                ),
+                extraction_summary=extraction_summary,
             ),
             True,  # used_ai
         )
@@ -3215,6 +3265,17 @@ def _normalize_impl(
     canonical, norm_warnings = normalize_canonical_lease(canonical)
     warnings.extend(norm_warnings)
     confidence_score, missing, questions = _compute_confidence_and_missing(canonical)
+    extraction_summary = _build_extraction_summary(
+        text=extraction_text_for_summary,
+        filename=extraction_filename_for_summary,
+        canonical=canonical,
+        missing_fields=missing,
+        warnings=warnings,
+    )
+    doc_type = str(extraction_summary.get("document_type_detected") or "unknown")
+    doc_type_note = f"Document type detected: {doc_type}."
+    if not any("document type detected:" in str(w).lower() for w in warnings):
+        warnings.insert(0, doc_type_note)
     return (
         NormalizerResponse(
             canonical_lease=canonical,
@@ -3223,13 +3284,7 @@ def _normalize_impl(
             missing_fields=missing,
             clarification_questions=questions,
             warnings=warnings,
-            extraction_summary=_build_extraction_summary(
-                text=extraction_text_for_summary,
-                filename=extraction_filename_for_summary,
-                canonical=canonical,
-                missing_fields=missing,
-                warnings=warnings,
-            ),
+            extraction_summary=extraction_summary,
         ),
         False,  # used_ai: MANUAL/JSON does not use AI
     )
