@@ -666,7 +666,7 @@ def _split_by_calendar_year(
     return ranges
 
 
-def _scenario_rent_rows(entry: dict[str, Any], max_rows: int = 14) -> tuple[list[dict[str, str]], int]:
+def _scenario_rent_rows(entry: dict[str, Any]) -> list[dict[str, str]]:
     scenario = entry["scenario"]
     steps = _extract_rent_steps(scenario)
     if not steps:
@@ -751,26 +751,28 @@ def _scenario_rent_rows(entry: dict[str, Any], max_rows: int = 14) -> tuple[list
                     }
                 )
 
-    omitted = 0
-    if len(expanded) > max_rows:
-        omitted = len(expanded) - max_rows
-        expanded = expanded[:max_rows]
-    return expanded, omitted
+    return expanded
 
 
-def ScenarioDetailSection(entry: dict[str, Any]) -> str:
-    scenario = entry["scenario"]
-    result = entry["result"]
-    rows, omitted = _scenario_rent_rows(entry)
-    kpis = [
-        ("Document type", entry["doc_type"]),
-        ("RSF", f"{_fmt_number(scenario.get('rsf'))} SF"),
-        ("Term", f"{_fmt_number(result.get('term_months'))} months"),
-        ("NPV cost", _fmt_currency(result.get("npv_cost"))),
-        ("Avg cost/SF/year", _fmt_psf(result.get("avg_cost_psf_year"))),
-        ("Total obligation", _fmt_currency(result.get("total_cost_nominal"))),
-    ]
+def _chunk_detail_rows(rows: list[dict[str, str]], max_units: int = 28) -> list[list[dict[str, str]]]:
+    chunks: list[list[dict[str, str]]] = []
+    current: list[dict[str, str]] = []
+    units = 0
+    for row in rows:
+        note_len = len(str(row.get("note") or ""))
+        row_units = 1 + math.ceil(note_len / 42)
+        if current and units + row_units > max_units:
+            chunks.append(current)
+            current = []
+            units = 0
+        current.append(row)
+        units += row_units
+    if current:
+        chunks.append(current)
+    return chunks
 
+
+def _detail_table_html(rows: list[dict[str, str]]) -> str:
     table_rows = "".join(
         f"""
         <tr>
@@ -787,15 +789,7 @@ def ScenarioDetailSection(entry: dict[str, Any]) -> str:
         """
         for r in rows
     )
-    omitted_note = (
-        f"<p class='table-footnote'>+ {omitted} additional segmented row(s) omitted here to keep one-page scenario layout. Use Excel export for full row-level schedule.</p>"
-        if omitted > 0
-        else ""
-    )
-
     return f"""
-    {SectionTitle("Scenario detail", entry["name"], "One-page option profile with KPIs and segmented rent schedule.")}
-    {KpiTilesRow(kpis)}
     <table class="detail-table">
       <thead>
         <tr>
@@ -814,8 +808,47 @@ def ScenarioDetailSection(entry: dict[str, Any]) -> str:
         {table_rows}
       </tbody>
     </table>
-    {omitted_note}
     """
+
+
+def ScenarioDetailSections(entry: dict[str, Any]) -> list[str]:
+    scenario = entry["scenario"]
+    result = entry["result"]
+    rows = _scenario_rent_rows(entry)
+    chunks = _chunk_detail_rows(rows, max_units=30 if len(rows) <= 16 else 26)
+    if not chunks:
+        chunks = [[]]
+    kpis = [
+        ("Document type", entry["doc_type"]),
+        ("RSF", f"{_fmt_number(scenario.get('rsf'))} SF"),
+        ("Term", f"{_fmt_number(result.get('term_months'))} months"),
+        ("NPV cost", _fmt_currency(result.get("npv_cost"))),
+        ("Avg cost/SF/year", _fmt_psf(result.get("avg_cost_psf_year"))),
+        ("Total obligation", _fmt_currency(result.get("total_cost_nominal"))),
+    ]
+    out: list[str] = []
+    total_chunks = len(chunks)
+    for idx, chunk in enumerate(chunks):
+        subtitle = (
+            "Full segmented rent schedule with no clipped rows."
+            if total_chunks == 1
+            else f"Segmented rent schedule page {idx + 1} of {total_chunks}."
+        )
+        kpi_html = KpiTilesRow(kpis) if idx == 0 else ""
+        continuation = (
+            ""
+            if idx == 0
+            else f"<p class='table-footnote'>Continued rent schedule for {_esc(entry['name'])}.</p>"
+        )
+        out.append(
+            f"""
+            {SectionTitle("Scenario detail", entry["name"], subtitle)}
+            {kpi_html}
+            {_detail_table_html(chunk)}
+            {continuation}
+            """
+        )
+    return out
 
 
 def _cover_option_reason(entry: dict[str, Any], *, is_best: bool) -> str:
@@ -1066,6 +1099,142 @@ def _cost_visuals_page(entries: list[dict[str, Any]]) -> str:
     """
 
 
+def _nice_axis_max(value: float, *, steps: int = 5) -> float:
+    if value <= 0:
+        return 1.0
+    rough = value / max(1, steps)
+    magnitude = 10 ** math.floor(math.log10(max(rough, 1e-9)))
+    for factor in (1, 2, 5, 10):
+        candidate = factor * magnitude
+        if candidate >= rough:
+            return candidate * steps
+    return rough * steps
+
+
+def _split_label_lines(label: str, max_chars: int = 28) -> list[str]:
+    words = [w for w in str(label or "").split() if w]
+    if not words:
+        return ["Option"]
+    lines: list[str] = []
+    current = ""
+    for w in words:
+        next_text = f"{current} {w}".strip()
+        if current and len(next_text) > max_chars:
+            lines.append(current)
+            current = w
+            if len(lines) >= 2:
+                break
+        else:
+            current = next_text
+    if current and len(lines) < 2:
+        lines.append(current)
+    if not lines:
+        lines = [_truncate_text(label, max_chars)]
+    return lines
+
+
+def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
+    if not entries:
+        return "<article class='chart-block'><h3>Average Costs</h3><p class='axis-note'>No scenarios available.</p></article>"
+    values_year = [_safe_float(e["result"].get("avg_cost_year"), 0.0) for e in entries]
+    values_psf = [_safe_float(e["result"].get("avg_cost_psf_year"), 0.0) for e in entries]
+    max_year = _nice_axis_max(max(values_year) if values_year else 1.0, steps=5)
+    max_psf = _nice_axis_max(max(values_psf) if values_psf else 1.0, steps=5)
+
+    w, h = 1120, 390
+    left, right, top, bottom = 92, 92, 54, 116
+    plot_w = w - left - right
+    plot_h = h - top - bottom
+    count = max(1, len(entries))
+    slot = plot_w / count
+    bar_w = min(180, slot * 0.54)
+
+    grid_lines: list[str] = []
+    left_ticks: list[str] = []
+    right_ticks: list[str] = []
+    tick_count = 5
+    for i in range(tick_count + 1):
+        frac = i / tick_count
+        y = top + plot_h - (frac * plot_h)
+        yv_year = frac * max_year
+        yv_psf = frac * max_psf
+        grid_lines.append(
+            f'<line x1="{left}" y1="{y:.2f}" x2="{w-right}" y2="{y:.2f}" stroke="#d4d4d8" stroke-width="1" />'
+        )
+        left_ticks.append(
+            f'<text x="{left-12}" y="{y+4:.2f}" text-anchor="end" class="combo-axis">{_esc(_fmt_currency(yv_year))}</text>'
+        )
+        right_ticks.append(
+            f'<text x="{w-right+12}" y="{y+4:.2f}" text-anchor="start" class="combo-axis">{_esc(_fmt_currency(yv_psf, 2))}</text>'
+        )
+
+    bars: list[str] = []
+    line_points: list[str] = []
+    line_labels: list[str] = []
+    x_labels: list[str] = []
+    for idx, entry in enumerate(entries):
+        cx = left + (slot * idx) + (slot / 2)
+        year_val = values_year[idx]
+        psf_val = values_psf[idx]
+        bar_h = (year_val / max_year) * plot_h if max_year > 0 else 0
+        bar_x = cx - (bar_w / 2)
+        bar_y = top + plot_h - bar_h
+        bars.append(
+            f'<rect x="{bar_x:.2f}" y="{bar_y:.2f}" width="{bar_w:.2f}" height="{bar_h:.2f}" fill="#8f0011" />'
+        )
+        bars.append(
+            f'<text x="{cx:.2f}" y="{top + plot_h - 8:.2f}" text-anchor="middle" class="combo-bar-label">{_esc(_fmt_currency(year_val))}</text>'
+        )
+        py = top + plot_h - ((psf_val / max_psf) * plot_h if max_psf > 0 else 0)
+        line_points.append(f"{cx:.2f},{py:.2f}")
+        line_labels.append(
+            f'<circle cx="{cx:.2f}" cy="{py:.2f}" r="4" fill="#5f6368" />'
+            f'<text x="{cx:.2f}" y="{py-10:.2f}" text-anchor="middle" class="combo-line-label">{_esc(_fmt_currency(psf_val, 2))}</text>'
+        )
+        label_lines = _split_label_lines(entry["name"], max_chars=30)
+        for lidx, line in enumerate(label_lines):
+            x_labels.append(
+                f'<text x="{cx:.2f}" y="{top + plot_h + 24 + (lidx * 14):.2f}" text-anchor="middle" class="combo-x-label">{_esc(line)}</text>'
+            )
+
+    polyline = (
+        f'<polyline points="{" ".join(line_points)}" fill="none" stroke="#5f6368" stroke-width="4" />'
+        if len(line_points) >= 2
+        else ""
+    )
+    legend = (
+        f'<rect x="{left + 12}" y="16" width="26" height="10" fill="#8f0011" />'
+        f'<text x="{left + 44}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/YEAR</text>'
+        f'<line x1="{left + 348}" y1="21" x2="{left + 374}" y2="21" stroke="#5f6368" stroke-width="4" />'
+        f'<circle cx="{left + 361}" cy="21" r="4" fill="#5f6368" />'
+        f'<text x="{left + 382}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/SF/YEAR</text>'
+    )
+
+    return f"""
+    <article class="chart-block combo-chart-block">
+      <h3>Average Costs</h3>
+      <p class="axis-note">Bars show average cost/year. Line shows average cost/SF/year.</p>
+      <svg viewBox="0 0 {w} {h}" class="combo-chart" role="img" aria-label="Average costs by scenario">
+        {legend}
+        {''.join(grid_lines)}
+        {''.join(left_ticks)}
+        {''.join(right_ticks)}
+        {''.join(bars)}
+        {polyline}
+        {''.join(line_labels)}
+        {''.join(x_labels)}
+      </svg>
+    </article>
+    """
+
+
+def _average_costs_combo_page(entries: list[dict[str, Any]]) -> str:
+    return f"""
+    {SectionTitle("Cost visuals", "Average Costs", "Dual-axis view for average annual cost and average cost per SF/year.")}
+    {ComboAverageCostsChart(entries)}
+    """
+
+
 def _cost_visuals_pages(entries: list[dict[str, Any]]) -> list[str]:
     if not entries:
         return [_cost_visuals_page(entries)]
@@ -1073,6 +1242,7 @@ def _cost_visuals_pages(entries: list[dict[str, Any]]) -> list[str]:
     pages: list[str] = []
     for i in range(0, len(entries), chunk_size):
         subset = entries[i : i + chunk_size]
+        pages.append(_average_costs_combo_page(subset))
         pages.append(
             _cost_visuals_page(subset).replace(
                 "Horizontal bars use a shared per-metric scale to support clean visual ranking.",
@@ -1211,9 +1381,20 @@ def _deck_css(primary_color: str) -> str:
       overflow: hidden;
       position: relative;
     }}
+    .page-content::before {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px) 0 0 / 18px 18px,
+        linear-gradient(0deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px) 0 0 / 18px 18px;
+      pointer-events: none;
+    }}
     .page-content-inner {{
       width: 100%;
       transform-origin: top left;
+      position: relative;
+      z-index: 1;
     }}
     .page-footer {{
       height: 12mm;
@@ -1417,6 +1598,38 @@ def _deck_css(primary_color: str) -> str:
     .bar-fill {{
       height: 100%;
       background: {primary_color};
+    }}
+    .combo-chart-block {{
+      padding: 3.2mm;
+    }}
+    .combo-chart {{
+      width: 100%;
+      height: 92mm;
+      border: 1px solid #111;
+      background: #fafafa;
+      display: block;
+    }}
+    .combo-axis {{
+      font-size: 12px;
+      fill: #555;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .combo-bar-label {{
+      font-size: 13px;
+      fill: #fff;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .combo-line-label {{
+      font-size: 13px;
+      fill: #4b5563;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .combo-x-label {{
+      font-size: 12px;
+      fill: #111;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
     }}
     .abstract-stack {{
       display: grid;
@@ -1653,7 +1866,8 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
     for abstracts_html in _lease_abstract_pages(entries):
         page_payloads.append((abstracts_html, "Lease abstract highlights", True))
     for entry in entries:
-        page_payloads.append((ScenarioDetailSection(entry), "Scenario detail", True))
+        for detail_html in ScenarioDetailSections(entry):
+            page_payloads.append((detail_html, "Scenario detail", True))
     page_payloads.append((DisclaimerPage(theme), "Disclaimer", True))
 
     total_pages = len(page_payloads)
@@ -1693,7 +1907,7 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
           const limitHeight = content.clientHeight || 0;
           if (!rawHeight || !limitHeight) continue;
           if (rawHeight <= limitHeight) continue;
-          const targetScale = Math.max(0.76, Math.min(1, (limitHeight - 1) / rawHeight));
+          const targetScale = Math.max(0.58, Math.min(1, (limitHeight - 1) / rawHeight));
           if (targetScale < 0.999) {{
             inner.style.transform = `scale(${{targetScale}})`;
             inner.style.width = `${{(100 / targetScale).toFixed(4)}}%`;

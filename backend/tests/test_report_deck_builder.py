@@ -150,3 +150,27 @@ def test_report_dates_are_rendered_dd_mm_yyyy():
     }
     html = build_report_deck_html(payload)
     assert "19/02/2026" in html
+
+
+def test_scenario_detail_rows_paginate_without_omitting_rows():
+    scenario = Scenario(
+        name="Pagination Stress",
+        rsf=11000,
+        commencement=date(2026, 1, 1),
+        expiration=date(2033, 1, 1),
+        rent_steps=[RentStep(start=i, end=min(83, i + 2), rate_psf_yr=40 + (i / 3)) for i in range(0, 84, 3)],
+        free_rent_months=6,
+        ti_allowance_psf=20.0,
+        opex_mode=OpexMode.NNN,
+        base_opex_psf_yr=10.0,
+        base_year_opex_psf_yr=10.0,
+        opex_growth=0.03,
+        discount_rate_annual=0.07,
+    )
+    _, result = compute_cashflows(scenario)
+    html = build_report_deck_html(
+        {"scenarios": [{"scenario": scenario.model_dump(mode="json"), "result": result.model_dump()}]}
+    )
+    assert "Segmented rent schedule page" in html
+    assert "additional segmented row(s) omitted" not in html
+    assert "Average Costs" in html
