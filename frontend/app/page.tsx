@@ -291,7 +291,7 @@ export default function Home() {
   const [lastExtractionSummary, setLastExtractionSummary] = useState<ExtractionSummary | null>(null);
   const [pendingNormalizeQueue, setPendingNormalizeQueue] = useState<NormalizerResponse[]>([]);
   const [brandId, setBrandId] = useState<string>("default");
-  const [globalDiscountRate, setGlobalDiscountRate] = useState(0.08);
+  const [globalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [exportExcelError, setExportExcelError] = useState<string | null>(null);
   const [reportMeta, setReportMeta] = useState<{
@@ -1252,19 +1252,9 @@ export default function Home() {
           <p className="text-sm text-slate-300 mb-4">
             Export Excel or PDF directly from your current scenarios. Analysis refresh is optional.
           </p>
-          <label className="flex items-center gap-2 text-sm text-slate-300 mb-4">
-            <span>Discount rate (default 8%):</span>
-            <input
-              type="number"
-              min={0}
-              max={100}
-              step={0.25}
-              value={globalDiscountRate * 100}
-              onChange={(e) => setGlobalDiscountRate(Number(e.target.value) / 100)}
-              className="input-premium w-24 !min-h-0 py-1.5"
-            />
-            <span>%</span>
-          </label>
+          <p className="text-sm text-slate-300 mb-4">
+            Uses per-scenario discount rate overrides when set; otherwise defaults to 8%.
+          </p>
           <BrandingLogoUploader
             branding={organizationBranding}
             loading={brandingLoading}
