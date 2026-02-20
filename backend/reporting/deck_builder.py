@@ -1162,6 +1162,73 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
             elif metric_label == "Discount rate":
                 values.append(_fmt_percent(scenario.get("discount_rate_annual"), precision=2))
         rows.append((metric_label, values, style))
+
+    equalized_no_overlap = any(bool(e["result"].get("equalized_no_overlap")) for e in entries)
+    if equalized_no_overlap:
+        rows.append(
+            (
+                "Equalized (overlap-only)",
+                ["No overlapping lease term for equalized comparison"] * len(entries),
+                "text",
+            )
+        )
+        return rows
+
+    equalized_starts = [str(e["result"].get("equalized_start") or "").strip() for e in entries]
+    equalized_ends = [str(e["result"].get("equalized_end") or "").strip() for e in entries]
+    if any(equalized_starts) and any(equalized_ends):
+        rows.append(
+            (
+                "Equalized period",
+                [
+                    f"{_fmt_date(e['result'].get('equalized_start'))} – {_fmt_date(e['result'].get('equalized_end'))}"
+                    for e in entries
+                ],
+                "text",
+            )
+        )
+        rows.append(
+            (
+                "Equalized avg gross rent/SF/year",
+                [_fmt_psf(e["result"].get("equalized_avg_gross_rent_psf_year")) for e in entries],
+                "text",
+            )
+        )
+        rows.append(
+            (
+                "Equalized avg gross rent/month",
+                [_fmt_currency(e["result"].get("equalized_avg_gross_rent_month")) for e in entries],
+                "text",
+            )
+        )
+        rows.append(
+            (
+                "Equalized avg cost/SF/year",
+                [_fmt_psf(e["result"].get("equalized_avg_cost_psf_year")) for e in entries],
+                "text",
+            )
+        )
+        rows.append(
+            (
+                "Equalized avg cost/month",
+                [_fmt_currency(e["result"].get("equalized_avg_cost_month")) for e in entries],
+                "text",
+            )
+        )
+        rows.append(
+            (
+                "Equalized total cost",
+                [_fmt_currency(e["result"].get("equalized_total_cost")) for e in entries],
+                "text",
+            )
+        )
+        rows.append(
+            (
+                "Equalized NPV (t0=start)",
+                [_fmt_currency(e["result"].get("equalized_npv_cost")) for e in entries],
+                "text",
+            )
+        )
     return rows
 
 
@@ -1497,6 +1564,50 @@ def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
     )
     omitted = max(0, len(ranking) - len(ranking_display))
     omitted_line = f"<p class='matrix-footnote'>+ {omitted} additional option(s) are ranked in the comparison matrix.</p>" if omitted else ""
+
+    no_overlap = any(bool(e["result"].get("equalized_no_overlap")) for e in entries)
+    equalized_card_html: str
+    if no_overlap:
+        equalized_card_html = """
+        <article class="panel">
+          <h3>Equalized (overlap-only)</h3>
+          <p class="axis-note">No overlapping lease term for equalized comparison. Use a custom comparison window in the app.</p>
+        </article>
+        """
+    else:
+        first_with_window = next(
+            (
+                e
+                for e in entries
+                if e["result"].get("equalized_start") and e["result"].get("equalized_end")
+            ),
+            None,
+        )
+        equalized_period = (
+            f"{_fmt_date(first_with_window['result'].get('equalized_start'))} – "
+            f"{_fmt_date(first_with_window['result'].get('equalized_end'))}"
+            if first_with_window
+            else "—"
+        )
+        equalized_ranked = sorted(entries, key=lambda e: _safe_float(e["result"].get("equalized_npv_cost"), float("inf")))
+        equalized_top = "".join(
+            f"""
+            <li>
+              <strong>{_esc(e['name'])}</strong>
+              <span>{_esc(_fmt_currency(e['result'].get('equalized_npv_cost')))} equalized NPV</span>
+              <span>{_esc(_fmt_psf(e['result'].get('equalized_avg_cost_psf_year')))} equalized avg cost/SF/year</span>
+            </li>
+            """
+            for e in equalized_ranked[:4]
+        )
+        equalized_card_html = f"""
+        <article class="panel">
+          <h3>Equalized (overlap-only)</h3>
+          <p class="axis-note">Equalized period: { _esc(equalized_period) }</p>
+          <ol class="ranking-list">{equalized_top}</ol>
+        </article>
+        """
+
     return f"""
     {SectionTitle("Executive summary", "Decision Snapshot", "Ranking is based on lowest NPV cost (tenant cost perspective).")}
     <div class="summary-grid">
@@ -1514,6 +1625,9 @@ def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
           <li>Confirm parking terms and non-rent charges that may materially affect all-in occupancy costs.</li>
         </ul>
       </article>
+    </div>
+    <div class="summary-grid">
+      {equalized_card_html}
     </div>
     """
 

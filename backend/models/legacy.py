@@ -340,6 +340,18 @@ class CashflowResult(BaseModel):
     npv_cost: float
     avg_cost_year: float
     avg_cost_psf_year: float
+    equalized_start: Optional[str] = None
+    equalized_end: Optional[str] = None
+    equalized_window_days: Optional[float] = None
+    equalized_window_month_count: Optional[float] = None
+    equalized_window_source: Optional[Literal["overlap", "custom"]] = None
+    equalized_avg_gross_rent_psf_year: Optional[float] = None
+    equalized_avg_gross_rent_month: Optional[float] = None
+    equalized_avg_cost_psf_year: Optional[float] = None
+    equalized_avg_cost_month: Optional[float] = None
+    equalized_total_cost: Optional[float] = None
+    equalized_npv_cost: Optional[float] = None
+    equalized_no_overlap: bool = False
     parking_nominal: float = 0.0
     one_time_nominal: float = 0.0
     broker_fee_nominal: float = 0.0

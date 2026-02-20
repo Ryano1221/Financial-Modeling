@@ -124,6 +124,18 @@ export interface CashflowResult {
   npv_cost: number;
   avg_cost_year: number;
   avg_cost_psf_year: number;
+  equalized_start?: string;
+  equalized_end?: string;
+  equalized_window_days?: number;
+  equalized_window_month_count?: number;
+  equalized_window_source?: "overlap" | "custom";
+  equalized_avg_gross_rent_psf_year?: number;
+  equalized_avg_gross_rent_month?: number;
+  equalized_avg_cost_psf_year?: number;
+  equalized_avg_cost_month?: number;
+  equalized_total_cost?: number;
+  equalized_npv_cost?: number;
+  equalized_no_overlap?: boolean;
 }
 
 /** Report branding for PDF deck */

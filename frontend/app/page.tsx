@@ -37,6 +37,7 @@ import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
 import { SummaryMatrix } from "@/components/SummaryMatrix";
 import { formatDateISO } from "@/lib/format";
+import { computeEqualizedComparison, type EqualizedWindowInput } from "@/lib/equalized";
 import {
   backendCanonicalToScenarioInput,
   scenarioInputToBackendCanonical,
@@ -373,6 +374,10 @@ export default function Home() {
     report_date: "",
     market: "",
     submarket: "",
+  });
+  const [equalizedCustomWindow, setEqualizedCustomWindow] = useState<EqualizedWindowInput>({
+    start: "",
+    end: "",
   });
   const [organizationBranding, setOrganizationBranding] = useState<UserBrandingResponse | null>(null);
   const [brokerageName, setBrokerageName] = useState("");
@@ -988,10 +993,34 @@ export default function Home() {
         clientLogoBase64 || !clientLogoDataUrl || clientLogoDataUrl.startsWith("data:image/")
           ? undefined
           : clientLogoDataUrl;
-      const scenariosForDeck = scenarios.map((s) => ({
-        scenario: scenarioToPayload(s),
-        result: getScenarioResultForExport(s),
-      }));
+      if (equalizedForExport.needsCustomWindow) {
+        setExportPdfError(
+          "No overlapping lease term for equalized comparison. Enter a custom comparison start and end date."
+        );
+        return;
+      }
+      const scenariosForDeck = scenarios.map((s) => {
+        const equalized = equalizedForExport.metricsByScenario[s.id];
+        const baseResult = getScenarioResultForExport(s);
+        return {
+          scenario: scenarioToPayload(s),
+          result: {
+            ...baseResult,
+            equalized_start: equalizedForExport.windowStart || undefined,
+            equalized_end: equalizedForExport.windowEnd || undefined,
+            equalized_window_days: equalizedForExport.windowDays || undefined,
+            equalized_window_month_count: equalizedForExport.windowMonthCount || undefined,
+            equalized_window_source: equalizedForExport.windowSource,
+            equalized_avg_gross_rent_psf_year: equalized?.averageGrossRentPsfYear ?? undefined,
+            equalized_avg_gross_rent_month: equalized?.averageGrossRentMonth ?? undefined,
+            equalized_avg_cost_psf_year: equalized?.averageCostPsfYear ?? undefined,
+            equalized_avg_cost_month: equalized?.averageCostMonth ?? undefined,
+            equalized_total_cost: equalized?.totalCost ?? undefined,
+            equalized_npv_cost: equalized?.npvCost ?? undefined,
+            equalized_no_overlap: equalizedForExport.needsCustomWindow,
+          },
+        };
+      });
       const meta = buildReportMeta();
       const headers = getAuthHeaders();
       try {
@@ -1071,7 +1100,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName, defaultPreparedByFromAuth]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName, defaultPreparedByFromAuth, equalizedForExport]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1121,8 +1150,13 @@ export default function Home() {
     }
   }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob]);
 
+  const includedScenarios = useMemo(
+    () => scenarios.filter((s) => includedInSummary[s.id] !== false),
+    [scenarios, includedInSummary]
+  );
+
   const engineResults = useMemo(() => {
-    const included = scenarios.filter((s) => includedInSummary[s.id] !== false);
+    const included = includedScenarios;
     if (isProduction) {
       return included.map((s) => {
         const cached = canonicalComputeCache[s.id];
@@ -1141,7 +1175,17 @@ export default function Home() {
       });
     }
     return included.map((s) => runMonthlyEngine(scenarioToCanonical(s), globalDiscountRate));
-  }, [scenarios, globalDiscountRate, includedInSummary, isProduction, canonicalComputeCache]);
+  }, [includedScenarios, globalDiscountRate, isProduction, canonicalComputeCache]);
+
+  const equalizedUi = useMemo(
+    () => computeEqualizedComparison(includedScenarios, globalDiscountRate, equalizedCustomWindow),
+    [includedScenarios, globalDiscountRate, equalizedCustomWindow]
+  );
+
+  const equalizedForExport = useMemo(
+    () => computeEqualizedComparison(scenarios, globalDiscountRate, equalizedCustomWindow),
+    [scenarios, globalDiscountRate, equalizedCustomWindow]
+  );
 
   const chartData: ChartRow[] = engineResults
     .map((r) => ({
@@ -1573,7 +1617,55 @@ export default function Home() {
 
             {engineResults.length > 0 && (
               <>
-                <SummaryMatrix results={engineResults} />
+                {equalizedUi.needsCustomWindow && (
+                  <div className="mb-4 border border-amber-500/40 bg-amber-500/10 p-4">
+                    <p className="text-sm font-medium text-amber-200">
+                      {equalizedUi.message || "No overlapping lease term for equalized comparison."}
+                    </p>
+                    <p className="text-xs text-amber-100/80 mt-1">
+                      Enter a custom equalized comparison period (MM.DD.YYYY) to compute overlap-only metrics.
+                    </p>
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="text-xs text-amber-100/80">Custom start</span>
+                        <input
+                          type="text"
+                          value={equalizedCustomWindow.start}
+                          onChange={(e) =>
+                            setEqualizedCustomWindow((prev) => ({ ...prev, start: e.target.value }))
+                          }
+                          onBlur={(e) =>
+                            setEqualizedCustomWindow((prev) => ({
+                              ...prev,
+                              start: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
+                            }))
+                          }
+                          className="input-premium mt-1"
+                          placeholder="MM.DD.YYYY"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs text-amber-100/80">Custom end</span>
+                        <input
+                          type="text"
+                          value={equalizedCustomWindow.end}
+                          onChange={(e) =>
+                            setEqualizedCustomWindow((prev) => ({ ...prev, end: e.target.value }))
+                          }
+                          onBlur={(e) =>
+                            setEqualizedCustomWindow((prev) => ({
+                              ...prev,
+                              end: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
+                            }))
+                          }
+                          className="input-premium mt-1"
+                          placeholder="MM.DD.YYYY"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+                <SummaryMatrix results={engineResults} equalized={equalizedUi} />
                 <Charts data={chartData} />
               </>
             )}
