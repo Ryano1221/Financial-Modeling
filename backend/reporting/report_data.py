@@ -23,13 +23,13 @@ def _year_ranges(term_months: int) -> list[tuple[int, int, int]]:
 
 def _fmt_date(value: Any) -> str:
     if isinstance(value, date):
-        return value.strftime("%d/%m/%Y")
+        return value.strftime("%m.%d.%Y")
     text = str(value or "").strip()
     if not text:
         return "—"
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d"):
+    for fmt in ("%Y-%m-%d", "%m.%d.%Y", "%m/%d/%Y", "%d.%m.%Y", "%d/%m/%Y", "%Y/%m/%d"):
         try:
-            return datetime.strptime(text[:10], fmt).date().strftime("%d/%m/%Y")
+            return datetime.strptime(text[:10], fmt).date().strftime("%m.%d.%Y")
         except ValueError:
             continue
     return text

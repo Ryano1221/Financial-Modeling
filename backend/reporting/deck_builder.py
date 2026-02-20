@@ -134,7 +134,16 @@ def _parse_date(value: Any) -> date | None:
             return datetime.fromisoformat(candidate).date()
         except ValueError:
             continue
-    for fmt in ("%m/%d/%Y", "%m-%d-%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%Y-%m-%d"):
+    for fmt in (
+        "%m.%d.%Y",
+        "%m/%d/%Y",
+        "%m-%d-%Y",
+        "%d.%m.%Y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+        "%Y-%m-%d",
+    ):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
@@ -146,7 +155,7 @@ def _fmt_date(value: Any) -> str:
     d = _parse_date(value)
     if d is None:
         return "—"
-    return d.strftime("%d/%m/%Y")
+    return d.strftime("%m.%d.%Y")
 
 
 def _truncate_text(value: str, max_len: int = 88) -> str:
@@ -166,7 +175,7 @@ def _add_months(d: date, months: int) -> date:
 def _month_start_end_dates(commencement: date, start_offset: int, end_offset: int) -> tuple[str, str]:
     start_date = _add_months(commencement, max(0, start_offset))
     end_date = _add_months(commencement, max(0, end_offset) + 1) - timedelta(days=1)
-    return start_date.strftime("%d/%m/%Y"), end_date.strftime("%d/%m/%Y")
+    return start_date.strftime("%m.%d.%Y"), end_date.strftime("%m.%d.%Y")
 
 
 def _pick(branding: dict[str, Any], *keys: str, default: str = "") -> str:

@@ -25,14 +25,14 @@ def format_date(d: Any) -> str:
     if d is None:
         return "—"
     if isinstance(d, date):
-        return d.strftime("%d/%m/%Y")
+        return d.strftime("%m.%d.%Y")
     text = str(d).strip()
     if not text:
         return "—"
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d"):
+    for fmt in ("%Y-%m-%d", "%m.%d.%Y", "%m/%d/%Y", "%d.%m.%Y", "%d/%m/%Y", "%Y/%m/%d"):
         try:
             parsed = datetime.strptime(text[:10], fmt).date()
-            return parsed.strftime("%d/%m/%Y")
+            return parsed.strftime("%m.%d.%Y")
         except ValueError:
             continue
     return text

@@ -164,14 +164,14 @@ function getBrandingDisplayErrorMessage(error: unknown): string {
   return msg;
 }
 
-function formatDateDdMmYyyy(dateValue: Date): string {
-  const dd = String(dateValue.getDate()).padStart(2, "0");
+function formatDateMmDdYyyy(dateValue: Date): string {
   const mm = String(dateValue.getMonth() + 1).padStart(2, "0");
+  const dd = String(dateValue.getDate()).padStart(2, "0");
   const yyyy = dateValue.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
+  return `${mm}.${dd}.${yyyy}`;
 }
 
-function normalizeDateDdMmYyyy(raw: string): string {
+function normalizeDateMmDdYyyy(raw: string): string {
   const text = String(raw || "").trim();
   if (!text) return "";
   const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
@@ -181,17 +181,24 @@ function normalizeDateDdMmYyyy(raw: string): string {
     const dd = Number(iso[3]);
     const parsed = new Date(yyyy, mm - 1, dd);
     if (parsed.getFullYear() === yyyy && parsed.getMonth() + 1 === mm && parsed.getDate() === dd) {
-      return `${String(dd).padStart(2, "0")}/${String(mm).padStart(2, "0")}/${yyyy}`;
+      return `${String(mm).padStart(2, "0")}.${String(dd).padStart(2, "0")}.${yyyy}`;
     }
   }
-  const dmy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (dmy) {
-    const dd = Number(dmy[1]);
-    const mm = Number(dmy[2]);
-    const yyyy = Number(dmy[3]);
+  const delimited = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (delimited) {
+    const a = Number(delimited[1]);
+    const b = Number(delimited[2]);
+    const yyyy = Number(delimited[3]);
+    let mm = a;
+    let dd = b;
+    // Backward-compatible parse for legacy DD/MM/YYYY input.
+    if (a > 12 && b <= 12) {
+      mm = b;
+      dd = a;
+    }
     const parsed = new Date(yyyy, mm - 1, dd);
     if (parsed.getFullYear() === yyyy && parsed.getMonth() + 1 === mm && parsed.getDate() === dd) {
-      return `${String(dd).padStart(2, "0")}/${String(mm).padStart(2, "0")}/${yyyy}`;
+      return `${String(mm).padStart(2, "0")}.${String(dd).padStart(2, "0")}.${yyyy}`;
     }
   }
   return "";
@@ -820,11 +827,11 @@ export default function Home() {
   }, [selectedScenario, scenarios, canonicalComputeCache]);
 
   const buildReportMeta = useCallback((): ReportMeta => {
-    const todayDmy = formatDateDdMmYyyy(new Date());
+    const todayMdy = formatDateMmDdYyyy(new Date());
     return {
       prepared_for: reportMeta.prepared_for.trim() || "Client",
       prepared_by: reportMeta.prepared_by.trim() || "theCREmodel",
-      report_date: normalizeDateDdMmYyyy(reportMeta.report_date) || todayDmy,
+      report_date: normalizeDateMmDdYyyy(reportMeta.report_date) || todayMdy,
       market: reportMeta.market.trim() || inferredReportLocation.market || "",
       submarket: reportMeta.submarket.trim() || inferredReportLocation.submarket || "",
       confidential: true,
@@ -896,7 +903,7 @@ export default function Home() {
               broker_name: meta.prepared_by || "theCREmodel",
               prepared_by_name: meta.prepared_by || "theCREmodel",
               prepared_by_company: meta.prepared_by || "theCREmodel",
-              date: meta.report_date || formatDateDdMmYyyy(new Date()),
+              date: meta.report_date || formatDateMmDdYyyy(new Date()),
               market: meta.market || "",
               submarket: meta.submarket || "",
               client_logo_asset_url: clientLogoUrl,
@@ -1308,11 +1315,11 @@ export default function Home() {
                   onBlur={(e) =>
                     setReportMeta((prev) => ({
                       ...prev,
-                      report_date: normalizeDateDdMmYyyy(e.target.value),
+                      report_date: normalizeDateMmDdYyyy(e.target.value),
                     }))
                   }
                   className="input-premium mt-1"
-                  placeholder="dd/mm/yyyy"
+                  placeholder="MM.DD.YYYY"
                 />
               </label>
               <label className="block">
@@ -1337,7 +1344,7 @@ export default function Home() {
               </label>
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (dd/mm/yyyy). Market/Submarket use API extracted values when available.
+              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

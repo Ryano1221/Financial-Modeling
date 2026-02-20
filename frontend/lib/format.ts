@@ -71,31 +71,45 @@ export function formatRSF(value: number | null | undefined): string {
   return `${formatNumber(value, { decimals: 0 })} RSF`;
 }
 
-/** Format date as dd/mm/yyyy. Accepts Date, YYYY-MM-DD, or dd/mm/yyyy inputs. */
+/** Format date as MM.DD.YYYY. Accepts Date, YYYY-MM-DD, and common slash/dot inputs. */
 export function formatDateISO(value: string | Date | null | undefined): string {
   if (value == null) return "";
   if (value instanceof Date) {
     const y = value.getUTCFullYear();
     const m = String(value.getUTCMonth() + 1).padStart(2, "0");
     const d = String(value.getUTCDate()).padStart(2, "0");
-    return `${d}/${m}/${y}`;
+    return `${m}.${d}.${y}`;
   }
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
   if (!trimmed) return "";
-  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|T)/);
   if (isoMatch) {
     const yyyy = isoMatch[1];
     const mm = String(Number(isoMatch[2])).padStart(2, "0");
     const dd = String(Number(isoMatch[3])).padStart(2, "0");
-    return `${dd}/${mm}/${yyyy}`;
+    return `${mm}.${dd}.${yyyy}`;
   }
-  const dmyMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (dmyMatch) {
-    const dd = String(Number(dmyMatch[1])).padStart(2, "0");
-    const mm = String(Number(dmyMatch[2])).padStart(2, "0");
-    const yyyy = dmyMatch[3];
-    return `${dd}/${mm}/${yyyy}`;
+  const delimitedMatch = trimmed.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (delimitedMatch) {
+    const a = Number(delimitedMatch[1]);
+    const b = Number(delimitedMatch[2]);
+    const yyyy = Number(delimitedMatch[3]);
+    let mm = a;
+    let dd = b;
+    // Backward-compatibility for historical DD/MM/YYYY data entry.
+    if (a > 12 && b <= 12) {
+      mm = b;
+      dd = a;
+    }
+    const parsed = new Date(Date.UTC(yyyy, mm - 1, dd));
+    if (
+      parsed.getUTCFullYear() === yyyy &&
+      parsed.getUTCMonth() + 1 === mm &&
+      parsed.getUTCDate() === dd
+    ) {
+      return `${String(mm).padStart(2, "0")}.${String(dd).padStart(2, "0")}.${String(yyyy)}`;
+    }
   }
   return "";
 }

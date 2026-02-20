@@ -51,7 +51,7 @@ export function ScenarioForm({
     const yyyy = match[1];
     const mm = String(Number(match[2])).padStart(2, "0");
     const dd = String(Number(match[3])).padStart(2, "0");
-    return `${dd}/${mm}/${yyyy}`;
+    return `${mm}.${dd}.${yyyy}`;
   };
 
   const displayToIsoDate = (value: string): string | null => {
@@ -68,11 +68,18 @@ export function ScenarioForm({
       }
       return null;
     }
-    const dmy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (!dmy) return null;
-    const dd = Number(dmy[1]);
-    const mm = Number(dmy[2]);
-    const yyyy = Number(dmy[3]);
+    const delimited = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+    if (!delimited) return null;
+    const a = Number(delimited[1]);
+    const b = Number(delimited[2]);
+    const yyyy = Number(delimited[3]);
+    let mm = a;
+    let dd = b;
+    // Backward-compatibility for legacy DD/MM/YYYY inputs.
+    if (a > 12 && b <= 12) {
+      mm = b;
+      dd = a;
+    }
     const parsed = new Date(yyyy, mm - 1, dd);
     if (parsed.getFullYear() !== yyyy || parsed.getMonth() + 1 !== mm || parsed.getDate() !== dd) return null;
     return `${String(yyyy)}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
@@ -196,11 +203,11 @@ export function ScenarioForm({
     const yearLabel = startYear === endYear ? `Year ${startYear}` : `Years ${startYear}-${endYear}`;
     return `${yearLabel} (M${startDisplayMonth}-${endDisplayMonth})`;
   };
-  const formatDateDDMMYYYY = (value: Date): string => {
-    const dd = String(value.getUTCDate()).padStart(2, "0");
+  const formatDateMMDDYYYY = (value: Date): string => {
     const mm = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(value.getUTCDate()).padStart(2, "0");
     const yyyy = value.getUTCFullYear();
-    return `${dd}/${mm}/${yyyy}`;
+    return `${mm}.${dd}.${yyyy}`;
   };
   const leaseMonthStartDate = (monthIndexRaw: number): Date | null => {
     if (!scenario) return null;
@@ -221,7 +228,7 @@ export function ScenarioForm({
     const nextStart = leaseMonthStartDate(endMonth + 1);
     if (!startDate || !nextStart) return "N/A";
     const endDate = new Date(nextStart.getTime() - 24 * 60 * 60 * 1000);
-    return `${formatDateDDMMYYYY(startDate)} - ${formatDateDDMMYYYY(endDate)}`;
+    return `${formatDateMMDDYYYY(startDate)} - ${formatDateMMDDYYYY(endDate)}`;
   };
   const termMonths = scenario ? termMonthsFromDates(scenario.commencement, scenario.expiration) : 1;
   type PeriodizedRow = {
@@ -446,7 +453,7 @@ export function ScenarioForm({
               setCommencementInput(isoToDisplayDate(iso || scenario.commencement));
             }}
             className={inputClass}
-            placeholder="dd/mm/yyyy"
+            placeholder="MM.DD.YYYY"
           />
         </label>
         <label className="block">
@@ -461,7 +468,7 @@ export function ScenarioForm({
               setExpirationInput(isoToDisplayDate(iso || scenario.expiration));
             }}
             className={inputClass}
-            placeholder="dd/mm/yyyy"
+            placeholder="MM.DD.YYYY"
           />
         </label>
         <label className="block">
@@ -615,7 +622,7 @@ export function ScenarioForm({
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Step</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Start month</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">End month</span>
-          <span className="text-[11px] uppercase tracking-wide text-slate-400">Dates (dd/mm/yyyy)</span>
+          <span className="text-[11px] uppercase tracking-wide text-slate-400">Dates (MM.DD.YYYY)</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Rate ($/SF/yr)</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">Opex ($/SF/yr)</span>
           <span className="text-[11px] uppercase tracking-wide text-slate-400">RSF</span>
@@ -653,7 +660,7 @@ export function ScenarioForm({
                 />
               </label>
               <div className="text-xs text-slate-200 min-h-10 flex items-center px-2 rounded-lg border border-slate-300/20 bg-slate-900/40 sm:col-span-2 xl:col-span-1">
-                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden mr-2">Dates (dd/mm/yyyy)</span>
+                <span className="text-[11px] text-slate-400 mb-1 block xl:hidden mr-2">Dates (MM.DD.YYYY)</span>
                 {leaseStepDateLabel(step.start, step.end)}
               </div>
               <label className="col-span-1">
@@ -699,7 +706,7 @@ export function ScenarioForm({
           <div className="hidden xl:grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 px-1 pb-1">
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Start month</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">End month</span>
-            <span className="text-[11px] uppercase tracking-wide text-slate-400">Dates (dd/mm/yyyy)</span>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Dates (MM.DD.YYYY)</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Base rent ($/SF/yr)</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Opex ($/SF/yr)</span>
             <span className="text-[11px] uppercase tracking-wide text-slate-400">RSF</span>
