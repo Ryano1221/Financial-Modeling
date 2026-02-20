@@ -100,6 +100,29 @@ function cleanMaybeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function titleCaseWords(value: string): string {
+  return value
+    .split(" ")
+    .map((word) => {
+      const clean = word.trim();
+      if (!clean) return "";
+      return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function derivePreparedByFromSession(session: SupabaseAuthSession | null): string {
+  const explicitName = cleanMaybeString(session?.user?.name);
+  if (explicitName) return explicitName;
+  const email = cleanMaybeString(session?.user?.email);
+  if (!email) return "";
+  const localPart = cleanMaybeString(email.split("@")[0] || "");
+  if (!localPart) return "";
+  const spaced = localPart.replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  return titleCaseWords(spaced);
+}
+
 function inferMarketFromAddress(address: string): string {
   const raw = String(address || "").trim();
   if (!raw) return "";
@@ -348,6 +371,10 @@ export default function Home() {
   const pendingNormalize = pendingNormalizeQueue[0] ?? null;
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
+  const defaultPreparedByFromAuth = useMemo(
+    () => derivePreparedByFromSession(authSession),
+    [authSession]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -511,10 +538,6 @@ export default function Home() {
       const updated = await updateBrokerageName(brokerageName.trim());
       setBrokerageName((updated.brokerage_name || "").trim());
       await loadOrganizationBranding();
-      setReportMeta((prev) => ({
-        ...prev,
-        prepared_by: prev.prepared_by.trim() || (updated.brokerage_name || "").trim() || prev.prepared_by,
-      }));
     } catch (err) {
       setBrandingError(getBrandingDisplayErrorMessage(err));
     } finally {
@@ -532,13 +555,12 @@ export default function Home() {
   }, [authSession, loadOrganizationBranding]);
 
   useEffect(() => {
-    const fallbackPreparedBy = brokerageName.trim();
-    if (!fallbackPreparedBy) return;
+    if (!defaultPreparedByFromAuth) return;
     setReportMeta((prev) => {
       if (prev.prepared_by.trim()) return prev;
-      return { ...prev, prepared_by: fallbackPreparedBy };
+      return { ...prev, prepared_by: defaultPreparedByFromAuth };
     });
-  }, [brokerageName]);
+  }, [defaultPreparedByFromAuth]);
 
   const uploadClientLogo = useCallback(async (file: File) => {
     const mime = (file.type || "").toLowerCase();
@@ -892,7 +914,7 @@ export default function Home() {
 
   const buildReportMeta = useCallback((): ReportMeta => {
     const todayMdy = formatDateMmDdYyyy(new Date());
-    const defaultPreparedBy = reportMeta.prepared_by.trim() || brokerageName.trim() || "theCREmodel";
+    const defaultPreparedBy = reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || "theCREmodel";
     return {
       prepared_for: reportMeta.prepared_for.trim() || "Client",
       prepared_by: defaultPreparedBy,
@@ -901,7 +923,7 @@ export default function Home() {
       submarket: reportMeta.submarket.trim() || inferredReportLocation.submarket || "",
       confidential: true,
     };
-  }, [reportMeta, brokerageName, inferredReportLocation.market, inferredReportLocation.submarket]);
+  }, [reportMeta, defaultPreparedByFromAuth, inferredReportLocation.market, inferredReportLocation.submarket]);
 
   const downloadBlob = useCallback((blob: Blob, fileName: string) => {
     const url = URL.createObjectURL(blob);
@@ -965,9 +987,9 @@ export default function Home() {
               logo_asset_bytes: organizationBranding?.logo_asset_bytes || undefined,
               brand_name: brokerageName.trim() || "theCREmodel",
               client_name: meta.prepared_for || "Client",
-              broker_name: brokerageName.trim() || meta.prepared_by || "theCREmodel",
-              prepared_by_name: meta.prepared_by || "theCREmodel",
-              prepared_by_company: brokerageName.trim() || meta.prepared_by || "theCREmodel",
+              broker_name: meta.prepared_by || defaultPreparedByFromAuth || "theCREmodel",
+              prepared_by_name: meta.prepared_by || defaultPreparedByFromAuth || "theCREmodel",
+              prepared_by_company: brokerageName.trim() || "theCREmodel",
               date: meta.report_date || formatDateMmDdYyyy(new Date()),
               market: meta.market || "",
               submarket: meta.submarket || "",
@@ -1030,7 +1052,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName, defaultPreparedByFromAuth]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {

@@ -6,6 +6,7 @@ const USER_KEY = "thecremodel_supabase_user";
 export interface SupabaseAuthUser {
   id: string;
   email?: string | null;
+  name?: string | null;
 }
 
 export interface SupabaseAuthSession {
@@ -89,6 +90,16 @@ function toSession(payload: Record<string, unknown>): SupabaseAuthSession {
   if (!access_token || !userId) {
     throw new Error("Supabase auth response did not include a valid session.");
   }
+  const metadata =
+    user.user_metadata && typeof user.user_metadata === "object"
+      ? (user.user_metadata as Record<string, unknown>)
+      : {};
+  const nameCandidate = [
+    metadata.full_name,
+    metadata.name,
+    metadata.display_name,
+  ].find((value) => typeof value === "string" && String(value).trim().length > 0);
+
   return {
     access_token,
     refresh_token: typeof payload.refresh_token === "string" ? payload.refresh_token : undefined,
@@ -96,6 +107,7 @@ function toSession(payload: Record<string, unknown>): SupabaseAuthSession {
     user: {
       id: userId,
       email: typeof user.email === "string" ? user.email : null,
+      name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
     },
   };
 }
@@ -200,9 +212,19 @@ export async function getSession(): Promise<SupabaseAuthSession | null> {
       const userPayload = (await userRes.json()) as Record<string, unknown>;
       const userId = String(userPayload.id || "").trim();
       if (userId) {
+        const metadata =
+          userPayload.user_metadata && typeof userPayload.user_metadata === "object"
+            ? (userPayload.user_metadata as Record<string, unknown>)
+            : {};
+        const nameCandidate = [
+          metadata.full_name,
+          metadata.name,
+          metadata.display_name,
+        ].find((value) => typeof value === "string" && String(value).trim().length > 0);
         const user: SupabaseAuthUser = {
           id: userId,
           email: typeof userPayload.email === "string" ? userPayload.email : null,
+          name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
         };
         const refresh = getStoredRefreshToken() || undefined;
         const session: SupabaseAuthSession = { access_token: token, refresh_token: refresh, user };
@@ -225,4 +247,3 @@ export async function getSession(): Promise<SupabaseAuthSession | null> {
   persistSession(null);
   return null;
 }
-
