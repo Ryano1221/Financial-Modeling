@@ -18,6 +18,7 @@ const defaultScenarioInput: ScenarioInput = {
   building_name: "",
   suite: "",
   floor: "",
+  notes: "",
   rsf: 10000,
   commencement: "2026-01-01",
   expiration: "2031-01-01",
@@ -432,6 +433,15 @@ export function ScenarioForm({
         <label className="block sm:col-span-2 xl:col-span-2">
           <span className="text-sm text-slate-300">Street address (optional)</span>
           <input type="text" value={scenario.address ?? ""} onChange={(e) => update("address", e.target.value)} className={inputClass} placeholder="e.g. 123 Main St, City, State" />
+        </label>
+        <label className="block sm:col-span-2 xl:col-span-3">
+          <span className="text-sm text-slate-300">Notes</span>
+          <textarea
+            value={scenario.notes ?? ""}
+            onChange={(e) => update("notes", e.target.value)}
+            className={`${inputClass} min-h-[92px] resize-y`}
+            placeholder="Add clause notes, assumptions, and context for this scenario."
+          />
         </label>
         <label className="block">
           <span className="text-sm text-slate-300">RSF</span>
