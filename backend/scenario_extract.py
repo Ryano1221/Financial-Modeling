@@ -1335,7 +1335,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         "base_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 10.0) or 10.0),
         "base_year_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 10.0) or 10.0),
         "opex_growth": 0.03,
-        "discount_rate_annual": 0.06,
+        "discount_rate_annual": 0.08,
         "parking_spaces": 0,
         "parking_cost_monthly_per_space": 0.0,
     }
@@ -1469,7 +1469,7 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
     scenario.setdefault("base_opex_psf_yr", 10.0)
     scenario.setdefault("base_year_opex_psf_yr", 10.0)
     scenario.setdefault("opex_growth", 0.03)
-    scenario.setdefault("discount_rate_annual", 0.06)
+    scenario.setdefault("discount_rate_annual", 0.08)
     scenario.setdefault("parking_spaces", 0)
     scenario.setdefault("parking_cost_monthly_per_space", 0.0)
     scenario.setdefault("broker_fee", 0.0)
@@ -1511,7 +1511,7 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
             base_opex_psf_yr=10.0,
             base_year_opex_psf_yr=10.0,
             opex_growth=0.03,
-            discount_rate_annual=0.06,
+            discount_rate_annual=0.08,
         )
         return ExtractionResponse(
             scenario=scenario,

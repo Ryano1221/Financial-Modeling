@@ -41,7 +41,7 @@ function extractionToScenario(ext: LeaseExtraction, edits: Record<string, string
   const base_opex_psf_yr = num("base_opex_psf_yr") ?? 10;
   const base_year_opex_psf_yr = num("base_year_opex_psf_yr") ?? 10;
   const opex_growth = num("opex_growth") ?? 0.03;
-  const discount_rate_annual = num("discount_rate_annual") ?? 0.06;
+  const discount_rate_annual = num("discount_rate_annual") ?? 0.08;
 
   return {
     name: "From lease upload",
@@ -173,7 +173,7 @@ export default function UploadPage() {
               { key: "base_opex_psf_yr", label: "Base opex ($/SF/yr)", ext: null, type: "number" as const, default: 10 },
               { key: "base_year_opex_psf_yr", label: "Base year opex ($/SF/yr)", ext: null, type: "number" as const, default: 10 },
               { key: "opex_growth", label: "Opex growth", ext: null, type: "number" as const, default: 0.03 },
-              { key: "discount_rate_annual", label: "Discount rate (annual)", ext: null, type: "number" as const, default: 0.06 },
+              { key: "discount_rate_annual", label: "Discount rate (annual)", ext: null, type: "number" as const, default: 0.08 },
             ].map(({ key, label, ext, type, default: def }) => (
               <div key={key} className="grid grid-cols-1 md:grid-cols-2 gap-4 border-b border-slate-300/20 pb-4">
                 <div>

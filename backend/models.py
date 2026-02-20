@@ -197,7 +197,7 @@ class GenerateScenariosRequest(BaseModel):
     target_term_months: int = Field(gt=0)
     renewal: RenewalInput
     relocation: RelocationInput
-    discount_rate_annual: float = Field(ge=0.0, default=0.06)
+    discount_rate_annual: float = Field(ge=0.0, default=0.08)
     commencement: Optional[date] = None  # default: 2026-01-01
 
 

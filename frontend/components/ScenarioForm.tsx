@@ -354,7 +354,7 @@ export function ScenarioForm({
     return issues;
   })();
 
-  const inputClass = "input-premium mt-1 block";
+  const inputClass = "input-premium mt-1 block w-full";
   const btnSecondary = "btn-premium btn-premium-secondary w-full sm:w-auto";
 
   if (!scenario) {
