@@ -30,8 +30,8 @@
     --type-display: clamp(2.4rem, 7.2vw, 6rem);
     --type-section: clamp(1.2rem, 1.8vw, 1.55rem);
     --type-body: clamp(0.94rem, 1.2vw, 1.02rem);
-    --grid-line: rgba(255, 255, 255, 0.05);
-    --grid-line-strong: rgba(255, 255, 255, 0.07);
+    --grid-line: rgba(255, 255, 255, 0.085);
+    --grid-line-strong: rgba(255, 255, 255, 0.12);
   }
   html,
   body {
@@ -47,10 +47,11 @@
       linear-gradient(180deg, var(--bg-canvas-alt), var(--bg-canvas)),
       linear-gradient(var(--grid-line) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-      linear-gradient(135deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 100% 100%, 42px 42px, 42px 42px, 42px 42px;
-    background-position: center top, center top, center top, center top;
-    background-repeat: repeat, repeat, repeat, repeat;
+      linear-gradient(135deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(45deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px, 40px 40px, 40px 40px;
+    background-position: center top, center top, center top, center top, center top;
+    background-repeat: repeat, repeat, repeat, repeat, repeat;
     color: var(--text-primary);
     text-rendering: optimizeLegibility;
   }
@@ -268,8 +269,9 @@
     background-image:
       linear-gradient(var(--grid-line) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-      linear-gradient(135deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 42px 42px, 42px 42px, 42px 42px;
+      linear-gradient(135deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(45deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px, 40px 40px, 40px 40px, 40px 40px;
     background-position: center center;
   }
 
@@ -296,7 +298,7 @@
   position: fixed;
   inset: 0;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  opacity: 0.018;
+  opacity: 0.012;
   pointer-events: none;
   z-index: 0;
 }

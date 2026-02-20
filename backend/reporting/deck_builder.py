@@ -1185,7 +1185,7 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
         bar_x = cx - (bar_w / 2)
         bar_y = top + plot_h - bar_h
         bars.append(
-            f'<rect x="{bar_x:.2f}" y="{bar_y:.2f}" width="{bar_w:.2f}" height="{bar_h:.2f}" fill="#8f0011" />'
+            f'<rect x="{bar_x:.2f}" y="{bar_y:.2f}" width="{bar_w:.2f}" height="{bar_h:.2f}" fill="#111111" />'
         )
         bars.append(
             f'<text x="{cx:.2f}" y="{top + plot_h - 8:.2f}" text-anchor="middle" class="combo-bar-label">{_esc(_fmt_currency(year_val))}</text>'
@@ -1193,7 +1193,7 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
         py = top + plot_h - ((psf_val / max_psf) * plot_h if max_psf > 0 else 0)
         line_points.append(f"{cx:.2f},{py:.2f}")
         line_labels.append(
-            f'<circle cx="{cx:.2f}" cy="{py:.2f}" r="4" fill="#5f6368" />'
+            f'<circle cx="{cx:.2f}" cy="{py:.2f}" r="4" fill="#4b5563" />'
             f'<text x="{cx:.2f}" y="{py-10:.2f}" text-anchor="middle" class="combo-line-label">{_esc(_fmt_currency(psf_val, 2))}</text>'
         )
         label_lines = _split_label_lines(entry["name"], max_chars=30)
@@ -1203,15 +1203,15 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
             )
 
     polyline = (
-        f'<polyline points="{" ".join(line_points)}" fill="none" stroke="#5f6368" stroke-width="4" />'
+        f'<polyline points="{" ".join(line_points)}" fill="none" stroke="#4b5563" stroke-width="4" />'
         if len(line_points) >= 2
         else ""
     )
     legend = (
-        f'<rect x="{left + 12}" y="16" width="26" height="10" fill="#8f0011" />'
+        f'<rect x="{left + 12}" y="16" width="26" height="10" fill="#111111" />'
         f'<text x="{left + 44}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/YEAR</text>'
-        f'<line x1="{left + 348}" y1="21" x2="{left + 374}" y2="21" stroke="#5f6368" stroke-width="4" />'
-        f'<circle cx="{left + 361}" cy="21" r="4" fill="#5f6368" />'
+        f'<line x1="{left + 348}" y1="21" x2="{left + 374}" y2="21" stroke="#4b5563" stroke-width="4" />'
+        f'<circle cx="{left + 361}" cy="21" r="4" fill="#4b5563" />'
         f'<text x="{left + 382}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/SF/YEAR</text>'
     )
 
@@ -1391,8 +1391,9 @@ def _deck_css(primary_color: str) -> str:
       position: absolute;
       inset: 0;
       background:
-        linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px) 0 0 / 18px 18px,
-        linear-gradient(0deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px) 0 0 / 18px 18px;
+        linear-gradient(90deg, rgba(15, 23, 42, 0.055) 1px, transparent 1px) 0 0 / 18px 18px,
+        linear-gradient(0deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px) 0 0 / 18px 18px,
+        linear-gradient(45deg, rgba(15, 23, 42, 0.022) 1px, transparent 1px) 0 0 / 18px 18px;
       pointer-events: none;
     }}
     .page-content-inner {{
@@ -1683,8 +1684,9 @@ def _deck_css(primary_color: str) -> str:
       position: absolute;
       inset: 0;
       background:
-        linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px) 0 0 / 18px 18px,
-        linear-gradient(0deg, rgba(0,0,0,0.04) 1px, transparent 1px) 0 0 / 18px 18px;
+        linear-gradient(90deg, rgba(0,0,0,0.055) 1px, transparent 1px) 0 0 / 18px 18px,
+        linear-gradient(0deg, rgba(0,0,0,0.055) 1px, transparent 1px) 0 0 / 18px 18px,
+        linear-gradient(45deg, rgba(0,0,0,0.022) 1px, transparent 1px) 0 0 / 18px 18px;
     }}
     .cover-photo {{
       position: absolute;
