@@ -10,7 +10,7 @@ export function TopNav() {
   if (pathname?.startsWith("/report")) return null;
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 print:hidden border-b border-white/20 bg-black/95 backdrop-blur-sm">
+    <header className="fixed top-0 left-0 right-0 z-50 print:hidden border-b border-white/30 bg-black/95 backdrop-blur-sm">
       <div className="app-container flex items-center justify-between gap-3 sm:gap-4 min-w-0 py-3">
         <Link
           href="/"
@@ -27,6 +27,22 @@ export function TopNav() {
             sizes="(max-width: 640px) 112px, 140px"
           />
         </Link>
+        <div className="hidden md:flex items-center gap-6 text-xs uppercase tracking-[0.12em] text-white/78">
+          <a href="#extract" className="border-b border-transparent hover:border-white/80 transition-colors">
+            Upload
+          </a>
+          <a href="/example" className="border-b border-transparent hover:border-white/80 transition-colors">
+            Example
+          </a>
+        </div>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <a href="#extract" className="btn-premium btn-premium-primary !min-h-0 !py-2 !px-3 sm:!px-5">
+            Open app
+          </a>
+          <a href="/example" className="btn-premium btn-premium-secondary !min-h-0 !py-2 !px-3 sm:!px-5">
+            View report
+          </a>
+        </div>
       </div>
     </header>
   );
