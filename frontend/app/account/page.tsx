@@ -1,21 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { AuthPanel } from "@/components/AuthPanel";
 import { getSession, signOut, type SupabaseAuthSession } from "@/lib/supabase";
 
 export default function AccountPage() {
   const router = useRouter();
-  const params = useSearchParams();
-  const initialMode = useMemo<"signin" | "signup">(
-    () => (params.get("mode") === "signup" ? "signup" : "signin"),
-    [params]
-  );
+  const [initialMode, setInitialMode] = useState<"signin" | "signup">("signin");
 
   const [session, setSession] = useState<SupabaseAuthSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const value = new URLSearchParams(window.location.search).get("mode");
+    setInitialMode(value === "signup" ? "signup" : "signin");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
