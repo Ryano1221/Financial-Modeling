@@ -1005,8 +1005,16 @@ def _cover_option_reason(entry: dict[str, Any], *, is_best: bool) -> str:
 
 def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
     ranking = sorted(entries, key=lambda e: _safe_float(e["result"].get("npv_cost"), 0.0))
-    winner_name = ranking[0]["name"] if ranking else "N/A"
-    winner_npv = _fmt_currency((ranking[0]["result"] if ranking else {}).get("npv_cost"))
+    winner = ranking[0] if ranking else None
+    winner_name = winner["name"] if winner else "N/A"
+    winner_npv = _fmt_currency((winner["result"] if winner else {}).get("npv_cost"))
+    winner_metrics = (
+        f"{_fmt_currency((winner or {}).get('result', {}).get('npv_cost'))} NPV · "
+        f"{_fmt_psf((winner or {}).get('result', {}).get('avg_cost_psf_year'))}"
+        if winner
+        else "—"
+    )
+    winner_reason = _cover_option_reason(winner, is_best=True) if winner else "Financially competitive under current assumptions."
     top_options = ranking[1 : min(3, len(ranking))]
 
     logo = (
@@ -1082,9 +1090,13 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
           {cover_meta_html}
         </div>
         <div class="cover-winner-strip">
-          <span>Best Financial Outcome by NPV</span>
-          <strong>{_esc(winner_name)}</strong>
-          <p>{_esc(winner_npv)} NPV cost</p>
+          <div class="cover-option-rank">#1</div>
+          <div class="cover-option-name">
+            <span class="winner-label">Best Financial Outcome by NPV</span>
+            <strong>{_esc(_truncate_text(winner_name, 68))}</strong>
+          </div>
+          <div class="cover-option-metrics">{_esc(winner_metrics)}</div>
+          <div class="cover-option-why">{_esc(_truncate_text(winner_reason, 120))}</div>
         </div>
         {"<div class='cover-options-stack'>" + top_options_html + "</div>" if top_options_html else ""}
       </div>
@@ -1973,6 +1985,7 @@ def _deck_css(primary_color: str) -> str:
       display: flex;
       flex-direction: column;
       gap: 2.2mm;
+      justify-content: flex-start;
     }}
     .cover-hero-strip {{
       border: 1px solid #111;
@@ -2058,32 +2071,42 @@ def _deck_css(primary_color: str) -> str:
       color: #fff;
       padding: 2mm 2.6mm;
       display: grid;
-      grid-template-columns: 1.4fr 1.7fr 1.1fr;
+      grid-template-columns: 8mm 1.55fr 1fr 1.7fr;
       align-items: center;
       gap: 2mm;
+      min-height: 14mm;
     }}
-    .cover-winner-strip span {{
+    .cover-winner-strip .winner-label {{
+      display: block;
       font-size: 8px;
       letter-spacing: 0.1em;
       text-transform: uppercase;
       opacity: 0.9;
+      margin-bottom: 0.6mm;
     }}
-    .cover-winner-strip strong {{
-      font-size: 12px;
+    .cover-winner-strip .cover-option-name strong {{
+      display: block;
+      font-size: 11px;
       line-height: 1.2;
-      text-align: center;
+      color: #fff;
+      overflow-wrap: anywhere;
     }}
-    .cover-winner-strip p {{
-      margin: 0;
-      font-size: 10px;
-      opacity: 0.95;
-      text-align: right;
-      white-space: nowrap;
+    .cover-winner-strip .cover-option-rank,
+    .cover-winner-strip .cover-option-metrics,
+    .cover-winner-strip .cover-option-why {{
+      color: #fff;
+    }}
+    .cover-winner-strip .cover-option-metrics {{
+      white-space: normal;
+      overflow-wrap: anywhere;
     }}
     .cover-options-stack {{
       display: grid;
       grid-template-columns: 1fr;
       gap: 1.5mm;
+      flex: 1;
+      min-height: 0;
+      align-content: stretch;
     }}
     .cover-option-strip {{
       border: 1px solid #111;
@@ -2111,7 +2134,8 @@ def _deck_css(primary_color: str) -> str:
       font-size: 8.5px;
       line-height: 1.2;
       color: #222;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }}
     .cover-option-why {{
       font-size: 8.2px;
