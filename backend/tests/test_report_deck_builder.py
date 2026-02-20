@@ -236,3 +236,37 @@ def test_scenario_detail_splits_long_notes_into_continuation_rows():
     _, result = compute_cashflows(scenario)
     html = build_report_deck_html({"scenarios": [{"scenario": scenario_json, "result": result.model_dump()}]})
     assert "(cont.)" in html
+
+
+def test_notes_page_keeps_full_bullets_without_truncation():
+    long_note = (
+        "Renewal option contains detailed conditions requiring tenant notice at least nine months prior "
+        "to expiration, and includes a fixed cap exception for uncontrollable operating expenses with full "
+        "language preserved ENDMARKER_NOT_TRUNCATED"
+    )
+    payload = {
+        "scenarios": [_entry("Full Notes Validation", 6000, 41.0, doc_type="proposal")],
+        "branding": {"client_name": "Notes Client"},
+    }
+    payload["scenarios"][0]["scenario"]["notes"] = long_note
+    html = build_report_deck_html(payload)
+    assert "ENDMARKER_NOT_TRUNCATED" in html
+    assert "Notes &amp; Clause Highlights" in html
+
+
+def test_notes_page_paginates_when_note_cards_are_large():
+    scenarios = []
+    for i in range(12):
+        item = _entry(f"Large Notes Scenario {i+1}", 6000 + i * 100, 40.0 + i, doc_type="proposal")
+        item["scenario"]["notes"] = " | ".join(
+            [
+                "Renewal option: Tenant has one five-year option at fair market value with detailed notice requirements and additional legal conditions that must be reviewed in full by counsel before execution.",
+                "ROFR/ROFO: Tenant has a right of first offer on adjacent space subject to landlord delivery timelines, blackout periods, and match rights that create nuanced decision windows.",
+                "Operating expenses: Capital repairs and structural replacements excluded from controllable OpEx pool, plus management fee caps and audit rights with multi-step notice process.",
+                "Parking: Reserved and unreserved parking terms with monthly charges, annual escalation references, relocation allowances, and staged assignment by occupancy milestones.",
+            ]
+        )
+        scenarios.append(item)
+
+    html = build_report_deck_html({"scenarios": scenarios, "branding": {"client_name": "Portfolio"}})
+    assert "Notes &amp; Clause Highlights continued" in html

@@ -1184,40 +1184,110 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
     return pages
 
 
-def _notes_page(entries: list[dict[str, Any]]) -> str:
-    if not entries:
-        return ""
+def _estimate_note_units(text: str) -> int:
+    cleaned = " ".join(str(text or "").split())
+    if not cleaned:
+        return 1
+    return max(1, math.ceil(len(cleaned) / 120))
 
-    cards: list[str] = []
+
+def _split_note_lines(lines: list[str], *, max_units: int = 20) -> list[list[str]]:
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    units = 0
+    for line in lines:
+        est = _estimate_note_units(line)
+        if current and units + est > max_units:
+            chunks.append(current)
+            current = []
+            units = 0
+        current.append(line)
+        units += est
+    if current:
+        chunks.append(current)
+    return chunks or [[]]
+
+
+def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
+    if not entries:
+        return []
+
+    cards: list[dict[str, Any]] = []
     for entry in entries:
         scenario = entry["scenario"]
         raw_notes = str(scenario.get("notes") or "").strip()
         categorized = _notes_by_category(raw_notes)
         bullet_lines: list[str] = []
         for category, lines in categorized.items():
-            for line in lines[:1]:
-                bullet_lines.append(f"{category}: {_truncate_text(line, 130)}")
-        if not bullet_lines:
-            bullet_lines = ["No clause notes were extracted. Review ROFR/ROFO, renewal rights, termination rights, and OpEx exclusions manually."]
+            for line in lines:
+                cleaned = " ".join(str(line or "").split())
+                if cleaned:
+                    bullet_lines.append(f"{category}: {cleaned}")
 
-        bullets_html = "".join(f"<li>{_esc(line)}</li>" for line in bullet_lines[:4])
-        cards.append(
+        if not bullet_lines:
+            bullet_lines = [
+                "No clause notes were extracted. Review ROFR/ROFO, renewal rights, termination rights, and OpEx exclusions manually.",
+            ]
+
+        parts = _split_note_lines(bullet_lines, max_units=20)
+        for idx, part in enumerate(parts, start=1):
+            title = entry["name"] if idx == 1 else f'{entry["name"]} (cont. {idx})'
+            est_units = 4 + sum(_estimate_note_units(line) for line in part)
+            cards.append(
+                {
+                    "title": title,
+                    "doc_type": str(entry.get("doc_type") or "Unknown"),
+                    "lines": part,
+                    "units": est_units,
+                }
+            )
+
+    pages: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    units = 0
+    max_units_per_page = 38
+    for card in cards:
+        card_units = _safe_int(card.get("units"), 6)
+        if current and units + card_units > max_units_per_page:
+            pages.append(current)
+            current = []
+            units = 0
+        current.append(card)
+        units += card_units
+    if current:
+        pages.append(current)
+
+    rendered_pages: list[str] = []
+    total_pages = len(pages)
+    for page_idx, page_cards in enumerate(pages, start=1):
+        card_html = []
+        for card in page_cards:
+            bullets_html = "".join(f"<li>{_esc(line)}</li>" for line in card["lines"])
+            card_html.append(
+                f"""
+                <article class="notes-summary-card">
+                  <h3>{_esc(card["title"])}</h3>
+                  <p class="axis-note">Document type: {_esc(card["doc_type"])}</p>
+                  <ul class="bullet-list notes-bullets">{bullets_html}</ul>
+                </article>
+                """
+            )
+
+        subtitle = (
+            "All scenario notes are fully listed below with bullets."
+            if page_idx == 1
+            else f"Notes & Clause Highlights continued ({page_idx}/{total_pages})."
+        )
+        rendered_pages.append(
             f"""
-            <article class="notes-summary-card">
-              <h3>{_esc(_truncate_text(entry["name"], 70))}</h3>
-              <p class="axis-note">Document type: {_esc(str(entry.get("doc_type") or "Unknown"))}</p>
-              <ul class="bullet-list">{bullets_html}</ul>
-            </article>
+            {SectionTitle("Notes", "Notes & Clause Highlights", subtitle)}
+            <div class="notes-summary-grid">
+              {''.join(card_html)}
+            </div>
             """
         )
 
-    columns = 2 if len(entries) <= 4 else 3
-    return f"""
-    {SectionTitle("Notes", "Notes & Clause Highlights", f"All scenario notes are shown on this single page for cleaner comparison readability.")}
-    <div class="notes-summary-grid" style="grid-template-columns: repeat({columns}, minmax(0, 1fr));">
-      {''.join(cards)}
-    </div>
-    """
+    return rendered_pages
 
 
 def _cost_visuals_page(entries: list[dict[str, Any]]) -> str:
@@ -1811,6 +1881,7 @@ def _deck_css(primary_color: str) -> str:
     }}
     .notes-summary-grid {{
       display: grid;
+      grid-template-columns: 1fr;
       gap: 2.4mm;
     }}
     .notes-summary-card {{
@@ -1819,7 +1890,6 @@ def _deck_css(primary_color: str) -> str:
       padding: 2.6mm;
       break-inside: avoid;
       page-break-inside: avoid;
-      min-height: 34mm;
     }}
     .notes-summary-card h3 {{
       margin: 0 0 1.2mm 0;
@@ -1827,11 +1897,19 @@ def _deck_css(primary_color: str) -> str:
       line-height: 1.2;
       letter-spacing: -0.01em;
       color: #111;
+      overflow-wrap: anywhere;
     }}
-    .notes-summary-card .bullet-list {{
+    .notes-summary-card .notes-bullets {{
       font-size: 9px;
-      line-height: 1.3;
+      line-height: 1.35;
       margin-top: 0.6mm;
+      padding-left: 4mm;
+    }}
+    .notes-summary-card .notes-bullets li {{
+      margin: 0 0 0.8mm 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
     }}
     .abstract-grid {{
       display: grid;
@@ -2059,8 +2137,7 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
     page_payloads.append((_executive_summary_page(entries), "Executive summary", True))
     for matrix_html in _matrix_pages(entries):
         page_payloads.append((matrix_html, "Comparison matrix", True))
-    notes_html = _notes_page(entries)
-    if notes_html:
+    for notes_html in _notes_pages(entries):
         page_payloads.append((notes_html, "Notes & clause highlights", True))
     for visuals_html in _cost_visuals_pages(entries):
         page_payloads.append((visuals_html, "Cost visuals", True))
