@@ -46,7 +46,7 @@ export function ScenarioList({
   const actionBtnDanger =
     `${actionBtnBase} text-red-200 border-red-400/45 hover:bg-red-500/15 hover:text-red-100`;
   const nameBtnBase =
-    "text-left font-medium focus:outline-none focus-ring inline-flex items-center gap-2 min-w-0 w-full max-w-[22rem] min-h-[34px] px-2.5 border transition-colors";
+    "text-left font-medium focus:outline-none focus-ring inline-flex items-start gap-2 min-w-0 w-full min-h-[34px] px-2.5 py-1.5 border transition-colors";
 
   if (scenarios.length === 0) {
     return (
@@ -133,7 +133,7 @@ export function ScenarioList({
                       >
                         {onReorder ? "⋮⋮" : ""}
                       </span>
-                      <span className="truncate">{s.name}</span>
+                      <span className="flex-1 whitespace-normal break-words leading-snug">{s.name}</span>
                     </button>
                   )}
                 </td>
