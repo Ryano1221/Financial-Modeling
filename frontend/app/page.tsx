@@ -980,6 +980,21 @@ export default function Home() {
     };
   }, [results, globalDiscountRate]);
 
+  const includedScenarios = useMemo(
+    () => scenarios.filter((s) => includedInSummary[s.id] !== false),
+    [scenarios, includedInSummary]
+  );
+
+  const equalizedUi = useMemo(
+    () => computeEqualizedComparison(includedScenarios, globalDiscountRate, equalizedCustomWindow),
+    [includedScenarios, globalDiscountRate, equalizedCustomWindow]
+  );
+
+  const equalizedForExport = useMemo(
+    () => computeEqualizedComparison(scenarios, globalDiscountRate, equalizedCustomWindow),
+    [scenarios, globalDiscountRate, equalizedCustomWindow]
+  );
+
   const exportPdfDeck = useCallback(async () => {
     if (scenarios.length === 0) {
       setExportPdfError("Add at least one scenario.");
@@ -1150,11 +1165,6 @@ export default function Home() {
     }
   }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob]);
 
-  const includedScenarios = useMemo(
-    () => scenarios.filter((s) => includedInSummary[s.id] !== false),
-    [scenarios, includedInSummary]
-  );
-
   const engineResults = useMemo(() => {
     const included = includedScenarios;
     if (isProduction) {
@@ -1176,16 +1186,6 @@ export default function Home() {
     }
     return included.map((s) => runMonthlyEngine(scenarioToCanonical(s), globalDiscountRate));
   }, [includedScenarios, globalDiscountRate, isProduction, canonicalComputeCache]);
-
-  const equalizedUi = useMemo(
-    () => computeEqualizedComparison(includedScenarios, globalDiscountRate, equalizedCustomWindow),
-    [includedScenarios, globalDiscountRate, equalizedCustomWindow]
-  );
-
-  const equalizedForExport = useMemo(
-    () => computeEqualizedComparison(scenarios, globalDiscountRate, equalizedCustomWindow),
-    [scenarios, globalDiscountRate, equalizedCustomWindow]
-  );
 
   const chartData: ChartRow[] = engineResults
     .map((r) => ({
