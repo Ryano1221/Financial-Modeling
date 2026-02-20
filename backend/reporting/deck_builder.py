@@ -1304,9 +1304,12 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
         )
         py = top + plot_h - ((psf_val / max_psf) * plot_h if max_psf > 0 else 0)
         line_points.append(f"{cx:.2f},{py:.2f}")
+        line_label_y = py - 10
+        line_label_on_bar = line_label_y >= (bar_y + 2) and line_label_y <= (bar_y + bar_h - 2)
+        line_label_class = "combo-line-label-onbar" if line_label_on_bar else "combo-line-label"
         line_labels.append(
             f'<circle cx="{cx:.2f}" cy="{py:.2f}" r="4" fill="#4b5563" />'
-            f'<text x="{cx:.2f}" y="{py-10:.2f}" text-anchor="middle" class="combo-line-label">{_esc(_fmt_currency(psf_val, 2))}</text>'
+            f'<text x="{cx:.2f}" y="{line_label_y:.2f}" text-anchor="middle" class="{line_label_class}">{_esc(_fmt_currency(psf_val, 2))}</text>'
         )
         label_lines = _split_label_lines(entry["name"], max_chars=30)
         for lidx, line in enumerate(label_lines):
@@ -1319,12 +1322,14 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
         if len(line_points) >= 2
         else ""
     )
+    legend_width = 520
+    legend_start_x = (w - legend_width) / 2
     legend = (
-        f'<rect x="{left + 12}" y="16" width="26" height="10" fill="#111111" />'
-        f'<text x="{left + 44}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/YEAR</text>'
-        f'<line x1="{left + 348}" y1="21" x2="{left + 374}" y2="21" stroke="#4b5563" stroke-width="4" />'
-        f'<circle cx="{left + 361}" cy="21" r="4" fill="#4b5563" />'
-        f'<text x="{left + 382}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/SF/YEAR</text>'
+        f'<rect x="{legend_start_x + 0:.2f}" y="16" width="26" height="10" fill="#111111" />'
+        f'<text x="{legend_start_x + 34:.2f}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/YEAR</text>'
+        f'<line x1="{legend_start_x + 272:.2f}" y1="21" x2="{legend_start_x + 298:.2f}" y2="21" stroke="#4b5563" stroke-width="4" />'
+        f'<circle cx="{legend_start_x + 285:.2f}" cy="21" r="4" fill="#4b5563" />'
+        f'<text x="{legend_start_x + 306:.2f}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/SF/YEAR</text>'
     )
 
     return f"""
@@ -1757,6 +1762,16 @@ def _deck_css(primary_color: str) -> str:
       fill: #4b5563;
       font-weight: 700;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .combo-line-label-onbar {{
+      font-size: 13px;
+      fill: #ffffff;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #111111;
+      stroke-width: 1.1px;
+      stroke-linejoin: round;
     }}
     .combo-x-label {{
       font-size: 12px;
