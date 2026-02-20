@@ -1024,26 +1024,9 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
         if theme.cover_photo
         else '<div class="cover-pattern"></div>'
     )
-    prepared_by_lines = [
-        theme.prepared_by_name,
-        theme.prepared_by_title,
-        theme.prepared_by_company,
-        theme.prepared_by_email,
-        theme.prepared_by_phone,
-    ]
-    prepared_by_unique: list[str] = []
-    seen_prepared_by: set[str] = set()
-    for line in prepared_by_lines:
-        text = str(line or "").strip()
-        if not text:
-            continue
-        dedupe_key = text.lower()
-        if dedupe_key in seen_prepared_by:
-            continue
-        seen_prepared_by.add(dedupe_key)
-        prepared_by_unique.append(text)
-    prepared_by_lines = prepared_by_unique
-    prepared_by_html = "<br/>".join(_esc(line) for line in prepared_by_lines) or _esc(theme.prepared_by_name)
+    # Cover meta card requirement: show only logo + person name in Prepared by.
+    prepared_by_name = str(theme.prepared_by_name or "").strip() or "theCREmodel"
+    prepared_by_html = _esc(prepared_by_name)
     prepared_by_logo = (
         f'<img class="prepared-by-logo" src="{_esc(theme.logo_src)}" alt="{_esc(theme.brand_name)}" />'
         if theme.logo_src
