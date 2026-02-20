@@ -1,15 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SupabaseAuthSession } from "@/lib/supabase";
 import { signInWithPassword, signUpWithPassword } from "@/lib/supabase";
 
 interface AuthPanelProps {
   onAuthed: (session: SupabaseAuthSession) => void;
+  initialMode?: "signin" | "signup";
 }
 
-export function AuthPanel({ onAuthed }: AuthPanelProps) {
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+export function AuthPanel({ onAuthed, initialMode = "signin" }: AuthPanelProps) {
+  const [mode, setMode] = useState<"signin" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,6 +20,10 @@ export function AuthPanel({ onAuthed }: AuthPanelProps) {
   const canSubmit = useMemo(() => {
     return !loading && email.trim().length > 3 && password.length >= 8;
   }, [email, password, loading]);
+
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
 
   async function submit(): Promise<void> {
     setLoading(true);

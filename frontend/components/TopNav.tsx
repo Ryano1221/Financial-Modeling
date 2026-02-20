@@ -3,9 +3,27 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { getSession, type SupabaseAuthSession } from "@/lib/supabase";
 
 export function TopNav() {
   const pathname = usePathname();
+  const [session, setSession] = useState<SupabaseAuthSession | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSession()
+      .then((next) => {
+        if (!cancelled) setSession(next);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
   // Keep exported report routes presentation-only (no app chrome).
   if (pathname?.startsWith("/report")) return null;
 
@@ -27,6 +45,22 @@ export function TopNav() {
             sizes="(max-width: 640px) 112px, 140px"
           />
         </Link>
+        <div className="flex items-center gap-2">
+          {authLoading ? null : session ? (
+            <Link href="/account" className="btn-premium btn-premium-secondary text-xs sm:text-sm">
+              Account
+            </Link>
+          ) : (
+            <>
+              <Link href="/account?mode=signin" className="btn-premium btn-premium-secondary text-xs sm:text-sm">
+                Sign in
+              </Link>
+              <Link href="/account?mode=signup" className="btn-premium btn-premium-primary text-xs sm:text-sm">
+                Create account
+              </Link>
+            </>
+          )}
+        </div>
       </div>
     </header>
   );

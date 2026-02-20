@@ -25,7 +25,6 @@ import { ResultsActionsCard } from "@/components/ResultsActionsCard";
 import { Footer } from "@/components/Footer";
 import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
 import { ClientLogoUploader } from "@/components/ClientLogoUploader";
-import { AuthPanel } from "@/components/AuthPanel";
 import type {
   ScenarioWithId,
   CashflowResult,
@@ -49,7 +48,7 @@ import {
 import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
 import type { CanonicalComputeResponse } from "@/lib/types";
 import type { SupabaseAuthSession } from "@/lib/supabase";
-import { getSession, signOut } from "@/lib/supabase";
+import { getSession } from "@/lib/supabase";
 import {
   type UserBrandingResponse,
   deleteUserBrandingLogo,
@@ -308,7 +307,6 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
 
 export default function Home() {
   const [authSession, setAuthSession] = useState<SupabaseAuthSession | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
@@ -353,7 +351,6 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    setAuthLoading(true);
     getSession()
       .then((session) => {
         if (cancelled) return;
@@ -362,10 +359,6 @@ export default function Home() {
       .catch(() => {
         if (cancelled) return;
         setAuthSession(null);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setAuthLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1155,35 +1148,6 @@ export default function Home() {
       .join(" ");
   }, [heroSparklineValues]);
 
-  const handleSignOut = useCallback(async () => {
-    try {
-      await signOut();
-    } finally {
-      setAuthSession(null);
-      setOrganizationBranding(null);
-      setBrokerageName("");
-    }
-  }, []);
-
-  if (authLoading) {
-    return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
-        <p className="text-sm text-slate-300">Loading account…</p>
-      </main>
-    );
-  }
-
-  if (!authSession) {
-    return (
-      <AuthPanel
-        onAuthed={(session) => {
-          setAuthSession(session);
-          setAuthLoading(false);
-        }}
-      />
-    );
-  }
-
   return (
     <>
       <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
@@ -1214,13 +1178,6 @@ export default function Home() {
                 >
                   Try It Live
                 </a>
-                <button
-                  type="button"
-                  onClick={() => void handleSignOut()}
-                  className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
-                >
-                  Sign out
-                </button>
               </div>
             </div>
             <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll flex">
@@ -1417,125 +1374,141 @@ export default function Home() {
           <p className="text-sm text-slate-300 mb-4">
             Uses per-scenario discount rate overrides when set; otherwise defaults to 8%.
           </p>
-          <div className="mb-4 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
-            <label className="block">
-              <span className="text-xs text-slate-400">Brokerage name</span>
-              <input
-                type="text"
-                value={brokerageName}
-                onChange={(e) => setBrokerageName(e.target.value)}
-                className="input-premium mt-1"
-                placeholder="Your brokerage"
-              />
-            </label>
-            <button
-              type="button"
-              className="btn-premium btn-premium-secondary w-full sm:w-auto"
-              onClick={() => void saveBrokerage()}
-              disabled={brandingUploading || brandingLoading}
-            >
-              Save brokerage
-            </button>
-          </div>
-          <BrandingLogoUploader
-            branding={organizationBranding}
-            loading={brandingLoading}
-            uploading={brandingUploading}
-            error={brandingError}
-            onUpload={uploadOrganizationLogo}
-            onDelete={deleteOrganizationLogo}
-          />
-          <div className="mb-5 border-t border-slate-300/20 pt-4">
-            <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
-            <div className="mb-3">
-              <ClientLogoUploader
-                logoDataUrl={clientLogoDataUrl}
-                fileName={clientLogoFileName}
-                uploading={clientLogoUploading}
-                error={clientLogoError}
-                onUpload={uploadClientLogo}
-                onClear={clearClientLogo}
-              />
+          {!authSession ? (
+            <div className="mb-5 border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
+              <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
+              <div className="flex flex-wrap gap-2">
+                <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+                  Sign in
+                </a>
+                <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
+                  Create account
+                </a>
+              </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="block">
-                <span className="text-xs text-slate-400">Prepared for</span>
-                <input
-                  type="text"
-                  value={reportMeta.prepared_for}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
-                  className="input-premium mt-1"
-                  placeholder="Client"
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs text-slate-400">Prepared by</span>
-                <input
-                  type="text"
-                  value={reportMeta.prepared_by}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
-                  className="input-premium mt-1"
-                  placeholder="theCREmodel"
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs text-slate-400">Report date</span>
-                <input
-                  type="text"
-                  value={reportMeta.report_date}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
-                  onBlur={(e) =>
-                    setReportMeta((prev) => ({
-                      ...prev,
-                      report_date: normalizeDateMmDdYyyy(e.target.value),
-                    }))
-                  }
-                  className="input-premium mt-1"
-                  placeholder="MM.DD.YYYY"
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs text-slate-400">Market</span>
-                <input
-                  type="text"
-                  value={reportMeta.market}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, market: e.target.value }))}
-                  className="input-premium mt-1"
-                  placeholder={inferredReportLocation.market || "Auto from document/API"}
-                />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="text-xs text-slate-400">Submarket</span>
-                <input
-                  type="text"
-                  value={reportMeta.submarket}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, submarket: e.target.value }))}
-                  className="input-premium mt-1"
-                  placeholder={inferredReportLocation.submarket || "Auto from document/API when available"}
-                />
-              </label>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">
-              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
-            </p>
-          </div>
+          ) : (
+            <>
+              <div className="mb-4 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
+                <label className="block">
+                  <span className="text-xs text-slate-400">Brokerage name</span>
+                  <input
+                    type="text"
+                    value={brokerageName}
+                    onChange={(e) => setBrokerageName(e.target.value)}
+                    className="input-premium mt-1"
+                    placeholder="Your brokerage"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn-premium btn-premium-secondary w-full sm:w-auto"
+                  onClick={() => void saveBrokerage()}
+                  disabled={brandingUploading || brandingLoading}
+                >
+                  Save brokerage
+                </button>
+              </div>
+              <BrandingLogoUploader
+                branding={organizationBranding}
+                loading={brandingLoading}
+                uploading={brandingUploading}
+                error={brandingError}
+                onUpload={uploadOrganizationLogo}
+                onDelete={deleteOrganizationLogo}
+              />
+              <div className="mb-5 border-t border-slate-300/20 pt-4">
+                <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
+                <div className="mb-3">
+                  <ClientLogoUploader
+                    logoDataUrl={clientLogoDataUrl}
+                    fileName={clientLogoFileName}
+                    uploading={clientLogoUploading}
+                    error={clientLogoError}
+                    onUpload={uploadClientLogo}
+                    onClear={clearClientLogo}
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Prepared for</span>
+                    <input
+                      type="text"
+                      value={reportMeta.prepared_for}
+                      onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
+                      className="input-premium mt-1"
+                      placeholder="Client"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Prepared by</span>
+                    <input
+                      type="text"
+                      value={reportMeta.prepared_by}
+                      onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
+                      className="input-premium mt-1"
+                      placeholder="theCREmodel"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Report date</span>
+                    <input
+                      type="text"
+                      value={reportMeta.report_date}
+                      onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
+                      onBlur={(e) =>
+                        setReportMeta((prev) => ({
+                          ...prev,
+                          report_date: normalizeDateMmDdYyyy(e.target.value),
+                        }))
+                      }
+                      className="input-premium mt-1"
+                      placeholder="MM.DD.YYYY"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-400">Market</span>
+                    <input
+                      type="text"
+                      value={reportMeta.market}
+                      onChange={(e) => setReportMeta((prev) => ({ ...prev, market: e.target.value }))}
+                      className="input-premium mt-1"
+                      placeholder={inferredReportLocation.market || "Auto from document/API"}
+                    />
+                  </label>
+                  <label className="block sm:col-span-2">
+                    <span className="text-xs text-slate-400">Submarket</span>
+                    <input
+                      type="text"
+                      value={reportMeta.submarket}
+                      onChange={(e) => setReportMeta((prev) => ({ ...prev, submarket: e.target.value }))}
+                      className="input-premium mt-1"
+                      placeholder={inferredReportLocation.submarket || "Auto from document/API when available"}
+                    />
+                  </label>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
+                </p>
+              </div>
+            </>
+          )}
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={exportExcelDeck}
-              disabled={exportExcelLoading || scenarios.length === 0}
-              className="btn-premium btn-premium-success w-full sm:w-auto disabled:opacity-50"
-            >
-              {exportExcelLoading ? "Exporting…" : "Export Excel"}
-            </button>
-            <button
-              type="button"
-              onClick={exportPdfDeck}
-              disabled={exportPdfLoading || scenarios.length === 0}
-              className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
-            >
-              {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
-            </button>
+              <button
+                type="button"
+                onClick={exportExcelDeck}
+                disabled={exportExcelLoading || scenarios.length === 0 || !authSession}
+                className="btn-premium btn-premium-success w-full sm:w-auto disabled:opacity-50"
+              >
+                {exportExcelLoading ? "Exporting…" : "Export Excel"}
+              </button>
+              <button
+                type="button"
+                onClick={exportPdfDeck}
+                disabled={exportPdfLoading || scenarios.length === 0 || !authSession}
+                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
+              >
+                {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
+              </button>
           </div>
           {(exportPdfError || exportExcelError) && (
             <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError}</p>
