@@ -38,6 +38,7 @@ import type {
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
 import { SummaryMatrix } from "@/components/SummaryMatrix";
+import { formatDateISO } from "@/lib/format";
 import {
   backendCanonicalToScenarioInput,
   scenarioInputToBackendCanonical,
@@ -1060,6 +1061,28 @@ export default function Home() {
       return null;
     })
     .filter((x): x is { name: string; error: string } => x !== null);
+  const coverMetaPreview = buildReportMeta();
+  const heroSparklineValues = useMemo(() => {
+    const values = chartData
+      .map((row) => Number(row.npv_cost))
+      .filter((v) => Number.isFinite(v) && v > 0)
+      .slice(0, 8);
+    if (values.length >= 2) return values;
+    return [780000, 820000, 760000, 805000, 790000];
+  }, [chartData]);
+  const heroSparklinePoints = useMemo(() => {
+    const min = Math.min(...heroSparklineValues);
+    const max = Math.max(...heroSparklineValues);
+    const span = Math.max(1, max - min);
+    const count = heroSparklineValues.length;
+    return heroSparklineValues
+      .map((value, idx) => {
+        const x = count === 1 ? 12 : 12 + (idx * 236) / (count - 1);
+        const y = 58 - ((value - min) / span) * 42;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+  }, [heroSparklineValues]);
 
   return (
     <>
@@ -1094,32 +1117,64 @@ export default function Home() {
               </div>
             </div>
             <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll">
-              <div className="border border-white/25 bg-black/65">
-                <div className="grid grid-cols-12">
-                  <div className="col-span-8 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.2)" }}>
-                    <p className="heading-kicker mb-2">Scenarios</p>
-                    <p className="text-4xl sm:text-5xl tracking-tight text-white leading-none">
-                      {Math.max(1, scenarios.length)}
-                    </p>
+              <div className="border border-white/25 bg-black/65 p-2 sm:p-3">
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
+                    <p className="heading-kicker mb-1">Scenarios</p>
+                    <p className="text-3xl sm:text-4xl tracking-tight text-white leading-none">{Math.max(1, scenarios.length)}</p>
                   </div>
-                  <div className="col-span-4 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
-                    <p className="heading-kicker mb-2">Status</p>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
+                    <p className="heading-kicker mb-1">Status</p>
                     <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
                   </div>
-                  <div className="col-span-5 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
-                    <p className="heading-kicker mb-2">Brand</p>
-                    <p className="text-base text-white/90 leading-tight">{brandId || "default"}</p>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
+                    <p className="heading-kicker mb-1">Brokerage</p>
+                    <p className="text-sm text-white/90 leading-tight truncate">{brandId || "default"}</p>
                   </div>
-                  <div className="col-span-7 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.15)" }}>
-                    <p className="heading-kicker mb-2">Discount rate</p>
-                    <p className="text-3xl tracking-tight text-white leading-none">{(globalDiscountRate * 100).toFixed(2)}%</p>
+
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
+                    <p className="heading-kicker mb-1">Prepared for</p>
+                    <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_for || "Client"}</p>
                   </div>
-                  <div className="col-span-12 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
+                    <p className="heading-kicker mb-1">Prepared by</p>
+                    <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_by || "theCREmodel"}</p>
+                  </div>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
+                    <p className="heading-kicker mb-1">Report date</p>
+                    <p className="text-sm text-white/90 leading-tight">{coverMetaPreview.report_date}</p>
+                  </div>
+
+                  <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="heading-kicker">NPV trend</p>
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live profile</p>
+                    </div>
+                    <svg viewBox="0 0 260 70" className="w-full h-16 sm:h-20">
+                      <polyline
+                        points={heroSparklinePoints}
+                        fill="none"
+                        stroke="rgba(255,255,255,0.28)"
+                        strokeWidth="5"
+                        strokeLinejoin="round"
+                        strokeLinecap="round"
+                      />
+                      <polyline
+                        points={heroSparklinePoints}
+                        fill="none"
+                        stroke="rgba(255,255,255,0.9)"
+                        strokeWidth="1.8"
+                        strokeLinejoin="round"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </div>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
                     <p className="heading-kicker mb-2">Document pipeline</p>
-                    <div className="grid grid-cols-3 gap-2 text-[11px] uppercase tracking-[0.12em] text-white/75">
-                      <span className="border border-white/20 px-2 py-1">Upload</span>
-                      <span className="border border-white/20 px-2 py-1">Extract</span>
-                      <span className="border border-white/20 px-2 py-1">Compare</span>
+                    <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/80">
+                      <span className="border border-white/20 px-2 py-1 text-center">Upload</span>
+                      <span className="border border-white/20 px-2 py-1 text-center">Extract</span>
+                      <span className="border border-white/20 px-2 py-1 text-center">Compare</span>
                     </div>
                   </div>
                 </div>
