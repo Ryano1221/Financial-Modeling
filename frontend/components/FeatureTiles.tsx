@@ -32,8 +32,6 @@ const features = [
   },
 ];
 
-const trustedBy = ["JLL", "CBRE", "Cushman", "Newmark"];
-
 export function FeatureTiles() {
   return (
     <section className="relative z-10 section-shell">
@@ -57,33 +55,6 @@ export function FeatureTiles() {
             </motion.div>
           ))}
         </div>
-
-        {/* Trusted by - placeholders only */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          className="mt-16 sm:mt-20 pt-10 sm:pt-12 border-t border-white/20 reveal-on-scroll"
-        >
-          <p className="text-xs uppercase tracking-[0.18em] text-white/55 text-center mb-6">
-            Trusted by leading firms
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-10 md:gap-16">
-            {trustedBy.map((name) => (
-              <span
-                key={name}
-                className="text-white/55 text-sm font-semibold tracking-wide grayscale opacity-70"
-                aria-hidden
-              >
-                {name}
-              </span>
-            ))}
-          </div>
-          <p className="text-xs text-white/45 text-center mt-4">
-            Placeholder logos — no endorsement implied
-          </p>
-        </motion.div>
       </div>
     </section>
   );
