@@ -3284,6 +3284,13 @@ def _normalize_impl(
                         continue
                     existing_notes = f"{existing_notes} | {line}".strip(" |") if existing_notes else line
                 updates["notes"] = existing_notes[:1600]
+            current_discount = _coerce_float_token(
+                updates.get("discount_rate_annual"),
+                _coerce_float_token(canonical.discount_rate_annual, 0.0),
+            )
+            # Default discount should be 8% unless explicitly set otherwise.
+            if current_discount <= 0 or abs(current_discount - 0.06) < 1e-9:
+                updates["discount_rate_annual"] = 0.08
             if updates:
                 canonical = canonical.model_copy(update=updates)
 

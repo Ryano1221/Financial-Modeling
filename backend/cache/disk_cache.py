@@ -36,7 +36,18 @@ def get_cached_extraction(file_bytes: bytes, force_ocr: bool | str) -> dict[str,
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        # Backward-compat migration: legacy extraction cache stored default discount as 6%.
+        scenario = payload.get("scenario") if isinstance(payload, dict) else None
+        if isinstance(scenario, dict):
+            raw = scenario.get("discount_rate_annual")
+            try:
+                parsed = float(raw)
+            except (TypeError, ValueError):
+                parsed = 0.0
+            if parsed <= 0 or abs(parsed - 0.06) < 1e-9:
+                scenario["discount_rate_annual"] = 0.08
+        return payload
     except Exception:
         return None
 

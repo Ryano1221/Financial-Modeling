@@ -205,6 +205,22 @@ function normalizeDateMmDdYyyy(raw: string): string {
   return "";
 }
 
+function normalizeDiscountRateAnnual(raw: unknown): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0.08;
+  if (Math.abs(parsed - 0.06) < 0.0000001) return 0.08;
+  return parsed;
+}
+
+function normalizeScenarioDiscountRate<T extends ScenarioInput | ScenarioWithId>(scenario: T): T {
+  return {
+    ...scenario,
+    discount_rate_annual: normalizeDiscountRateAnnual(
+      (scenario as ScenarioInput | ScenarioWithId).discount_rate_annual
+    ),
+  } as T;
+}
+
 async function fileToDataUrl(file: File): Promise<string> {
   await file.arrayBuffer(); // Touch the file first so file read failures reject early.
   return await new Promise<string>((resolve, reject) => {
@@ -334,8 +350,9 @@ export default function Home() {
       }
       const data = JSON.parse(raw) as { scenarios?: ScenarioWithId[]; includedInSummary?: Record<string, boolean> };
       if (Array.isArray(data.scenarios) && data.scenarios.length > 0) {
-        setScenarios(data.scenarios);
-        if (data.scenarios[0]) setSelectedId(data.scenarios[0].id);
+        const restoredScenarios = data.scenarios.map((s) => normalizeScenarioDiscountRate(s));
+        setScenarios(restoredScenarios);
+        if (restoredScenarios[0]) setSelectedId(restoredScenarios[0].id);
       }
       if (data.includedInSummary && typeof data.includedInSummary === "object") setIncludedInSummary(data.includedInSummary);
       setHasRestored(true);
@@ -359,6 +376,22 @@ export default function Home() {
       // ignore
     }
   }, [scenarios, includedInSummary, hasRestored]);
+
+  useEffect(() => {
+    if (!hasRestored) return;
+    setScenarios((prev) => {
+      let changed = false;
+      const next = prev.map((s) => {
+        const normalized = normalizeScenarioDiscountRate(s);
+        if (normalized.discount_rate_annual !== s.discount_rate_annual) {
+          changed = true;
+          return normalized;
+        }
+        return s;
+      });
+      return changed ? next : prev;
+    });
+  }, [hasRestored]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !isProduction || scenarios.length === 0) return;
@@ -564,8 +597,8 @@ export default function Home() {
 
   const addScenarioFromCanonical = useCallback(
     (canonical: BackendCanonicalLease, onAdded?: (s: ScenarioWithId) => void) => {
-      const scenarioInput = backendCanonicalToScenarioInput(canonical);
-      const scenarioWithId: ScenarioWithId = { id: nextId(), ...scenarioInput };
+      const scenarioInput = normalizeScenarioDiscountRate(backendCanonicalToScenarioInput(canonical));
+      const scenarioWithId: ScenarioWithId = normalizeScenarioDiscountRate({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, scenarioWithId]);
       setSelectedId(scenarioWithId.id);
       setResults((prev) => {
@@ -680,7 +713,7 @@ export default function Home() {
       if (!raw) return;
       sessionStorage.removeItem(PENDING_SCENARIO_KEY);
       const scenarioInput: ScenarioInput = JSON.parse(raw);
-      const withId: ScenarioWithId = { id: nextId(), ...scenarioInput };
+      const withId: ScenarioWithId = normalizeScenarioDiscountRate({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, withId]);
       setSelectedId(withId.id);
     } catch {
@@ -1116,41 +1149,41 @@ export default function Home() {
                 </a>
               </div>
             </div>
-            <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll">
-              <div className="border border-white/25 bg-black/65 p-2 sm:p-3">
-                <div className="grid grid-cols-12 gap-2">
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
+            <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll flex">
+              <div className="border border-white/25 bg-black/65 p-2 sm:p-3 flex-1 min-h-[280px]">
+                <div className="grid grid-cols-12 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 h-full">
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
                     <p className="heading-kicker mb-1">Scenarios</p>
                     <p className="text-3xl sm:text-4xl tracking-tight text-white leading-none">{Math.max(1, scenarios.length)}</p>
                   </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
                     <p className="heading-kicker mb-1">Status</p>
                     <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
                   </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
                     <p className="heading-kicker mb-1">Brokerage</p>
                     <p className="text-sm text-white/90 leading-tight truncate">{brandId || "default"}</p>
                   </div>
 
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
                     <p className="heading-kicker mb-1">Prepared for</p>
                     <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_for || "Client"}</p>
                   </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
                     <p className="heading-kicker mb-1">Prepared by</p>
                     <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_by || "theCREmodel"}</p>
                   </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
                     <p className="heading-kicker mb-1">Report date</p>
                     <p className="text-sm text-white/90 leading-tight">{coverMetaPreview.report_date}</p>
                   </div>
 
-                  <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
+                  <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-between min-h-[132px]" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
                     <div className="flex items-center justify-between mb-2">
                       <p className="heading-kicker">NPV trend</p>
                       <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live profile</p>
                     </div>
-                    <svg viewBox="0 0 260 70" className="w-full h-16 sm:h-20">
+                    <svg viewBox="0 0 260 70" className="w-full h-20 sm:h-24">
                       <polyline
                         points={heroSparklinePoints}
                         fill="none"
@@ -1169,9 +1202,9 @@ export default function Home() {
                       />
                     </svg>
                   </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
+                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
                     <p className="heading-kicker mb-2">Document pipeline</p>
-                    <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/80">
+                    <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/80 h-full content-center">
                       <span className="border border-white/20 px-2 py-1 text-center">Upload</span>
                       <span className="border border-white/20 px-2 py-1 text-center">Extract</span>
                       <span className="border border-white/20 px-2 py-1 text-center">Compare</span>
