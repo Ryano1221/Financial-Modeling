@@ -7,6 +7,15 @@ import type { ScenarioInput, CanonicalComputeResponse, CanonicalMetrics } from "
 import type { BackendCanonicalLease, BackendRentScheduleStep, BackendPhaseInStep } from "@/lib/types";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 
+function toNumber(value: unknown, fallback: number = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
 function monthDiff(comm: string, exp: string): number {
   const [cy, cm, cd] = comm.split("-").map(Number);
   const [ey, em, ed] = exp.split("-").map(Number);
@@ -232,6 +241,7 @@ export function canonicalResponseToEngineResult(
   scenarioName: string
 ): EngineResult {
   const m = res.metrics;
+  const normalized = res.normalized_canonical_lease;
   const termMonths = m.term_months ?? 0;
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
@@ -251,7 +261,7 @@ export function canonicalResponseToEngineResult(
     baseRentPsfYr: m.base_rent_avg_psf_year ?? 0,
     escalationPercent: 0,
     opexPsfYr: m.opex_avg_psf_year ?? 0,
-    opexEscalationPercent: 0,
+    opexEscalationPercent: toNumber(normalized?.opex_growth_rate, 0),
     parkingCostAnnual: m.parking_total ?? 0,
     tiBudget: m.ti_value_total ?? 0,
     tiAllowance: m.ti_value_total ?? 0,
