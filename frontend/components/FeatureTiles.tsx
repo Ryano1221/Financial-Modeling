@@ -46,7 +46,7 @@ export function FeatureTiles() {
               transition={{ duration: 0.5, delay: i * 0.1, ease: [0.22, 1, 0.36, 1] }}
               className="surface-card surface-card-hover p-6 md:p-8 reveal-on-scroll"
             >
-              <p className="heading-kicker mb-4">Feature {i + 1}</p>
+              <p className="heading-kicker mb-4">Step {i + 1}</p>
               <div className="mb-5 inline-flex h-11 w-11 items-center justify-center rounded border border-white/20 bg-white/[0.03] text-white/90">
                 {feature.icon}
               </div>
