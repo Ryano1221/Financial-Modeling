@@ -438,7 +438,12 @@ export async function buildBrokerWorkbook(
       },
     },
     { label: "Allotted parking spaces", format: "integer", get: (s) => s.parkingSchedule?.spacesAllotted ?? 0 },
-    { label: "Parking cost ($/spot/month)", format: "currency", get: (_s, r) => r.metrics.parkingCostPerSpotMonthly ?? 0 },
+    {
+      label: "Parking cost ($/spot/month, pre-tax)",
+      format: "currency",
+      get: (_s, r) => r.metrics.parkingCostPerSpotMonthlyPreTax ?? safeDiv(r.metrics.parkingCostPerSpotMonthly ?? 0, 1 + (r.metrics.parkingSalesTaxPercent ?? 0)),
+    },
+    { label: "Parking cost ($/spot/month, after tax)", format: "currency", get: (_s, r) => r.metrics.parkingCostPerSpotMonthly ?? 0 },
     { label: "Parking sales tax %", format: "percent", get: (_s, r) => r.metrics.parkingSalesTaxPercent ?? 0.0825 },
     { label: "Monthly parking cost", format: "currency", get: (_s, r) => safeDiv(r.metrics.parkingCostAnnual, 12) },
     { label: "TI budget ($/SF)", format: "currency_psf", get: (s) => safeDiv(s.tiSchedule?.budgetTotal ?? 0, s.partyAndPremises?.rentableSqFt ?? 0) },
@@ -507,6 +512,9 @@ export async function buildBrokerWorkbook(
     const upFrontCapexPsf = safeDiv(upFrontCapexGross, scenario.partyAndPremises?.rentableSqFt ?? 0);
     const parkingSpaces = scenario.parkingSchedule?.spacesAllotted ?? 0;
     const parkingRatio = safeDiv(parkingSpaces, scenario.partyAndPremises?.rentableSqFt ?? 0) * 1000;
+    const parkingCostPerSpotMonthlyPreTax =
+      result.metrics.parkingCostPerSpotMonthlyPreTax
+      ?? safeDiv(result.metrics.parkingCostPerSpotMonthly ?? 0, 1 + (result.metrics.parkingSalesTaxPercent ?? 0));
     const parkingCostPerSpotMonthly = result.metrics.parkingCostPerSpotMonthly ?? 0;
     const parkingSalesTaxPercent = result.metrics.parkingSalesTaxPercent ?? 0.0825;
     const parkingMonthly = safeDiv(result.metrics.parkingCostAnnual, 12);
@@ -527,7 +535,8 @@ export async function buildBrokerWorkbook(
       { label: "Annual OpEx escalation %", value: scenario.expenseSchedule?.annualEscalationPercent ?? 0, format: "percent" },
       { label: "Parking ratio (/1,000 SF)", value: parkingRatio, format: "number" },
       { label: "Allotted parking spaces", value: parkingSpaces, format: "integer" },
-      { label: "Parking cost ($/spot/month)", value: parkingCostPerSpotMonthly, format: "currency" },
+      { label: "Parking cost ($/spot/month, pre-tax)", value: parkingCostPerSpotMonthlyPreTax, format: "currency" },
+      { label: "Parking cost ($/spot/month, after tax)", value: parkingCostPerSpotMonthly, format: "currency" },
       { label: "Parking sales tax %", value: parkingSalesTaxPercent, format: "percent" },
       { label: "Monthly parking cost", value: parkingMonthly, format: "currency" },
       { label: "TI budget ($/SF)", value: tiBudgetPsf, format: "currency_psf" },
@@ -805,7 +814,12 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     { label: "Rent abatement", format: "text", get: (_m, c) => (c.free_rent_months ?? 0) > 0 ? `${c.free_rent_months} months` : "None" },
     { label: "Parking ratio (/1,000 SF)", format: "number", get: (m, c) => safeDiv(c.parking_count ?? 0, m.rsf ?? 0) * 1000 },
     { label: "Allotted parking spaces", format: "integer", get: (_m, c) => c.parking_count ?? 0 },
-    { label: "Parking cost ($/spot/month)", format: "currency", get: (_m, c) => (c.parking_rate_monthly ?? 0) * (1 + (c.parking_sales_tax_rate ?? 0)) },
+    { label: "Parking cost ($/spot/month, pre-tax)", format: "currency", get: (_m, c) => c.parking_rate_monthly ?? 0 },
+    {
+      label: "Parking cost ($/spot/month, after tax)",
+      format: "currency",
+      get: (_m, c) => (c.parking_rate_monthly ?? 0) * (1 + (c.parking_sales_tax_rate ?? 0)),
+    },
     { label: "Parking sales tax %", format: "percent", get: (_m, c) => c.parking_sales_tax_rate ?? 0.0825 },
     {
       label: "Monthly parking cost",
@@ -878,7 +892,8 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     sheet.getCell(row, 1).font = { bold: true, size: 12 };
     row += 2;
     const parkingRatio = safeDiv(c.parking_count ?? 0, m.rsf ?? 0) * 1000;
-    const parkingCostPerSpotMonthly = (c.parking_rate_monthly ?? 0) * (1 + (c.parking_sales_tax_rate ?? 0));
+    const parkingCostPerSpotMonthlyPreTax = c.parking_rate_monthly ?? 0;
+    const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + (c.parking_sales_tax_rate ?? 0));
     const parkingSalesTaxPercent = c.parking_sales_tax_rate ?? 0.0825;
     const parkingMonthly = (c.parking_rate_monthly ?? 0) * (c.parking_count ?? 0) * (1 + (c.parking_sales_tax_rate ?? 0));
     const grossAnnual = safeDiv((m.base_rent_total ?? 0) + (m.opex_total ?? 0) + (m.parking_total ?? 0), Math.max(1, (m.term_months ?? 1) / 12));
@@ -898,7 +913,8 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
       { label: "Rent abatement months", value: c.free_rent_months ?? 0, format: "integer" },
       { label: "Parking ratio (/1,000 SF)", value: parkingRatio, format: "number" },
       { label: "Allotted parking spaces", value: c.parking_count ?? 0, format: "integer" },
-      { label: "Parking cost ($/spot/month)", value: parkingCostPerSpotMonthly, format: "currency" },
+      { label: "Parking cost ($/spot/month, pre-tax)", value: parkingCostPerSpotMonthlyPreTax, format: "currency" },
+      { label: "Parking cost ($/spot/month, after tax)", value: parkingCostPerSpotMonthly, format: "currency" },
       { label: "Parking sales tax %", value: parkingSalesTaxPercent, format: "percent" },
       { label: "Monthly parking cost", value: parkingMonthly, format: "currency" },
       { label: "TI allowance ($/SF)", value: c.ti_allowance_psf ?? 0, format: "currency_psf" },

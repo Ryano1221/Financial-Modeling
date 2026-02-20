@@ -267,6 +267,7 @@ export function canonicalResponseToEngineResult(
     escalationPercent: 0,
     opexPsfYr: m.opex_avg_psf_year ?? 0,
     opexEscalationPercent: toNumber(normalized?.opex_growth_rate, 0),
+    parkingCostPerSpotMonthlyPreTax: parkingRateMonthly,
     parkingCostPerSpotMonthly: parkingRateMonthly * (1 + parkingSalesTaxRate),
     parkingSalesTaxPercent: parkingSalesTaxRate,
     parkingCostAnnual: m.parking_total ?? 0,

@@ -69,6 +69,7 @@ export interface OptionMetrics {
   escalationPercent: number;
   opexPsfYr: number;
   opexEscalationPercent: number;
+  parkingCostPerSpotMonthlyPreTax: number;
   parkingCostPerSpotMonthly: number;
   parkingSalesTaxPercent: number;
   parkingCostAnnual: number;
@@ -398,13 +399,14 @@ export function runMonthlyEngine(
   const suiteName = (scenario.partyAndPremises.floorsOrSuite ?? "").trim();
   const totalParkingSlots = (scenario.parkingSchedule.slots ?? []).reduce((sum, slot) => sum + Math.max(0, slot.count || 0), 0);
   const parkingTaxPct = Math.max(0, Number(scenario.parkingSchedule.salesTaxPercent ?? 0) || 0);
-  const parkingCostPerSpotMonthly =
+  const parkingCostPerSpotMonthlyPreTax =
     totalParkingSlots > 0
       ? ((scenario.parkingSchedule.slots ?? []).reduce(
           (sum, slot) => sum + (Math.max(0, Number(slot.costPerSpacePerMonth) || 0) * Math.max(0, Number(slot.count) || 0)),
           0
-        ) / totalParkingSlots) * (1 + parkingTaxPct)
+        ) / totalParkingSlots)
       : 0;
+  const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + parkingTaxPct);
   const metrics: OptionMetrics = {
     buildingName,
     suiteName,
@@ -418,6 +420,7 @@ export function runMonthlyEngine(
     escalationPercent: scenario.rentSchedule.annualEscalationPercent * 100,
     opexPsfYr: scenario.expenseSchedule.baseOpexPsfYr,
     opexEscalationPercent: scenario.expenseSchedule.annualEscalationPercent * 100,
+    parkingCostPerSpotMonthlyPreTax,
     parkingCostPerSpotMonthly,
     parkingSalesTaxPercent: parkingTaxPct,
     parkingCostAnnual: parking.reduce((a, b) => a + b, 0),

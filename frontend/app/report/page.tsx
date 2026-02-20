@@ -48,6 +48,7 @@ type DerivedScenario = {
   freeRentMonths: number;
   parkingSpaces: number;
   parkingRatio: number;
+  parkingCostPerSpotMonthlyPreTax: number;
   parkingCostPerSpotMonthly: number;
   parkingSalesTaxRate: number;
   parkingMonthly: number;
@@ -187,7 +188,8 @@ function deriveScenario(entry: ScenarioEntry): DerivedScenario {
   const parkingSpaces = toNumber(scenario.parking_spaces);
   const parkingRate = toNumber(scenario.parking_cost_monthly_per_space);
   const parkingSalesTaxRate = Math.max(0, toNumber(scenario.parking_sales_tax_rate, 0.0825));
-  const parkingCostPerSpotMonthly = parkingRate * (1 + parkingSalesTaxRate);
+  const parkingCostPerSpotMonthlyPreTax = parkingRate;
+  const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + parkingSalesTaxRate);
   const parkingMonthly = parkingSpaces * parkingCostPerSpotMonthly;
   const tiAllowancePsf = toNumber(scenario.ti_allowance_psf);
   const tiAllowanceGross = tiAllowancePsf * rsf;
@@ -217,6 +219,7 @@ function deriveScenario(entry: ScenarioEntry): DerivedScenario {
     freeRentMonths: toNumber(scenario.free_rent_months),
     parkingSpaces,
     parkingRatio: safeDiv(parkingSpaces, safeDiv(rsf, 1000)),
+    parkingCostPerSpotMonthlyPreTax,
     parkingCostPerSpotMonthly,
     parkingSalesTaxRate,
     parkingMonthly,
@@ -321,8 +324,9 @@ function ReportContent() {
     { label: "Rent abatement", value: (d) => `${formatNumber(d.freeRentMonths)} months` },
     { label: "Parking ratio", value: (d) => `${formatNumber(d.parkingRatio, { decimals: 2 })}/1,000 SF` },
     { label: "Allotted parking spaces", value: (d) => formatNumber(d.parkingSpaces) },
-    { label: "Parking cost ($/spot/month)", value: (d) => formatCurrency(d.parkingCostPerSpotMonthly) },
+    { label: "Parking cost ($/spot/month, pre-tax)", value: (d) => formatCurrency(d.parkingCostPerSpotMonthlyPreTax) },
     { label: "Parking sales tax", value: (d) => formatPercent(d.parkingSalesTaxRate) },
+    { label: "Parking cost ($/spot/month, after tax)", value: (d) => formatCurrency(d.parkingCostPerSpotMonthly) },
     { label: "Monthly parking cost", value: (d) => formatCurrency(d.parkingMonthly) },
     { label: "TI allowance", value: (d) => formatCurrencyPerSF(d.tiAllowancePsf) },
     { label: "TI allowance (gross)", value: (d) => formatCurrency(d.tiAllowanceGross) },
