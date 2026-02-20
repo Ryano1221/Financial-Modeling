@@ -25,6 +25,7 @@ import { ResultsActionsCard } from "@/components/ResultsActionsCard";
 import { Footer } from "@/components/Footer";
 import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
 import { ClientLogoUploader } from "@/components/ClientLogoUploader";
+import { AuthPanel } from "@/components/AuthPanel";
 import type {
   ScenarioWithId,
   CashflowResult,
@@ -33,7 +34,6 @@ import type {
   ScenarioInput,
   BackendCanonicalLease,
   ExtractionSummary,
-  OrganizationBrandingResponse,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
@@ -48,6 +48,15 @@ import {
 } from "@/lib/canonical-api";
 import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
 import type { CanonicalComputeResponse } from "@/lib/types";
+import type { SupabaseAuthSession } from "@/lib/supabase";
+import { getSession, signOut } from "@/lib/supabase";
+import {
+  type UserBrandingResponse,
+  deleteUserBrandingLogo,
+  fetchUserBranding,
+  updateBrokerageName,
+  uploadUserBrandingLogo,
+} from "@/lib/user-settings";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -298,6 +307,8 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
 }
 
 export default function Home() {
+  const [authSession, setAuthSession] = useState<SupabaseAuthSession | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
@@ -324,7 +335,8 @@ export default function Home() {
     market: "",
     submarket: "",
   });
-  const [organizationBranding, setOrganizationBranding] = useState<OrganizationBrandingResponse | null>(null);
+  const [organizationBranding, setOrganizationBranding] = useState<UserBrandingResponse | null>(null);
+  const [brokerageName, setBrokerageName] = useState("");
   const [brandingLoading, setBrandingLoading] = useState(false);
   const [brandingUploading, setBrandingUploading] = useState(false);
   const [brandingError, setBrandingError] = useState<string | null>(null);
@@ -338,6 +350,27 @@ export default function Home() {
   const pendingNormalize = pendingNormalizeQueue[0] ?? null;
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setAuthLoading(true);
+    getSession()
+      .then((session) => {
+        if (cancelled) return;
+        setAuthSession(session);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAuthSession(null);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [hasRestored, setHasRestored] = useState(false);
   useEffect(() => {
@@ -428,53 +461,31 @@ export default function Home() {
   }, [brandId]);
 
   const loadOrganizationBranding = useCallback(async () => {
+    if (!authSession) {
+      setOrganizationBranding(null);
+      setBrokerageName("");
+      return;
+    }
     setBrandingLoading(true);
     try {
-      let res = await fetchApiProxy("/api/v1/branding", { method: "GET" });
-      if ([401, 403, 404].includes(res.status)) {
-        // Fallback for single-tenant mode when org auth is not configured.
-        res = await fetchApiProxy("/branding", { method: "GET" });
-      }
-      if (!res.ok) {
-        if (res.status === 401 || res.status === 403 || res.status === 404) {
-          setOrganizationBranding(null);
-          return;
-        }
-        const body = await res.text();
-        throw new Error(body || `Branding request failed (${res.status})`);
-      }
-      const data = (await res.json()) as OrganizationBrandingResponse;
+      const data = await fetchUserBranding();
       setOrganizationBranding(data);
+      setBrokerageName((data.brokerage_name || "").trim());
     } catch (err) {
       setOrganizationBranding(null);
       console.warn("[branding] unable to load org branding", err);
     } finally {
       setBrandingLoading(false);
     }
-  }, []);
+  }, [authSession]);
 
   const uploadOrganizationLogo = useCallback(
     async (file: File) => {
       setBrandingUploading(true);
       setBrandingError(null);
       try {
-        const form = new FormData();
-        form.append("file", file);
-        let res = await fetchApiProxy("/api/v1/branding/logo", {
-          method: "POST",
-          body: form,
-        });
-        if ([401, 403, 404].includes(res.status)) {
-          res = await fetchApiProxy("/branding/logo", {
-            method: "POST",
-            body: form,
-          });
-        }
-        if (!res.ok) {
-          const body = parseErrorPayloadText(await res.text());
-          throw new Error(body || `Logo upload failed (${res.status})`);
-        }
-        const data = (await res.json()) as OrganizationBrandingResponse;
+        if (!authSession) throw new Error("Not authenticated");
+        const data = await uploadUserBrandingLogo(file);
         setOrganizationBranding(data);
       } catch (err) {
         setBrandingError(getBrandingDisplayErrorMessage(err));
@@ -482,33 +493,59 @@ export default function Home() {
         setBrandingUploading(false);
       }
     },
-    []
+    [authSession]
   );
 
   const deleteOrganizationLogo = useCallback(async () => {
     setBrandingUploading(true);
     setBrandingError(null);
     try {
-      let res = await fetchApiProxy("/api/v1/branding/logo", { method: "DELETE" });
-      if ([401, 403, 404].includes(res.status)) {
-        res = await fetchApiProxy("/branding/logo", { method: "DELETE" });
-      }
-      if (!res.ok) {
-        const body = parseErrorPayloadText(await res.text());
-        throw new Error(body || `Logo delete failed (${res.status})`);
-      }
-      const data = (await res.json()) as OrganizationBrandingResponse;
+      if (!authSession) throw new Error("Not authenticated");
+      const data = await deleteUserBrandingLogo();
       setOrganizationBranding(data);
     } catch (err) {
       setBrandingError(getBrandingDisplayErrorMessage(err));
     } finally {
       setBrandingUploading(false);
     }
-  }, []);
+  }, [authSession]);
+
+  const saveBrokerage = useCallback(async () => {
+    setBrandingUploading(true);
+    setBrandingError(null);
+    try {
+      if (!authSession) throw new Error("Not authenticated");
+      const updated = await updateBrokerageName(brokerageName.trim());
+      setBrokerageName((updated.brokerage_name || "").trim());
+      await loadOrganizationBranding();
+      setReportMeta((prev) => ({
+        ...prev,
+        prepared_by: prev.prepared_by.trim() || (updated.brokerage_name || "").trim() || prev.prepared_by,
+      }));
+    } catch (err) {
+      setBrandingError(getBrandingDisplayErrorMessage(err));
+    } finally {
+      setBrandingUploading(false);
+    }
+  }, [authSession, brokerageName, loadOrganizationBranding]);
 
   useEffect(() => {
+    if (!authSession) {
+      setOrganizationBranding(null);
+      setBrokerageName("");
+      return;
+    }
     void loadOrganizationBranding();
-  }, [loadOrganizationBranding]);
+  }, [authSession, loadOrganizationBranding]);
+
+  useEffect(() => {
+    const fallbackPreparedBy = brokerageName.trim();
+    if (!fallbackPreparedBy) return;
+    setReportMeta((prev) => {
+      if (prev.prepared_by.trim()) return prev;
+      return { ...prev, prepared_by: fallbackPreparedBy };
+    });
+  }, [brokerageName]);
 
   const uploadClientLogo = useCallback(async (file: File) => {
     const mime = (file.type || "").toLowerCase();
@@ -862,15 +899,16 @@ export default function Home() {
 
   const buildReportMeta = useCallback((): ReportMeta => {
     const todayMdy = formatDateMmDdYyyy(new Date());
+    const defaultPreparedBy = reportMeta.prepared_by.trim() || brokerageName.trim() || "theCREmodel";
     return {
       prepared_for: reportMeta.prepared_for.trim() || "Client",
-      prepared_by: reportMeta.prepared_by.trim() || "theCREmodel",
+      prepared_by: defaultPreparedBy,
       report_date: normalizeDateMmDdYyyy(reportMeta.report_date) || todayMdy,
       market: reportMeta.market.trim() || inferredReportLocation.market || "",
       submarket: reportMeta.submarket.trim() || inferredReportLocation.submarket || "",
       confidential: true,
     };
-  }, [reportMeta, inferredReportLocation.market, inferredReportLocation.submarket]);
+  }, [reportMeta, brokerageName, inferredReportLocation.market, inferredReportLocation.submarket]);
 
   const downloadBlob = useCallback((blob: Blob, fileName: string) => {
     const url = URL.createObjectURL(blob);
@@ -932,11 +970,11 @@ export default function Home() {
               org_id: organizationBranding?.organization_id || undefined,
               theme_hash: organizationBranding?.theme_hash || undefined,
               logo_asset_bytes: organizationBranding?.logo_asset_bytes || undefined,
-              brand_name: "theCREmodel",
+              brand_name: brokerageName.trim() || "theCREmodel",
               client_name: meta.prepared_for || "Client",
-              broker_name: meta.prepared_by || "theCREmodel",
+              broker_name: brokerageName.trim() || meta.prepared_by || "theCREmodel",
               prepared_by_name: meta.prepared_by || "theCREmodel",
-              prepared_by_company: meta.prepared_by || "theCREmodel",
+              prepared_by_company: brokerageName.trim() || meta.prepared_by || "theCREmodel",
               date: meta.report_date || formatDateMmDdYyyy(new Date()),
               market: meta.market || "",
               submarket: meta.submarket || "",
@@ -999,7 +1037,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1117,6 +1155,35 @@ export default function Home() {
       .join(" ");
   }, [heroSparklineValues]);
 
+  const handleSignOut = useCallback(async () => {
+    try {
+      await signOut();
+    } finally {
+      setAuthSession(null);
+      setOrganizationBranding(null);
+      setBrokerageName("");
+    }
+  }, []);
+
+  if (authLoading) {
+    return (
+      <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <p className="text-sm text-slate-300">Loading account…</p>
+      </main>
+    );
+  }
+
+  if (!authSession) {
+    return (
+      <AuthPanel
+        onAuthed={(session) => {
+          setAuthSession(session);
+          setAuthLoading(false);
+        }}
+      />
+    );
+  }
+
   return (
     <>
       <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
@@ -1147,6 +1214,13 @@ export default function Home() {
                 >
                   Try It Live
                 </a>
+                <button
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
+                >
+                  Sign out
+                </button>
               </div>
             </div>
             <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll flex">
@@ -1162,7 +1236,7 @@ export default function Home() {
                   </div>
                   <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
                     <p className="heading-kicker mb-1">Brokerage</p>
-                    <p className="text-sm text-white/90 leading-tight truncate">{brandId || "default"}</p>
+                    <p className="text-sm text-white/90 leading-tight truncate">{brokerageName || "theCREmodel"}</p>
                   </div>
 
                   <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
@@ -1343,6 +1417,26 @@ export default function Home() {
           <p className="text-sm text-slate-300 mb-4">
             Uses per-scenario discount rate overrides when set; otherwise defaults to 8%.
           </p>
+          <div className="mb-4 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
+            <label className="block">
+              <span className="text-xs text-slate-400">Brokerage name</span>
+              <input
+                type="text"
+                value={brokerageName}
+                onChange={(e) => setBrokerageName(e.target.value)}
+                className="input-premium mt-1"
+                placeholder="Your brokerage"
+              />
+            </label>
+            <button
+              type="button"
+              className="btn-premium btn-premium-secondary w-full sm:w-auto"
+              onClick={() => void saveBrokerage()}
+              disabled={brandingUploading || brandingLoading}
+            >
+              Save brokerage
+            </button>
+          </div>
           <BrandingLogoUploader
             branding={organizationBranding}
             loading={brandingLoading}

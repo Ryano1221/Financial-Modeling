@@ -14,6 +14,9 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 from dotenv import load_dotenv
 
@@ -25,6 +28,7 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, HTMLResponse, JSONResponse
+from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from engine.compute import compute_cashflows
@@ -117,6 +121,10 @@ VERSION = (os.environ.get("RENDER_GIT_COMMIT") or "").strip() or "unknown"
 PUBLIC_BRANDING_ORG_ID = "public"
 PUBLIC_BRANDING_MAX_LOGO_BYTES = 1_500_000
 PUBLIC_BRANDING_ALLOWED_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip().rstrip("/")
+SUPABASE_ANON_KEY = (os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or "").strip()
+SUPABASE_SERVICE_ROLE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+SUPABASE_LOGOS_BUCKET = (os.environ.get("SUPABASE_LOGOS_BUCKET") or "logos").strip() or "logos"
 
 
 def _public_branding_path() -> Path:
@@ -165,6 +173,264 @@ def _public_branding_payload() -> dict[str, str | bool | None]:
         "logo_asset_bytes": logo_b64 if has_logo else None,
         "theme_hash": state.get("logo_sha256") if has_logo else None,
         "logo_updated_at": state.get("logo_updated_at") if has_logo else None,
+    }
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    brokerage_name: Optional[str] = None
+
+
+def _supabase_configured(require_service: bool = False) -> None:
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase is not configured on backend (SUPABASE_URL / SUPABASE_ANON_KEY missing).",
+        )
+    if require_service and not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase service role is not configured on backend.",
+        )
+
+
+def _extract_bearer_token(request: Request) -> str:
+    raw = (request.headers.get("authorization") or "").strip()
+    if not raw.lower().startswith("bearer "):
+        return ""
+    return raw.split(" ", 1)[1].strip()
+
+
+def _http_json_request(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: Optional[dict[str, str]] = None,
+    payload: Optional[dict] = None,
+    timeout: float = 20.0,
+) -> tuple[int, dict | list | None]:
+    body = None
+    req_headers: dict[str, str] = {"accept": "application/json"}
+    if headers:
+        req_headers.update(headers)
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        req_headers.setdefault("content-type", "application/json")
+    req = urllib_request.Request(url=url, data=body, headers=req_headers, method=method.upper())
+    try:
+        with urllib_request.urlopen(req, timeout=timeout) as resp:
+            status = int(resp.getcode() or 200)
+            text = resp.read().decode("utf-8", errors="ignore")
+    except urllib_error.HTTPError as e:
+        status = int(e.code or 500)
+        text = e.read().decode("utf-8", errors="ignore")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Supabase request failed: {e}") from e
+    if not text.strip():
+        return status, None
+    try:
+        return status, json.loads(text)
+    except Exception:
+        return status, {"raw": text}
+
+
+def _http_bytes_request(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: Optional[dict[str, str]] = None,
+    body: bytes | None = None,
+    timeout: float = 20.0,
+) -> tuple[int, bytes]:
+    req_headers = dict(headers or {})
+    req = urllib_request.Request(url=url, data=body, headers=req_headers, method=method.upper())
+    try:
+        with urllib_request.urlopen(req, timeout=timeout) as resp:
+            return int(resp.getcode() or 200), resp.read()
+    except urllib_error.HTTPError as e:
+        return int(e.code or 500), e.read()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Supabase request failed: {e}") from e
+
+
+def _require_supabase_user(request: Request) -> dict[str, str]:
+    _supabase_configured(require_service=False)
+    token = _extract_bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    status, payload = _http_json_request(
+        f"{SUPABASE_URL}/auth/v1/user",
+        headers={
+            "apikey": SUPABASE_ANON_KEY,
+            "authorization": f"Bearer {token}",
+        },
+    )
+    data = payload if isinstance(payload, dict) else {}
+    user_id = str(data.get("id") or "").strip()
+    if status != 200 or not user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired auth token")
+    return {
+        "id": user_id,
+        "email": str(data.get("email") or "").strip(),
+    }
+
+
+def _admin_headers() -> dict[str, str]:
+    _supabase_configured(require_service=True)
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+    }
+
+
+def _load_user_settings(user_id: str) -> dict[str, str]:
+    encoded_user = urllib_parse.quote(user_id, safe="")
+    status, payload = _http_json_request(
+        (
+            f"{SUPABASE_URL}/rest/v1/user_settings"
+            f"?select=user_id,brokerage_name,brokerage_logo_url,created_at,updated_at"
+            f"&user_id=eq.{encoded_user}"
+        ),
+        headers=_admin_headers(),
+    )
+    if status >= 400:
+        raise HTTPException(status_code=503, detail="Failed to load user settings from Supabase")
+    rows = payload if isinstance(payload, list) else []
+    row = rows[0] if rows else {}
+    if not isinstance(row, dict):
+        row = {}
+    return {
+        "user_id": user_id,
+        "brokerage_name": str(row.get("brokerage_name") or "").strip(),
+        "brokerage_logo_url": str(row.get("brokerage_logo_url") or "").strip(),
+        "created_at": str(row.get("created_at") or "").strip(),
+        "updated_at": str(row.get("updated_at") or "").strip(),
+    }
+
+
+def _upsert_user_settings(user_id: str, *, brokerage_name: Optional[str], brokerage_logo_url: Optional[str]) -> dict[str, str]:
+    existing = _load_user_settings(user_id)
+    payload = {
+        "user_id": user_id,
+        "brokerage_name": (brokerage_name if brokerage_name is not None else existing.get("brokerage_name") or "").strip() or None,
+        "brokerage_logo_url": (brokerage_logo_url if brokerage_logo_url is not None else existing.get("brokerage_logo_url") or "").strip() or None,
+    }
+    status, _ = _http_json_request(
+        f"{SUPABASE_URL}/rest/v1/user_settings",
+        method="POST",
+        headers={
+            **_admin_headers(),
+            "prefer": "resolution=merge-duplicates,return=representation",
+        },
+        payload=payload,
+    )
+    if status >= 400:
+        raise HTTPException(status_code=503, detail="Failed to save user settings to Supabase")
+    return _load_user_settings(user_id)
+
+
+def _guess_extension(content_type: str, filename: str) -> str:
+    ct = (content_type or "").lower().strip()
+    fn = (filename or "").lower().strip()
+    if ct == "image/png" or fn.endswith(".png"):
+        return ".png"
+    if ct in {"image/jpeg", "image/jpg"} or fn.endswith(".jpg") or fn.endswith(".jpeg"):
+        return ".jpg"
+    if ct == "image/svg+xml" or fn.endswith(".svg"):
+        return ".svg"
+    return ".png"
+
+
+def _storage_upload_logo(user_id: str, filename: str, content_type: str, data: bytes) -> str:
+    ext = _guess_extension(content_type, filename)
+    object_path = f"logos/{user_id}/brokerage{ext}"
+    encoded = urllib_parse.quote(object_path, safe="/")
+    status, body = _http_bytes_request(
+        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_LOGOS_BUCKET}/{encoded}",
+        method="POST",
+        headers={
+            **_admin_headers(),
+            "content-type": content_type,
+            "x-upsert": "true",
+        },
+        body=data,
+        timeout=30.0,
+    )
+    if status >= 400:
+        msg = body.decode("utf-8", errors="ignore")[:300]
+        raise HTTPException(status_code=503, detail=f"Failed to upload logo to Supabase storage: {msg}")
+    return object_path
+
+
+def _storage_delete_logo(object_path: str) -> None:
+    clean = (object_path or "").strip().lstrip("/")
+    if not clean:
+        return
+    encoded = urllib_parse.quote(clean, safe="/")
+    status, _ = _http_bytes_request(
+        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_LOGOS_BUCKET}/{encoded}",
+        method="DELETE",
+        headers=_admin_headers(),
+    )
+    if status not in (200, 204, 404):
+        raise HTTPException(status_code=503, detail="Failed to delete logo from Supabase storage")
+
+
+def _storage_signed_logo_url(object_path: str, expires_seconds: int = 3600) -> str | None:
+    clean = (object_path or "").strip().lstrip("/")
+    if not clean:
+        return None
+    encoded = urllib_parse.quote(clean, safe="/")
+    status, payload = _http_json_request(
+        f"{SUPABASE_URL}/storage/v1/object/sign/{SUPABASE_LOGOS_BUCKET}/{encoded}",
+        method="POST",
+        headers=_admin_headers(),
+        payload={"expiresIn": max(60, int(expires_seconds))},
+    )
+    if status >= 400 or not isinstance(payload, dict):
+        return None
+    signed_path = str(payload.get("signedURL") or "").strip()
+    if not signed_path:
+        return None
+    if signed_path.startswith("http://") or signed_path.startswith("https://"):
+        return signed_path
+    return f"{SUPABASE_URL}/storage/v1{signed_path}"
+
+
+def _storage_download_logo_bytes(object_path: str) -> tuple[bytes | None, str | None]:
+    clean = (object_path or "").strip().lstrip("/")
+    if not clean:
+        return None, None
+    encoded = urllib_parse.quote(clean, safe="/")
+    status, body = _http_bytes_request(
+        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_LOGOS_BUCKET}/{encoded}",
+        method="GET",
+        headers=_admin_headers(),
+        timeout=30.0,
+    )
+    if status >= 400 or not body:
+        return None, None
+    content_type = "image/png"
+    if clean.lower().endswith(".svg"):
+        content_type = "image/svg+xml"
+    elif clean.lower().endswith(".jpg") or clean.lower().endswith(".jpeg"):
+        content_type = "image/jpeg"
+    return body, content_type
+
+
+def _user_branding_payload(user_id: str, settings: dict[str, str]) -> dict[str, str | bool | None]:
+    logo_path = str(settings.get("brokerage_logo_url") or "").strip()
+    logo_signed_url = _storage_signed_logo_url(logo_path) if logo_path else None
+    return {
+        "organization_id": user_id,
+        "brokerage_name": str(settings.get("brokerage_name") or "").strip() or None,
+        "has_logo": bool(logo_path),
+        "logo_filename": logo_path.split("/")[-1] if logo_path else None,
+        "logo_content_type": None,
+        "logo_data_url": logo_signed_url,
+        "logo_asset_bytes": None,
+        "logo_storage_path": logo_path or None,
+        "theme_hash": hashlib.sha256(f"{user_id}:{logo_path}".encode("utf-8")).hexdigest() if logo_path else None,
+        "logo_updated_at": settings.get("updated_at") or None,
     }
 
 
@@ -370,6 +636,84 @@ def delete_public_branding_logo():
         }
     )
     return _public_branding_payload()
+
+
+@app.get("/auth/me")
+def get_auth_me(request: Request):
+    user = _require_supabase_user(request)
+    return {"user_id": user["id"], "email": user.get("email") or None}
+
+
+@app.get("/user-settings/branding")
+def get_user_branding(request: Request):
+    user = _require_supabase_user(request)
+    settings = _load_user_settings(user["id"])
+    return _user_branding_payload(user["id"], settings)
+
+
+@app.patch("/user-settings")
+def patch_user_settings(body: UserSettingsUpdateRequest, request: Request):
+    user = _require_supabase_user(request)
+    settings = _upsert_user_settings(
+        user["id"],
+        brokerage_name=(body.brokerage_name or "").strip() or None,
+        brokerage_logo_url=None,
+    )
+    return {
+        "user_id": user["id"],
+        "brokerage_name": settings.get("brokerage_name") or "",
+        "brokerage_logo_url": settings.get("brokerage_logo_url") or "",
+        "updated_at": settings.get("updated_at") or None,
+    }
+
+
+@app.post("/user-settings/branding/logo")
+async def upload_user_branding_logo(request: Request, file: UploadFile = File(...)):
+    user = _require_supabase_user(request)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    filename = file.filename.strip()
+    content_type = (file.content_type or "").lower().strip()
+    if content_type not in PUBLIC_BRANDING_ALLOWED_TYPES:
+        _ = _guess_extension(content_type, filename)  # normalize by extension
+        if filename.lower().endswith(".png"):
+            content_type = "image/png"
+        elif filename.lower().endswith(".jpg") or filename.lower().endswith(".jpeg"):
+            content_type = "image/jpeg"
+        elif filename.lower().endswith(".svg"):
+            content_type = "image/svg+xml"
+    if content_type not in PUBLIC_BRANDING_ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="Logo must be PNG, JPG, or SVG")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > PUBLIC_BRANDING_MAX_LOGO_BYTES:
+        raise HTTPException(status_code=413, detail="Logo exceeds 1.5MB")
+
+    object_path = _storage_upload_logo(user["id"], filename, content_type, raw)
+    _upsert_user_settings(
+        user["id"],
+        brokerage_name=None,
+        brokerage_logo_url=object_path,
+    )
+    settings = _load_user_settings(user["id"])
+    return _user_branding_payload(user["id"], settings)
+
+
+@app.delete("/user-settings/branding/logo")
+def delete_user_branding_logo(request: Request):
+    user = _require_supabase_user(request)
+    settings = _load_user_settings(user["id"])
+    object_path = str(settings.get("brokerage_logo_url") or "").strip()
+    if object_path:
+        _storage_delete_logo(object_path)
+    _upsert_user_settings(
+        user["id"],
+        brokerage_name=None,
+        brokerage_logo_url="",
+    )
+    settings = _load_user_settings(user["id"])
+    return _user_branding_payload(user["id"], settings)
 
 
 @app.post("/extract", response_model=ExtractionResponse)
@@ -3437,45 +3781,70 @@ def debug_cashflows(scenario: Scenario) -> dict:
 
 
 @app.post("/reports", response_model=CreateReportResponse)
-def create_report(req: CreateReportRequest) -> CreateReportResponse:
+def create_report(req: CreateReportRequest, request: Request) -> CreateReportResponse:
     """
     Store a report (scenarios + results + optional branding) and return reportId.
     """
+    user = _require_supabase_user(request)
+    user_id = user["id"]
+    settings = _load_user_settings(user_id)
+
     branding = req.branding.model_dump(exclude_none=True) if req.branding else {}
-    org_id = str(branding.get("org_id") or branding.get("orgId") or "").strip()
-    if org_id:
-        branding["org_id"] = org_id
+    # Never trust org/user IDs from client. Always scope to authenticated user.
+    branding["org_id"] = user_id
+
+    brokerage_name = str(settings.get("brokerage_name") or "").strip()
+    logo_path = str(settings.get("brokerage_logo_url") or "").strip()
+    if brokerage_name:
+        branding.setdefault("brand_name", brokerage_name)
+        branding.setdefault("broker_name", brokerage_name)
+        branding.setdefault("prepared_by_company", brokerage_name)
+    if logo_path and not branding.get("logo_asset_bytes"):
+        logo_bytes, _content_type = _storage_download_logo_bytes(logo_path)
+        if logo_bytes:
+            branding["logo_asset_bytes"] = base64.b64encode(logo_bytes).decode("ascii")
+            branding.setdefault("logo_storage_path", logo_path)
+
     if not branding.get("theme_hash"):
         branding["theme_hash"] = _branding_theme_hash(branding)
 
     data = {
         "scenarios": [{"scenario": e.scenario, "result": e.result.model_dump()} for e in req.scenarios],
         "branding": branding,
+        "owner_user_id": user_id,
     }
     report_id = save_report(data)
     return CreateReportResponse(report_id=report_id)
 
 
 @app.get("/reports/{report_id}")
-def get_report(report_id: str):
+def get_report(report_id: str, request: Request):
     """
     Return stored report JSON for the report page to consume.
     """
+    user = _require_supabase_user(request)
     data = load_report(report_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Report not found")
+    owner_user_id = str((data or {}).get("owner_user_id") or "").strip()
+    if owner_user_id and owner_user_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
     return data
 
 
 @app.get("/reports/{report_id}/preview", response_class=HTMLResponse)
-def get_report_preview(report_id: str):
+def get_report_preview(report_id: str, request: Request):
     """
     Return a print-friendly multi-scenario deck HTML from stored report payload.
     Useful as a fallback when PDF rendering is unavailable.
     """
+    user = _require_supabase_user(request)
     data = load_report(report_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Report not found")
+    owner_user_id = str((data or {}).get("owner_user_id") or "").strip()
+    if owner_user_id and owner_user_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
     from reporting.deck_builder import build_report_deck_html
 
     return HTMLResponse(
@@ -3931,13 +4300,17 @@ def build_report_preview(req: ReportRequest) -> str:
 
 
 @app.get("/reports/{report_id}/pdf")
-def get_report_pdf(report_id: str):
+def get_report_pdf(report_id: str, request: Request):
     """
     Render a deterministic, template-based multi-scenario deck PDF.
     """
+    user = _require_supabase_user(request)
     data = load_report(report_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Report not found")
+    owner_user_id = str((data or {}).get("owner_user_id") or "").strip()
+    if owner_user_id and owner_user_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
     branding = data.get("branding") if isinstance(data, dict) and isinstance(data.get("branding"), dict) else {}
     org_id = str(branding.get("org_id") or branding.get("orgId") or "public")
     theme_hash = str(branding.get("theme_hash") or branding.get("themeHash") or _branding_theme_hash(branding))

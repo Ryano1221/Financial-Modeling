@@ -3,6 +3,7 @@
  * No Vercel proxy; avoids 60s Hobby timeout on lease uploads.
  */
 import { getBackendBaseUrl } from "./backend";
+import { getAccessToken } from "./auth-token";
 
 const DEFAULT_TIMEOUT_MS = 300000; // 5 min for Render cold start + extraction
 const NORMALIZE_TIMEOUT_MS = 180000; // 3 min for /normalize only
@@ -57,7 +58,21 @@ export function getDisplayErrorMessage(error: unknown): string {
 export type ApiHeaders = Record<string, string>;
 
 export function getAuthHeaders(): ApiHeaders {
-  return { "Content-Type": "application/json" };
+  const headers: ApiHeaders = { "Content-Type": "application/json" };
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+function attachAuthHeader(init: RequestInit): RequestInit {
+  const token = getAccessToken();
+  if (!token) return init;
+
+  const headers = new Headers(init.headers || undefined);
+  if (!headers.has("authorization")) {
+    headers.set("authorization", `Bearer ${token}`);
+  }
+  return { ...init, headers };
 }
 
 function withTimeoutSignal(timeoutMs: number): { signal: AbortSignal; clear: () => void } {
@@ -79,8 +94,9 @@ export async function fetchApi(
   const timeout = isNormalize ? NORMALIZE_TIMEOUT_MS : timeoutMs;
   const url = getApiUrl(path);
   const { signal, clear } = withTimeoutSignal(timeout);
+  const initWithAuth = attachAuthHeader(init);
   try {
-    const res = await fetch(url, { ...init, signal });
+    const res = await fetch(url, { ...initWithAuth, signal });
     clear();
     return res;
   } catch (e) {
@@ -102,8 +118,9 @@ export async function fetchApiProxy(
   const timeout = isNormalize ? NORMALIZE_TIMEOUT_MS : timeoutMs;
   const url = getProxyApiUrl(path);
   const { signal, clear } = withTimeoutSignal(timeout);
+  const initWithAuth = attachAuthHeader(init);
   try {
-    const res = await fetch(url, { ...init, signal });
+    const res = await fetch(url, { ...initWithAuth, signal });
     clear();
     return res;
   } catch (e) {

@@ -2,10 +2,15 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import type { OrganizationBrandingResponse } from "@/lib/types";
+
+interface BrandingPreviewPayload {
+  has_logo?: boolean;
+  logo_filename?: string | null;
+  logo_data_url?: string | null;
+}
 
 interface BrandingLogoUploaderProps {
-  branding: OrganizationBrandingResponse | null;
+  branding: BrandingPreviewPayload | null;
   loading: boolean;
   uploading: boolean;
   error: string | null;
