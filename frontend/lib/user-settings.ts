@@ -27,13 +27,26 @@ function parseBodyText(text: string): string {
   }
 }
 
+function toBrandingError(message: string): string {
+  const msg = String(message || "").trim();
+  const lower = msg.toLowerCase();
+  if (!msg) return "Unable to save brokerage branding right now.";
+  if (lower.includes("not authenticated") || lower.includes("invalid or expired")) {
+    return "Session expired. Please sign in again.";
+  }
+  if (lower.includes("service role") || lower.includes("supabase is not configured")) {
+    return "Branding storage is not configured on backend yet. Add Supabase backend env vars and redeploy.";
+  }
+  return msg;
+}
+
 export async function fetchUserBranding(): Promise<UserBrandingResponse> {
   const res = await fetchApiProxy("/user-settings/branding", {
     method: "GET",
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
-    throw new Error(parseBodyText(await res.text()) || `Branding request failed (${res.status})`);
+    throw new Error(toBrandingError(parseBodyText(await res.text()) || `Branding request failed (${res.status})`));
   }
   return (await res.json()) as UserBrandingResponse;
 }
@@ -46,7 +59,7 @@ export async function uploadUserBrandingLogo(file: File): Promise<UserBrandingRe
     body: form,
   });
   if (!res.ok) {
-    throw new Error(parseBodyText(await res.text()) || `Logo upload failed (${res.status})`);
+    throw new Error(toBrandingError(parseBodyText(await res.text()) || `Logo upload failed (${res.status})`));
   }
   return (await res.json()) as UserBrandingResponse;
 }
@@ -57,7 +70,7 @@ export async function deleteUserBrandingLogo(): Promise<UserBrandingResponse> {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
-    throw new Error(parseBodyText(await res.text()) || `Logo delete failed (${res.status})`);
+    throw new Error(toBrandingError(parseBodyText(await res.text()) || `Logo delete failed (${res.status})`));
   }
   return (await res.json()) as UserBrandingResponse;
 }
@@ -71,7 +84,7 @@ export async function updateBrokerageName(brokerageName: string): Promise<{ brok
     }),
   });
   if (!res.ok) {
-    throw new Error(parseBodyText(await res.text()) || `Brokerage update failed (${res.status})`);
+    throw new Error(toBrandingError(parseBodyText(await res.text()) || `Brokerage update failed (${res.status})`));
   }
   return (await res.json()) as { brokerage_name: string | null };
 }

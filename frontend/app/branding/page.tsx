@@ -69,7 +69,7 @@ export default function BrandingPage() {
   }
 
   return (
-    <main className="min-h-screen bg-black text-white px-4 py-10">
+    <main className="min-h-screen bg-black text-white px-4 pt-24 sm:pt-28 pb-10">
       <section className="mx-auto w-full max-w-3xl border border-white/20 p-6 bg-slate-950/70">
         <div className="flex items-center justify-between gap-3 mb-5">
           <div>
@@ -128,6 +128,9 @@ export default function BrandingPage() {
             try {
               const data = await uploadUserBrandingLogo(file);
               setBranding(data);
+              await load();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
             } finally {
               setUploading(false);
             }
@@ -138,6 +141,9 @@ export default function BrandingPage() {
             try {
               const data = await deleteUserBrandingLogo();
               setBranding(data);
+              await load();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
             } finally {
               setUploading(false);
             }
