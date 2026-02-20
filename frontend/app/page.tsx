@@ -405,7 +405,7 @@ export default function Home() {
       if (Array.isArray(data.scenarios) && data.scenarios.length > 0) {
         const restoredScenarios = data.scenarios.map((s) => normalizeScenarioDiscountRate(s));
         setScenarios(restoredScenarios);
-        if (restoredScenarios[0]) setSelectedId(restoredScenarios[0].id);
+        setSelectedId(null);
       }
       if (data.includedInSummary && typeof data.includedInSummary === "object") setIncludedInSummary(data.includedInSummary);
       setHasRestored(true);
@@ -652,7 +652,7 @@ export default function Home() {
       const scenarioInput = normalizeScenarioDiscountRate(backendCanonicalToScenarioInput(canonical));
       const scenarioWithId: ScenarioWithId = normalizeScenarioDiscountRate({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, scenarioWithId]);
-      setSelectedId(scenarioWithId.id);
+      setSelectedId(null);
       setResults((prev) => {
         const next = { ...prev };
         delete next[scenarioWithId.id];
@@ -767,7 +767,7 @@ export default function Home() {
       const scenarioInput: ScenarioInput = JSON.parse(raw);
       const withId: ScenarioWithId = normalizeScenarioDiscountRate({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, withId]);
-      setSelectedId(withId.id);
+      setSelectedId(null);
     } catch {
       // ignore invalid or missing
     }
@@ -780,7 +780,7 @@ export default function Home() {
       discount_rate_annual: globalDiscountRate,
     };
     setScenarios((prev) => [...prev, newScenario]);
-    setSelectedId(newScenario.id);
+    setSelectedId(null);
     setResults((prev) => {
       const next = { ...prev };
       delete next[newScenario.id];
@@ -796,7 +796,6 @@ export default function Home() {
       name: `${selectedScenario.name} (copy)`,
     };
     setScenarios((prev) => [...prev, copy]);
-    setSelectedId(copy.id);
     setResults((prev) => {
       const next = { ...prev };
       delete next[copy.id];
@@ -827,7 +826,6 @@ export default function Home() {
       name: `${source.name} (copy)`,
     };
     setScenarios((prev) => [...prev, copy]);
-    setSelectedId(copy.id);
     setResults((prev) => {
       const next = { ...prev };
       delete next[copy.id];
