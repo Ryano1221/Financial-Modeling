@@ -18,6 +18,7 @@ const REVIEW_FIELDS: { key: keyof BackendCanonicalLease; label: string; type?: "
   { key: "opex_growth_rate", label: "Opex growth rate", type: "number" },
   { key: "parking_count", label: "Parking spaces", type: "number" },
   { key: "parking_rate_monthly", label: "Parking $/space/month", type: "number" },
+  { key: "parking_sales_tax_rate", label: "Parking sales tax rate", type: "number" },
   { key: "discount_rate_annual", label: "Discount rate (e.g. 0.08)", type: "number" },
 ];
 
@@ -31,7 +32,7 @@ export function NormalizeReviewCard({ data, onConfirm, onCancel }: NormalizeRevi
   const [edited, setEdited] = useState<BackendCanonicalLease>(() => ({ ...data.canonical_lease }));
 
   const update = useCallback((key: keyof BackendCanonicalLease, value: string | number) => {
-    setEdited((prev) => ({ ...prev, [key]: key === "rsf" || key === "term_months" || key === "free_rent_months" || key === "parking_count" ? Number(value) : key === "ti_allowance_psf" || key === "opex_psf_year_1" || key === "opex_growth_rate" || key === "parking_rate_monthly" || key === "discount_rate_annual" ? Number(value) : value }));
+    setEdited((prev) => ({ ...prev, [key]: key === "rsf" || key === "term_months" || key === "free_rent_months" || key === "parking_count" ? Number(value) : key === "ti_allowance_psf" || key === "opex_psf_year_1" || key === "opex_growth_rate" || key === "parking_rate_monthly" || key === "parking_sales_tax_rate" || key === "discount_rate_annual" ? Number(value) : value }));
   }, []);
 
   const handleConfirm = useCallback(() => {

@@ -252,6 +252,25 @@ function normalizeScenarioDiscountRate<T extends ScenarioInput | ScenarioWithId>
   } as T;
 }
 
+function normalizeParkingSalesTaxRate(raw: unknown): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0.0825;
+  return parsed;
+}
+
+function normalizeScenarioParkingTax<T extends ScenarioInput | ScenarioWithId>(scenario: T): T {
+  return {
+    ...scenario,
+    parking_sales_tax_rate: normalizeParkingSalesTaxRate(
+      (scenario as ScenarioInput | ScenarioWithId).parking_sales_tax_rate
+    ),
+  } as T;
+}
+
+function normalizeScenarioEconomics<T extends ScenarioInput | ScenarioWithId>(scenario: T): T {
+  return normalizeScenarioParkingTax(normalizeScenarioDiscountRate(scenario));
+}
+
 async function fileToDataUrl(file: File): Promise<string> {
   await file.arrayBuffer(); // Touch the file first so file read failures reject early.
   return await new Promise<string>((resolve, reject) => {
@@ -403,7 +422,7 @@ export default function Home() {
       }
       const data = JSON.parse(raw) as { scenarios?: ScenarioWithId[]; includedInSummary?: Record<string, boolean> };
       if (Array.isArray(data.scenarios) && data.scenarios.length > 0) {
-        const restoredScenarios = data.scenarios.map((s) => normalizeScenarioDiscountRate(s));
+        const restoredScenarios = data.scenarios.map((s) => normalizeScenarioEconomics(s));
         setScenarios(restoredScenarios);
         setSelectedId(null);
       }
@@ -435,8 +454,11 @@ export default function Home() {
     setScenarios((prev) => {
       let changed = false;
       const next = prev.map((s) => {
-        const normalized = normalizeScenarioDiscountRate(s);
-        if (normalized.discount_rate_annual !== s.discount_rate_annual) {
+        const normalized = normalizeScenarioEconomics(s);
+        if (
+          normalized.discount_rate_annual !== s.discount_rate_annual ||
+          normalized.parking_sales_tax_rate !== s.parking_sales_tax_rate
+        ) {
           changed = true;
           return normalized;
         }
@@ -649,8 +671,8 @@ export default function Home() {
 
   const addScenarioFromCanonical = useCallback(
     (canonical: BackendCanonicalLease, onAdded?: (s: ScenarioWithId) => void) => {
-      const scenarioInput = normalizeScenarioDiscountRate(backendCanonicalToScenarioInput(canonical));
-      const scenarioWithId: ScenarioWithId = normalizeScenarioDiscountRate({ id: nextId(), ...scenarioInput });
+      const scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical));
+      const scenarioWithId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, scenarioWithId]);
       setSelectedId(null);
       setResults((prev) => {
@@ -765,7 +787,7 @@ export default function Home() {
       if (!raw) return;
       sessionStorage.removeItem(PENDING_SCENARIO_KEY);
       const scenarioInput: ScenarioInput = JSON.parse(raw);
-      const withId: ScenarioWithId = normalizeScenarioDiscountRate({ id: nextId(), ...scenarioInput });
+      const withId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, withId]);
       setSelectedId(null);
     } catch {

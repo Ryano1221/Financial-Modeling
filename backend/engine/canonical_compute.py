@@ -43,6 +43,7 @@ def canonical_to_scenario(c: CanonicalLease) -> Scenario:
         discount_rate_annual=c.discount_rate_annual,
         parking_spaces=c.parking_count,
         parking_cost_monthly_per_space=c.parking_rate_monthly,
+        parking_sales_tax_rate=c.parking_sales_tax_rate,
     )
 
 
@@ -266,7 +267,8 @@ def _compute_phase_aware_monthly(
         if parking_count <= 0 and float(lease.parking_ratio or 0) > 0:
             parking_count = (float(lease.parking_ratio) * rsf_m) / 1000.0
         parking_mult = (1.0 + float(lease.parking_escalation_rate or 0.0)) ** (m // 12)
-        parking[m] = parking_count * float(lease.parking_rate_monthly or 0.0) * parking_mult
+        parking_tax_mult = 1.0 + max(0.0, float(lease.parking_sales_tax_rate or 0.0))
+        parking[m] = parking_count * float(lease.parking_rate_monthly or 0.0) * parking_tax_mult * parking_mult
 
     free_ranges = _free_rent_ranges(lease, term_months)
     scope = str(getattr(lease, "free_rent_scope", "base") or "base").strip().lower()

@@ -69,6 +69,8 @@ export interface OptionMetrics {
   escalationPercent: number;
   opexPsfYr: number;
   opexEscalationPercent: number;
+  parkingCostPerSpotMonthly: number;
+  parkingSalesTaxPercent: number;
   parkingCostAnnual: number;
   tiBudget: number;
   tiAllowance: number;
@@ -174,16 +176,18 @@ function effectiveRsfSchedule(
 function monthlyParking(
   termMonths: number,
   slots: ParkingSlotCanonical[],
-  escalationPercent: number
+  escalationPercent: number,
+  salesTaxPercent: number = 0
 ): number[] {
   const park: number[] = [];
+  const taxMultiplier = 1 + Math.max(0, Number(salesTaxPercent) || 0);
   for (let m = 0; m < termMonths; m++) {
     const yearIndex = Math.floor(m / 12);
     const mult = Math.pow(1 + escalationPercent, yearIndex);
     let sum = 0;
     for (const slot of slots) {
       const abate = slot.abatementMonths ?? 0;
-      const cost = m < abate ? 0 : slot.costPerSpacePerMonth * slot.count * mult;
+      const cost = m < abate ? 0 : slot.costPerSpacePerMonth * taxMultiplier * slot.count * mult;
       sum += cost;
     }
     park.push(sum);
@@ -291,7 +295,8 @@ export function runMonthlyEngine(
   const parking = monthlyParking(
     termMonths,
     scenario.parkingSchedule.slots,
-    scenario.parkingSchedule.annualEscalationPercent
+    scenario.parkingSchedule.annualEscalationPercent,
+    scenario.parkingSchedule.salesTaxPercent ?? 0
   );
   if (scenario.rentSchedule.abatement?.appliesTo === "gross" && (scenario.rentSchedule.abatement?.months ?? 0) > 0) {
     const start = Math.max(0, Math.floor(Number(scenario.rentSchedule.abatement.startMonth ?? 0) || 0));
@@ -391,6 +396,15 @@ export function runMonthlyEngine(
   const firstStep = scenario.rentSchedule.steps[0];
   const buildingName = (scenario.partyAndPremises.premisesLabel ?? "").trim();
   const suiteName = (scenario.partyAndPremises.floorsOrSuite ?? "").trim();
+  const totalParkingSlots = (scenario.parkingSchedule.slots ?? []).reduce((sum, slot) => sum + Math.max(0, slot.count || 0), 0);
+  const parkingTaxPct = Math.max(0, Number(scenario.parkingSchedule.salesTaxPercent ?? 0) || 0);
+  const parkingCostPerSpotMonthly =
+    totalParkingSlots > 0
+      ? ((scenario.parkingSchedule.slots ?? []).reduce(
+          (sum, slot) => sum + (Math.max(0, Number(slot.costPerSpacePerMonth) || 0) * Math.max(0, Number(slot.count) || 0)),
+          0
+        ) / totalParkingSlots) * (1 + parkingTaxPct)
+      : 0;
   const metrics: OptionMetrics = {
     buildingName,
     suiteName,
@@ -404,6 +418,8 @@ export function runMonthlyEngine(
     escalationPercent: scenario.rentSchedule.annualEscalationPercent * 100,
     opexPsfYr: scenario.expenseSchedule.baseOpexPsfYr,
     opexEscalationPercent: scenario.expenseSchedule.annualEscalationPercent * 100,
+    parkingCostPerSpotMonthly,
+    parkingSalesTaxPercent: parkingTaxPct,
     parkingCostAnnual: parking.reduce((a, b) => a + b, 0),
     tiBudget: scenario.tiSchedule.budgetTotal,
     tiAllowance: scenario.tiSchedule.allowanceFromLandlord,

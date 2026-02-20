@@ -1338,6 +1338,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         "discount_rate_annual": 0.08,
         "parking_spaces": 0,
         "parking_cost_monthly_per_space": 0.0,
+        "parking_sales_tax_rate": 0.0825,
     }
 
     confidence = {
@@ -1472,6 +1473,7 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
     scenario.setdefault("discount_rate_annual", 0.08)
     scenario.setdefault("parking_spaces", 0)
     scenario.setdefault("parking_cost_monthly_per_space", 0.0)
+    scenario.setdefault("parking_sales_tax_rate", 0.0825)
     scenario.setdefault("broker_fee", 0.0)
     scenario.setdefault("security_deposit_months", 0.0)
     scenario.setdefault("holdover_months", 0)

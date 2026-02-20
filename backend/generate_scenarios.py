@@ -63,6 +63,7 @@ def generate_scenarios(req: GenerateScenariosRequest) -> GenerateScenariosRespon
         discount_rate_annual=req.discount_rate_annual,
         parking_spaces=req.renewal.parking_spaces,
         parking_cost_monthly_per_space=req.renewal.parking_cost_monthly_per_space,
+        parking_sales_tax_rate=req.renewal.parking_sales_tax_rate,
         one_time_costs=[],  # minimal
     )
 
@@ -106,6 +107,7 @@ def generate_scenarios(req: GenerateScenariosRequest) -> GenerateScenariosRespon
         discount_rate_annual=req.discount_rate_annual,
         parking_spaces=rel.parking_spaces,
         parking_cost_monthly_per_space=rel.parking_cost_monthly_per_space,
+        parking_sales_tax_rate=rel.parking_sales_tax_rate,
         one_time_costs=one_time,
         broker_fee=rel.broker_fee,
     )

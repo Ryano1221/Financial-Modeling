@@ -156,7 +156,7 @@ def test_compute_scenario_with_parking_broker_deposit_one_time():
     assert result.term_months == 24
     assert len(cashflows) == 24
 
-    monthly_parking = 50 * 200.0
+    monthly_parking = 50 * 200.0 * (1.0 + scenario.parking_sales_tax_rate)
     assert result.parking_nominal == monthly_parking * 24
     assert result.broker_fee_nominal == 25000.0
     base_monthly_rent = 10000 * 30.0 / 12.0
@@ -267,4 +267,3 @@ def test_generate_scenarios_endpoint():
     assert data["renewal"]["rent_steps"][0]["end"] == 59
     assert data["relocation"]["free_rent_months"] == 2  # 0 + downtime 2
     assert any(ot["name"] == "Overlap rent" for ot in data["relocation"]["one_time_costs"])
-

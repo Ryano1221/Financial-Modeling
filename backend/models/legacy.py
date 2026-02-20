@@ -72,6 +72,7 @@ class Scenario(BaseModel):
     discount_rate_annual: float = Field(ge=0.0, description="Annual discount rate for NPV (as decimal)")
     parking_spaces: int = Field(ge=0, default=0)
     parking_cost_monthly_per_space: float = Field(ge=0.0, default=0.0)
+    parking_sales_tax_rate: float = Field(ge=0.0, default=0.0825)
     one_time_costs: List[OneTimeCost] = Field(default_factory=list)
     broker_fee: float = Field(ge=0.0, default=0.0)
     security_deposit_months: float = Field(ge=0.0, default=0.0)
@@ -128,6 +129,7 @@ class RenewalInput(BaseModel):
     opex_growth: float = Field(ge=0.0)
     parking_spaces: int = Field(ge=0, default=0)
     parking_cost_monthly_per_space: float = Field(ge=0.0, default=0.0)
+    parking_sales_tax_rate: float = Field(ge=0.0, default=0.0825)
 
 
 class RelocationInput(BaseModel):
@@ -144,6 +146,7 @@ class RelocationInput(BaseModel):
     broker_fee: float = Field(ge=0.0, default=0.0)
     parking_spaces: int = Field(ge=0, default=0)
     parking_cost_monthly_per_space: float = Field(ge=0.0, default=0.0)
+    parking_sales_tax_rate: float = Field(ge=0.0, default=0.0825)
     opex_mode: OpexMode = OpexMode.NNN
     base_opex_psf_yr: float = Field(ge=0.0, default=0.0)
     base_year_opex_psf_yr: float = Field(ge=0.0, default=0.0)

@@ -32,6 +32,9 @@ const defaultScenarioInput: ScenarioInput = {
   base_year_opex_psf_yr: 10,
   opex_growth: 0.03,
   discount_rate_annual: 0.08,
+  parking_spaces: 0,
+  parking_cost_monthly_per_space: 0,
+  parking_sales_tax_rate: 0.0825,
 };
 
 export function ScenarioForm({
@@ -576,6 +579,39 @@ export function ScenarioForm({
             onChange={(e) =>
               update("discount_rate_annual", Number(e.target.value))
             }
+            className={inputClass}
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm text-slate-300">Parking spaces</span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={scenario.parking_spaces ?? 0}
+            onChange={(e) => update("parking_spaces", Number(e.target.value))}
+            className={inputClass}
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm text-slate-300">Parking cost ($/spot/month)</span>
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            value={scenario.parking_cost_monthly_per_space ?? 0}
+            onChange={(e) => update("parking_cost_monthly_per_space", Number(e.target.value))}
+            className={inputClass}
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm text-slate-300">Parking sales tax (e.g. 0.0825)</span>
+          <input
+            type="number"
+            min={0}
+            step={0.0001}
+            value={scenario.parking_sales_tax_rate ?? 0.0825}
+            onChange={(e) => update("parking_sales_tax_rate", Number(e.target.value))}
             className={inputClass}
           />
         </label>

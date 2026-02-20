@@ -28,6 +28,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       : (buildingName || suiteName || s.name);
   const parkingSpaces = s.parking_spaces ?? 0;
   const parkingCost = s.parking_cost_monthly_per_space ?? 0;
+  const parkingSalesTax = s.parking_sales_tax_rate ?? 0.0825;
   const tiAllowanceTotal = s.ti_allowance_psf * rsf;
 
   return {
@@ -77,6 +78,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
     },
     parkingSchedule: {
       spacesAllotted: parkingSpaces,
+      salesTaxPercent: parkingSalesTax,
       slots:
         parkingSpaces > 0 && parkingCost > 0
           ? [{ type: "unreserved" as const, count: parkingSpaces, costPerSpacePerMonth: parkingCost }]

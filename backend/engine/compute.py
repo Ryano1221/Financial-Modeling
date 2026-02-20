@@ -85,7 +85,8 @@ def _monthly_opex_schedule(scenario: Scenario, total_months: int) -> List[float]
 
 def _monthly_parking(scenario: Scenario, total_months: int) -> List[float]:
     """Monthly parking cost (positive = cost)."""
-    monthly = scenario.parking_spaces * scenario.parking_cost_monthly_per_space
+    tax_multiplier = 1.0 + max(0.0, float(getattr(scenario, "parking_sales_tax_rate", 0.0) or 0.0))
+    monthly = scenario.parking_spaces * scenario.parking_cost_monthly_per_space * tax_multiplier
     return [monthly for _ in range(total_months)]
 
 

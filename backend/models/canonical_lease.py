@@ -197,6 +197,7 @@ class CanonicalLease(BaseModel):
     parking_ratio: float = Field(ge=0.0, default=0.0, description="Per 1,000 RSF")
     parking_count: int = Field(ge=0, default=0)
     parking_rate_monthly: float = Field(ge=0.0, default=0.0)
+    parking_sales_tax_rate: float = Field(ge=0.0, default=0.0825)
     parking_escalation_rate: float = Field(ge=0.0, default=0.0)
 
     # --- TI + CapEx ---

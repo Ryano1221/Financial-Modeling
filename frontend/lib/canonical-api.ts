@@ -173,6 +173,7 @@ export function scenarioInputToBackendCanonical(
     expense_structure_type: s.opex_mode === "base_year" ? "base_year" : "nnn" as const,
     parking_count: s.parking_spaces ?? 0,
     parking_rate_monthly: s.parking_cost_monthly_per_space ?? 0,
+    parking_sales_tax_rate: s.parking_sales_tax_rate ?? 0.0825,
     ti_allowance_psf: s.ti_allowance_psf ?? 0,
     notes: s.notes ?? "",
   };
@@ -231,6 +232,7 @@ export function backendCanonicalToScenarioInput(
     discount_rate_annual: c.discount_rate_annual ?? 0.08,
     parking_spaces: c.parking_count ?? 0,
     parking_cost_monthly_per_space: c.parking_rate_monthly ?? 0,
+    parking_sales_tax_rate: c.parking_sales_tax_rate ?? 0.0825,
   };
 }
 
@@ -243,6 +245,9 @@ export function canonicalResponseToEngineResult(
   const m = res.metrics;
   const normalized = res.normalized_canonical_lease;
   const termMonths = m.term_months ?? 0;
+  const parkingCount = Math.max(0, toNumber(normalized?.parking_count, 0));
+  const parkingRateMonthly = Math.max(0, toNumber(normalized?.parking_rate_monthly, 0));
+  const parkingSalesTaxRate = Math.max(0, toNumber(normalized?.parking_sales_tax_rate, 0.0825));
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),
@@ -262,6 +267,8 @@ export function canonicalResponseToEngineResult(
     escalationPercent: 0,
     opexPsfYr: m.opex_avg_psf_year ?? 0,
     opexEscalationPercent: toNumber(normalized?.opex_growth_rate, 0),
+    parkingCostPerSpotMonthly: parkingRateMonthly * (1 + parkingSalesTaxRate),
+    parkingSalesTaxPercent: parkingSalesTaxRate,
     parkingCostAnnual: m.parking_total ?? 0,
     tiBudget: m.ti_value_total ?? 0,
     tiAllowance: m.ti_value_total ?? 0,

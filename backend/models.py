@@ -91,6 +91,7 @@ class Scenario(BaseModel):
     # Additional tenant economics (defaults keep existing payloads valid)
     parking_spaces: int = Field(ge=0, default=0)
     parking_cost_monthly_per_space: float = Field(ge=0.0, default=0.0)
+    parking_sales_tax_rate: float = Field(ge=0.0, default=0.0825)
     one_time_costs: List[OneTimeCost] = Field(default_factory=list)
     broker_fee: float = Field(ge=0.0, default=0.0)
     security_deposit_months: float = Field(ge=0.0, default=0.0)
@@ -167,6 +168,7 @@ class RenewalInput(BaseModel):
     opex_growth: float = Field(ge=0.0)
     parking_spaces: int = Field(ge=0, default=0)
     parking_cost_monthly_per_space: float = Field(ge=0.0, default=0.0)
+    parking_sales_tax_rate: float = Field(ge=0.0, default=0.0825)
 
 
 class RelocationInput(BaseModel):
@@ -184,6 +186,7 @@ class RelocationInput(BaseModel):
     broker_fee: float = Field(ge=0.0, default=0.0)
     parking_spaces: int = Field(ge=0, default=0)
     parking_cost_monthly_per_space: float = Field(ge=0.0, default=0.0)
+    parking_sales_tax_rate: float = Field(ge=0.0, default=0.0825)
     # Opex required to build full Scenario (defaults for relocation)
     opex_mode: OpexMode = OpexMode.NNN
     base_opex_psf_yr: float = Field(ge=0.0, default=0.0)

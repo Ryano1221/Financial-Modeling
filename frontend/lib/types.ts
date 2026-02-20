@@ -49,6 +49,7 @@ export interface ScenarioInput {
   discount_rate_annual: number;
   parking_spaces?: number;
   parking_cost_monthly_per_space?: number;
+  parking_sales_tax_rate?: number;
   one_time_costs?: OneTimeCost[];
   broker_fee?: number;
   security_deposit_months?: number;
@@ -77,6 +78,7 @@ export interface RenewalInput {
   opex_growth: number;
   parking_spaces?: number;
   parking_cost_monthly_per_space?: number;
+  parking_sales_tax_rate?: number;
 }
 
 export interface RelocationInput {
@@ -93,6 +95,7 @@ export interface RelocationInput {
   broker_fee?: number;
   parking_spaces?: number;
   parking_cost_monthly_per_space?: number;
+  parking_sales_tax_rate?: number;
   opex_mode?: OpexMode;
   base_opex_psf_yr?: number;
   base_year_opex_psf_yr?: number;
@@ -290,6 +293,7 @@ export interface BackendCanonicalLease {
   expense_structure_type?: string;
   parking_count?: number;
   parking_rate_monthly?: number;
+  parking_sales_tax_rate?: number;
   ti_allowance_psf?: number;
   notes?: string;
   document_type_detected?: string;

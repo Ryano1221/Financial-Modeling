@@ -56,6 +56,8 @@ export const METRIC_LABELS: (keyof OptionMetrics)[] = [
   "escalationPercent",
   "opexPsfYr",
   "opexEscalationPercent",
+  "parkingCostPerSpotMonthly",
+  "parkingSalesTaxPercent",
   "parkingCostAnnual",
   "tiBudget",
   "tiAllowance",
@@ -86,6 +88,8 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   escalationPercent: "Rent escalation %",
   opexPsfYr: "Operating expenses ($/RSF/yr)",
   opexEscalationPercent: "OpEx escalation %",
+  parkingCostPerSpotMonthly: "Parking cost ($/spot/month)",
+  parkingSalesTaxPercent: "Parking sales tax %",
   parkingCostAnnual: "Parking cost (annual)",
   tiBudget: "TI budget",
   tiAllowance: "TI allowance",
@@ -161,7 +165,7 @@ export function formatMetricValue(key: string, value: unknown): string {
   if (key === "notes") return formatNotesByCategory(String(value));
   if (typeof value === "number") {
     if (key === "discountRateUsed") return formatPercent(value, { decimals: 1 });
-    if (key === "escalationPercent" || key === "opexEscalationPercent") return formatPercent(value);
+    if (key === "escalationPercent" || key === "opexEscalationPercent" || key === "parkingSalesTaxPercent") return formatPercent(value);
     if (key === "rsf") return formatRSF(value);
     if (key === "termMonths") return formatMonths(value);
 if (key === "commencementDate" || key === "expirationDate") return typeof value === "string" ? formatDateISO(value) : String(value ?? "");
