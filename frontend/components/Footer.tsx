@@ -1,6 +1,7 @@
 "use client";
 
 import { FRONTEND_BUILD_VERSION } from "@/lib/build-version";
+import Link from "next/link";
 
 export function Footer() {
   return (
@@ -10,9 +11,9 @@ export function Footer() {
           TheCREmodel <span className="text-slate-500 font-normal">build {FRONTEND_BUILD_VERSION}</span>
         </span>
         <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm text-slate-400">
-          <a href="#" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Docs</a>
-          <a href="#" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Security</a>
-          <a href="#" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Contact</a>
+          <Link href="/docs" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Docs</Link>
+          <Link href="/security" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Security</Link>
+          <Link href="/contact" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Contact</Link>
         </div>
       </div>
     </footer>

@@ -180,6 +180,43 @@ class UserSettingsUpdateRequest(BaseModel):
     brokerage_name: Optional[str] = None
 
 
+class ContactSubmissionRequest(BaseModel):
+    name: str
+    email: str
+    message: str
+
+
+def _validate_contact_submission(body: ContactSubmissionRequest) -> tuple[str, str, str]:
+    name = str(body.name or "").strip()
+    email = str(body.email or "").strip().lower()
+    message = str(body.message or "").strip()
+
+    if len(name) < 2 or len(name) > 120:
+        raise HTTPException(status_code=400, detail="Name must be between 2 and 120 characters.")
+    if len(email) < 5 or len(email) > 320:
+        raise HTTPException(status_code=400, detail="Email must be between 5 and 320 characters.")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]{2,}", email):
+        raise HTTPException(status_code=400, detail="Email format is invalid.")
+    if len(message) < 10 or len(message) > 5000:
+        raise HTTPException(status_code=400, detail="Message must be between 10 and 5000 characters.")
+
+    return name, email, message
+
+
+def _mask_email(value: str) -> str:
+    email = (value or "").strip()
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if len(local) <= 1:
+        masked_local = "*"
+    elif len(local) == 2:
+        masked_local = f"{local[0]}*"
+    else:
+        masked_local = f"{local[0]}***{local[-1]}"
+    return f"{masked_local}@{domain}"
+
+
 def _supabase_configured(require_service: bool = False) -> None:
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
         raise HTTPException(
@@ -642,6 +679,31 @@ def delete_public_branding_logo():
 def get_auth_me(request: Request):
     user = _require_supabase_user(request)
     return {"user_id": user["id"], "email": user.get("email") or None}
+
+
+@app.post("/contact")
+def submit_contact(body: ContactSubmissionRequest, request: Request):
+    """
+    Accepts support contact submissions.
+    Logs minimal, sanitized metadata only (no raw message body).
+    """
+    name, email, message = _validate_contact_submission(body)
+
+    message_sha = hashlib.sha256(message.encode("utf-8")).hexdigest()
+    forwarded_for = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    source_ip = forwarded_for or (request.client.host if request.client else "")
+    user_agent = (request.headers.get("user-agent") or "").strip()[:200]
+
+    logging.getLogger("uvicorn.error").info(
+        "CONTACT_SUBMISSION name=%s email=%s message_len=%s message_sha256=%s ip=%s ua=%s",
+        name[:120],
+        _mask_email(email),
+        len(message),
+        message_sha,
+        source_ip[:64],
+        user_agent,
+    )
+    return {"ok": True, "message": "Thanks for contacting us. We will follow up shortly."}
 
 
 @app.get("/user-settings/branding")
