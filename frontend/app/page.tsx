@@ -25,7 +25,6 @@ import { ResultsActionsCard } from "@/components/ResultsActionsCard";
 import { Footer } from "@/components/Footer";
 import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
 import { ClientLogoUploader } from "@/components/ClientLogoUploader";
-import { BackgroundGrid } from "@/components/BackgroundGrid";
 import type {
   ScenarioWithId,
   CashflowResult,
@@ -39,7 +38,6 @@ import type {
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
 import { SummaryMatrix } from "@/components/SummaryMatrix";
-import { formatCurrency, formatCurrencyPerSF, formatDateISO } from "@/lib/format";
 import {
   backendCanonicalToScenarioInput,
   scenarioInputToBackendCanonical,
@@ -1063,17 +1061,12 @@ export default function Home() {
     })
     .filter((x): x is { name: string; error: string } => x !== null);
 
-  const selectedResultCandidate = selectedScenario ? results[selectedScenario.id] : undefined;
-  const selectedComputed =
-    selectedResultCandidate && "term_months" in selectedResultCandidate ? selectedResultCandidate : null;
-
   return (
     <>
       <section className="relative z-10 section-shell pt-28 sm:pt-32">
-        <BackgroundGrid variant="hero" />
         <div className="app-container">
-          <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] nominal-panel reveal-on-scroll">
-            <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25">
+          <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
+            <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25 reveal-on-scroll">
               <p className="heading-kicker mb-4">Platform</p>
               <h1 className="heading-display max-w-3xl">
                 The Commercial Real Estate Model
@@ -1100,37 +1093,35 @@ export default function Home() {
                 </a>
               </div>
             </div>
-            <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01]">
-              <div className="grid grid-cols-12 gap-2 border border-white/25 bg-black/65 p-2">
-                <div className="col-span-8 telemetry-tile hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.2)" }}>
-                  <p className="heading-kicker mb-1">Scenarios</p>
-                  <p className="text-4xl sm:text-5xl tracking-tight text-white leading-none">{Math.max(1, scenarios.length)}</p>
-                </div>
-                <div className="col-span-4 telemetry-tile hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
-                  <p className="heading-kicker mb-1">Status</p>
-                  <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
-                </div>
-                <div className="col-span-5 telemetry-tile hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
-                  <p className="heading-kicker mb-1">Brand</p>
-                  <p className="text-base text-white/90 leading-tight">{brandId || "default"}</p>
-                </div>
-                <div className="col-span-7 telemetry-tile hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.15)" }}>
-                  <p className="heading-kicker mb-1">Discount rate</p>
-                  <p className="text-3xl tracking-tight text-white leading-none">{(globalDiscountRate * 100).toFixed(2)}%</p>
-                </div>
-                <div className="col-span-6 telemetry-tile hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
-                  <p className="heading-kicker mb-1">Pipeline</p>
-                  <div className="grid grid-cols-3 gap-1.5 text-[10px] uppercase tracking-[0.13em] text-white/78">
-                    <span className="border border-white/25 px-2 py-1 text-center">Upload</span>
-                    <span className="border border-white/25 px-2 py-1 text-center">Extract</span>
-                    <span className="border border-white/25 px-2 py-1 text-center">Compare</span>
+            <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll">
+              <div className="border border-white/25 bg-black/65">
+                <div className="grid grid-cols-12">
+                  <div className="col-span-8 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.2)" }}>
+                    <p className="heading-kicker mb-2">Scenarios</p>
+                    <p className="text-4xl sm:text-5xl tracking-tight text-white leading-none">
+                      {Math.max(1, scenarios.length)}
+                    </p>
                   </div>
-                </div>
-                <div className="col-span-6 telemetry-tile hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.06)" }}>
-                  <p className="heading-kicker mb-1">Summary</p>
-                  <p className="text-sm text-white/90 leading-relaxed">
-                    Institutional lease analytics with branded exports and multi-scenario comparison.
-                  </p>
+                  <div className="col-span-4 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
+                    <p className="heading-kicker mb-2">Status</p>
+                    <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
+                  </div>
+                  <div className="col-span-5 border-r border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
+                    <p className="heading-kicker mb-2">Brand</p>
+                    <p className="text-base text-white/90 leading-tight">{brandId || "default"}</p>
+                  </div>
+                  <div className="col-span-7 border-b border-white/25 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.15)" }}>
+                    <p className="heading-kicker mb-2">Discount rate</p>
+                    <p className="text-3xl tracking-tight text-white leading-none">{(globalDiscountRate * 100).toFixed(2)}%</p>
+                  </div>
+                  <div className="col-span-12 p-4 hero-parallax-layer" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
+                    <p className="heading-kicker mb-2">Document pipeline</p>
+                    <div className="grid grid-cols-3 gap-2 text-[11px] uppercase tracking-[0.12em] text-white/75">
+                      <span className="border border-white/20 px-2 py-1">Upload</span>
+                      <span className="border border-white/20 px-2 py-1">Extract</span>
+                      <span className="border border-white/20 px-2 py-1">Compare</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1141,57 +1132,8 @@ export default function Home() {
       <FeatureTiles />
 
       <main className="relative z-10 app-container pb-14 md:pb-20">
-        <section id="extract" className="scroll-mt-24 relative">
-        <BackgroundGrid variant="dashboard" className="opacity-90" />
-        <div className="nominal-status-strip reveal-on-scroll mb-4 grid grid-cols-2 lg:grid-cols-4">
-          <div className="nominal-status-item">
-            <span className="heading-kicker">Current scenario</span>
-            <span className="text-sm text-slate-100 truncate">{selectedScenario?.name || "No scenario selected"}</span>
-          </div>
-          <div className="nominal-status-item">
-            <span className="heading-kicker">Dates</span>
-            <span className="text-sm text-slate-100">
-              {selectedScenario
-                ? `${formatDateISO(selectedScenario.commencement)} - ${formatDateISO(selectedScenario.expiration)}`
-                : "—"}
-            </span>
-          </div>
-          <div className="nominal-status-item">
-            <span className="heading-kicker">Included scenarios</span>
-            <span className="text-sm text-slate-100">{scenarios.filter((s) => includedInSummary[s.id] !== false).length}</span>
-          </div>
-          <div className="nominal-status-item">
-            <span className="heading-kicker">Engine</span>
-            <span className="text-sm text-slate-100">{(exportExcelLoading || exportPdfLoading) ? "Busy" : "Ready"}</span>
-          </div>
-        </div>
-        <div className="mb-4 grid grid-cols-2 xl:grid-cols-4 gap-2 reveal-on-scroll">
-          <div className="telemetry-tile">
-            <p className="heading-kicker mb-1">Rent (nominal)</p>
-            <p className="text-base sm:text-lg text-white">
-              {selectedComputed ? formatCurrency(selectedComputed.rent_nominal) : "—"}
-            </p>
-          </div>
-          <div className="telemetry-tile">
-            <p className="heading-kicker mb-1">OpEx (nominal)</p>
-            <p className="text-base sm:text-lg text-white">
-              {selectedComputed ? formatCurrency(selectedComputed.opex_nominal) : "—"}
-            </p>
-          </div>
-          <div className="telemetry-tile">
-            <p className="heading-kicker mb-1">Total obligation</p>
-            <p className="text-base sm:text-lg text-white">
-              {selectedComputed ? formatCurrency(selectedComputed.total_cost_nominal) : "—"}
-            </p>
-          </div>
-          <div className="telemetry-tile">
-            <p className="heading-kicker mb-1">NER ($/SF/yr)</p>
-            <p className="text-base sm:text-lg text-white">
-              {selectedComputed ? formatCurrencyPerSF(selectedComputed.avg_cost_psf_year) : "—"}
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 nominal-panel p-3 sm:p-4 reveal-on-scroll">
+        <section id="extract" className="scroll-mt-24">
+        <div className="grid grid-cols-1 xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 border border-white/15 p-3 sm:p-4">
           {/* Left column: upload & extract */}
           <div className="space-y-5 sm:space-y-6">
             <div id="upload-section" className="reveal-on-scroll">

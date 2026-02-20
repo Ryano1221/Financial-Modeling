@@ -1,7 +1,6 @@
 "use client";
 
-import { BackgroundGrid } from "@/components/BackgroundGrid";
-import { Panel } from "@/components/Panel";
+import { motion } from "framer-motion";
 
 const features = [
   {
@@ -38,23 +37,35 @@ const trustedBy = ["JLL", "CBRE", "Cushman", "Newmark"];
 export function FeatureTiles() {
   return (
     <section className="relative z-10 section-shell">
-      <BackgroundGrid variant="section" />
       <div className="app-container">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
           {features.map((feature, i) => (
-            <Panel key={feature.title} className="surface-card-hover p-6 md:p-8 reveal-on-scroll">
+            <motion.div
+              key={feature.title}
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: "-40px" }}
+              transition={{ duration: 0.5, delay: i * 0.1, ease: [0.22, 1, 0.36, 1] }}
+              className="surface-card surface-card-hover p-6 md:p-8 reveal-on-scroll"
+            >
               <p className="heading-kicker mb-4">Feature {i + 1}</p>
               <div className="mb-5 inline-flex h-11 w-11 items-center justify-center rounded border border-white/20 bg-white/[0.03] text-white/90">
                 {feature.icon}
               </div>
               <h3 className="text-xl font-semibold text-white tracking-tight mb-2">{feature.title}</h3>
               <p className="text-sm text-white/75 leading-relaxed">{feature.description}</p>
-            </Panel>
+            </motion.div>
           ))}
         </div>
 
         {/* Trusted by - placeholders only */}
-        <div className="mt-16 sm:mt-20 pt-10 sm:pt-12 border-t border-white/20 reveal-on-scroll">
+        <motion.div
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5, delay: 0.3 }}
+          className="mt-16 sm:mt-20 pt-10 sm:pt-12 border-t border-white/20 reveal-on-scroll"
+        >
           <p className="text-xs uppercase tracking-[0.18em] text-white/55 text-center mb-6">
             Trusted by leading firms
           </p>
@@ -72,7 +83,7 @@ export function FeatureTiles() {
           <p className="text-xs text-white/45 text-center mt-4">
             Placeholder logos — no endorsement implied
           </p>
-        </div>
+        </motion.div>
       </div>
     </section>
   );

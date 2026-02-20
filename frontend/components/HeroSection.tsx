@@ -1,5 +1,7 @@
 "use client";
 
+import { motion } from "framer-motion";
+
 export function HeroSection() {
   const scrollToUpload = () => {
     const el = document.getElementById("upload-section");
@@ -30,13 +32,28 @@ export function HeroSection() {
 
       {/* Hero content */}
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 text-center">
-        <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight text-white max-w-4xl leading-[1.1] reveal-on-scroll">
+        <motion.h1
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight text-white max-w-4xl leading-[1.1]"
+        >
           The Commercial Real Estate Model
-        </h1>
-        <p className="mt-6 text-lg sm:text-xl text-zinc-400 max-w-2xl reveal-on-scroll">
+        </motion.h1>
+        <motion.p
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+          className="mt-6 text-lg sm:text-xl text-zinc-400 max-w-2xl"
+        >
           Upload a proposal, validate the terms, generate a white labeled memo ready PDF.
-        </p>
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-4 reveal-on-scroll">
+        </motion.p>
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="mt-10 flex flex-wrap items-center justify-center gap-4"
+        >
           <button
             type="button"
             onClick={scrollToUpload}
@@ -51,7 +68,7 @@ export function HeroSection() {
           >
             View example report preview
           </button>
-        </div>
+        </motion.div>
       </div>
     </section>
   );

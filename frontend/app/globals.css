@@ -32,11 +32,6 @@
     --type-body: clamp(0.94rem, 1.2vw, 1.02rem);
     --grid-line: rgba(255, 255, 255, 0.085);
     --grid-line-strong: rgba(255, 255, 255, 0.12);
-    --panel-surface: rgba(8, 9, 12, 0.9);
-    --panel-surface-alt: rgba(10, 12, 16, 0.95);
-    --panel-border: rgba(255, 255, 255, 0.24);
-    --panel-border-inner: rgba(255, 255, 255, 0.1);
-    --status-strip: rgba(255, 255, 255, 0.03);
   }
   html,
   body {
@@ -57,7 +52,6 @@
     background-size: 100% 100%, 40px 40px, 40px 40px, 40px 40px, 40px 40px;
     background-position: center top, center top, center top, center top, center top;
     background-repeat: repeat, repeat, repeat, repeat, repeat;
-    background-attachment: fixed, fixed, fixed, fixed, fixed;
     color: var(--text-primary);
     text-rendering: optimizeLegibility;
   }
@@ -117,51 +111,6 @@
     background: linear-gradient(180deg, rgba(12, 12, 12, 0.88) 0%, rgba(10, 10, 10, 0.88) 100%);
     box-shadow: var(--shadow-medium);
     backdrop-filter: blur(3px);
-  }
-
-  .nominal-panel {
-    border: 1px solid var(--panel-border);
-    background: linear-gradient(180deg, var(--panel-surface) 0%, var(--panel-surface-alt) 100%);
-    position: relative;
-  }
-
-  .nominal-panel::before {
-    content: "";
-    position: absolute;
-    inset: 0.35rem;
-    border: 1px solid var(--panel-border-inner);
-    pointer-events: none;
-  }
-
-  .nominal-panel-header {
-    padding: 0.9rem 1.1rem;
-    border-bottom: 1px solid var(--panel-border-inner);
-    background: rgba(255, 255, 255, 0.015);
-  }
-
-  .nominal-status-strip {
-    border: 1px solid var(--panel-border);
-    background: linear-gradient(180deg, var(--status-strip) 0%, rgba(255, 255, 255, 0.012) 100%);
-  }
-
-  .nominal-status-item {
-    border-right: 1px solid var(--panel-border-inner);
-    min-height: 72px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 0.28rem;
-    padding: 0.75rem 1rem;
-  }
-
-  .nominal-status-item:last-child {
-    border-right: none;
-  }
-
-  .telemetry-tile {
-    border: 1px solid var(--panel-border);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(10, 10, 14, 0.82) 100%);
-    padding: 0.75rem 0.9rem;
   }
 
   .surface-card {
