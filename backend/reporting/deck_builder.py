@@ -473,7 +473,7 @@ def ComparisonMatrixTable(
     )
     table_class = "matrix-table matrix-compact" if option_count > 6 else "matrix-table"
     head_cells = "".join(
-        f"<th><span class='matrix-head-text'>{_esc(_truncate_text(e['name'], 42))}</span></th>"
+        f"<th><span class='matrix-head-text'>{_esc(e['name'])}</span></th>"
         for e in entries
     )
 
@@ -483,9 +483,9 @@ def ComparisonMatrixTable(
         for value in values:
             if style == "bullets":
                 bullets = [v.strip() for v in value.split(" | ") if v.strip()]
-                cell = "<ul class='bullet-mini'>" + "".join(f"<li>{_esc(_truncate_text(b, 120))}</li>" for b in bullets[:3]) + "</ul>"
+                cell = "<ul class='bullet-mini'>" + "".join(f"<li>{_esc(b)}</li>" for b in bullets) + "</ul>"
             else:
-                cell = f"<span class='matrix-cell-text'>{_esc(_truncate_text(value, 60))}</span>"
+                cell = f"<span class='matrix-cell-text'>{_esc(value)}</span>"
             tds.append(f"<td>{cell}</td>")
         body_parts.append(f"<tr><th><span class='matrix-row-label'>{_esc(label)}</span></th>{''.join(tds)}</tr>")
 

@@ -93,6 +93,7 @@ def test_comparison_matrix_supports_ten_options_on_one_page():
     html = build_report_deck_html(payload)
     assert html.count("Comparison Matrix") >= 1
     assert "Options 1-10 of 10" in html
+    assert "Long Building Name Scenario 0 With Additional Descriptor" in html
 
 
 def test_cost_visuals_and_abstracts_paginate_for_large_sets():
