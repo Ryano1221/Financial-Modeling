@@ -1184,9 +1184,9 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
     return pages
 
 
-def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
+def _notes_page(entries: list[dict[str, Any]]) -> str:
     if not entries:
-        return []
+        return ""
 
     cards: list[str] = []
     for entry in entries:
@@ -1195,35 +1195,29 @@ def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
         categorized = _notes_by_category(raw_notes)
         bullet_lines: list[str] = []
         for category, lines in categorized.items():
-            for line in lines[:2]:
-                bullet_lines.append(f"{category}: {_truncate_text(line, 180)}")
+            for line in lines[:1]:
+                bullet_lines.append(f"{category}: {_truncate_text(line, 130)}")
         if not bullet_lines:
             bullet_lines = ["No clause notes were extracted. Review ROFR/ROFO, renewal rights, termination rights, and OpEx exclusions manually."]
 
-        bullets_html = "".join(f"<li>{_esc(line)}</li>" for line in bullet_lines[:10])
+        bullets_html = "".join(f"<li>{_esc(line)}</li>" for line in bullet_lines[:4])
         cards.append(
             f"""
-            <article class="panel">
-              <h3>{_esc(entry["name"])}</h3>
+            <article class="notes-summary-card">
+              <h3>{_esc(_truncate_text(entry["name"], 70))}</h3>
               <p class="axis-note">Document type: {_esc(str(entry.get("doc_type") or "Unknown"))}</p>
               <ul class="bullet-list">{bullets_html}</ul>
             </article>
             """
         )
 
-    pages: list[str] = []
-    per_page = 2
-    for i in range(0, len(cards), per_page):
-        subset = cards[i : i + per_page]
-        pages.append(
-            f"""
-            {SectionTitle("Notes", "Notes & Clause Highlights", f"Options {i + 1}-{i + len(subset)} of {len(cards)}. Notes are separated from the comparison matrix for cleaner side-by-side analysis.")}
-            <div class="summary-grid">
-              {''.join(subset)}
-            </div>
-            """
-        )
-    return pages
+    columns = 2 if len(entries) <= 4 else 3
+    return f"""
+    {SectionTitle("Notes", "Notes & Clause Highlights", f"All scenario notes are shown on this single page for cleaner comparison readability.")}
+    <div class="notes-summary-grid" style="grid-template-columns: repeat({columns}, minmax(0, 1fr));">
+      {''.join(cards)}
+    </div>
+    """
 
 
 def _cost_visuals_page(entries: list[dict[str, Any]]) -> str:
@@ -1815,6 +1809,30 @@ def _deck_css(primary_color: str) -> str:
       grid-template-columns: 1fr;
       gap: 3mm;
     }}
+    .notes-summary-grid {{
+      display: grid;
+      gap: 2.4mm;
+    }}
+    .notes-summary-card {{
+      border: 1px solid #111;
+      background: #fff;
+      padding: 2.6mm;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      min-height: 34mm;
+    }}
+    .notes-summary-card h3 {{
+      margin: 0 0 1.2mm 0;
+      font-size: 12px;
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+      color: #111;
+    }}
+    .notes-summary-card .bullet-list {{
+      font-size: 9px;
+      line-height: 1.3;
+      margin-top: 0.6mm;
+    }}
     .abstract-grid {{
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -2041,7 +2059,8 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
     page_payloads.append((_executive_summary_page(entries), "Executive summary", True))
     for matrix_html in _matrix_pages(entries):
         page_payloads.append((matrix_html, "Comparison matrix", True))
-    for notes_html in _notes_pages(entries):
+    notes_html = _notes_page(entries)
+    if notes_html:
         page_payloads.append((notes_html, "Notes & clause highlights", True))
     for visuals_html in _cost_visuals_pages(entries):
         page_payloads.append((visuals_html, "Cost visuals", True))
