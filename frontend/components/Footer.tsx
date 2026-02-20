@@ -6,14 +6,33 @@ import Link from "next/link";
 export function Footer() {
   return (
     <footer className="relative z-10 border-t border-slate-400/20 mt-16 sm:mt-20">
-      <div className="app-container py-8 sm:py-10 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <span className="text-center sm:text-left text-xs sm:text-sm font-medium text-slate-400">
-          TheCREmodel <span className="text-slate-500 font-normal">build {FRONTEND_BUILD_VERSION}</span>
-        </span>
-        <div className="flex items-center gap-4 sm:gap-6 text-xs sm:text-sm text-slate-400">
-          <Link href="/docs" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Docs</Link>
-          <Link href="/security" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Security</Link>
-          <Link href="/contact" className="hover:text-slate-100 transition-colors focus:outline-none focus-ring rounded">Contact</Link>
+      <div className="app-container py-8 sm:py-10">
+        <div className="rounded border border-slate-300/20 bg-slate-950/60 px-4 py-4 sm:px-6 sm:py-5 flex flex-col lg:flex-row items-center justify-between gap-4">
+          <div className="text-center lg:text-left">
+            <p className="text-sm sm:text-base font-semibold text-slate-100">TheCREmodel</p>
+            <p className="text-xs text-slate-400 mt-0.5">Build {FRONTEND_BUILD_VERSION}</p>
+          </div>
+
+          <nav className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+            <Link
+              href="/docs"
+              className="inline-flex items-center justify-center min-h-[38px] px-4 text-xs sm:text-sm font-medium text-slate-200 border border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:text-white transition-colors focus:outline-none focus-ring"
+            >
+              Docs
+            </Link>
+            <Link
+              href="/security"
+              className="inline-flex items-center justify-center min-h-[38px] px-4 text-xs sm:text-sm font-medium text-slate-200 border border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:text-white transition-colors focus:outline-none focus-ring"
+            >
+              Security
+            </Link>
+            <Link
+              href="/contact"
+              className="inline-flex items-center justify-center min-h-[38px] px-4 text-xs sm:text-sm font-medium text-slate-200 border border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:text-white transition-colors focus:outline-none focus-ring"
+            >
+              Contact
+            </Link>
+          </nav>
         </div>
       </div>
     </footer>
