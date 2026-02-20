@@ -47,7 +47,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning className={inter.variable}>
-      <body className="font-sans antialiased min-h-screen bg-[#0a0a0b] text-white premium-noise">
+      <body className="font-sans antialiased min-h-screen bg-[#0a0a0b] text-white premium-noise bg-grid">
         <TopNav />
         {children}
         <BuildStamp />
