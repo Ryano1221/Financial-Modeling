@@ -1111,7 +1111,6 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
         "Avg cost/year",
         "Avg cost/SF/year",
         "Discount rate",
-        "Notes",
     ]:
         values: list[str] = []
         style = "text"
@@ -1150,15 +1149,6 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
                 values.append(_fmt_psf(result.get("avg_cost_psf_year")))
             elif metric_label == "Discount rate":
                 values.append(_fmt_percent(scenario.get("discount_rate_annual"), precision=2))
-            elif metric_label == "Notes":
-                style = "bullets"
-                note_text = str(scenario.get("notes") or "")
-                categorized = _notes_by_category(note_text)
-                note_bullets: list[str] = []
-                for category, lines in categorized.items():
-                    for line in lines[:1]:
-                        note_bullets.append(f"{category}: {_truncate_text(line, 82)}")
-                values.append(" | ".join(note_bullets[:3]) if note_bullets else "General: Review lease clauses manually.")
         rows.append((metric_label, values, style))
     return rows
 
@@ -1191,6 +1181,48 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
                 <p class="matrix-footnote">Table headers repeat across pages. Numeric units are normalized for side-by-side review.</p>
                 """
             )
+    return pages
+
+
+def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
+    if not entries:
+        return []
+
+    cards: list[str] = []
+    for entry in entries:
+        scenario = entry["scenario"]
+        raw_notes = str(scenario.get("notes") or "").strip()
+        categorized = _notes_by_category(raw_notes)
+        bullet_lines: list[str] = []
+        for category, lines in categorized.items():
+            for line in lines[:2]:
+                bullet_lines.append(f"{category}: {_truncate_text(line, 180)}")
+        if not bullet_lines:
+            bullet_lines = ["No clause notes were extracted. Review ROFR/ROFO, renewal rights, termination rights, and OpEx exclusions manually."]
+
+        bullets_html = "".join(f"<li>{_esc(line)}</li>" for line in bullet_lines[:10])
+        cards.append(
+            f"""
+            <article class="panel">
+              <h3>{_esc(entry["name"])}</h3>
+              <p class="axis-note">Document type: {_esc(str(entry.get("doc_type") or "Unknown"))}</p>
+              <ul class="bullet-list">{bullets_html}</ul>
+            </article>
+            """
+        )
+
+    pages: list[str] = []
+    per_page = 2
+    for i in range(0, len(cards), per_page):
+        subset = cards[i : i + per_page]
+        pages.append(
+            f"""
+            {SectionTitle("Notes", "Notes & Clause Highlights", f"Options {i + 1}-{i + len(subset)} of {len(cards)}. Notes are separated from the comparison matrix for cleaner side-by-side analysis.")}
+            <div class="summary-grid">
+              {''.join(subset)}
+            </div>
+            """
+        )
     return pages
 
 
@@ -2009,6 +2041,8 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
     page_payloads.append((_executive_summary_page(entries), "Executive summary", True))
     for matrix_html in _matrix_pages(entries):
         page_payloads.append((matrix_html, "Comparison matrix", True))
+    for notes_html in _notes_pages(entries):
+        page_payloads.append((notes_html, "Notes & clause highlights", True))
     for visuals_html in _cost_visuals_pages(entries):
         page_payloads.append((visuals_html, "Cost visuals", True))
     for abstracts_html in _lease_abstract_pages(entries):
