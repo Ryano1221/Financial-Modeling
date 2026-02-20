@@ -45,6 +45,8 @@ export function ScenarioList({
     `${actionBtnBase} text-slate-200 border-slate-300/35 hover:bg-slate-800/70 hover:text-white`;
   const actionBtnDanger =
     `${actionBtnBase} text-red-200 border-red-400/45 hover:bg-red-500/15 hover:text-red-100`;
+  const nameBtnBase =
+    "text-left font-medium focus:outline-none focus-ring inline-flex items-center gap-2 min-w-0 w-full max-w-[22rem] min-h-[34px] px-2.5 border transition-colors";
 
   if (scenarios.length === 0) {
     return (
@@ -118,10 +120,19 @@ export function ScenarioList({
                     <button
                       type="button"
                       onClick={() => onSelect(s.id)}
-                      className="text-left font-medium text-slate-100 hover:underline focus:outline-none focus-ring rounded inline-flex items-center gap-1 max-w-[20rem] min-w-0"
+                      className={`${nameBtnBase} ${
+                        selectedId === s.id
+                          ? "bg-[#3b82f6]/20 border-[#3b82f6]/60 text-white"
+                          : "text-slate-100 border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:border-slate-200/45"
+                      }`}
                       title={s.name}
                     >
-                      <span className="text-slate-500 cursor-grab" aria-hidden>{onReorder ? "⋮⋮" : ""}</span>
+                      <span
+                        className={`cursor-grab text-xs leading-none ${selectedId === s.id ? "text-slate-200" : "text-slate-500"}`}
+                        aria-hidden
+                      >
+                        {onReorder ? "⋮⋮" : ""}
+                      </span>
                       <span className="truncate">{s.name}</span>
                     </button>
                   )}
