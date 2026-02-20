@@ -772,13 +772,118 @@ def _scenario_rent_rows(entry: dict[str, Any]) -> list[dict[str, str]]:
     return expanded
 
 
-def _chunk_detail_rows(rows: list[dict[str, str]], max_units: int = 28) -> list[list[dict[str, str]]]:
+_DETAIL_CELL_CHAR_BUDGET: dict[str, int] = {
+    "step": 7,
+    "start_month": 9,
+    "end_month": 9,
+    "start_date": 12,
+    "end_date": 12,
+    "rate_psf_yr": 14,
+    "opex_psf_yr": 12,
+    "rsf": 11,
+    "note": 54,
+}
+
+
+def _wrap_line_count(value: str, budget: int) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 1
+    return max(1, math.ceil(len(text) / max(1, budget)))
+
+
+def _split_note_into_segments(note: str, max_chars: int = 150) -> list[str]:
+    cleaned = " ".join(str(note or "").replace("\n", " ").split()).strip()
+    if not cleaned:
+        return [""]
+
+    parts = [p.strip() for p in cleaned.split("|") if p.strip()]
+    if not parts:
+        parts = [cleaned]
+
+    segments: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for part in parts:
+        chunk_len = len(part) + (3 if current else 0)
+        if current and current_len + chunk_len > max_chars:
+            segments.append(" | ".join(current))
+            current = [part]
+            current_len = len(part)
+        else:
+            current.append(part)
+            current_len += chunk_len
+    if current:
+        segments.append(" | ".join(current))
+
+    final_segments: list[str] = []
+    for segment in segments:
+        if len(segment) <= max_chars:
+            final_segments.append(segment)
+            continue
+        start = 0
+        while start < len(segment):
+            end = min(len(segment), start + max_chars)
+            if end < len(segment):
+                split_at = segment.rfind(" ", start, end)
+                if split_at > start + 24:
+                    end = split_at
+            final_segments.append(segment[start:end].strip())
+            start = end
+
+    return [seg for seg in final_segments if seg] or [""]
+
+
+def _normalize_detail_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """
+    Split oversized notes into continuation rows so no single table row can
+    become taller than a printable page segment.
+    """
+    normalized: list[dict[str, str]] = []
+    for row in rows:
+        segments = _split_note_into_segments(str(row.get("note") or ""), max_chars=150)
+        if len(segments) <= 1:
+            item = dict(row)
+            item["note"] = segments[0]
+            normalized.append(item)
+            continue
+
+        for idx, segment in enumerate(segments):
+            item = dict(row)
+            item["note"] = segment
+            if idx > 0:
+                item["step"] = f"{row.get('step', '')} (cont.)"
+            normalized.append(item)
+    return normalized
+
+
+def _estimate_detail_row_units(row: dict[str, str]) -> int:
+    counts = [
+        _wrap_line_count(str(row.get("step") or ""), _DETAIL_CELL_CHAR_BUDGET["step"]),
+        _wrap_line_count(str(row.get("start_month") or ""), _DETAIL_CELL_CHAR_BUDGET["start_month"]),
+        _wrap_line_count(str(row.get("end_month") or ""), _DETAIL_CELL_CHAR_BUDGET["end_month"]),
+        _wrap_line_count(str(row.get("start_date") or ""), _DETAIL_CELL_CHAR_BUDGET["start_date"]),
+        _wrap_line_count(str(row.get("end_date") or ""), _DETAIL_CELL_CHAR_BUDGET["end_date"]),
+        _wrap_line_count(str(row.get("rate_psf_yr") or ""), _DETAIL_CELL_CHAR_BUDGET["rate_psf_yr"]),
+        _wrap_line_count(str(row.get("opex_psf_yr") or ""), _DETAIL_CELL_CHAR_BUDGET["opex_psf_yr"]),
+        _wrap_line_count(str(row.get("rsf") or ""), _DETAIL_CELL_CHAR_BUDGET["rsf"]),
+        _wrap_line_count(str(row.get("note") or ""), _DETAIL_CELL_CHAR_BUDGET["note"]),
+    ]
+    # Base unit + wrapped lines in the tallest cell.
+    return 1 + max(counts)
+
+
+def _chunk_detail_rows(rows: list[dict[str, str]], max_units: int = 44) -> list[list[dict[str, str]]]:
+    """
+    Deterministic pagination for long segmented rent schedules.
+    Chunks rows conservatively to avoid clipping and preserves all rows.
+    """
+    normalized = _normalize_detail_rows(rows)
     chunks: list[list[dict[str, str]]] = []
     current: list[dict[str, str]] = []
     units = 0
-    for row in rows:
-        note_len = len(str(row.get("note") or ""))
-        row_units = 1 + math.ceil(note_len / 42)
+    for row in normalized:
+        row_units = _estimate_detail_row_units(row)
         if current and units + row_units > max_units:
             chunks.append(current)
             current = []
@@ -794,7 +899,7 @@ def _detail_table_html(rows: list[dict[str, str]]) -> str:
     table_rows = "".join(
         f"""
         <tr>
-          <td>{_esc(r['step'])}</td>
+          <td class="detail-step">{_esc(r['step'])}</td>
           <td>{_esc(r['start_month'])}</td>
           <td>{_esc(r['end_month'])}</td>
           <td>{_esc(r['start_date'])}</td>
@@ -802,13 +907,24 @@ def _detail_table_html(rows: list[dict[str, str]]) -> str:
           <td>{_esc(r['rate_psf_yr'])}</td>
           <td>{_esc(r['opex_psf_yr'])}</td>
           <td>{_esc(r['rsf'])}</td>
-          <td>{_esc(r['note'])}</td>
+          <td class="detail-note">{_esc(r['note'])}</td>
         </tr>
         """
         for r in rows
     )
     return f"""
     <table class="detail-table">
+      <colgroup>
+        <col style="width:7%" />
+        <col style="width:8%" />
+        <col style="width:8%" />
+        <col style="width:11%" />
+        <col style="width:11%" />
+        <col style="width:11%" />
+        <col style="width:10%" />
+        <col style="width:9%" />
+        <col style="width:25%" />
+      </colgroup>
       <thead>
         <tr>
           <th>Step</th>
@@ -833,7 +949,7 @@ def ScenarioDetailSections(entry: dict[str, Any]) -> list[str]:
     scenario = entry["scenario"]
     result = entry["result"]
     rows = _scenario_rent_rows(entry)
-    chunks = _chunk_detail_rows(rows, max_units=30 if len(rows) <= 16 else 26)
+    chunks = _chunk_detail_rows(rows, max_units=44)
     if not chunks:
         chunks = [[]]
     kpis = [
@@ -850,13 +966,13 @@ def ScenarioDetailSections(entry: dict[str, Any]) -> list[str]:
         subtitle = (
             "Full segmented rent schedule with no clipped rows."
             if total_chunks == 1
-            else f"Segmented rent schedule page {idx + 1} of {total_chunks}."
+            else f"Rent schedule continued — page {idx + 1} of {total_chunks}."
         )
         kpi_html = KpiTilesRow(kpis) if idx == 0 else ""
         continuation = (
             ""
             if idx == 0
-            else f"<p class='table-footnote'>Continued rent schedule for {_esc(entry['name'])}.</p>"
+            else f"<p class='table-footnote'>Rent schedule continued for {_esc(entry['name'])}.</p>"
         )
         out.append(
             f"""
@@ -1534,6 +1650,20 @@ def _deck_css(primary_color: str) -> str:
       vertical-align: top;
       line-height: 1.35;
       word-break: break-word;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }}
+    .detail-table tbody tr {{
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }}
+    .detail-step {{
+      white-space: nowrap;
+    }}
+    .detail-note {{
+      white-space: normal;
+      overflow-wrap: anywhere;
+      line-height: 1.42;
     }}
     .matrix-table.matrix-compact thead th {{
       padding: 1.1mm 0.9mm;

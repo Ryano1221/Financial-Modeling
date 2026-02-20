@@ -171,6 +171,68 @@ def test_scenario_detail_rows_paginate_without_omitting_rows():
     html = build_report_deck_html(
         {"scenarios": [{"scenario": scenario.model_dump(mode="json"), "result": result.model_dump()}]}
     )
-    assert "Segmented rent schedule page" in html
+    assert "Rent schedule continued" in html
     assert "additional segmented row(s) omitted" not in html
     assert "Average Costs" in html
+
+
+def test_scenario_detail_handles_40_plus_steps_without_dropping_rows():
+    steps = [RentStep(start=i, end=i, rate_psf_yr=40 + (i * 0.2)) for i in range(0, 42)]
+    scenario = Scenario(
+        name="Forty Step Stress",
+        rsf=15000,
+        commencement=date(2026, 1, 1),
+        expiration=date(2029, 6, 1),
+        rent_steps=steps,
+        free_rent_months=0,
+        ti_allowance_psf=10.0,
+        opex_mode=OpexMode.NNN,
+        base_opex_psf_yr=11.0,
+        base_year_opex_psf_yr=11.0,
+        opex_growth=0.03,
+        discount_rate_annual=0.08,
+    )
+    _, result = compute_cashflows(scenario)
+    html = build_report_deck_html(
+        {"scenarios": [{"scenario": scenario.model_dump(mode="json"), "result": result.model_dump()}]}
+    )
+    assert html.count("Rent schedule continued") >= 1
+    # Ensure first and last generated step markers exist in detail rows.
+    assert ">1<" in html
+    assert ">42<" in html
+
+
+def test_scenario_detail_splits_long_notes_into_continuation_rows():
+    scenario = Scenario(
+        name="Long Notes Stress",
+        rsf=9000,
+        commencement=date(2026, 1, 1),
+        expiration=date(2031, 1, 1),
+        rent_steps=[RentStep(start=0, end=59, rate_psf_yr=45.0)],
+        free_rent_months=4,
+        free_rent_start_month=0,
+        free_rent_end_month=3,
+        free_rent_abatement_type="base",
+        ti_allowance_psf=25.0,
+        opex_mode=OpexMode.NNN,
+        base_opex_psf_yr=10.0,
+        base_year_opex_psf_yr=10.0,
+        opex_growth=0.03,
+        discount_rate_annual=0.08,
+        notes="Renewal option and OpEx exclusions are described in long-form narrative text.",
+    )
+    scenario_json = scenario.model_dump(mode="json")
+    # Force an oversized note payload similar to extracted clause blobs.
+    scenario_json["notes"] = " | ".join(
+        [
+            "Renewal option: Tenant has one five-year renewal right at FMV.",
+            "ROFR/ROFO: Tenant has ROFO on adjacent suite subject to landlord notice.",
+            "OpEx exclusions: capital repairs, structural repairs, roof replacement, and HVAC replacement excluded.",
+            "Parking: 4.5 per 1,000 RSF with reserved allocation and overflow rights.",
+            "Use restriction: specialty retail only with no conflicting uses in adjacent premises.",
+            "Holdover: 150% in first period and 200% in second period with full additional rent.",
+        ]
+    )
+    _, result = compute_cashflows(scenario)
+    html = build_report_deck_html({"scenarios": [{"scenario": scenario_json, "result": result.model_dump()}]})
+    assert "(cont.)" in html
