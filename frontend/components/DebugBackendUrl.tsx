@@ -3,14 +3,6 @@
 import { useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { getBackendBaseUrlForDisplay, logResolvedUrlsOnce } from "@/lib/backend";
-import { FRONTEND_BUILD_VERSION } from "@/lib/build-version";
-
-let _buildVersionLogged = false;
-function logBuildVersionOnce(): void {
-  if (_buildVersionLogged) return;
-  _buildVersionLogged = true;
-  console.log("[build] FRONTEND_BUILD_VERSION", FRONTEND_BUILD_VERSION);
-}
 
 function DebugBackendUrlInner() {
   const searchParams = useSearchParams();
@@ -18,7 +10,6 @@ function DebugBackendUrlInner() {
   const isProd = process.env.NODE_ENV === "production";
 
   useEffect(() => {
-    logBuildVersionOnce();
     if (!isProd) logResolvedUrlsOnce();
   }, [isProd]);
 
