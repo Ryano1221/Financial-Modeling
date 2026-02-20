@@ -39,6 +39,12 @@ export function ScenarioList({
     if (onRename && editName.trim()) onRename(id, editName.trim());
     setEditingId(null);
   };
+  const actionBtnBase =
+    "inline-flex items-center justify-center min-h-[30px] px-2.5 text-[11px] sm:text-xs font-medium border bg-slate-900/60 transition-colors focus:outline-none focus-ring";
+  const actionBtnNeutral =
+    `${actionBtnBase} text-slate-200 border-slate-300/35 hover:bg-slate-800/70 hover:text-white`;
+  const actionBtnDanger =
+    `${actionBtnBase} text-red-200 border-red-400/45 hover:bg-red-500/15 hover:text-red-100`;
 
   if (scenarios.length === 0) {
     return (
@@ -148,7 +154,7 @@ export function ScenarioList({
                       <button
                         type="button"
                         onClick={() => startRename(s)}
-                        className="text-slate-300 hover:text-slate-100 text-xs font-medium focus:outline-none focus-ring rounded"
+                        className={actionBtnNeutral}
                       >
                         Rename
                       </button>
@@ -156,21 +162,21 @@ export function ScenarioList({
                     <button
                       type="button"
                       onClick={() => onSelect(s.id)}
-                      className="text-slate-300 hover:text-slate-100 text-xs font-medium focus:outline-none focus-ring rounded"
+                      className={actionBtnNeutral}
                     >
                       Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => onDuplicate(s.id)}
-                      className="text-slate-300 hover:text-slate-100 text-xs font-medium focus:outline-none focus-ring rounded"
+                      className={actionBtnNeutral}
                     >
                       Duplicate
                     </button>
                     <button
                       type="button"
                       onClick={() => onDelete(s.id)}
-                      className="text-red-300 hover:text-red-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
+                      className={actionBtnDanger}
                     >
                       Delete
                     </button>
