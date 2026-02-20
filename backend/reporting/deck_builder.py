@@ -293,6 +293,10 @@ def resolve_theme(branding: dict[str, Any]) -> DeckTheme:
     )
     cover_photo = _safe_media_url(_pick(branding, "cover_photo", "coverPhoto"))
 
+    report_date = _fmt_date(_pick(branding, "date", "report_date", "reportDate", default=date.today().isoformat()))
+    if report_date == "—":
+        report_date = _fmt_date(date.today())
+
     return DeckTheme(
         brand_name=brand_name,
         logo_src=logo_src,
@@ -316,7 +320,7 @@ def resolve_theme(branding: dict[str, Any]) -> DeckTheme:
         ),
         cover_photo=cover_photo,
         prepared_for=_pick(branding, "client_name", "prepared_for", "preparedFor", default="Client"),
-        report_date=_fmt_date(_pick(branding, "date", "report_date", "reportDate", default=date.today().isoformat())),
+        report_date=report_date,
         market=_blank_if_na(_pick(branding, "market")),
         submarket=_blank_if_na(_pick(branding, "submarket")),
         report_title=_pick(branding, "report_title", "reportTitle", default=DEFAULT_REPORT_TITLE),

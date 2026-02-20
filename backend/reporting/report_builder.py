@@ -8,6 +8,7 @@ import hashlib
 import html
 import json
 import os
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -167,10 +168,12 @@ def build_report_html(
         tenant_name = meta.get("tenant_name", "")
         prepared_for = meta.get("prepared_for", "—")
         prepared_by = meta.get("prepared_by", "—")
-        report_date = meta.get("report_date", "")
+        report_date = meta.get("report_date") or date.today().isoformat()
         market = meta.get("market", "")
         submarket = meta.get("submarket", "")
-        report_date_str = format_date(report_date) if report_date else report_date
+        report_date_str = format_date(report_date)
+        if report_date_str == "—":
+            report_date_str = format_date(date.today())
         logo_block = f'<img src="{_escape(logo_url)}" alt="{_escape(company_name)}" />' if logo_url else f'<div class="company-text">{_escape(company_name)}</div>'
         cover_html = f"""<div class="cover">
     <div class="logo-wrap">{logo_block}</div>
