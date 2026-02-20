@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { Footer } from "@/components/Footer";
 import { fetchApiProxy } from "@/lib/api";
 
 function isValidEmail(value: string): boolean {
@@ -68,10 +67,9 @@ export default function ContactPage() {
   }
 
   return (
-    <>
-      <main className="relative z-10 section-shell">
-        <div className="app-container max-w-4xl">
-          <section className="section-panel p-6 sm:p-10 space-y-8">
+    <main className="relative z-10 section-shell">
+      <div className="app-container max-w-4xl">
+        <section className="section-panel p-6 sm:p-10 space-y-8">
             <div className="space-y-3">
               <p className="heading-kicker">Contact</p>
               <h1 className="heading-display !text-[clamp(2rem,5vw,3.5rem)]">Contact Support</h1>
@@ -128,11 +126,8 @@ export default function ContactPage() {
               {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
               {error ? <p className="text-sm text-red-300">{error}</p> : null}
             </form>
-          </section>
-        </div>
-      </main>
-      <Footer />
-    </>
+        </section>
+      </div>
+    </main>
   );
 }
-

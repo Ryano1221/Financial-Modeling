@@ -22,7 +22,6 @@ const Diagnostics = showDiagnostics
   : () => null;
 import { UploadExtractCard } from "@/components/UploadExtractCard";
 import { ResultsActionsCard } from "@/components/ResultsActionsCard";
-import { Footer } from "@/components/Footer";
 import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
 import { ClientLogoUploader } from "@/components/ClientLogoUploader";
 import type {
@@ -1583,7 +1582,6 @@ export default function Home() {
         </div>
         </section>
       </main>
-      <Footer />
     </>
   );
 }

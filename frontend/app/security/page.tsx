@@ -1,11 +1,8 @@
-import { Footer } from "@/components/Footer";
-
 export default function SecurityPage() {
   return (
-    <>
-      <main className="relative z-10 section-shell">
-        <div className="app-container max-w-5xl">
-          <section className="section-panel p-6 sm:p-10 space-y-8">
+    <main className="relative z-10 section-shell">
+      <div className="app-container max-w-5xl">
+        <section className="section-panel p-6 sm:p-10 space-y-8">
             <div className="space-y-3">
               <p className="heading-kicker">Security</p>
               <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Security Overview</h1>
@@ -65,11 +62,8 @@ export default function SecurityPage() {
                 .
               </p>
             </section>
-          </section>
-        </div>
-      </main>
-      <Footer />
-    </>
+        </section>
+      </div>
+    </main>
   );
 }
-
