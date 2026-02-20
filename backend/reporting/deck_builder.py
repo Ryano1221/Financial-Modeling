@@ -1045,6 +1045,11 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
         if prepared_by_logo
         else f"<strong>{prepared_by_html}</strong>"
     )
+    prepared_for_block = (
+        f'<div class="prepared-for-block"><img class="prepared-for-logo" src="{_esc(theme.client_logo_src)}" alt="{_esc(theme.prepared_for)}" /></div>'
+        if client_logo
+        else f"<strong>{_esc(theme.prepared_for)}</strong>"
+    )
 
     top_options_html = "".join(
         f"""
@@ -1059,7 +1064,7 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
     )
 
     cover_meta_cards: list[tuple[str, str]] = [
-        ("Prepared for", f"<strong>{_esc(theme.prepared_for)}</strong>"),
+        ("Prepared for", prepared_for_block),
         ("Prepared by", prepared_by_block),
         ("Report date", f"<strong>{_esc(theme.report_date)}</strong>"),
     ]
@@ -1084,7 +1089,6 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
         </div>
         <div class="cover-brand-row">
           <div>{logo}</div>
-          <div>{client_logo}</div>
         </div>
         <div class="cover-meta-grid">
           {cover_meta_html}
@@ -2172,12 +2176,24 @@ def _deck_css(primary_color: str) -> str:
       align-items: flex-start;
       gap: 2mm;
     }}
+    .prepared-for-block {{
+      display: flex;
+      align-items: center;
+      min-height: 8mm;
+    }}
     .prepared-by-logo {{
       width: 12mm;
       max-height: 8mm;
       object-fit: contain;
       flex: 0 0 auto;
       margin-top: 0.2mm;
+    }}
+    .prepared-for-logo {{
+      width: auto;
+      max-width: 46mm;
+      max-height: 8mm;
+      object-fit: contain;
+      flex: 0 0 auto;
     }}
     .cover-winner-strip {{
       border: 1px solid #111;
