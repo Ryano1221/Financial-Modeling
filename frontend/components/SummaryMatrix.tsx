@@ -39,42 +39,41 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
       .map((line) => line.replace(/^\s*•\s*/, "").trim())
       .filter(Boolean);
 
-  return (
-    <div className="table-shell">
-      <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
-        <p className="heading-kicker mb-1">Equalized</p>
-        <h2 className="heading-section">Equalized comparison</h2>
-        <p className="text-xs text-slate-400 mt-1">
-          Equalized period:{" "}
-          {equalized?.windowStart && equalized?.windowEnd
-            ? `${formatDateISO(equalized.windowStart)} – ${formatDateISO(equalized.windowEnd)}`
-            : "Not available"}
+  const renderEqualizedSection = () => (
+    <div className="px-5 py-4 bg-slate-900/45">
+      <p className="heading-kicker mb-1">Equalized</p>
+      <h2 className="heading-section">Equalized comparison</h2>
+      <p className="text-xs text-slate-400 mt-1">
+        Equalized period:{" "}
+        {equalized?.windowStart && equalized?.windowEnd
+          ? `${formatDateISO(equalized.windowStart)} – ${formatDateISO(equalized.windowEnd)}`
+          : "Not available"}
+      </p>
+      {equalized?.windowSource === "custom" && (
+        <p className="text-xs text-amber-200/90 mt-1">Using custom comparison window.</p>
+      )}
+      {equalized?.needsCustomWindow ? (
+        <p className="text-xs text-amber-200/90 mt-1">
+          No overlapping lease term for equalized comparison. Enter custom dates to compute equalized values.
         </p>
-        {equalized?.windowSource === "custom" && (
-          <p className="text-xs text-amber-200/90 mt-1">Using custom comparison window.</p>
-        )}
-        {equalized?.needsCustomWindow ? (
-          <p className="text-xs text-amber-200/90 mt-1">
-            No overlapping lease term for equalized comparison. Enter custom dates to compute equalized values.
-          </p>
-        ) : (
-          <>
-            <div className="md:hidden mt-3 space-y-3">
-              {results.map((r) => (
-                <div key={`eq-mobile-${r.scenarioId}`} className="border border-slate-300/20 bg-slate-950/55 p-3">
-                  <h3 className="text-sm font-semibold text-slate-100 mb-2 whitespace-normal break-words">{r.scenarioName}</h3>
-                  <dl className="space-y-1.5 text-xs">
-                    {equalizedRows.map((label, idx) => (
-                      <div key={`eq-mobile-${r.scenarioId}-${label}`} className="grid grid-cols-2 gap-2">
-                        <dt className="text-slate-400">{label}</dt>
-                        <dd className="text-slate-200 text-right">{getEqualizedCellValue(idx, r.scenarioId)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-            </div>
-            <div className="hidden md:block overflow-x-auto mt-3">
+      ) : (
+        <>
+          <div className="md:hidden mt-3 space-y-3">
+            {results.map((r) => (
+              <div key={`eq-mobile-${r.scenarioId}`} className="border border-slate-300/20 bg-slate-950/55 p-3">
+                <h3 className="text-sm font-semibold text-slate-100 mb-2 whitespace-normal break-words">{r.scenarioName}</h3>
+                <dl className="space-y-1.5 text-xs">
+                  {equalizedRows.map((label, idx) => (
+                    <div key={`eq-mobile-${r.scenarioId}-${label}`} className="grid grid-cols-2 gap-2">
+                      <dt className="text-slate-400">{label}</dt>
+                      <dd className="text-slate-200 text-right">{getEqualizedCellValue(idx, r.scenarioId)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block overflow-x-auto mt-3">
             <table className="w-full min-w-[780px] text-xs sm:text-sm border border-slate-300/15">
               <thead>
                 <tr className="bg-slate-900/35 border-b border-slate-300/20">
@@ -90,21 +89,23 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
                 {equalizedRows.map((label, rowIdx) => (
                   <tr key={label} className="border-b border-slate-300/10 hover:bg-slate-400/10">
                     <td className="py-2.5 px-4 font-medium text-slate-200">{label}</td>
-                    {results.map((r) => {
-                      return (
-                        <td key={`${label}-${r.scenarioId}`} className="py-2.5 px-4 text-right text-slate-300">
-                          {getEqualizedCellValue(rowIdx, r.scenarioId)}
-                        </td>
-                      );
-                    })}
+                    {results.map((r) => (
+                      <td key={`${label}-${r.scenarioId}`} className="py-2.5 px-4 text-right text-slate-300">
+                        {getEqualizedCellValue(rowIdx, r.scenarioId)}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          </>
-        )}
-      </div>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="table-shell">
       <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
         <p className="heading-kicker mb-1">Portfolio comparison</p>
         <h2 className="heading-section">Comparison matrix</h2>
@@ -199,6 +200,9 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="border-t border-slate-300/20">
+        {renderEqualizedSection()}
       </div>
     </div>
   );
