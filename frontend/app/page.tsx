@@ -1623,7 +1623,7 @@ export default function Home() {
                       {equalizedUi.message || "No overlapping lease term for equalized comparison."}
                     </p>
                     <p className="text-xs text-amber-100/80 mt-1">
-                      Enter a custom equalized comparison period (MM.DD.YYYY) to compute overlap-only metrics.
+                      Enter a custom equalized comparison period (MM.DD.YYYY) to compute equalized metrics.
                     </p>
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="block">

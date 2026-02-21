@@ -448,7 +448,7 @@ def _chunk_rows_by_estimated_height(
     units = 0
     for row in rows:
         label, values, style = row
-        est = max(1, math.ceil(max([len(label), *(len(v) for v in values)]) / 54))
+        est = max(1, math.ceil(max([len(label), *(len(v) for v in values)]) / 46))
         est += 1 if style == "bullets" else 0
         if current and units + est > max_units:
             chunks.append(current)
@@ -1171,7 +1171,7 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
     if equalized_no_overlap:
         rows.append(
             (
-                "Equalized (overlap-only)",
+                "Equalized",
                 ["No overlapping lease term for equalized comparison"] * len(entries),
                 "text",
             )
@@ -1247,7 +1247,13 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
     option_chunks = chunk(entries, 10)
     for idx, option_chunk in enumerate(option_chunks):
         metric_rows = _metric_rows_for(option_chunk)
-        max_units = 16 if len(option_chunk) >= 8 else 24
+        # Conservative row budgeting prevents matrix clipping at page bottom.
+        if len(option_chunk) >= 8:
+            max_units = 12
+        elif len(option_chunk) >= 5:
+            max_units = 15
+        else:
+            max_units = 18
         metric_chunks = _chunk_rows_by_estimated_height(metric_rows, max_units=max_units)
         for midx, metrics_chunk in enumerate(metric_chunks):
             start = idx * 10 + 1
@@ -1261,7 +1267,6 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
                     f"Options {start}-{end} of {len(entries)}{suffix}",
                 )}
                 {ComparisonMatrixTable(option_chunk, metrics_chunk)}
-                <p class="matrix-footnote">Table headers repeat across pages. Numeric units are normalized for side-by-side review.</p>
                 """
             )
     return pages
@@ -1569,49 +1574,6 @@ def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
     omitted = max(0, len(ranking) - len(ranking_display))
     omitted_line = f"<p class='matrix-footnote'>+ {omitted} additional option(s) are ranked in the comparison matrix.</p>" if omitted else ""
 
-    no_overlap = any(bool(e["result"].get("equalized_no_overlap")) for e in entries)
-    equalized_card_html: str
-    if no_overlap:
-        equalized_card_html = """
-        <article class="panel">
-          <h3>Equalized (overlap-only)</h3>
-          <p class="axis-note">No overlapping lease term for equalized comparison. Use a custom comparison window in the app.</p>
-        </article>
-        """
-    else:
-        first_with_window = next(
-            (
-                e
-                for e in entries
-                if e["result"].get("equalized_start") and e["result"].get("equalized_end")
-            ),
-            None,
-        )
-        equalized_period = (
-            f"{_fmt_date(first_with_window['result'].get('equalized_start'))} – "
-            f"{_fmt_date(first_with_window['result'].get('equalized_end'))}"
-            if first_with_window
-            else "—"
-        )
-        equalized_ranked = sorted(entries, key=lambda e: _safe_float(e["result"].get("equalized_npv_cost"), float("inf")))
-        equalized_top = "".join(
-            f"""
-            <li>
-              <strong>{_esc(e['name'])}</strong>
-              <span>{_esc(_fmt_currency(e['result'].get('equalized_npv_cost')))} equalized NPV</span>
-              <span>{_esc(_fmt_psf(e['result'].get('equalized_avg_cost_psf_year')))} equalized avg cost/SF/year</span>
-            </li>
-            """
-            for e in equalized_ranked[:4]
-        )
-        equalized_card_html = f"""
-        <article class="panel">
-          <h3>Equalized (overlap-only)</h3>
-          <p class="axis-note">Equalized period: { _esc(equalized_period) }</p>
-          <ol class="ranking-list">{equalized_top}</ol>
-        </article>
-        """
-
     return f"""
     {SectionTitle("Executive summary", "Decision Snapshot", "Ranking is based on lowest NPV cost (tenant cost perspective).")}
     <div class="summary-grid">
@@ -1629,9 +1591,6 @@ def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
           <li>Confirm parking terms and non-rent charges that may materially affect all-in occupancy costs.</li>
         </ul>
       </article>
-    </div>
-    <div class="summary-grid">
-      {equalized_card_html}
     </div>
     """
 

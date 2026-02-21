@@ -43,7 +43,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
     <div className="table-shell">
       <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
         <p className="heading-kicker mb-1">Equalized</p>
-        <h2 className="heading-section">Overlap-only comparison</h2>
+        <h2 className="heading-section">Equalized comparison</h2>
         <p className="text-xs text-slate-400 mt-1">
           Equalized period:{" "}
           {equalized?.windowStart && equalized?.windowEnd
