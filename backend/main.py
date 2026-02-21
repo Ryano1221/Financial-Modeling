@@ -125,6 +125,7 @@ SUPABASE_URL = (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SU
 SUPABASE_ANON_KEY = (os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or "").strip()
 SUPABASE_SERVICE_ROLE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
 SUPABASE_LOGOS_BUCKET = (os.environ.get("SUPABASE_LOGOS_BUCKET") or "logos").strip() or "logos"
+DEFAULT_CREMODEL_BRAND_NAME = "The CRE Model"
 
 
 def _public_branding_path() -> Path:
@@ -618,16 +619,18 @@ def version():
 
 
 @app.get("/branding")
-def get_public_branding():
+def get_public_branding(request: Request):
     """
-    Unauthenticated single-tenant branding fallback.
-    Used when org auth is unavailable so brokerage logo upload still works.
+    Backward-compatible alias to authenticated per-user branding.
     """
-    return _public_branding_payload()
+    user = _require_supabase_user(request)
+    settings = _load_user_settings(user["id"])
+    return _user_branding_payload(user["id"], settings)
 
 
 @app.post("/branding/logo")
-async def upload_public_branding_logo(file: UploadFile = File(...)):
+async def upload_public_branding_logo(request: Request, file: UploadFile = File(...)):
+    user = _require_supabase_user(request)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     filename = file.filename.strip()
@@ -647,32 +650,30 @@ async def upload_public_branding_logo(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Empty file")
     if len(raw) > PUBLIC_BRANDING_MAX_LOGO_BYTES:
         raise HTTPException(status_code=413, detail="Logo exceeds 1.5MB")
-    logo_b64 = base64.b64encode(raw).decode("ascii")
-    logo_sha = hashlib.sha256(raw).hexdigest()
-    _save_public_branding_state(
-        {
-            "logo_content_type": content_type,
-            "logo_filename": filename,
-            "logo_asset_bytes": logo_b64,
-            "logo_sha256": logo_sha,
-            "logo_updated_at": datetime.utcnow().isoformat(),
-        }
+    object_path = _storage_upload_logo(user["id"], filename, content_type, raw)
+    _upsert_user_settings(
+        user["id"],
+        brokerage_name=None,
+        brokerage_logo_url=object_path,
     )
-    return _public_branding_payload()
+    settings = _load_user_settings(user["id"])
+    return _user_branding_payload(user["id"], settings)
 
 
 @app.delete("/branding/logo")
-def delete_public_branding_logo():
-    _save_public_branding_state(
-        {
-            "logo_content_type": None,
-            "logo_filename": None,
-            "logo_asset_bytes": None,
-            "logo_sha256": None,
-            "logo_updated_at": None,
-        }
+def delete_public_branding_logo(request: Request):
+    user = _require_supabase_user(request)
+    settings = _load_user_settings(user["id"])
+    object_path = str(settings.get("brokerage_logo_url") or "").strip()
+    if object_path:
+        _storage_delete_logo(object_path)
+    _upsert_user_settings(
+        user["id"],
+        brokerage_name=None,
+        brokerage_logo_url="",
     )
-    return _public_branding_payload()
+    settings = _load_user_settings(user["id"])
+    return _user_branding_payload(user["id"], settings)
 
 
 @app.get("/auth/me")
@@ -3852,20 +3853,40 @@ def create_report(req: CreateReportRequest, request: Request) -> CreateReportRes
     settings = _load_user_settings(user_id)
 
     branding = req.branding.model_dump(exclude_none=True) if req.branding else {}
-    # Never trust org/user IDs from client. Always scope to authenticated user.
-    branding["org_id"] = user_id
+    # Never trust brokerage/org branding keys from client.
+    for key in (
+        "org_id",
+        "orgId",
+        "brand_name",
+        "brandName",
+        "broker_name",
+        "brokerName",
+        "prepared_by_company",
+        "preparedByCompany",
+        "logo_asset_bytes",
+        "logoAssetBytes",
+        "logoAssetBase64",
+        "logo_asset_url",
+        "logoAssetUrl",
+        "logo_url",
+        "logo_storage_path",
+        "logoStoragePath",
+    ):
+        branding.pop(key, None)
 
     brokerage_name = str(settings.get("brokerage_name") or "").strip()
+    effective_brokerage_name = brokerage_name or DEFAULT_CREMODEL_BRAND_NAME
+    branding["org_id"] = user_id
+    branding["brand_name"] = effective_brokerage_name
+    branding["broker_name"] = effective_brokerage_name
+    branding["prepared_by_company"] = effective_brokerage_name
+
     logo_path = str(settings.get("brokerage_logo_url") or "").strip()
-    if brokerage_name:
-        branding.setdefault("brand_name", brokerage_name)
-        branding.setdefault("broker_name", brokerage_name)
-        branding.setdefault("prepared_by_company", brokerage_name)
-    if logo_path and not branding.get("logo_asset_bytes"):
+    if logo_path:
         logo_bytes, _content_type = _storage_download_logo_bytes(logo_path)
         if logo_bytes:
             branding["logo_asset_bytes"] = base64.b64encode(logo_bytes).decode("ascii")
-            branding.setdefault("logo_storage_path", logo_path)
+            branding["logo_storage_path"] = logo_path
 
     if not branding.get("theme_hash"):
         branding["theme_hash"] = _branding_theme_hash(branding)

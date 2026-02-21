@@ -22,7 +22,6 @@ const Diagnostics = showDiagnostics
   : () => null;
 import { UploadExtractCard } from "@/components/UploadExtractCard";
 import { ResultsActionsCard } from "@/components/ResultsActionsCard";
-import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
 import { ClientLogoUploader } from "@/components/ClientLogoUploader";
 import type {
   ScenarioWithId,
@@ -51,10 +50,7 @@ import type { SupabaseAuthSession } from "@/lib/supabase";
 import { getSession } from "@/lib/supabase";
 import {
   type UserBrandingResponse,
-  deleteUserBrandingLogo,
   fetchUserBranding,
-  updateBrokerageName,
-  uploadUserBrandingLogo,
 } from "@/lib/user-settings";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
@@ -174,26 +170,6 @@ function extractDataUrlBase64(dataUrl: string | null | undefined): string | null
   const match = raw.match(/^data:image\/[A-Za-z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)$/);
   if (!match) return null;
   return match[1].replace(/\s+/g, "");
-}
-
-function getBrandingDisplayErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error ?? "");
-  const msg = parseErrorPayloadText(raw);
-  if (!msg) return "We couldn't update your logo. Please try again.";
-  const lower = msg.toLowerCase();
-  if (lower.includes("png") || lower.includes("jpg") || lower.includes("jpeg") || lower.includes("svg")) {
-    return msg;
-  }
-  if (lower.includes("1.5mb") || lower.includes("exceeds")) {
-    return msg;
-  }
-  if (lower.includes("unauthorized") || lower.includes("forbidden") || lower.includes("permission")) {
-    return "Your account does not have permission to update brokerage branding.";
-  }
-  if (lower.includes("unavailable")) {
-    return "Branding storage is temporarily unavailable. Please retry in a minute.";
-  }
-  return msg;
 }
 
 function formatDateMmDdYyyy(dateValue: Date): string {
@@ -382,8 +358,6 @@ export default function Home() {
   const [organizationBranding, setOrganizationBranding] = useState<UserBrandingResponse | null>(null);
   const [brokerageName, setBrokerageName] = useState("");
   const [brandingLoading, setBrandingLoading] = useState(false);
-  const [brandingUploading, setBrandingUploading] = useState(false);
-  const [brandingError, setBrandingError] = useState<string | null>(null);
   const [clientLogoDataUrl, setClientLogoDataUrl] = useState<string | null>(null);
   const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
   const [clientLogoUploading, setClientLogoUploading] = useState(false);
@@ -525,56 +499,13 @@ export default function Home() {
     }
   }, [authSession]);
 
-  const uploadOrganizationLogo = useCallback(
-    async (file: File) => {
-      setBrandingUploading(true);
-      setBrandingError(null);
-      try {
-        if (!authSession) throw new Error("Not authenticated");
-        const data = await uploadUserBrandingLogo(file);
-        setOrganizationBranding(data);
-      } catch (err) {
-        setBrandingError(getBrandingDisplayErrorMessage(err));
-      } finally {
-        setBrandingUploading(false);
-      }
-    },
-    [authSession]
-  );
-
-  const deleteOrganizationLogo = useCallback(async () => {
-    setBrandingUploading(true);
-    setBrandingError(null);
-    try {
-      if (!authSession) throw new Error("Not authenticated");
-      const data = await deleteUserBrandingLogo();
-      setOrganizationBranding(data);
-    } catch (err) {
-      setBrandingError(getBrandingDisplayErrorMessage(err));
-    } finally {
-      setBrandingUploading(false);
-    }
-  }, [authSession]);
-
-  const saveBrokerage = useCallback(async () => {
-    setBrandingUploading(true);
-    setBrandingError(null);
-    try {
-      if (!authSession) throw new Error("Not authenticated");
-      const updated = await updateBrokerageName(brokerageName.trim());
-      setBrokerageName((updated.brokerage_name || "").trim());
-      await loadOrganizationBranding();
-    } catch (err) {
-      setBrandingError(getBrandingDisplayErrorMessage(err));
-    } finally {
-      setBrandingUploading(false);
-    }
-  }, [authSession, brokerageName, loadOrganizationBranding]);
-
   useEffect(() => {
     if (!authSession) {
       setOrganizationBranding(null);
       setBrokerageName("");
+      setClientLogoDataUrl(null);
+      setClientLogoFileName(null);
+      setClientLogoError(null);
       return;
     }
     void loadOrganizationBranding();
@@ -589,6 +520,10 @@ export default function Home() {
   }, [defaultPreparedByFromAuth]);
 
   const uploadClientLogo = useCallback(async (file: File) => {
+    if (!authSession) {
+      setClientLogoError("Sign in to upload a client logo.");
+      return;
+    }
     const mime = (file.type || "").toLowerCase();
     if (!["image/png", "image/jpeg", "image/jpg", "image/svg+xml"].includes(mime)) {
       setClientLogoError("Client logo must be PNG, SVG, or JPG.");
@@ -609,7 +544,7 @@ export default function Home() {
     } finally {
       setClientLogoUploading(false);
     }
-  }, []);
+  }, [authSession]);
 
   const clearClientLogo = useCallback(() => {
     setClientLogoDataUrl(null);
@@ -1459,7 +1394,7 @@ export default function Home() {
           <p className="text-sm text-slate-300 mb-4">
             Uses per-scenario discount rate overrides when set; otherwise defaults to 8%.
           </p>
-          {!authSession ? (
+          {!authSession && (
             <div className="mb-5 border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
               <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
               <div className="flex flex-wrap gap-2">
@@ -1471,112 +1406,113 @@ export default function Home() {
                 </a>
               </div>
             </div>
-          ) : (
-            <>
-              <div className="mb-4 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-end">
-                <label className="block">
-                  <span className="text-xs text-slate-400">Brokerage name</span>
-                  <input
-                    type="text"
-                    value={brokerageName}
-                    onChange={(e) => setBrokerageName(e.target.value)}
-                    className="input-premium mt-1"
-                    placeholder="Your brokerage"
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="btn-premium btn-premium-secondary w-full sm:w-auto"
-                  onClick={() => void saveBrokerage()}
-                  disabled={brandingUploading || brandingLoading}
-                >
-                  Save brokerage
-                </button>
-              </div>
-              <BrandingLogoUploader
-                branding={organizationBranding}
-                loading={brandingLoading}
-                uploading={brandingUploading}
-                error={brandingError}
-                onUpload={uploadOrganizationLogo}
-                onDelete={deleteOrganizationLogo}
-              />
-              <div className="mb-5 border-t border-slate-300/20 pt-4">
-                <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
-                <div className="mb-3">
-                  <ClientLogoUploader
-                    logoDataUrl={clientLogoDataUrl}
-                    fileName={clientLogoFileName}
-                    uploading={clientLogoUploading}
-                    error={clientLogoError}
-                    onUpload={uploadClientLogo}
-                    onClear={clearClientLogo}
-                  />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label className="block">
-                    <span className="text-xs text-slate-400">Prepared for</span>
-                    <input
-                      type="text"
-                      value={reportMeta.prepared_for}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
-                      className="input-premium mt-1"
-                      placeholder="Client"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-xs text-slate-400">Prepared by</span>
-                    <input
-                      type="text"
-                      value={reportMeta.prepared_by}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
-                      className="input-premium mt-1"
-                      placeholder="theCREmodel"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-xs text-slate-400">Report date</span>
-                    <input
-                      type="text"
-                      value={reportMeta.report_date}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
-                      onBlur={(e) =>
-                        setReportMeta((prev) => ({
-                          ...prev,
-                          report_date: normalizeDateMmDdYyyy(e.target.value),
-                        }))
-                      }
-                      className="input-premium mt-1"
-                      placeholder="MM.DD.YYYY"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-xs text-slate-400">Market</span>
-                    <input
-                      type="text"
-                      value={reportMeta.market}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, market: e.target.value }))}
-                      className="input-premium mt-1"
-                      placeholder={inferredReportLocation.market || "Auto from document/API"}
-                    />
-                  </label>
-                  <label className="block sm:col-span-2">
-                    <span className="text-xs text-slate-400">Submarket</span>
-                    <input
-                      type="text"
-                      value={reportMeta.submarket}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, submarket: e.target.value }))}
-                      className="input-premium mt-1"
-                      placeholder={inferredReportLocation.submarket || "Auto from document/API when available"}
-                    />
-                  </label>
-                </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
+          )}
+          <div className="mb-5 border border-slate-300/20 bg-slate-950/30 p-4">
+            <p className="heading-kicker mb-2">Brokerage branding</p>
+            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
+              <div>
+                <p className="text-xs text-slate-400">Brokerage name</p>
+                <p className="mt-1 text-sm text-white">{brokerageName || "The CRE Model"}</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Brokerage logo: {organizationBranding?.has_logo ? "Saved" : "Using The CRE Model default"}
+                </p>
+                <p className="mt-2 text-xs text-slate-400">
+                  Brokerage name and logo are editable only in Account.
                 </p>
               </div>
-            </>
-          )}
+              {authSession ? (
+                <a href="/branding" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                  Manage brokerage branding
+                </a>
+              ) : (
+                <a href="/account?mode=signin" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                  Sign in to manage branding
+                </a>
+              )}
+            </div>
+            {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading brokerage branding…</p>}
+          </div>
+          <div className="mb-5 border-t border-slate-300/20 pt-4">
+            <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
+            <div className="mb-3">
+              <ClientLogoUploader
+                logoDataUrl={clientLogoDataUrl}
+                fileName={clientLogoFileName}
+                uploading={clientLogoUploading}
+                disabled={!authSession}
+                disabledMessage="Sign in to upload a client logo."
+                error={clientLogoError}
+                onUpload={uploadClientLogo}
+                onClear={clearClientLogo}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-xs text-slate-400">Prepared for</span>
+                <input
+                  type="text"
+                  value={reportMeta.prepared_for}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
+                  className="input-premium mt-1 disabled:opacity-60"
+                  placeholder="Client"
+                  disabled={!authSession}
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-400">Prepared by</span>
+                <input
+                  type="text"
+                  value={reportMeta.prepared_by}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
+                  className="input-premium mt-1 disabled:opacity-60"
+                  placeholder="theCREmodel"
+                  disabled={!authSession}
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-400">Report date</span>
+                <input
+                  type="text"
+                  value={reportMeta.report_date}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
+                  onBlur={(e) =>
+                    setReportMeta((prev) => ({
+                      ...prev,
+                      report_date: normalizeDateMmDdYyyy(e.target.value),
+                    }))
+                  }
+                  className="input-premium mt-1 disabled:opacity-60"
+                  placeholder="MM.DD.YYYY"
+                  disabled={!authSession}
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-400">Market</span>
+                <input
+                  type="text"
+                  value={reportMeta.market}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, market: e.target.value }))}
+                  className="input-premium mt-1 disabled:opacity-60"
+                  placeholder={inferredReportLocation.market || "Auto from document/API"}
+                  disabled={!authSession}
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="text-xs text-slate-400">Submarket</span>
+                <input
+                  type="text"
+                  value={reportMeta.submarket}
+                  onChange={(e) => setReportMeta((prev) => ({ ...prev, submarket: e.target.value }))}
+                  className="input-premium mt-1 disabled:opacity-60"
+                  placeholder={inferredReportLocation.submarket || "Auto from document/API when available"}
+                  disabled={!authSession}
+                />
+              </label>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
+            </p>
+          </div>
           <div className="flex flex-wrap gap-3">
               <button
                 type="button"

@@ -7,6 +7,8 @@ interface ClientLogoUploaderProps {
   logoDataUrl: string | null;
   fileName: string | null;
   uploading: boolean;
+  disabled?: boolean;
+  disabledMessage?: string;
   error: string | null;
   onUpload: (file: File) => Promise<void>;
   onClear: () => void;
@@ -18,6 +20,8 @@ export function ClientLogoUploader({
   logoDataUrl,
   fileName,
   uploading,
+  disabled = false,
+  disabledMessage = "Sign in to upload a client logo.",
   error,
   onUpload,
   onClear,
@@ -47,23 +51,23 @@ export function ClientLogoUploader({
     async (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       setDragOver(false);
-      if (uploading) return;
+      if (uploading || disabled) return;
       try {
         await processFiles(event.dataTransfer.files);
       } catch {
         // error is managed by page state
       }
     },
-    [processFiles, uploading]
+    [processFiles, uploading, disabled]
   );
 
   const onDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
-      if (uploading) return;
+      if (uploading || disabled) return;
       setDragOver(true);
     },
-    [uploading]
+    [uploading, disabled]
   );
 
   const onDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -74,6 +78,7 @@ export function ClientLogoUploader({
   const onFileInputChange = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       try {
+        if (disabled) return;
         await processFiles(event.target.files);
       } catch {
         // error is managed by page state
@@ -81,7 +86,7 @@ export function ClientLogoUploader({
         event.target.value = "";
       }
     },
-    [processFiles]
+    [processFiles, disabled]
   );
 
   return (
@@ -103,7 +108,7 @@ export function ClientLogoUploader({
           accept=".png,.svg,.jpg,.jpeg,image/png,image/svg+xml,image/jpeg"
           className="hidden"
           onChange={onFileInputChange}
-          disabled={uploading}
+          disabled={uploading || disabled}
         />
         {hasLogo ? (
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-center">
@@ -122,7 +127,7 @@ export function ClientLogoUploader({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="btn-premium btn-premium-secondary"
-                disabled={uploading}
+                disabled={uploading || disabled}
               >
                 Replace
               </button>
@@ -130,7 +135,7 @@ export function ClientLogoUploader({
                 type="button"
                 onClick={onClear}
                 className="btn-premium btn-premium-danger"
-                disabled={uploading}
+                disabled={uploading || disabled}
               >
                 Remove
               </button>
@@ -143,13 +148,14 @@ export function ClientLogoUploader({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="btn-premium btn-premium-secondary"
-              disabled={uploading}
+              disabled={uploading || disabled}
             >
               {uploading ? "Uploading..." : "Upload client logo"}
             </button>
           </div>
         )}
         <p className="mt-2 text-xs text-slate-400">{helperText}</p>
+        {disabled && <p className="mt-2 text-xs text-amber-200">{disabledMessage}</p>}
         {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
       </div>
     </div>
