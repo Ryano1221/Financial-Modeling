@@ -65,7 +65,126 @@ export function ScenarioList({
         <h2 className="heading-section mb-2">Scenario manager</h2>
         <p className="text-xs text-slate-400">Rename, drag to reorder, include in summary. Information is stored securely.</p>
       </div>
-      <div className="overflow-x-auto">
+      <div className="md:hidden p-3 space-y-3">
+        {scenarios.map((s) => (
+          <div
+            key={`mobile-${s.id}`}
+            className={`border border-slate-300/20 bg-slate-950/60 p-3 space-y-3 ${
+              selectedId === s.id ? "ring-1 ring-[#3b82f6]/60 bg-[#3b82f6]/12" : ""
+            }`}
+          >
+            <div>
+              {editingId === s.id ? (
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onBlur={() => submitRename(s.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitRename(s.id);
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                  className="input-premium min-h-0 py-2 px-2 text-sm"
+                  autoFocus
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelect(s.id)}
+                  className={`${nameBtnBase} ${
+                    selectedId === s.id
+                      ? "bg-[#3b82f6]/20 border-[#3b82f6]/60 text-white"
+                      : "text-slate-100 border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:border-slate-200/45"
+                  }`}
+                  title={s.name}
+                >
+                  <span
+                    className={`cursor-grab text-xs leading-none ${selectedId === s.id ? "text-slate-200" : "text-slate-500"}`}
+                    aria-hidden
+                  >
+                    {onReorder ? "⋮⋮" : ""}
+                  </span>
+                  <span className="flex-1 whitespace-normal break-words leading-snug">{s.name}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+              <div>
+                <p className="text-slate-400">Doc type</p>
+                <p className="text-slate-200 capitalize whitespace-normal break-words">{(s.document_type_detected || "unknown").replace(/_/g, " ")}</p>
+              </div>
+              <div>
+                <p className="text-slate-400">RSF</p>
+                <p className="text-slate-200">{formatRSF(s.rsf)}</p>
+              </div>
+              <div>
+                <p className="text-slate-400">Commencement</p>
+                <p className="text-slate-200">{formatDateISO(s.commencement)}</p>
+              </div>
+              <div>
+                <p className="text-slate-400">Expiration</p>
+                <p className="text-slate-200">{formatDateISO(s.expiration)}</p>
+              </div>
+              <div>
+                <p className="text-slate-400">Opex mode</p>
+                <p className="text-slate-200 capitalize">{s.opex_mode === "base_year" ? "Base year" : "NNN"}</p>
+              </div>
+              <div>
+                {onToggleIncludeInSummary && (
+                  <>
+                    <p className="text-slate-400">Summary</p>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer mt-0.5">
+                      <input
+                        type="checkbox"
+                        checked={includedInSummary[s.id] !== false}
+                        onChange={() => onToggleIncludeInSummary(s.id)}
+                        className="rounded border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6]"
+                      />
+                      <span className="text-slate-300">Include</span>
+                    </label>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {onRename && editingId !== s.id && (
+                <button
+                  type="button"
+                  onClick={() => startRename(s)}
+                  className={actionBtnNeutral}
+                >
+                  Rename
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onSelect(s.id)}
+                className={actionBtnNeutral}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => onDuplicate(s.id)}
+                className={actionBtnNeutral}
+              >
+                Duplicate
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(s.id)}
+                className={actionBtnDanger}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden md:block overflow-x-auto">
         <table className="w-full min-w-[980px] text-xs sm:text-sm">
           <thead>
             <tr className="bg-slate-900/35 border-b border-slate-300/20">
