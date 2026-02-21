@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 
 DEFAULT_MONOCHROME = "#111111"
@@ -1242,6 +1242,274 @@ def _monthly_appendix_table_html(rows: list[dict[str, Any]]) -> str:
     """
 
 
+def _scenario_pre_commencement_amount(entry: dict[str, Any]) -> float:
+    """
+    Month 0 cash outflow using existing model concepts for upfront costs.
+    Includes broker fee, security deposit outflow, month-0 one-time costs,
+    and month-0 expected termination fee if present.
+    """
+    scenario = entry.get("scenario") if isinstance(entry.get("scenario"), dict) else {}
+    result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
+
+    broker_fee = max(0.0, _safe_float(result.get("broker_fee_nominal"), _safe_float(scenario.get("broker_fee"), 0.0)))
+    deposit = max(0.0, _safe_float(result.get("deposit_nominal"), 0.0))
+    one_time_month0 = 0.0
+    one_time_costs = scenario.get("one_time_costs")
+    if isinstance(one_time_costs, list):
+        for item in one_time_costs:
+            if not isinstance(item, dict):
+                continue
+            month = _safe_int(item.get("month"), 0)
+            if month <= 0:
+                one_time_month0 += max(0.0, _safe_float(item.get("amount"), 0.0))
+
+    termination_month0 = 0.0
+    termination = scenario.get("termination_option")
+    if isinstance(termination, dict) and _safe_int(termination.get("month"), -1) == 0:
+        termination_month0 = max(0.0, _safe_float(termination.get("fee"), 0.0)) * max(
+            0.0, min(1.0, _safe_float(termination.get("probability"), 0.0))
+        )
+
+    return broker_fee + deposit + one_time_month0 + termination_month0
+
+
+def _scenario_monthly_window(entry: dict[str, Any]) -> dict[str, Any]:
+    monthly_rows = _scenario_monthly_cashflow_rows(entry)
+    by_month_start: dict[date, float] = {}
+    for row in monthly_rows:
+        m_start = _parse_date(row.get("month_start"))
+        if m_start is None:
+            continue
+        key = date(m_start.year, m_start.month, 1)
+        by_month_start[key] = _safe_float(row.get("gross"), 0.0)
+
+    scenario = entry["scenario"]
+    commencement = _parse_date(scenario.get("commencement"))
+    expiration = _parse_date(scenario.get("expiration"))
+    start_month = date(commencement.year, commencement.month, 1) if commencement else None
+    end_month = date(expiration.year, expiration.month, 1) if expiration else None
+    if by_month_start:
+        start_month = start_month or min(by_month_start)
+        end_month = end_month or max(by_month_start)
+
+    return {
+        "start_month": start_month,
+        "end_month": end_month,
+        "gross_by_month": by_month_start,
+        "month0_value": _scenario_pre_commencement_amount(entry),
+    }
+
+
+def _consolidated_monthly_gross_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    windows = [_scenario_monthly_window(entry) for entry in entries]
+    starts = [w["start_month"] for w in windows if isinstance(w.get("start_month"), date)]
+    ends = [w["end_month"] for w in windows if isinstance(w.get("end_month"), date)]
+    if not starts or not ends:
+        return []
+
+    overall_start = min(starts)
+    overall_end = max(ends)
+    month_starts: list[date] = []
+    cursor = overall_start
+    while cursor <= overall_end:
+        month_starts.append(cursor)
+        cursor = _add_months(cursor, 1)
+
+    rows: list[dict[str, Any]] = [
+        {
+            "month_no": "0",
+            "date_text": "Pre Commencement",
+            "values": [_fmt_currency(w.get("month0_value"), precision=0) for w in windows],
+        }
+    ]
+
+    for idx, month_start in enumerate(month_starts, start=1):
+        values: list[str] = []
+        for window in windows:
+            start_month = window.get("start_month")
+            end_month = window.get("end_month")
+            gross_map = window.get("gross_by_month") if isinstance(window.get("gross_by_month"), dict) else {}
+            if isinstance(start_month, date) and month_start < start_month:
+                values.append("—")
+                continue
+            if isinstance(end_month, date) and month_start > end_month:
+                values.append("—")
+                continue
+            if month_start in gross_map:
+                values.append(_fmt_currency(gross_map.get(month_start), precision=0))
+            else:
+                values.append(_fmt_currency(0.0, precision=0))
+        rows.append(
+            {
+                "month_no": str(idx),
+                "date_text": _fmt_date(month_start),
+                "values": values,
+            }
+        )
+    return rows
+
+
+def _monthly_gross_matrix_table(entries: list[dict[str, Any]], rows: list[dict[str, Any]]) -> str:
+    scenario_count = max(1, len(entries))
+    month_col = 7.5
+    date_col = 12.5
+    scenario_col = max(9.0, (100.0 - month_col - date_col) / scenario_count)
+    colgroup = (
+        f'<col style="width:{month_col:.2f}%"/>'
+        f'<col style="width:{date_col:.2f}%"/>'
+        + "".join(f'<col style="width:{scenario_col:.2f}%"/>' for _ in entries)
+    )
+
+    head_cells = "".join(
+        f"<th><span class='matrix-head-text'>{_esc(e['name'])}</span></th>"
+        for e in entries
+    )
+    body_rows = "".join(
+        "<tr>"
+        f"<th><span class='matrix-row-label'>{_esc(row['month_no'])}</span></th>"
+        f"<td><span class='matrix-cell-text'>{_esc(row['date_text'])}</span></td>"
+        + "".join(f"<td><span class='matrix-cell-text'>{_esc(v)}</span></td>" for v in row["values"])
+        + "</tr>"
+        for row in rows
+    )
+
+    return f"""
+    <table class="matrix-table monthly-gross-table">
+      <colgroup>{colgroup}</colgroup>
+      <thead>
+        <tr>
+          <th>Month #</th>
+          <th>Date</th>
+          {head_cells}
+        </tr>
+      </thead>
+      <tbody>{body_rows}</tbody>
+    </table>
+    """
+
+
+TChunk = TypeVar("TChunk")
+
+
+def _chunk_list(items: list[TChunk], size: int) -> list[list[TChunk]]:
+    if size <= 0:
+        return [items]
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _monthly_gross_panel_size(orientation: str, font_scale: float) -> int:
+    """
+    Determine how many scenario columns can safely fit for the consolidated
+    monthly matrix. If too wide, we split into panels (e.g. scenarios 1-3).
+    """
+    width = _content_inner_width_mm(orientation)
+    fixed_cols_mm = 34.0
+    scenario_col_mm = max(18.0, 26.0 * max(MIN_FONT_SCALE, min(1.0, font_scale)))
+    capacity = int((width - fixed_cols_mm) // scenario_col_mm)
+    return max(1, min(10, capacity))
+
+
+def _monthly_gross_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[DeckPage]:
+    if not entries:
+        return []
+    all_rows = _consolidated_monthly_gross_rows(entries)
+    if not all_rows:
+        return []
+
+    estimated_width_mm = 34.0 + (len(entries) * 26.0)
+    default_orientation = _auto_orientation_for_columns(estimated_width_mm)
+    orientation = plan.orientation_for("monthly_gross_matrix", default_orientation)
+    panel_size = _monthly_gross_panel_size(orientation, plan.font_scale)
+    entry_panels = _chunk_list(entries, panel_size)
+
+    row_mm = 6.2 * plan.font_scale
+    rows_per_page = _rows_per_page_from_printable(
+        orientation,
+        header_mm=38.0,
+        row_mm=row_mm,
+        safety_rows=plan.monthly_safety + 1,
+    )
+    rows_per_page = max(2, rows_per_page)
+
+    pages: list[DeckPage] = []
+    total_panels = len(entry_panels)
+    for panel_idx, panel_entries in enumerate(entry_panels, start=1):
+        panel_offset = (panel_idx - 1) * panel_size
+        row_chunks = _chunk_list(all_rows, rows_per_page)
+        total_chunks = len(row_chunks)
+        panel_start = panel_offset + 1
+        panel_end = panel_start + len(panel_entries) - 1
+        for chunk_idx, row_chunk in enumerate(row_chunks, start=1):
+            panel_rows = [
+                {
+                    "month_no": row["month_no"],
+                    "date_text": row["date_text"],
+                    "values": row["values"][panel_offset : panel_offset + len(panel_entries)],
+                }
+                for row in row_chunk
+            ]
+            subtitle = (
+                "Month 0 reflects pre-commencement outflows. Timeline spans earliest commencement to latest expiration."
+                if chunk_idx == 1 and panel_idx == 1
+                else (
+                    "Monthly Gross Cash Flows (All Scenarios) continued"
+                    f" · Panel {panel_idx}/{total_panels} (Options {panel_start}-{panel_end})"
+                    f" · Page {chunk_idx}/{total_chunks}"
+                )
+            )
+            body_html = f"""
+                {SectionTitle("Cash flows", "Monthly Gross Cash Flows (All Scenarios)", subtitle)}
+                {_monthly_gross_matrix_table(panel_entries, panel_rows)}
+                """
+            pages.append(
+                DeckPage(
+                    body_html=body_html,
+                    section_label="Monthly gross cash flows",
+                    include_frame=True,
+                    kind="monthly_gross_matrix",
+                    orientation=orientation,
+                )
+            )
+    return pages
+
+
+def _scenario_monthly_appendix_pages(entry: dict[str, Any], plan: DeckRenderPlan) -> list[DeckPage]:
+    monthly_rows = _scenario_monthly_cashflow_rows(entry)
+    if not monthly_rows:
+        return []
+
+    appendix_orientation_default = _auto_orientation_for_columns(236.0)
+    appendix_orientation = plan.orientation_for("monthly_cashflow_appendix", appendix_orientation_default)
+    rows_per_page = _rows_per_page_from_printable(
+        appendix_orientation,
+        header_mm=30.0,
+        row_mm=6.0 * plan.font_scale,
+        safety_rows=plan.monthly_safety + 1,
+    )
+    chunks = _chunk_list(monthly_rows, rows_per_page)
+    total_chunks = len(chunks)
+    pages: list[DeckPage] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        subtitle = (
+            "Detailed monthly line-item cash flows."
+            if idx == 1
+            else f"Scenario detail (continued) · page {idx} of {total_chunks}"
+        )
+        pages.append(
+            DeckPage(
+                body_html=f"""
+                {SectionTitle("Appendix", f"Appendix — Monthly Cash Flows ({entry['name']})", subtitle)}
+                {_monthly_appendix_table_html(chunk)}
+                """,
+                section_label="Appendix — monthly cash flows",
+                include_frame=True,
+                kind="monthly_cashflow_appendix",
+                orientation=appendix_orientation,
+            )
+        )
+    return pages
+
+
 def ScenarioDetailSections(entry: dict[str, Any], plan: DeckRenderPlan) -> list[DeckPage]:
     scenario = entry["scenario"]
     result = entry["result"]
@@ -1310,37 +1578,6 @@ def ScenarioDetailSections(entry: dict[str, Any], plan: DeckRenderPlan) -> list[
         )
     ]
 
-    if not monthly_rows:
-        return pages
-
-    appendix_orientation_default = _auto_orientation_for_columns(236.0)
-    appendix_orientation = plan.orientation_for("monthly_cashflow", appendix_orientation_default)
-    rows_per_page = _rows_per_page_from_printable(
-        appendix_orientation,
-        header_mm=30.0,
-        row_mm=6.0 * plan.font_scale,
-        safety_rows=plan.monthly_safety + 1,
-    )
-    chunks = [monthly_rows[i : i + rows_per_page] for i in range(0, len(monthly_rows), rows_per_page)]
-    total_chunks = len(chunks)
-    for idx, chunk in enumerate(chunks, start=1):
-        subtitle = (
-            "Monthly Cash Flows"
-            if idx == 1
-            else f"Scenario Detail (Continued) · Monthly Cash Flows page {idx} of {total_chunks}"
-        )
-        pages.append(
-            DeckPage(
-                body_html=f"""
-                {SectionTitle("Monthly appendix", entry["name"], subtitle)}
-                {_monthly_appendix_table_html(chunk)}
-                """,
-                section_label="Monthly cash flows",
-                include_frame=True,
-                kind="monthly_cashflow",
-                orientation=appendix_orientation,
-            )
-        )
     return pages
 
 
@@ -2710,11 +2947,14 @@ def build_report_deck_html(data: dict[str, Any], plan: DeckRenderPlan | None = N
         )
     )
     page_payloads.extend(_matrix_pages(entries, active_plan))
+    page_payloads.extend(_monthly_gross_pages(entries, active_plan))
     page_payloads.extend(_notes_pages(entries, active_plan))
     page_payloads.extend(_cost_visuals_pages(entries, active_plan))
     page_payloads.extend(_lease_abstract_pages(entries, active_plan))
     for entry in entries:
         page_payloads.extend(ScenarioDetailSections(entry, active_plan))
+    for entry in entries:
+        page_payloads.extend(_scenario_monthly_appendix_pages(entry, active_plan))
     page_payloads.append(
         DeckPage(
             body_html=DisclaimerPage(theme),
@@ -2804,7 +3044,8 @@ def _adjust_plan_for_overflow(plan: DeckRenderPlan, issues: list[dict[str, Any]]
             changed = True
         elif _safe_float(issue.get("overflowPx"), 0.0) > 0.0 and not _is_landscape(orientation) and kind in {
             "comparison_matrix",
-            "monthly_cashflow",
+            "monthly_cashflow_appendix",
+            "monthly_gross_matrix",
             "scenario_summary",
         }:
             plan.orientation_overrides[kind] = "landscape"

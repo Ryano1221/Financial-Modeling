@@ -172,7 +172,9 @@ def test_scenario_detail_rows_paginate_without_omitting_rows():
     html = build_report_deck_html(
         {"scenarios": [{"scenario": scenario.model_dump(mode="json"), "result": result.model_dump()}]}
     )
-    assert "Scenario Detail (Continued)" in html
+    assert "Monthly Gross Cash Flows (All Scenarios)" in html
+    assert "Appendix — Monthly Cash Flows (Pagination Stress)" in html
+    assert "Scenario detail (continued) · page" in html
     assert "additional segmented row(s) omitted" not in html
     assert "Monthly Cash Flows" in html
 
@@ -197,8 +199,9 @@ def test_scenario_detail_handles_40_plus_steps_without_dropping_rows():
     html = build_report_deck_html(
         {"scenarios": [{"scenario": scenario.model_dump(mode="json"), "result": result.model_dump()}]}
     )
-    assert html.count("Scenario Detail (Continued)") >= 1
-    assert "Monthly Cash Flows" in html
+    assert "Monthly Gross Cash Flows (All Scenarios)" in html
+    assert "Appendix — Monthly Cash Flows (Forty Step Stress)" in html
+    assert html.count("Scenario detail (continued) · page") >= 1
 
 
 def test_scenario_detail_splits_long_notes_into_continuation_rows():
@@ -269,3 +272,17 @@ def test_notes_page_paginates_when_note_cards_are_large():
 
     html = build_report_deck_html({"scenarios": scenarios, "branding": {"client_name": "Portfolio"}})
     assert "Notes &amp; Clause Highlights continued" in html
+
+
+def test_monthly_gross_cashflow_matrix_includes_month0_and_timeline_alignment():
+    first = _entry("Early Start", 5400, 41.0, doc_type="proposal")
+    second = _entry("Later Start", 6200, 39.0, doc_type="lease")
+    second["scenario"]["commencement"] = "2026-06-01"
+    second["scenario"]["expiration"] = "2030-12-31"
+    payload = {"scenarios": [first, second], "branding": {"client_name": "Timeline Client"}}
+
+    html = build_report_deck_html(payload)
+    assert "Monthly Gross Cash Flows (All Scenarios)" in html
+    assert "Pre Commencement" in html
+    assert "<th>Month #</th>" in html
+    assert "<th>Date</th>" in html
