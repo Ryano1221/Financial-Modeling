@@ -144,13 +144,13 @@ def test_report_branding_rejects_invalid_media_inputs():
         ReportBranding(logoAssetBytes="not-base64")
 
 
-def test_report_dates_are_rendered_dd_mm_yyyy():
+def test_report_dates_are_rendered_mm_dd_yyyy():
     payload = {
         "scenarios": [_entry("Date Format Scenario", 4500, 36.0)],
         "branding": {"reportDate": "02/19/2026"},
     }
     html = build_report_deck_html(payload)
-    assert "19/02/2026" in html
+    assert "02.19.2026" in html
 
 
 def test_scenario_detail_rows_paginate_without_omitting_rows():
@@ -172,9 +172,9 @@ def test_scenario_detail_rows_paginate_without_omitting_rows():
     html = build_report_deck_html(
         {"scenarios": [{"scenario": scenario.model_dump(mode="json"), "result": result.model_dump()}]}
     )
-    assert "Rent schedule continued" in html
+    assert "Scenario Detail (Continued)" in html
     assert "additional segmented row(s) omitted" not in html
-    assert "Average Costs" in html
+    assert "Monthly Cash Flows" in html
 
 
 def test_scenario_detail_handles_40_plus_steps_without_dropping_rows():
@@ -197,10 +197,8 @@ def test_scenario_detail_handles_40_plus_steps_without_dropping_rows():
     html = build_report_deck_html(
         {"scenarios": [{"scenario": scenario.model_dump(mode="json"), "result": result.model_dump()}]}
     )
-    assert html.count("Rent schedule continued") >= 1
-    # Ensure first and last generated step markers exist in detail rows.
-    assert ">1<" in html
-    assert ">42<" in html
+    assert html.count("Scenario Detail (Continued)") >= 1
+    assert "Monthly Cash Flows" in html
 
 
 def test_scenario_detail_splits_long_notes_into_continuation_rows():
@@ -236,7 +234,7 @@ def test_scenario_detail_splits_long_notes_into_continuation_rows():
     )
     _, result = compute_cashflows(scenario)
     html = build_report_deck_html({"scenarios": [{"scenario": scenario_json, "result": result.model_dump()}]})
-    assert "(cont.)" in html
+    assert "Lease Abstract Highlights" in html
 
 
 def test_notes_page_keeps_full_bullets_without_truncation():

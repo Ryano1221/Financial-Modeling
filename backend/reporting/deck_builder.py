@@ -12,7 +12,7 @@ import html
 import math
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,14 @@ DEFAULT_MONOCHROME = "#111111"
 DEFAULT_REPORT_TITLE = "Lease Economics Comparison Deck"
 DEFAULT_CONFIDENTIALITY = "Confidential"
 MAX_LOGO_BYTES = 1_500_000
+MIN_FONT_SCALE = 0.95
+
+A4_PORTRAIT_MM = (210.0, 297.0)
+A4_LANDSCAPE_MM = (297.0, 210.0)
+PAGE_MARGIN_MM = 8.0
+HEADER_HEIGHT_MM = 18.0
+FOOTER_HEIGHT_MM = 12.0
+CONTENT_PADDING_MM = 6.0
 
 
 @dataclass(frozen=True)
@@ -47,11 +55,76 @@ class DeckTheme:
     confidentiality_line: str
 
 
+@dataclass
+class DeckPage:
+    body_html: str
+    section_label: str
+    include_frame: bool
+    kind: str
+    orientation: str = "portrait"
+
+
+@dataclass
+class DeckRenderPlan:
+    font_scale: float = 1.0
+    orientation_overrides: dict[str, str] = field(default_factory=dict)
+    matrix_safety: int = 0
+    notes_safety: int = 0
+    monthly_safety: int = 0
+    annual_safety: int = 0
+
+    def orientation_for(self, kind: str, default: str) -> str:
+        return self.orientation_overrides.get(kind, default)
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     parsed = _numeric_or_none(value)
     if parsed is None:
         return default
     return parsed
+
+
+def _is_landscape(orientation: str) -> bool:
+    return str(orientation or "").strip().lower() == "landscape"
+
+
+def _page_size_mm(orientation: str) -> tuple[float, float]:
+    return A4_LANDSCAPE_MM if _is_landscape(orientation) else A4_PORTRAIT_MM
+
+
+def _printable_area_mm(orientation: str) -> tuple[float, float]:
+    w, h = _page_size_mm(orientation)
+    return (w - (2.0 * PAGE_MARGIN_MM), h - (2.0 * PAGE_MARGIN_MM))
+
+
+def _content_inner_height_mm(orientation: str) -> float:
+    _, printable_h = _printable_area_mm(orientation)
+    return max(
+        40.0,
+        printable_h - HEADER_HEIGHT_MM - FOOTER_HEIGHT_MM - (2.0 * CONTENT_PADDING_MM),
+    )
+
+
+def _content_inner_width_mm(orientation: str) -> float:
+    printable_w, _ = _printable_area_mm(orientation)
+    return max(80.0, printable_w - (2.0 * CONTENT_PADDING_MM))
+
+
+def _auto_orientation_for_columns(total_column_mm: float) -> str:
+    portrait_width = _content_inner_width_mm("portrait")
+    return "landscape" if total_column_mm > portrait_width else "portrait"
+
+
+def _rows_per_page_from_printable(
+    orientation: str,
+    *,
+    header_mm: float,
+    row_mm: float,
+    safety_rows: int = 0,
+) -> int:
+    usable = _content_inner_height_mm(orientation) - max(0.0, header_mm)
+    base = max(1, math.floor(usable / max(1.0, row_mm)))
+    return max(1, base - max(0, safety_rows))
 
 
 def _numeric_or_none(value: Any) -> float | None:
@@ -373,6 +446,8 @@ def _build_page_shell(
     total_pages: int,
     section_label: str,
     include_frame: bool = True,
+    kind: str = "general",
+    orientation: str = "portrait",
 ) -> str:
     logo = (
         f'<img class="brand-logo" src="{_esc(theme.logo_src)}" alt="{_esc(theme.brand_name)}" />'
@@ -407,8 +482,9 @@ def _build_page_shell(
             """
         )
     )
+    orientation_cls = "landscape" if _is_landscape(orientation) else "portrait"
     return f"""
-    <section class="pdf-page">
+    <section class="pdf-page {orientation_cls}" data-kind="{_esc(kind)}" data-orientation="{orientation_cls}">
       {header}
       <div class="page-content"><div class="page-content-inner">{body_html}</div></div>
       {footer}
@@ -945,44 +1021,327 @@ def _detail_table_html(rows: list[dict[str, str]]) -> str:
     """
 
 
-def ScenarioDetailSections(entry: dict[str, Any]) -> list[str]:
+def _term_months_from_dates(commencement: date | None, expiration: date | None, fallback: int = 0) -> int:
+    if not commencement or not expiration:
+        return max(0, fallback)
+    months = (expiration.year - commencement.year) * 12 + (expiration.month - commencement.month)
+    if expiration.day < commencement.day:
+        months -= 1
+    if commencement.day == 1:
+        month_end = (date(expiration.year, expiration.month, 1) + timedelta(days=31)).replace(day=1) - timedelta(days=1)
+        if expiration.day == month_end.day:
+            months += 1
+    return max(months, fallback)
+
+
+def _monthly_step_for_index(step_rows: list[dict[str, Any]], month_index: int) -> dict[str, Any] | None:
+    for step in step_rows:
+        if step["start"] <= month_index <= step["end"]:
+            return step
+    return None
+
+
+def _scenario_monthly_cashflow_rows(entry: dict[str, Any]) -> list[dict[str, Any]]:
     scenario = entry["scenario"]
     result = entry["result"]
-    rows = _scenario_rent_rows(entry)
-    chunks = _chunk_detail_rows(rows, max_units=44)
-    if not chunks:
-        chunks = [[]]
-    kpis = [
-        ("Document type", entry["doc_type"]),
-        ("RSF", f"{_fmt_number(scenario.get('rsf'))} SF"),
-        ("Term", f"{_fmt_number(result.get('term_months'))} months"),
-        ("NPV cost", _fmt_currency(result.get("npv_cost"))),
-        ("Avg cost/SF/year", _fmt_psf(result.get("avg_cost_psf_year"))),
-        ("Total obligation", _fmt_currency(result.get("total_cost_nominal"))),
-    ]
-    out: list[str] = []
-    total_chunks = len(chunks)
-    for idx, chunk in enumerate(chunks):
-        subtitle = (
-            "Full segmented rent schedule with no clipped rows."
-            if total_chunks == 1
-            else f"Rent schedule continued — page {idx + 1} of {total_chunks}."
+    steps = _extract_rent_steps(scenario)
+    if not steps:
+        return []
+    month_base = _month_index_base(steps)
+    commencement = _parse_date(scenario.get("commencement"))
+    expiration = _parse_date(scenario.get("expiration"))
+    term_months = _safe_int(result.get("term_months"), 0)
+    term_months = _term_months_from_dates(commencement, expiration, fallback=term_months)
+    if term_months <= 0:
+        term_months = max(1, max(step["end"] for step in steps) - min(step["start"] for step in steps) + 1)
+
+    phase_steps = _extract_phase_steps(scenario)
+    free_range = _free_rent_range(scenario, month_base)
+    free_type = str(scenario.get("free_rent_abatement_type") or "base").strip().lower()
+    base_opex = _safe_float(scenario.get("base_opex_psf_yr"), 0.0)
+    opex_growth = _safe_float(scenario.get("opex_growth"), 0.0)
+    parking_spaces = max(0, _safe_int(scenario.get("parking_spaces"), 0))
+    parking_per_spot = max(0.0, _safe_float(scenario.get("parking_cost_monthly_per_space"), 0.0))
+    parking_tax_rate = max(0.0, _safe_float(scenario.get("parking_sales_tax_rate"), 0.0825))
+    sublease_income = max(0.0, _safe_float(scenario.get("sublease_income_monthly"), 0.0))
+    sublease_start = max(0, _safe_int(scenario.get("sublease_start_month"), 0))
+    sublease_duration = max(0, _safe_int(scenario.get("sublease_duration_months"), 0))
+    discount_rate_annual = max(0.0, _safe_float(scenario.get("discount_rate_annual"), 0.08))
+    monthly_discount = (1.0 + discount_rate_annual) ** (1.0 / 12.0) - 1.0 if discount_rate_annual > 0 else 0.0
+
+    rows: list[dict[str, Any]] = []
+    cumulative_pv = 0.0
+    for month_zero in range(term_months):
+        month_index = month_zero if month_base == 0 else month_zero + 1
+        step = _monthly_step_for_index(steps, month_index)
+        if step is None:
+            continue
+        rsf = _rsf_for_month(month_index, scenario, phase_steps)
+        rate_psf_yr = _safe_float(step.get("rate"), 0.0)
+        base_rent = (rate_psf_yr * rsf) / 12.0
+
+        month_start = _add_months(commencement, month_zero) if commencement else None
+        month_end = (_add_months(month_start, 1) - timedelta(days=1)) if month_start else None
+        year_diff = max(0, (month_start.year - commencement.year) if month_start and commencement else 0)
+        opex_psf_yr = base_opex * ((1.0 + max(0.0, opex_growth)) ** year_diff)
+        opex = (opex_psf_yr * rsf) / 12.0
+
+        parking_pre_tax = parking_spaces * parking_per_spot
+        parking_after_tax = parking_pre_tax * (1.0 + parking_tax_rate)
+        other = 0.0
+        if sublease_duration > 0:
+            sublease_month = month_index
+            sublease_end = sublease_start + sublease_duration - 1
+            if sublease_start <= sublease_month <= sublease_end:
+                other -= sublease_income
+
+        if free_range is not None:
+            free_start, free_end = free_range
+            in_free = free_start <= month_index <= free_end
+            if in_free:
+                base_rent = 0.0
+                if free_type == "gross":
+                    opex = 0.0
+                    parking_after_tax = 0.0
+
+        gross = base_rent + opex + parking_after_tax + other
+        discount_factor = (1.0 / ((1.0 + monthly_discount) ** (month_zero + 1))) if monthly_discount > 0 else 1.0
+        present_value = gross * discount_factor
+        cumulative_pv += present_value
+        rows.append(
+            {
+                "lease_year": (month_zero // 12) + 1,
+                "month_start": month_start,
+                "month_end": month_end,
+                "base_rent": base_rent,
+                "opex": opex,
+                "parking": parking_after_tax,
+                "other": other,
+                "gross": gross,
+                "discount_factor": discount_factor,
+                "present_value": present_value,
+                "cumulative_pv": cumulative_pv,
+            }
         )
-        kpi_html = KpiTilesRow(kpis) if idx == 0 else ""
-        continuation = (
-            ""
-            if idx == 0
-            else f"<p class='table-footnote'>Rent schedule continued for {_esc(entry['name'])}.</p>"
-        )
+    return rows
+
+
+def _annualized_rows(monthly_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_year: dict[int, dict[str, float]] = {}
+    for row in monthly_rows:
+        year = _safe_int(row.get("lease_year"), 1)
+        agg = by_year.setdefault(year, {"base_rent": 0.0, "opex": 0.0, "gross": 0.0, "months": 0.0})
+        agg["base_rent"] += _safe_float(row.get("base_rent"), 0.0)
+        agg["opex"] += _safe_float(row.get("opex"), 0.0)
+        agg["gross"] += _safe_float(row.get("gross"), 0.0)
+        agg["months"] += 1.0
+    out: list[dict[str, Any]] = []
+    for year in sorted(by_year):
+        agg = by_year[year]
+        months = max(1.0, agg["months"])
         out.append(
-            f"""
-            {SectionTitle("Scenario detail", entry["name"], subtitle)}
-            {kpi_html}
-            {_detail_table_html(chunk)}
-            {continuation}
-            """
+            {
+                "lease_year": year,
+                "base_rent": agg["base_rent"],
+                "opex": agg["opex"],
+                "gross_rent": agg["gross"],
+                "annual_total": agg["gross"],
+                "monthly_equivalent": agg["gross"] / months,
+            }
         )
     return out
+
+
+def _annualized_matrix_html(rows: list[dict[str, Any]]) -> str:
+    table_rows = "".join(
+        f"""
+        <tr>
+          <td>{_esc(_fmt_number(r.get("lease_year"), 0))}</td>
+          <td>{_esc(_fmt_currency(r.get("base_rent")))}</td>
+          <td>{_esc(_fmt_currency(r.get("opex")))}</td>
+          <td>{_esc(_fmt_currency(r.get("gross_rent")))}</td>
+          <td>{_esc(_fmt_currency(r.get("annual_total")))}</td>
+          <td>{_esc(_fmt_currency(r.get("monthly_equivalent")))}</td>
+        </tr>
+        """
+        for r in rows
+    )
+    return f"""
+    <table class="detail-table annualized-table">
+      <colgroup>
+        <col style="width:12%" />
+        <col style="width:17%" />
+        <col style="width:17%" />
+        <col style="width:18%" />
+        <col style="width:18%" />
+        <col style="width:18%" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Lease year</th>
+          <th>Base rent</th>
+          <th>OpEx</th>
+          <th>Gross rent</th>
+          <th>Annual total</th>
+          <th>Monthly equivalent</th>
+        </tr>
+      </thead>
+      <tbody>{table_rows}</tbody>
+    </table>
+    """
+
+
+def _monthly_appendix_table_html(rows: list[dict[str, Any]]) -> str:
+    table_rows = "".join(
+        f"""
+        <tr>
+          <td>{_esc(_fmt_date(r.get("month_start")))}</td>
+          <td>{_esc(_fmt_date(r.get("month_end")))}</td>
+          <td>{_esc(_fmt_currency(r.get("base_rent")))}</td>
+          <td>{_esc(_fmt_currency(r.get("opex")))}</td>
+          <td>{_esc(_fmt_currency(r.get("parking")))}</td>
+          <td>{_esc(_fmt_currency(r.get("other")))}</td>
+          <td>{_esc(_fmt_currency(r.get("gross")))}</td>
+          <td>{_esc(_fmt_number(r.get("discount_factor"), 6))}</td>
+          <td>{_esc(_fmt_currency(r.get("present_value")))}</td>
+          <td>{_esc(_fmt_currency(r.get("cumulative_pv")))}</td>
+        </tr>
+        """
+        for r in rows
+    )
+    return f"""
+    <table class="detail-table monthly-table">
+      <colgroup>
+        <col style="width:10%" />
+        <col style="width:10%" />
+        <col style="width:10%" />
+        <col style="width:10%" />
+        <col style="width:10%" />
+        <col style="width:9%" />
+        <col style="width:10%" />
+        <col style="width:8%" />
+        <col style="width:11%" />
+        <col style="width:12%" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Month start</th>
+          <th>Month end</th>
+          <th>Base rent</th>
+          <th>OpEx</th>
+          <th>Parking</th>
+          <th>Other</th>
+          <th>Gross rent</th>
+          <th>Disc. factor</th>
+          <th>Present value</th>
+          <th>Cumulative PV</th>
+        </tr>
+      </thead>
+      <tbody>{table_rows}</tbody>
+    </table>
+    """
+
+
+def ScenarioDetailSections(entry: dict[str, Any], plan: DeckRenderPlan) -> list[DeckPage]:
+    scenario = entry["scenario"]
+    result = entry["result"]
+    monthly_rows = _scenario_monthly_cashflow_rows(entry)
+    annual_rows = _annualized_rows(monthly_rows)
+
+    summary_kpis = [
+        ("Counterparty", str(scenario.get("name") or entry["name"])),
+        ("Commencement", _fmt_date(scenario.get("commencement"))),
+        ("Expiration", _fmt_date(scenario.get("expiration"))),
+        ("RSF", f"{_fmt_number(scenario.get('rsf'))} SF"),
+        ("Lease type", str(scenario.get("opex_mode") or "NNN").upper()),
+        ("Discount rate", _fmt_percent(scenario.get("discount_rate_annual"), precision=2)),
+        ("Avg gross rent/SF", _fmt_psf(result.get("equalized_avg_gross_rent_psf_year") or result.get("avg_cost_psf_year"))),
+        ("Avg cost/SF", _fmt_psf(result.get("avg_cost_psf_year"))),
+        ("Avg monthly cost", _fmt_currency(result.get("avg_cost_year", 0) / 12.0)),
+        ("NPV", _fmt_currency(result.get("npv_cost"))),
+        ("Total obligation", _fmt_currency(result.get("total_cost_nominal"))),
+        ("Document type", str(entry.get("doc_type") or "Unknown").replace("_", " ").title()),
+    ]
+    eq_period_text = (
+        f"{_fmt_date(result.get('equalized_start'))} – {_fmt_date(result.get('equalized_end'))}"
+        if result.get("equalized_start") and result.get("equalized_end")
+        else "No overlapping lease term for equalized comparison"
+    )
+    equalized_panel = f"""
+      <article class="panel institutional-panel">
+        <h3>Equalized Comparison</h3>
+        <p class="axis-note">Equalized period: {_esc(eq_period_text)}</p>
+        <table class="detail-table annualized-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Equalized avg gross rent/SF/year</td><td>{_esc(_fmt_psf(result.get("equalized_avg_gross_rent_psf_year")))}</td></tr>
+            <tr><td>Equalized avg monthly cost</td><td>{_esc(_fmt_currency(result.get("equalized_avg_cost_month")))}</td></tr>
+            <tr><td>Equalized avg cost/SF/year</td><td>{_esc(_fmt_psf(result.get("equalized_avg_cost_psf_year")))}</td></tr>
+            <tr><td>Equalized total cost</td><td>{_esc(_fmt_currency(result.get("equalized_total_cost")))}</td></tr>
+            <tr><td>Equalized NPV (t0=start)</td><td>{_esc(_fmt_currency(result.get("equalized_npv_cost")))}</td></tr>
+          </tbody>
+        </table>
+      </article>
+    """
+
+    summary_html = f"""
+      {SectionTitle("Scenario detail", entry["name"], "Scenario summary and annualized rent matrix.")}
+      {KpiTilesRow(summary_kpis)}
+      <article class="panel institutional-panel">
+        <h3>Annualized Rent Matrix</h3>
+        {_annualized_matrix_html(annual_rows)}
+      </article>
+      {equalized_panel}
+    """
+
+    summary_orientation = plan.orientation_for("scenario_summary", "portrait")
+    pages: list[DeckPage] = [
+        DeckPage(
+            body_html=summary_html,
+            section_label="Scenario detail",
+            include_frame=True,
+            kind="scenario_summary",
+            orientation=summary_orientation,
+        )
+    ]
+
+    if not monthly_rows:
+        return pages
+
+    appendix_orientation_default = _auto_orientation_for_columns(236.0)
+    appendix_orientation = plan.orientation_for("monthly_cashflow", appendix_orientation_default)
+    rows_per_page = _rows_per_page_from_printable(
+        appendix_orientation,
+        header_mm=30.0,
+        row_mm=6.0 * plan.font_scale,
+        safety_rows=plan.monthly_safety + 1,
+    )
+    chunks = [monthly_rows[i : i + rows_per_page] for i in range(0, len(monthly_rows), rows_per_page)]
+    total_chunks = len(chunks)
+    for idx, chunk in enumerate(chunks, start=1):
+        subtitle = (
+            "Monthly Cash Flows"
+            if idx == 1
+            else f"Scenario Detail (Continued) · Monthly Cash Flows page {idx} of {total_chunks}"
+        )
+        pages.append(
+            DeckPage(
+                body_html=f"""
+                {SectionTitle("Monthly appendix", entry["name"], subtitle)}
+                {_monthly_appendix_table_html(chunk)}
+                """,
+                section_label="Monthly cash flows",
+                include_frame=True,
+                kind="monthly_cashflow",
+                orientation=appendix_orientation,
+            )
+        )
+    return pages
 
 
 def _cover_option_reason(entry: dict[str, Any], *, is_best: bool) -> str:
@@ -1236,31 +1595,34 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
     return rows
 
 
-def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
+def _matrix_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[DeckPage]:
     def chunk(items: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
         if size <= 0:
             return [items]
         return [items[i : i + size] for i in range(0, len(items), size)]
 
-    pages: list[str] = []
+    pages: list[DeckPage] = []
     # Keep up to 10 scenarios side-by-side per matrix page.
     option_chunks = chunk(entries, 10)
     for idx, option_chunk in enumerate(option_chunks):
         metric_rows = _metric_rows_for(option_chunk)
-        # Conservative row budgeting prevents matrix clipping at page bottom.
-        if len(option_chunk) >= 8:
-            max_units = 12
-        elif len(option_chunk) >= 5:
-            max_units = 15
-        else:
-            max_units = 18
+        estimated_table_width_mm = 56.0 + (len(option_chunk) * 42.0)
+        default_orientation = _auto_orientation_for_columns(estimated_table_width_mm)
+        orientation = plan.orientation_for("comparison_matrix", default_orientation)
+        # Row budgets are derived from printable height so tables always split before clipping.
+        row_mm = 7.2 * plan.font_scale
+        max_units = _rows_per_page_from_printable(
+            orientation,
+            header_mm=37.0,
+            row_mm=row_mm,
+            safety_rows=plan.matrix_safety + (1 if len(option_chunk) >= 8 else 0),
+        )
         metric_chunks = _chunk_rows_by_estimated_height(metric_rows, max_units=max_units)
         for midx, metrics_chunk in enumerate(metric_chunks):
             start = idx * 10 + 1
             end = idx * 10 + len(option_chunk)
             suffix = "" if len(metric_chunks) == 1 else f" · Table segment {midx + 1}/{len(metric_chunks)}"
-            pages.append(
-                f"""
+            body_html = f"""
                 {SectionTitle(
                     "Portfolio comparison",
                     "Comparison Matrix",
@@ -1268,6 +1630,14 @@ def _matrix_pages(entries: list[dict[str, Any]]) -> list[str]:
                 )}
                 {ComparisonMatrixTable(option_chunk, metrics_chunk)}
                 """
+            pages.append(
+                DeckPage(
+                    body_html=body_html,
+                    section_label="Comparison matrix",
+                    include_frame=True,
+                    kind="comparison_matrix",
+                    orientation=orientation,
+                )
             )
     return pages
 
@@ -1296,7 +1666,7 @@ def _split_note_lines(lines: list[str], *, max_units: int = 20) -> list[list[str
     return chunks or [[]]
 
 
-def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
+def _notes_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[DeckPage]:
     if not entries:
         return []
 
@@ -1333,7 +1703,13 @@ def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
     pages: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     units = 0
-    max_units_per_page = 38
+    orientation = plan.orientation_for("notes", "portrait")
+    max_units_per_page = _rows_per_page_from_printable(
+        orientation,
+        header_mm=44.0,
+        row_mm=6.4 * plan.font_scale,
+        safety_rows=plan.notes_safety + 6,
+    )
     for card in cards:
         card_units = _safe_int(card.get("units"), 6)
         if current and units + card_units > max_units_per_page:
@@ -1345,7 +1721,7 @@ def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
     if current:
         pages.append(current)
 
-    rendered_pages: list[str] = []
+    rendered_pages: list[DeckPage] = []
     total_pages = len(pages)
     for page_idx, page_cards in enumerate(pages, start=1):
         card_html = []
@@ -1366,13 +1742,20 @@ def _notes_pages(entries: list[dict[str, Any]]) -> list[str]:
             if page_idx == 1
             else f"Notes & Clause Highlights continued ({page_idx}/{total_pages})."
         )
-        rendered_pages.append(
-            f"""
+        body_html = f"""
             {SectionTitle("Notes", "Notes & Clause Highlights", subtitle)}
             <div class="notes-summary-grid">
               {''.join(card_html)}
             </div>
             """
+        rendered_pages.append(
+            DeckPage(
+                body_html=body_html,
+                section_label="Notes & clause highlights",
+                include_frame=True,
+                kind="notes",
+                orientation=orientation,
+            )
         )
 
     return rendered_pages
@@ -1541,18 +1924,42 @@ def _average_costs_combo_page(entries: list[dict[str, Any]]) -> str:
     """
 
 
-def _cost_visuals_pages(entries: list[dict[str, Any]]) -> list[str]:
+def _cost_visuals_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[DeckPage]:
     if not entries:
-        return [_cost_visuals_page(entries)]
+        return [
+            DeckPage(
+                body_html=_cost_visuals_page(entries),
+                section_label="Cost visuals",
+                include_frame=True,
+                kind="cost_visuals",
+                orientation=plan.orientation_for("cost_visuals", "landscape"),
+            )
+        ]
     chunk_size = 5
-    pages: list[str] = []
+    pages: list[DeckPage] = []
+    orientation = plan.orientation_for("cost_visuals", "landscape")
     for i in range(0, len(entries), chunk_size):
         subset = entries[i : i + chunk_size]
-        pages.append(_average_costs_combo_page(subset))
         pages.append(
+            DeckPage(
+                body_html=_average_costs_combo_page(subset),
+                section_label="Cost visuals",
+                include_frame=True,
+                kind="cost_visuals",
+                orientation=orientation,
+            )
+        )
+        pages.append(
+            DeckPage(
+                body_html=
             _cost_visuals_page(subset).replace(
                 "Horizontal bars use a shared per-metric scale to support clean visual ranking.",
                 f"Options {i + 1}-{i + len(subset)} of {len(entries)}. Horizontal bars use a shared per-metric scale to support clean visual ranking.",
+            ),
+                section_label="Cost visuals",
+                include_frame=True,
+                kind="cost_visuals",
+                orientation=orientation,
             )
         )
     return pages
@@ -1603,19 +2010,35 @@ def _lease_abstracts_page(entries: list[dict[str, Any]]) -> str:
     """
 
 
-def _lease_abstract_pages(entries: list[dict[str, Any]]) -> list[str]:
+def _lease_abstract_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[DeckPage]:
     if not entries:
-        return [_lease_abstracts_page(entries)]
-    pages: list[str] = []
+        return [
+            DeckPage(
+                body_html=_lease_abstracts_page(entries),
+                section_label="Lease abstract highlights",
+                include_frame=True,
+                kind="lease_abstracts",
+                orientation=plan.orientation_for("lease_abstracts", "portrait"),
+            )
+        ]
+    pages: list[DeckPage] = []
     per_page = 2
+    orientation = plan.orientation_for("lease_abstracts", "portrait")
     for i in range(0, len(entries), per_page):
         subset = entries[i : i + per_page]
         cards = "".join(LeaseAbstractBlock(entry) for entry in subset)
-        pages.append(
-            f"""
+        body_html = f"""
             {SectionTitle("Lease abstracts", "Lease Abstract Highlights", f"Options {i + 1}-{i + len(subset)} of {len(entries)}. Categorized clause notes and financial context per option.")}
             <div class="abstract-stack">{cards}</div>
             """
+        pages.append(
+            DeckPage(
+                body_html=body_html,
+                section_label="Lease abstract highlights",
+                include_frame=True,
+                kind="lease_abstracts",
+                orientation=orientation,
+            )
         )
     return pages
 
@@ -1638,10 +2061,17 @@ def DisclaimerPage(theme: DeckTheme) -> str:
     """
 
 
-def _deck_css(primary_color: str) -> str:
+def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
     return f"""
-    @page {{
+    @page portrait {{
+      size: A4 portrait;
+      margin: {PAGE_MARGIN_MM:.1f}mm;
+    }}
+    @page landscape {{
       size: A4 landscape;
+      margin: {PAGE_MARGIN_MM:.1f}mm;
+    }}
+    @page {{
       margin: 8mm;
     }}
     * {{ box-sizing: border-box; }}
@@ -1657,13 +2087,21 @@ def _deck_css(primary_color: str) -> str:
     .pdf-page {{
       break-after: page;
       page-break-after: always;
-      height: 190mm;
-      max-height: 190mm;
       display: flex;
       flex-direction: column;
       border: 1px solid #111;
       background: #fff;
       overflow: hidden;
+      --font-scale: {max(MIN_FONT_SCALE, min(1.0, font_scale)):.3f};
+      font-size: calc(1em * var(--font-scale));
+    }}
+    .pdf-page.portrait {{
+      page: portrait;
+      height: 281mm;
+    }}
+    .pdf-page.landscape {{
+      page: landscape;
+      height: 194mm;
     }}
     .page-header {{
       height: 18mm;
@@ -1685,7 +2123,7 @@ def _deck_css(primary_color: str) -> str:
       display: block;
       flex: 1;
       min-height: 0;
-      overflow: hidden;
+      overflow: visible;
       position: relative;
     }}
     .page-content::before {{
@@ -1700,7 +2138,6 @@ def _deck_css(primary_color: str) -> str:
     }}
     .page-content-inner {{
       width: 100%;
-      transform-origin: top left;
       position: relative;
       z-index: 1;
     }}
@@ -1926,7 +2363,7 @@ def _deck_css(primary_color: str) -> str:
     }}
     .combo-chart {{
       width: 100%;
-      height: 92mm;
+      height: 84mm;
       border: 1px solid #111;
       background: #fafafa;
       display: block;
@@ -1972,6 +2409,13 @@ def _deck_css(primary_color: str) -> str:
       display: grid;
       grid-template-columns: 1fr;
       gap: 2.4mm;
+    }}
+    .institutional-panel {{
+      margin-bottom: 2.8mm;
+    }}
+    .annualized-table,
+    .monthly-table {{
+      margin-top: 1mm;
     }}
     .notes-summary-card {{
       border: 1px solid #111;
@@ -2238,40 +2682,62 @@ def _deck_css(primary_color: str) -> str:
     """
 
 
-def build_report_deck_html(data: dict[str, Any]) -> str:
+def build_report_deck_html(data: dict[str, Any], plan: DeckRenderPlan | None = None) -> str:
     entries = _extract_entries(data)
     if not entries:
         return "<!doctype html><html><body><h1>No scenarios found</h1></body></html>"
+    active_plan = plan or DeckRenderPlan()
     branding = data.get("branding") if isinstance(data.get("branding"), dict) else {}
     theme = resolve_theme(branding if isinstance(branding, dict) else {})
 
-    page_payloads: list[tuple[str, str, bool]] = []
-    page_payloads.append((CoverPage(entries, theme), "Cover", False))
-    page_payloads.append((_executive_summary_page(entries), "Executive summary", True))
-    for matrix_html in _matrix_pages(entries):
-        page_payloads.append((matrix_html, "Comparison matrix", True))
-    for notes_html in _notes_pages(entries):
-        page_payloads.append((notes_html, "Notes & clause highlights", True))
-    for visuals_html in _cost_visuals_pages(entries):
-        page_payloads.append((visuals_html, "Cost visuals", True))
-    for abstracts_html in _lease_abstract_pages(entries):
-        page_payloads.append((abstracts_html, "Lease abstract highlights", True))
+    page_payloads: list[DeckPage] = []
+    page_payloads.append(
+        DeckPage(
+            body_html=CoverPage(entries, theme),
+            section_label="Cover",
+            include_frame=False,
+            kind="cover",
+            orientation=active_plan.orientation_for("cover", "landscape"),
+        )
+    )
+    page_payloads.append(
+        DeckPage(
+            body_html=_executive_summary_page(entries),
+            section_label="Executive summary",
+            include_frame=True,
+            kind="executive_summary",
+            orientation=active_plan.orientation_for("executive_summary", "portrait"),
+        )
+    )
+    page_payloads.extend(_matrix_pages(entries, active_plan))
+    page_payloads.extend(_notes_pages(entries, active_plan))
+    page_payloads.extend(_cost_visuals_pages(entries, active_plan))
+    page_payloads.extend(_lease_abstract_pages(entries, active_plan))
     for entry in entries:
-        for detail_html in ScenarioDetailSections(entry):
-            page_payloads.append((detail_html, "Scenario detail", True))
-    page_payloads.append((DisclaimerPage(theme), "Disclaimer", True))
+        page_payloads.extend(ScenarioDetailSections(entry, active_plan))
+    page_payloads.append(
+        DeckPage(
+            body_html=DisclaimerPage(theme),
+            section_label="Disclaimer",
+            include_frame=True,
+            kind="disclaimer",
+            orientation=active_plan.orientation_for("disclaimer", "portrait"),
+        )
+    )
 
     total_pages = len(page_payloads)
     page_html = []
-    for i, (body_html, section_label, include_frame) in enumerate(page_payloads, start=1):
+    for i, payload in enumerate(page_payloads, start=1):
         page_html.append(
             _build_page_shell(
-                body_html=body_html,
+                body_html=payload.body_html,
                 theme=theme,
                 page_no=i,
                 total_pages=total_pages,
-                section_label=section_label,
-                include_frame=include_frame,
+                section_label=payload.section_label,
+                include_frame=payload.include_frame,
+                kind=payload.kind,
+                orientation=payload.orientation,
             )
         )
 
@@ -2282,57 +2748,107 @@ def build_report_deck_html(data: dict[str, Any]) -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{_esc(theme.report_title)}</title>
-  <style>{_deck_css(theme.primary_color)}</style>
+  <style>{_deck_css(theme.primary_color, font_scale=active_plan.font_scale)}</style>
 </head>
 <body>
   {''.join(page_html)}
-  <script>
-    (function () {{
-      try {{
-        const pages = Array.from(document.querySelectorAll(".pdf-page"));
-        for (const page of pages) {{
-          const content = page.querySelector(".page-content");
-          const inner = page.querySelector(".page-content-inner");
-          if (!content || !inner) continue;
-          const rawHeight = inner.scrollHeight || 0;
-          const limitHeight = content.clientHeight || 0;
-          if (!rawHeight || !limitHeight) continue;
-          if (rawHeight <= limitHeight) continue;
-          const targetScale = Math.max(0.58, Math.min(1, (limitHeight - 1) / rawHeight));
-          if (targetScale < 0.999) {{
-            inner.style.transform = `scale(${{targetScale}})`;
-            inner.style.width = `${{(100 / targetScale).toFixed(4)}}%`;
-          }}
-        }}
-      }} catch (_err) {{
-        // no-op; static layout still renders
-      }} finally {{
-        window.__deckLayoutReady = true;
-      }}
-    }})();
-  </script>
 </body>
 </html>
     """.strip()
 
 
+def _collect_overflow_issues(page: Any) -> list[dict[str, Any]]:
+    return page.evaluate(
+        """
+        () => {
+          const pages = Array.from(document.querySelectorAll(".pdf-page"));
+          return pages.map((el, idx) => {
+            const content = el.querySelector(".page-content");
+            const inner = el.querySelector(".page-content-inner");
+            const contentHeight = content ? content.clientHeight : 0;
+            const innerHeight = inner ? inner.scrollHeight : 0;
+            let tableOverflow = false;
+            const tables = Array.from(el.querySelectorAll("table"));
+            for (const t of tables) {
+              const parent = t.parentElement;
+              const maxWidth = parent ? parent.clientWidth : 0;
+              if (maxWidth && t.scrollWidth > maxWidth + 1) {
+                tableOverflow = true;
+                break;
+              }
+            }
+            return {
+              index: idx,
+              kind: el.getAttribute("data-kind") || "general",
+              orientation: el.getAttribute("data-orientation") || "portrait",
+              overflowPx: Math.max(0, innerHeight - contentHeight),
+              tableOverflow,
+            };
+          });
+        }
+        """
+    )
+
+
+def _adjust_plan_for_overflow(plan: DeckRenderPlan, issues: list[dict[str, Any]]) -> bool:
+    changed = False
+    overflow = [i for i in issues if _safe_float(i.get("overflowPx"), 0.0) > 0.0 or bool(i.get("tableOverflow"))]
+    if not overflow:
+        return False
+
+    for issue in overflow:
+        kind = str(issue.get("kind") or "general")
+        orientation = str(issue.get("orientation") or "portrait")
+        if bool(issue.get("tableOverflow")) and not _is_landscape(orientation):
+            plan.orientation_overrides[kind] = "landscape"
+            changed = True
+        elif _safe_float(issue.get("overflowPx"), 0.0) > 0.0 and not _is_landscape(orientation) and kind in {
+            "comparison_matrix",
+            "monthly_cashflow",
+            "scenario_summary",
+        }:
+            plan.orientation_overrides[kind] = "landscape"
+            changed = True
+
+    if any(_safe_float(i.get("overflowPx"), 0.0) > 0.0 for i in overflow):
+        if plan.font_scale > MIN_FONT_SCALE:
+            plan.font_scale = max(MIN_FONT_SCALE, round(plan.font_scale - 0.01, 3))
+            changed = True
+        else:
+            plan.matrix_safety += 1
+            plan.notes_safety += 1
+            plan.monthly_safety += 1
+            plan.annual_safety += 1
+            changed = True
+    return changed
+
+
 def render_report_deck_pdf(data: dict[str, Any]) -> bytes:
-    html_str = build_report_deck_html(data)
     from playwright.sync_api import sync_playwright
+
+    plan = DeckRenderPlan()
+    html_str = build_report_deck_html(data, plan=plan)
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.set_content(html_str, wait_until="networkidle")
-        try:
-            page.wait_for_function("window.__deckLayoutReady === true", timeout=2500)
-        except Exception:
-            # Layout guard is best-effort; continue with static output if script timing fails.
-            pass
-        page.emulate_media(media="print")
+
+        max_attempts = 6
+        for _ in range(max_attempts):
+            page.set_content(html_str, wait_until="networkidle")
+            page.emulate_media(media="print")
+            issues = _collect_overflow_issues(page)
+            if not any(_safe_float(i.get("overflowPx"), 0.0) > 0.0 or bool(i.get("tableOverflow")) for i in issues):
+                break
+            if not _adjust_plan_for_overflow(plan, issues):
+                break
+            html_str = build_report_deck_html(data, plan=plan)
+        else:
+            page.set_content(html_str, wait_until="networkidle")
+            page.emulate_media(media="print")
+
         pdf_bytes = page.pdf(
             format="A4",
-            landscape=True,
             print_background=True,
             prefer_css_page_size=True,
             margin={"top": "0in", "bottom": "0in", "left": "0in", "right": "0in"},
