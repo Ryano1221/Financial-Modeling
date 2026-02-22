@@ -172,6 +172,53 @@ function extractDataUrlBase64(dataUrl: string | null | undefined): string | null
   return match[1].replace(/\s+/g, "");
 }
 
+function getDataUrlMime(dataUrl: string | null | undefined): string | null {
+  const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^data:([^;]+);base64,/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+async function normalizeLogoDataUrlForExcel(dataUrl: string | null | undefined): Promise<string | null> {
+  const raw = String(dataUrl || "").trim();
+  if (!raw.startsWith("data:image/")) return null;
+  const mime = getDataUrlMime(raw);
+  if (!mime) return null;
+  if (mime === "image/png" || mime === "image/jpeg" || mime === "image/jpg") return raw;
+  if (mime !== "image/svg+xml") return null;
+
+  if (typeof window === "undefined") return null;
+  return await new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const maxWidth = 720;
+        const maxHeight = 220;
+        const widthRatio = maxWidth / Math.max(1, image.naturalWidth || image.width || 1);
+        const heightRatio = maxHeight / Math.max(1, image.naturalHeight || image.height || 1);
+        const scale = Math.min(1, widthRatio, heightRatio);
+        const drawWidth = Math.max(1, Math.round((image.naturalWidth || image.width || 1) * scale));
+        const drawHeight = Math.max(1, Math.round((image.naturalHeight || image.height || 1) * scale));
+        canvas.width = drawWidth;
+        canvas.height = drawHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.clearRect(0, 0, drawWidth, drawHeight);
+        ctx.drawImage(image, 0, 0, drawWidth, drawHeight);
+        resolve(canvas.toDataURL("image/png"));
+      } catch {
+        resolve(null);
+      }
+    };
+    image.onerror = () => resolve(null);
+    image.src = raw;
+  });
+}
+
 function formatDateMmDdYyyy(dateValue: Date): string {
   const mm = String(dateValue.getMonth() + 1).padStart(2, "0");
   const dd = String(dateValue.getDate()).padStart(2, "0");
@@ -1062,11 +1109,23 @@ export default function Home() {
     try {
       const canonical = scenarios.map(scenarioToCanonical);
       const reportMeta = buildReportMeta();
+      const brokerageLogoSource = organizationBranding?.logo_data_url
+        || (
+          organizationBranding?.logo_asset_bytes
+            ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+            : null
+        );
+      const [brokerageLogoForExcel, clientLogoForExcel] = await Promise.all([
+        normalizeLogoDataUrlForExcel(brokerageLogoSource),
+        normalizeLogoDataUrlForExcel(clientLogoDataUrl),
+      ]);
       const excelMeta = {
         brokerageName: brokerageName.trim() || "theCREmodel",
         clientName: reportMeta.prepared_for || "Client",
         reportDate: reportMeta.report_date || undefined,
         preparedBy: reportMeta.prepared_by || defaultPreparedByFromAuth || "theCREmodel",
+        brokerageLogoDataUrl: brokerageLogoForExcel,
+        clientLogoDataUrl: clientLogoForExcel,
       };
       let buffer: ArrayBuffer | null = null;
       let usedFallback = false;
@@ -1105,7 +1164,7 @@ export default function Home() {
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, brokerageName, defaultPreparedByFromAuth]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, brokerageName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl]);
 
   const engineResults = useMemo(() => {
     const included = includedScenarios;

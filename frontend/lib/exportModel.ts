@@ -78,6 +78,8 @@ export interface WorkbookBrandingMeta {
   clientName?: string;
   reportDate?: string;
   preparedBy?: string;
+  brokerageLogoDataUrl?: string | null;
+  clientLogoDataUrl?: string | null;
 }
 
 interface WorkbookMonthlyRow {
@@ -292,6 +294,54 @@ function applyCellFormat(cell: ExcelJS.Cell, format: CellFormat): void {
     return;
   }
   cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+}
+
+type ExcelImagePayload = {
+  base64: string;
+  extension: "png" | "jpeg";
+};
+
+function parseExcelImageData(dataUrl?: string | null): ExcelImagePayload | null {
+  const raw = String(dataUrl ?? "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^data:image\/([A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) return null;
+  const subtype = match[1].toLowerCase();
+  let extension: "png" | "jpeg" | null = null;
+  if (subtype === "png") extension = "png";
+  else if (subtype === "jpeg" || subtype === "jpg") extension = "jpeg";
+  if (!extension) return null;
+  const base64 = match[2].replace(/\s+/g, "");
+  if (!base64) return null;
+  return { base64, extension };
+}
+
+function addCoverLogoImage(
+  workbook: ExcelJS.Workbook,
+  sheet: ExcelJS.Worksheet,
+  dataUrl: string | null | undefined,
+  box: { col: number; row: number; widthCols: number; heightRows: number }
+): boolean {
+  const parsed = parseExcelImageData(dataUrl);
+  if (!parsed) return false;
+  try {
+    const imageId = workbook.addImage({
+      base64: parsed.base64,
+      extension: parsed.extension,
+    });
+    const pxPerCol = 64;
+    const pxPerRow = 20;
+    sheet.addImage(imageId, {
+      tl: { col: box.col - 1 + 0.1, row: box.row - 1 + 0.1 },
+      ext: {
+        width: Math.max(120, Math.floor(box.widthCols * pxPerCol - 12)),
+        height: Math.max(55, Math.floor(box.heightRows * pxPerRow - 6)),
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function setSheetPrintSettings(sheet: ExcelJS.Worksheet, opts: { landscape: boolean; repeatHeaderRow?: number }): void {
@@ -541,6 +591,19 @@ function createCoverSheet(
   header.font = { color: { argb: BRAND_COLORS.white }, bold: true, size: 22, name: "Aptos" };
   header.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
 
+  const hasBrokerageLogo = addCoverLogoImage(workbook, sheet, meta.brokerageLogoDataUrl, {
+    col: 1,
+    row: 5,
+    widthCols: 4,
+    heightRows: 4,
+  });
+  const hasClientLogo = addCoverLogoImage(workbook, sheet, meta.clientLogoDataUrl, {
+    col: 5,
+    row: 5,
+    widthCols: 4,
+    heightRows: 4,
+  });
+
   const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
   const brokerage = normalizeText(meta.brokerageName, "theCREmodel");
   const client = normalizeText(meta.clientName, "Client");
@@ -553,7 +616,7 @@ function createCoverSheet(
     ["Prepared by", preparedBy],
     ["Scenarios", `${scenarioCount}`],
   ];
-  let row = 6;
+  let row = 11;
   for (const [label, value] of rightMetaRows) {
     sheet.mergeCells(row, 5, row, 6);
     sheet.mergeCells(row, 7, row, 8);
@@ -568,14 +631,29 @@ function createCoverSheet(
     row += 2;
   }
 
-  sheet.mergeCells("A6:D15");
-  const leftBlock = sheet.getCell("A6");
+  sheet.mergeCells("A11:D19");
+  const leftBlock = sheet.getCell("A11");
   leftBlock.value = "Institutional comparison workbook\nPrepared for brokerage delivery\nPrint-ready formatted export";
   leftBlock.alignment = { horizontal: "left", vertical: "top", wrapText: true };
   leftBlock.font = { name: "Aptos", size: 14, color: { argb: BRAND_COLORS.text } };
 
-  sheet.mergeCells("A20:H20");
-  const footer = sheet.getCell("A20");
+  if (!hasBrokerageLogo) {
+    sheet.mergeCells("A5:D8");
+    const brokerageFallback = sheet.getCell("A5");
+    brokerageFallback.value = brokerage;
+    brokerageFallback.font = { name: "Aptos", size: 16, bold: true, color: { argb: BRAND_COLORS.text } };
+    brokerageFallback.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  }
+  if (!hasClientLogo) {
+    sheet.mergeCells("E5:H8");
+    const clientFallback = sheet.getCell("E5");
+    clientFallback.value = client;
+    clientFallback.font = { name: "Aptos", size: 14, bold: true, color: { argb: BRAND_COLORS.text } };
+    clientFallback.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+  }
+
+  sheet.mergeCells("A23:H23");
+  const footer = sheet.getCell("A23");
   footer.value = `Template Version ${TEMPLATE_VERSION}`;
   footer.font = { name: "Aptos", size: 10, color: { argb: "FF666666" } };
   footer.alignment = { horizontal: "center", vertical: "middle" };
