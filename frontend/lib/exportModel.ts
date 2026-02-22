@@ -839,30 +839,56 @@ function createSummarySheet(
   meta: WorkbookBrandingMeta
 ): void {
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Summary Comparison", "Summary Comparison", usedSheetNames));
-  const cols = scenarios.length + 1;
-  sheet.getColumn(1).width = 34;
-  for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 2).width = 28;
+  const metricCol = 1;
+  const spacerCol = 2;
+  const scenarioStartCol = 3;
+  const tableLastCol = scenarioStartCol + scenarios.length - 1;
+  const layoutLastCol = Math.max(14, tableLastCol);
 
-  const startRow = applyBrandHeader(workbook, sheet, meta, cols, "SUMMARY COMPARISON", "Institutional scenario matrix");
-  const headerRow = startRow;
+  sheet.getColumn(metricCol).width = 28;
+  sheet.getColumn(spacerCol).width = 2;
+  for (let i = 0; i < scenarios.length; i++) {
+    sheet.getColumn(scenarioStartCol + i).width = 24;
+  }
+  for (let c = tableLastCol + 1; c <= layoutLastCol; c++) {
+    sheet.getColumn(c).width = 6;
+  }
+
+  const startRow = applyBrandHeader(
+    workbook,
+    sheet,
+    meta,
+    layoutLastCol,
+    "SUMMARY COMPARISON",
+    "Institutional scenario matrix"
+  );
+  const headerRow = 6;
 
   sheet.getRow(headerRow).height = EXCEL_THEME.rowHeights.tableHeader + 6;
-  sheet.getCell(headerRow, 1).value = "Metric";
-  sheet.getCell(headerRow, 1).font = {
+  sheet.getCell(headerRow, metricCol).value = "Metric";
+  sheet.getCell(headerRow, metricCol).font = {
     name: EXCEL_THEME.font.family,
     bold: true,
     size: EXCEL_THEME.font.sectionSize,
-    color: { argb: COLORS.white },
+    color: { argb: COLORS.text },
   };
-  sheet.getCell(headerRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-  sheet.getCell(headerRow, 1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  sheet.getCell(headerRow, metricCol).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(headerRow, metricCol).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  sheet.getCell(headerRow, spacerCol).value = "";
+  sheet.getCell(headerRow, spacerCol).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
   scenarios.forEach((scenario, idx) => {
-    const cell = sheet.getCell(headerRow, idx + 2);
+    const cell = sheet.getCell(headerRow, scenarioStartCol + idx);
     cell.value = scenario.name;
     cell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
     cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
+  for (let c = tableLastCol + 1; c <= layoutLastCol; c++) {
+    const cell = sheet.getCell(headerRow, c);
+    cell.value = "";
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+    cell.border = { bottom: { style: "thin", color: { argb: COLORS.border } } };
+  }
 
   type SummaryRow =
     | { type: "section"; label: string }
@@ -898,19 +924,19 @@ function createSummarySheet(
     { type: "metric", label: "Avg cost/year", format: "currency0", getter: (s) => s.avgCostYear },
     { type: "metric", label: "Avg cost/SF/year", format: "currency2", getter: (s) => s.avgCostPsfYear },
     { type: "metric", label: "Equalized avg cost/RSF/yr", format: "currency2", getter: (s) => s.equalizedAvgCostPsfYear },
-    { type: "metric", label: "Notes", format: "text", getter: (s) => s.notes },
+    { type: "metric", label: "Notes", format: "text", getter: () => "See Notes sheet" },
   ];
 
   let row = headerRow + 1;
   for (const def of rows) {
     if (def.type === "section") {
-      sheet.mergeCells(row, 1, row, cols);
-      const cell = sheet.getCell(row, 1);
+      sheet.mergeCells(row, metricCol, row, layoutLastCol);
+      const cell = sheet.getCell(row, metricCol);
       cell.value = def.label;
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
       cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText }, size: EXCEL_THEME.font.labelSize };
       cell.alignment = { horizontal: "left", vertical: "middle" };
-      for (let c = 1; c <= cols; c++) {
+      for (let c = metricCol; c <= layoutLastCol; c++) {
         const sectionCell = sheet.getCell(row, c);
         sectionCell.border = {
           ...(sectionCell.border ?? {}),
@@ -922,44 +948,16 @@ function createSummarySheet(
       continue;
     }
 
-    if (def.label === "Notes") {
-      const noteChunks = scenarios.map((scenario) =>
-        splitCellTextForContinuation(String(def.getter(scenario) ?? ""), 5, 54)
-      );
-      const chunkCount = Math.max(1, ...noteChunks.map((segments) => segments.length));
-      for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
-        const labelCell = sheet.getCell(row, 1);
-        labelCell.value = chunkIndex === 0 ? "Notes" : "Notes (cont.)";
-        labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-        labelCell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.text }, size: EXCEL_THEME.font.bodySize };
-        labelCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
-        scenarios.forEach((_, idx) => {
-          const cell = sheet.getCell(row, idx + 2);
-          cell.value = noteChunks[idx][chunkIndex] || "";
-          cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
-          cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
-        });
-        for (let c = 1; c <= cols; c++) {
-          const cell = sheet.getCell(row, c);
-          cell.border = {
-            ...(cell.border ?? {}),
-            bottom: { style: "thin", color: { argb: COLORS.border } },
-          };
-        }
-        sheet.getRow(row).height = Math.max(EXCEL_THEME.rowHeights.notesMin, 78);
-        row += 1;
-      }
-      continue;
-    }
-
-    const labelCell = sheet.getCell(row, 1);
+    const labelCell = sheet.getCell(row, metricCol);
     labelCell.value = def.label;
     labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
     labelCell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.text }, size: EXCEL_THEME.font.bodySize };
     labelCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+    sheet.getCell(row, spacerCol).value = "";
+    sheet.getCell(row, spacerCol).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
     scenarios.forEach((scenario, idx) => {
       const value = def.getter(scenario);
-      const cell = sheet.getCell(row, idx + 2);
+      const cell = sheet.getCell(row, scenarioStartCol + idx);
       cell.value = typeof value === "number" ? Number(value.toFixed(6)) : value;
       cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
       applyCellFormat(cell, def.format);
@@ -967,22 +965,25 @@ function createSummarySheet(
         cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
       }
     });
-    for (let c = 1; c <= cols; c++) {
+    for (let c = metricCol; c <= layoutLastCol; c++) {
       const cell = sheet.getCell(row, c);
       cell.border = {
         ...(cell.border ?? {}),
         bottom: { style: "thin", color: { argb: COLORS.border } },
       };
     }
+    for (let c = tableLastCol + 1; c <= layoutLastCol; c++) {
+      const cell = sheet.getCell(row, c);
+      cell.value = "";
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+    }
     sheet.getRow(row).height = EXCEL_THEME.rowHeights.body;
     row += 1;
   }
   const endRow = row - 1;
-  sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
-  autoSizeColumns(sheet, 12, 42);
-  sheet.getColumn(1).width = Math.max(34, sheet.getColumn(1).width ?? 34);
+  sheet.views = [{ state: "frozen", xSplit: 2, ySplit: headerRow, showGridLines: false }];
   autoAdjustRowHeights(sheet, headerRow, endRow);
-  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
+  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: layoutLastCol, repeatRow: headerRow });
 }
 
 function createEqualizedSheet(
@@ -1352,6 +1353,79 @@ function rowBorderFill(sheet: ExcelJS.Worksheet, row: number, startCol: number, 
   }
 }
 
+function createNotesSheet(
+  workbook: ExcelJS.Workbook,
+  usedSheetNames: Set<string>,
+  scenarios: WorkbookScenario[],
+  meta: WorkbookBrandingMeta
+): void {
+  const sheet = workbook.addWorksheet(makeUniqueSheetName("Notes", "Notes", usedSheetNames));
+  const totalCols = 14;
+  const scenarioCol = 1;
+  const notesCol = 2;
+
+  sheet.getColumn(scenarioCol).width = 36;
+  sheet.getColumn(notesCol).width = 96;
+  for (let c = 3; c <= totalCols; c++) {
+    sheet.getColumn(c).width = 4;
+  }
+
+  const startRow = applyBrandHeader(workbook, sheet, meta, totalCols, "NOTES", "Scenario notes and clause highlights");
+  void startRow;
+  const headerRow = 6;
+  sheet.getRow(headerRow).height = EXCEL_THEME.rowHeights.tableHeader;
+
+  const scenarioHeader = sheet.getCell(headerRow, scenarioCol);
+  scenarioHeader.value = "Scenario";
+  scenarioHeader.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
+  scenarioHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  scenarioHeader.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+
+  const notesHeader = sheet.getCell(headerRow, notesCol);
+  notesHeader.value = "Notes";
+  notesHeader.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
+  notesHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  notesHeader.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+
+  for (let c = 3; c <= totalCols; c++) {
+    const filler = sheet.getCell(headerRow, c);
+    filler.value = "";
+    filler.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+    filler.border = { bottom: { style: "thin", color: { argb: COLORS.border } } };
+  }
+
+  let row = headerRow + 1;
+  for (const scenario of scenarios) {
+    const scenarioCell = sheet.getCell(row, scenarioCol);
+    scenarioCell.value = scenario.name;
+    scenarioCell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+    scenarioCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+    scenarioCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+
+    const notesCell = sheet.getCell(row, notesCol);
+    notesCell.value = normalizeText(scenario.notes, "No notable clauses captured from extraction.");
+    notesCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+    notesCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+    notesCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+
+    for (let c = 1; c <= totalCols; c++) {
+      const cell = sheet.getCell(row, c);
+      cell.border = { ...(cell.border ?? {}), bottom: { style: "thin", color: { argb: COLORS.border } } };
+      if (c >= 3) {
+        cell.value = "";
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+      }
+    }
+
+    row += 1;
+  }
+
+  const endRow = row - 1;
+  sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
+  autoAdjustRowHeights(sheet, startRow, endRow);
+  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: totalCols, repeatRow: headerRow });
+}
+
 async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: WorkbookBrandingMeta): Promise<ExcelJS.Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "The CRE Model";
@@ -1370,6 +1444,7 @@ async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: Workb
 
   createCoverSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createSummarySheet(workbook, usedSheetNames, scenarios, safeMeta);
+  createNotesSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createEqualizedSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createMonthlyGrossMatrixSheet(workbook, usedSheetNames, scenarios, safeMeta);
   scenarios.forEach((scenario) => createAppendixSheet(workbook, usedSheetNames, scenario, safeMeta));

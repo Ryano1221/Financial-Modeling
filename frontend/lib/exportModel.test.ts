@@ -109,7 +109,7 @@ describe("exportModel institutional workbook", () => {
     const summary = workbook.getWorksheet("Summary Comparison");
     const metricRow = findRowByFirstCell(summary, "Metric");
     expect(metricRow).not.toBeNull();
-    expect(summary?.getColumn(1).width).toBeGreaterThanOrEqual(34);
+    expect(summary?.getColumn(1).width).toBeGreaterThanOrEqual(28);
     const premisesRow = findRowByFirstCell(summary, "PREMISES");
     expect(premisesRow).not.toBeNull();
 
@@ -135,9 +135,10 @@ describe("exportModel institutional workbook", () => {
     const notesRow = findRowByCellValue(summary, 1, "Notes");
     expect(notesRow).not.toBeNull();
     if (summary && notesRow != null) {
-      const noteCell = summary.getCell(notesRow, 2);
+      const noteCell = summary.getCell(notesRow, 3);
       expect(noteCell.alignment?.wrapText).toBe(true);
-      expect((summary.getRow(notesRow).height ?? 0)).toBeGreaterThan(20);
+      expect((summary.getRow(notesRow).height ?? 0)).toBeGreaterThanOrEqual(20);
+      expect(noteCell.value).toBe("See Notes sheet");
     }
 
     const appendix = workbook.worksheets.find((sheet) => sheet.name.startsWith("Appendix"));
