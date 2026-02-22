@@ -114,6 +114,13 @@ const COLORS = {
 const CURRENCY_0 = '"$"#,##0;[Red]-"$"#,##0';
 const CURRENCY_2 = '"$"#,##0.00;[Red]-"$"#,##0.00';
 const PERCENT_2 = "0.00%";
+const COVER_WIDTH_COLS = 12;
+const HEADER_HEIGHT_ROWS = 4;
+const LOGO_BOX_W_PX = 280;
+const LOGO_BOX_H_PX = 58;
+const PADDING_PX = 8;
+const DEFAULT_BROKERAGE_NAME = "The CRE Model";
+const DEFAULT_PREPARED_BY = "The CRE Model";
 
 const BORDER_THIN: Partial<ExcelJS.Borders> = {
   top: { style: "thin", color: { argb: COLORS.border } },
@@ -459,22 +466,40 @@ function placeImageInBox(
   workbook: ExcelJS.Workbook,
   sheet: ExcelJS.Worksheet,
   parsed: ParsedImage | null,
-  box: { col: number; row: number; widthPx: number; heightPx: number }
+  box: { col: number; row: number; widthPx: number; heightPx: number; paddingPx?: number }
 ): boolean {
   if (!parsed) return false;
+  const padding = Math.max(0, box.paddingPx ?? PADDING_PX);
+  const innerWidth = Math.max(20, box.widthPx - padding * 2);
+  const innerHeight = Math.max(20, box.heightPx - padding * 2);
   const ratio = parsed.width / Math.max(1, parsed.height);
-  let targetWidth = box.widthPx;
+  let targetWidth = innerWidth;
   let targetHeight = Math.floor(targetWidth / ratio);
-  if (targetHeight > box.heightPx) {
-    targetHeight = box.heightPx;
+  if (targetHeight > innerHeight) {
+    targetHeight = innerHeight;
     targetWidth = Math.floor(targetHeight * ratio);
   }
   const imageId = workbook.addImage({ base64: parsed.dataUrl, extension: parsed.extension });
   sheet.addImage(imageId, {
-    tl: { col: box.col - 1 + 0.05, row: box.row - 1 + 0.05 },
+    tl: { col: box.col - 1 + (padding / 64), row: box.row - 1 + (padding / 20) },
     ext: { width: Math.max(20, targetWidth), height: Math.max(20, targetHeight) },
   });
   return true;
+}
+
+function drawHorizontalSeparator(
+  sheet: ExcelJS.Worksheet,
+  row: number,
+  startCol: number,
+  endCol: number
+): void {
+  for (let c = startCol; c <= endCol; c++) {
+    const cell = sheet.getCell(row, c);
+    cell.border = {
+      ...(cell.border ?? {}),
+      bottom: { style: "thin", color: { argb: COLORS.border } },
+    };
+  }
 }
 
 function applyBrandHeader(
@@ -485,6 +510,11 @@ function applyBrandHeader(
   sectionTitle: string,
   sectionSubtitle: string
 ): number {
+  const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
+  const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
+  const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
+  const brokerageName = normalizeText(meta.brokerageName, DEFAULT_BROKERAGE_NAME);
+
   sheet.mergeCells(1, 1, 2, totalCols);
   const top = sheet.getCell(1, 1);
   top.value = `${sectionTitle}\n${sectionSubtitle}`;
@@ -494,49 +524,54 @@ function applyBrandHeader(
   sheet.getRow(1).height = 24;
   sheet.getRow(2).height = 24;
 
-  const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
-  const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
-  const brokerageName = normalizeText(meta.brokerageName, "theCREmodel");
-  const clientName = normalizeText(meta.clientName, "Client");
+  sheet.mergeCells(3, 1, 3, totalCols);
+  const dateCell = sheet.getCell(3, 1);
+  dateCell.value = `REPORT DATE  ${reportDate}`;
+  dateCell.font = { name: "Aptos", bold: true, size: 10, color: { argb: COLORS.darkGray } };
+  dateCell.alignment = { horizontal: "center", vertical: "middle" };
+  sheet.getRow(3).height = 20;
+  drawHorizontalSeparator(sheet, 3, 1, totalCols);
 
-  const leftEndCol = Math.max(1, Math.floor(totalCols / 2));
-  const rightStartCol = leftEndCol + 1;
-  const pxPerCol = 64;
+  const leftEndCol = Math.max(1, Math.floor(totalCols / 3));
+  const rightStartCol = Math.max(leftEndCol + 1, totalCols - Math.floor(totalCols / 3) + 1);
+  const centerStartCol = leftEndCol + 1;
+  const centerEndCol = Math.max(centerStartCol, rightStartCol - 1);
+
   placeImageInBox(workbook, sheet, brokerageLogo, {
     col: 1,
-    row: 3,
-    widthPx: Math.max(80, leftEndCol * pxPerCol - 12),
-    heightPx: 44,
+    row: 4,
+    widthPx: Math.max(120, leftEndCol * 64),
+    heightPx: LOGO_BOX_H_PX,
+    paddingPx: PADDING_PX,
   });
   if (rightStartCol <= totalCols) {
     placeImageInBox(workbook, sheet, clientLogo, {
       col: rightStartCol,
-      row: 3,
-      widthPx: Math.max(80, (totalCols - rightStartCol + 1) * pxPerCol - 12),
-      heightPx: 44,
+      row: 4,
+      widthPx: Math.max(120, (totalCols - rightStartCol + 1) * 64),
+      heightPx: LOGO_BOX_H_PX,
+      paddingPx: PADDING_PX,
     });
   }
 
-  sheet.mergeCells(3, 1, 3, leftEndCol);
-  const brokerageCell = sheet.getCell(3, 1);
-  brokerageCell.value = brokerageLogo ? "" : brokerageName;
-  brokerageCell.font = { name: "Aptos", size: 11, bold: true, color: { argb: COLORS.text } };
-  brokerageCell.alignment = { horizontal: "left", vertical: "middle" };
-
-  if (rightStartCol <= totalCols) {
-    sheet.mergeCells(3, rightStartCol, 3, totalCols);
-    const clientCell = sheet.getCell(3, rightStartCol);
-    clientCell.value = clientLogo ? "" : clientName;
-    clientCell.font = { name: "Aptos", size: 11, bold: true, color: { argb: COLORS.text } };
-    clientCell.alignment = { horizontal: "right", vertical: "middle" };
+  if (!brokerageLogo) {
+    sheet.mergeCells(4, 1, 4, leftEndCol);
+    const brokerageCell = sheet.getCell(4, 1);
+    brokerageCell.value = brokerageName;
+    brokerageCell.font = { name: "Aptos", size: 11, bold: true, color: { argb: COLORS.text } };
+    brokerageCell.alignment = { horizontal: "left", vertical: "middle" };
   }
-
-  for (let c = 1; c <= totalCols; c++) {
-    const borderCell = sheet.getCell(3, c);
-    borderCell.border = { ...BORDER_THIN };
+  if (centerStartCol <= centerEndCol) {
+    sheet.mergeCells(4, centerStartCol, 4, centerEndCol);
+    const centerCell = sheet.getCell(4, centerStartCol);
+    centerCell.value = sectionTitle;
+    centerCell.font = { name: "Aptos", size: 11, bold: true, color: { argb: COLORS.text } };
+    centerCell.alignment = { horizontal: "center", vertical: "middle" };
   }
-  sheet.getRow(3).height = 28;
-  return 5;
+  sheet.getRow(4).height = 30;
+  drawHorizontalSeparator(sheet, 4, 1, totalCols);
+
+  return HEADER_HEIGHT_ROWS + 1;
 }
 
 function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], results: EngineResult[]): WorkbookScenario[] {
@@ -691,98 +726,76 @@ function createCoverSheet(
   meta: WorkbookBrandingMeta
 ): void {
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Cover", "Cover", usedSheetNames));
-  sheet.columns = Array.from({ length: 12 }, () => ({ width: 14 }));
+  sheet.columns = Array.from({ length: COVER_WIDTH_COLS }, () => ({ width: 14 }));
   sheet.views = [{ showGridLines: false }];
-  sheet.properties.defaultRowHeight = 24;
+  sheet.properties.defaultRowHeight = 22;
 
-  sheet.mergeCells(1, 1, 3, 12);
+  sheet.mergeCells(1, 1, 5, COVER_WIDTH_COLS);
   const titleBand = sheet.getCell(1, 1);
   titleBand.value = "THE COMMERCIAL REAL ESTATE MODEL\nLease Financial Analysis";
   titleBand.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-  titleBand.font = { name: "Aptos", bold: true, size: 24, color: { argb: COLORS.white } };
+  titleBand.font = { name: "Aptos", bold: true, size: 26, color: { argb: COLORS.white } };
   titleBand.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  for (let r = 1; r <= 5; r++) sheet.getRow(r).height = 28;
 
   const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
-  const brokerage = normalizeText(meta.brokerageName, "theCREmodel");
+  const brokerage = normalizeText(meta.brokerageName, DEFAULT_BROKERAGE_NAME);
   const client = normalizeText(meta.clientName, "Client");
-  const preparedBy = normalizeText(meta.preparedBy, "theCREmodel");
-  const market = normalizeText(meta.market, "");
+  const preparedBy = normalizeText(meta.preparedBy, DEFAULT_PREPARED_BY);
+  const market = normalizeText(meta.market, "—");
 
   const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
-  placeImageInBox(workbook, sheet, brokerageLogo, { col: 1, row: 4, widthPx: 280, heightPx: 80 });
+  placeImageInBox(workbook, sheet, brokerageLogo, {
+    col: 1,
+    row: 7,
+    widthPx: LOGO_BOX_W_PX,
+    heightPx: 80,
+    paddingPx: PADDING_PX,
+  });
 
   if (!brokerageLogo) {
-    sheet.mergeCells(4, 1, 6, 4);
-    const cell = sheet.getCell(4, 1);
+    sheet.mergeCells(7, 1, 9, 4);
+    const cell = sheet.getCell(7, 1);
     cell.value = brokerage;
     cell.font = { name: "Aptos", bold: true, size: 15, color: { argb: COLORS.text } };
     cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   }
-  type CoverBlock = {
-    label: string;
-    value: string;
-    colStart: number;
-    colEnd: number;
-    rowStart: number;
-    rowEnd: number;
-    logo?: ParsedImage | null;
-    valueAlignment?: "left" | "right" | "center";
-  };
-  const blocks: CoverBlock[] = [
-    { label: "Prepared For", value: client, colStart: 1, colEnd: 4, rowStart: 8, rowEnd: 10, logo: clientLogo },
-    { label: "Prepared By", value: preparedBy, colStart: 5, colEnd: 8, rowStart: 8, rowEnd: 10 },
-    { label: "Report Date", value: reportDate, colStart: 9, colEnd: 12, rowStart: 8, rowEnd: 10 },
-    { label: "Market", value: market || "—", colStart: 1, colEnd: 4, rowStart: 12, rowEnd: 13 },
-    { label: "Scenario Count", value: `${scenarios.length}`, colStart: 5, colEnd: 8, rowStart: 12, rowEnd: 13 },
-  ];
 
-  for (const block of blocks) {
-    sheet.mergeCells(block.rowStart, block.colStart, block.rowEnd, block.colEnd);
-    const cell = sheet.getCell(block.rowStart, block.colStart);
-    const label = block.label.toUpperCase();
-    const showValueText = !(block.label === "Prepared For" && block.logo);
-    cell.value = showValueText
-      ? {
-          richText: [
-            { text: `${label}\n`, font: { name: "Aptos", bold: true, size: 10, color: { argb: COLORS.darkGray } } },
-            { text: block.value, font: { name: "Aptos", bold: true, size: 12, color: { argb: COLORS.text } } },
-          ],
-        }
-      : {
-          richText: [
-            { text: label, font: { name: "Aptos", bold: true, size: 10, color: { argb: COLORS.darkGray } } },
-          ],
-        };
-    cell.alignment = {
-      horizontal: block.valueAlignment ?? "left",
-      vertical: "top",
-      wrapText: true,
-    };
-    for (let r = block.rowStart; r <= block.rowEnd; r++) {
-      for (let c = block.colStart; c <= block.colEnd; c++) {
-        sheet.getCell(r, c).border = { ...BORDER_THIN };
-      }
-    }
-    if (block.label === "Prepared For" && block.logo) {
-      placeImageInBox(workbook, sheet, block.logo, {
-        col: block.colStart,
-        row: block.rowStart + 1,
-        widthPx: Math.max(90, (block.colEnd - block.colStart + 1) * 62 - 12),
-        heightPx: 40,
-      });
-    }
+  sheet.mergeCells(7, 6, 8, COVER_WIDTH_COLS);
+  const stackTitle = sheet.getCell(7, 6);
+  stackTitle.value = "Prepared For\nPrepared By\nReport Date\nMarket\nScenario Count";
+  stackTitle.font = { name: "Aptos", bold: true, size: 9, color: { argb: COLORS.darkGray } };
+  stackTitle.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+
+  sheet.mergeCells(9, 6, 10, COVER_WIDTH_COLS);
+  const stackValues = sheet.getCell(9, 6);
+  stackValues.value = `${clientLogo ? "" : client}\n${preparedBy}\n${reportDate}\n${market}\n${scenarios.length}`;
+  stackValues.font = { name: "Aptos", bold: true, size: 13, color: { argb: COLORS.text } };
+  stackValues.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+
+  if (clientLogo) {
+    placeImageInBox(workbook, sheet, clientLogo, {
+      col: 6,
+      row: 9,
+      widthPx: 210,
+      heightPx: 40,
+      paddingPx: PADDING_PX,
+    });
   }
 
-  const footerRow = 15;
-  sheet.mergeCells(footerRow, 1, footerRow, 12);
+  drawHorizontalSeparator(sheet, 6, 1, COVER_WIDTH_COLS);
+  drawHorizontalSeparator(sheet, 11, 1, COVER_WIDTH_COLS);
+
+  const footerRow = 13;
+  sheet.mergeCells(footerRow, 1, footerRow, COVER_WIDTH_COLS);
   const footer = sheet.getCell(footerRow, 1);
   footer.value = `Template Version ${TEMPLATE_VERSION}`;
   footer.alignment = { horizontal: "center", vertical: "middle" };
   footer.font = { name: "Aptos", size: 10, color: { argb: "FF666666" } };
 
   autoAdjustRowHeights(sheet, 1, footerRow);
-  applyPrintSettings(sheet, { landscape: false, lastRow: footerRow, lastCol: 12 });
+  applyPrintSettings(sheet, { landscape: false, lastRow: footerRow, lastCol: COVER_WIDTH_COLS });
 }
 
 function createSummarySheet(
@@ -1252,14 +1265,14 @@ function rowBorderFill(sheet: ExcelJS.Worksheet, row: number, startCol: number, 
 
 async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: WorkbookBrandingMeta): Promise<ExcelJS.Buffer> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "theCREmodel";
+  workbook.creator = "The CRE Model";
   workbook.created = new Date();
   const usedSheetNames = new Set<string>();
   const safeMeta: WorkbookBrandingMeta = {
-    brokerageName: normalizeText(meta?.brokerageName, "theCREmodel"),
+    brokerageName: normalizeText(meta?.brokerageName, DEFAULT_BROKERAGE_NAME),
     clientName: normalizeText(meta?.clientName, "Client"),
     reportDate: meta?.reportDate || toIsoDate(new Date()),
-    preparedBy: normalizeText(meta?.preparedBy, "theCREmodel"),
+    preparedBy: normalizeText(meta?.preparedBy, DEFAULT_PREPARED_BY),
     market: normalizeText(meta?.market, ""),
     brokerageLogoDataUrl: meta?.brokerageLogoDataUrl ?? null,
     clientLogoDataUrl: meta?.clientLogoDataUrl ?? null,

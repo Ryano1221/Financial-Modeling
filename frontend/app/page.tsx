@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
@@ -55,6 +55,9 @@ import {
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
+const CRE_DEFAULT_BROKERAGE_NAME = "The CRE Model";
+const CRE_DEFAULT_PREPARED_BY = "The CRE Model";
+const CRE_DEFAULT_LOGO_PUBLIC_PATH = "/brand/logo.png";
 const NOISY_WARNING_PATTERNS = [
   /automatic extraction failed due to a backend processing issue/i,
   /automatic extraction failed\.\s*heuristic review template loaded/i,
@@ -304,6 +307,27 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read blob."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchPublicAssetDataUrl(path: string): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    const res = await fetch(path, { cache: "force-cache" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await blobToDataUrl(blob);
+  } catch {
+    return null;
+  }
+}
+
 /** POST /compute-canonical with request id, lease_type normalization, and lifecycle logs. */
 async function fetchComputeCanonical(
   scenarioId: string,
@@ -409,6 +433,7 @@ export default function Home() {
   const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
   const [clientLogoUploading, setClientLogoUploading] = useState(false);
   const [clientLogoError, setClientLogoError] = useState<string | null>(null);
+  const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
@@ -419,6 +444,13 @@ export default function Home() {
     () => derivePreparedByFromSession(authSession),
     [authSession]
   );
+
+  const getDefaultBrokerageLogoDataUrl = useCallback(async (): Promise<string | null> => {
+    if (!defaultBrokerageLogoPromiseRef.current) {
+      defaultBrokerageLogoPromiseRef.current = fetchPublicAssetDataUrl(CRE_DEFAULT_LOGO_PUBLIC_PATH);
+    }
+    return await defaultBrokerageLogoPromiseRef.current;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -920,7 +952,7 @@ export default function Home() {
 
   const buildReportMeta = useCallback((): ReportMeta => {
     const todayMdy = formatDateMmDdYyyy(new Date());
-    const defaultPreparedBy = reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || "theCREmodel";
+    const defaultPreparedBy = reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
     return {
       prepared_for: reportMeta.prepared_for.trim() || "Client",
       prepared_by: defaultPreparedBy,
@@ -1019,6 +1051,13 @@ export default function Home() {
         };
       });
       const meta = buildReportMeta();
+      const hasSavedBrokerageBranding = Boolean(
+        authSession && (organizationBranding?.has_logo || brokerageName.trim())
+      );
+      const resolvedBrokerageName = hasSavedBrokerageBranding
+        ? (brokerageName.trim() || CRE_DEFAULT_BROKERAGE_NAME)
+        : CRE_DEFAULT_BROKERAGE_NAME;
+      const resolvedPreparedBy = meta.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
       const headers = getAuthHeaders();
       try {
         const res = await fetchApiProxy("/reports", {
@@ -1030,11 +1069,11 @@ export default function Home() {
               org_id: organizationBranding?.organization_id || undefined,
               theme_hash: organizationBranding?.theme_hash || undefined,
               logo_asset_bytes: organizationBranding?.logo_asset_bytes || undefined,
-              brand_name: brokerageName.trim() || "theCREmodel",
+              brand_name: resolvedBrokerageName,
               client_name: meta.prepared_for || "Client",
-              broker_name: meta.prepared_by || defaultPreparedByFromAuth || "theCREmodel",
-              prepared_by_name: meta.prepared_by || defaultPreparedByFromAuth || "theCREmodel",
-              prepared_by_company: brokerageName.trim() || "theCREmodel",
+              broker_name: resolvedPreparedBy,
+              prepared_by_name: resolvedPreparedBy,
+              prepared_by_company: resolvedBrokerageName,
               date: meta.report_date || formatDateMmDdYyyy(new Date()),
               market: meta.market || "",
               submarket: meta.submarket || "",
@@ -1097,7 +1136,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName, defaultPreparedByFromAuth, equalizedForExport]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName, defaultPreparedByFromAuth, equalizedForExport, authSession]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1109,21 +1148,31 @@ export default function Home() {
     try {
       const canonical = scenarios.map(scenarioToCanonical);
       const reportMeta = buildReportMeta();
-      const brokerageLogoSource = organizationBranding?.logo_data_url
-        || (
-          organizationBranding?.logo_asset_bytes
-            ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
-            : null
-        );
+      const hasSavedBrokerageBranding = Boolean(
+        authSession && (organizationBranding?.has_logo || brokerageName.trim())
+      );
+      const resolvedBrokerageName = hasSavedBrokerageBranding
+        ? (brokerageName.trim() || CRE_DEFAULT_BROKERAGE_NAME)
+        : CRE_DEFAULT_BROKERAGE_NAME;
+      const resolvedPreparedBy = reportMeta.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
+      const savedBrokerageLogo = organizationBranding?.logo_data_url
+        || (organizationBranding?.logo_asset_bytes
+          ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+          : null);
+      const fallbackBrokerageLogo = await getDefaultBrokerageLogoDataUrl();
+      const brokerageLogoSource = hasSavedBrokerageBranding
+        ? (savedBrokerageLogo || fallbackBrokerageLogo)
+        : fallbackBrokerageLogo;
+      const clientLogoSource = authSession ? clientLogoDataUrl : null;
       const [brokerageLogoForExcel, clientLogoForExcel] = await Promise.all([
         normalizeLogoDataUrlForExcel(brokerageLogoSource),
-        normalizeLogoDataUrlForExcel(clientLogoDataUrl),
+        normalizeLogoDataUrlForExcel(clientLogoSource),
       ]);
       const excelMeta = {
-        brokerageName: brokerageName.trim() || "theCREmodel",
+        brokerageName: resolvedBrokerageName,
         clientName: reportMeta.prepared_for || "Client",
         reportDate: reportMeta.report_date || undefined,
-        preparedBy: reportMeta.prepared_by || defaultPreparedByFromAuth || "theCREmodel",
+        preparedBy: resolvedPreparedBy,
         brokerageLogoDataUrl: brokerageLogoForExcel,
         clientLogoDataUrl: clientLogoForExcel,
       };
@@ -1164,7 +1213,7 @@ export default function Home() {
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, brokerageName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, brokerageName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl]);
 
   const engineResults = useMemo(() => {
     const included = includedScenarios;
@@ -1279,7 +1328,7 @@ export default function Home() {
                   </div>
                   <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
                     <p className="heading-kicker mb-1">Brokerage</p>
-                    <p className="text-sm text-white/90 leading-tight truncate">{brokerageName || "theCREmodel"}</p>
+                    <p className="text-sm text-white/90 leading-tight truncate">{brokerageName || CRE_DEFAULT_BROKERAGE_NAME}</p>
                   </div>
 
                   <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
@@ -1288,7 +1337,7 @@ export default function Home() {
                   </div>
                   <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
                     <p className="heading-kicker mb-1">Prepared by</p>
-                    <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_by || "theCREmodel"}</p>
+                    <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_by || CRE_DEFAULT_PREPARED_BY}</p>
                   </div>
                   <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
                     <p className="heading-kicker mb-1">Report date</p>
@@ -1531,7 +1580,7 @@ export default function Home() {
                   value={reportMeta.prepared_by}
                   onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
                   className="input-premium mt-1 disabled:opacity-60"
-                  placeholder="theCREmodel"
+                  placeholder={CRE_DEFAULT_PREPARED_BY}
                   disabled={!authSession}
                 />
               </label>
@@ -1576,7 +1625,7 @@ export default function Home() {
               </label>
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              Defaults if blank: Prepared for = Client, Prepared by = theCREmodel, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
+              Defaults if blank: Prepared for = Client, Prepared by = The CRE Model, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
