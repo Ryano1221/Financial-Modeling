@@ -42,6 +42,7 @@ export interface WorkbookBrandingMeta {
   reportDate?: string;
   preparedBy?: string;
   market?: string;
+  submarket?: string;
   brokerageLogoDataUrl?: string | null;
   clientLogoDataUrl?: string | null;
 }
@@ -742,7 +743,8 @@ function createCoverSheet(
   const brokerage = normalizeText(meta.brokerageName, DEFAULT_BROKERAGE_NAME);
   const client = normalizeText(meta.clientName, "Client");
   const preparedBy = normalizeText(meta.preparedBy, DEFAULT_PREPARED_BY);
-  const market = normalizeText(meta.market, "—");
+  const market = normalizeText(meta.market, "");
+  const submarket = normalizeText(meta.submarket, "");
 
   const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
@@ -762,15 +764,24 @@ function createCoverSheet(
     cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   }
 
+  const detailRows: Array<{ label: string; value: string }> = [
+    { label: "Prepared For", value: clientLogo ? "" : client },
+    { label: "Prepared By", value: preparedBy },
+    { label: "Report Date", value: reportDate },
+    ...(market ? [{ label: "Market", value: market }] : []),
+    ...(submarket ? [{ label: "Submarket", value: submarket }] : []),
+    { label: "Scenario Count", value: String(scenarios.length) },
+  ].filter((row) => row.value.trim().length > 0);
+
   sheet.mergeCells(7, 6, 8, COVER_WIDTH_COLS);
   const stackTitle = sheet.getCell(7, 6);
-  stackTitle.value = "Prepared For\nPrepared By\nReport Date\nMarket\nScenario Count";
+  stackTitle.value = detailRows.map((row) => row.label).join("\n");
   stackTitle.font = { name: "Aptos", bold: true, size: 9, color: { argb: COLORS.darkGray } };
   stackTitle.alignment = { horizontal: "left", vertical: "top", wrapText: true };
 
   sheet.mergeCells(9, 6, 10, COVER_WIDTH_COLS);
   const stackValues = sheet.getCell(9, 6);
-  stackValues.value = `${clientLogo ? "" : client}\n${preparedBy}\n${reportDate}\n${market}\n${scenarios.length}`;
+  stackValues.value = detailRows.map((row) => row.value).join("\n");
   stackValues.font = { name: "Aptos", bold: true, size: 13, color: { argb: COLORS.text } };
   stackValues.alignment = { horizontal: "left", vertical: "top", wrapText: true };
 
@@ -1274,6 +1285,7 @@ async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: Workb
     reportDate: meta?.reportDate || toIsoDate(new Date()),
     preparedBy: normalizeText(meta?.preparedBy, DEFAULT_PREPARED_BY),
     market: normalizeText(meta?.market, ""),
+    submarket: normalizeText(meta?.submarket, ""),
     brokerageLogoDataUrl: meta?.brokerageLogoDataUrl ?? null,
     clientLogoDataUrl: meta?.clientLogoDataUrl ?? null,
   };

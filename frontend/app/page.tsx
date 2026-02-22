@@ -1173,6 +1173,8 @@ export default function Home() {
         clientName: reportMeta.prepared_for || "Client",
         reportDate: reportMeta.report_date || undefined,
         preparedBy: resolvedPreparedBy,
+        market: (reportMeta.market ?? "").trim() || undefined,
+        submarket: (reportMeta.submarket ?? "").trim() || undefined,
         brokerageLogoDataUrl: brokerageLogoForExcel,
         clientLogoDataUrl: clientLogoForExcel,
       };
