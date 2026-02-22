@@ -4,6 +4,7 @@ import type { EngineResult } from "@/lib/lease-engine/monthly-engine";
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse } from "@/lib/types";
+import { EXCEL_THEME } from "@/lib/excel-style-constants";
 
 export const TEMPLATE_VERSION = "3.0";
 
@@ -102,24 +103,23 @@ interface EqualizedMetrics {
 }
 
 const COLORS = {
-  black: "FF000000",
-  white: "FFFFFFFF",
-  accentRed: "FFE10600",
-  lightGray: "FFF2F2F2",
-  darkGray: "FF1A1A1A",
-  midGray: "FFD9D9D9",
-  text: "FF101010",
-  border: "FFB9B9B9",
+  black: EXCEL_THEME.colors.black,
+  white: EXCEL_THEME.colors.white,
+  lightGray: EXCEL_THEME.colors.mutedFill,
+  darkGray: EXCEL_THEME.colors.sectionRule,
+  text: EXCEL_THEME.colors.text,
+  border: EXCEL_THEME.colors.border,
+  secondaryText: EXCEL_THEME.colors.secondaryText,
 };
 
-const CURRENCY_0 = '"$"#,##0;[Red]-"$"#,##0';
-const CURRENCY_2 = '"$"#,##0.00;[Red]-"$"#,##0.00';
-const PERCENT_2 = "0.00%";
-const COVER_WIDTH_COLS = 12;
-const HEADER_HEIGHT_ROWS = 4;
-const LOGO_BOX_W_PX = 280;
-const LOGO_BOX_H_PX = 58;
-const PADDING_PX = 8;
+const CURRENCY_0 = EXCEL_THEME.numberFormats.currency0;
+const CURRENCY_2 = EXCEL_THEME.numberFormats.currency2;
+const PERCENT_2 = EXCEL_THEME.numberFormats.percent2;
+const COVER_WIDTH_COLS = EXCEL_THEME.spacing.coverCols;
+const HEADER_HEIGHT_ROWS = EXCEL_THEME.spacing.headerRows;
+const LOGO_BOX_W_PX = EXCEL_THEME.spacing.logoBoxWidthPx;
+const LOGO_BOX_H_PX = EXCEL_THEME.spacing.logoBoxHeightPx;
+const PADDING_PX = EXCEL_THEME.spacing.logoPaddingPx;
 const DEFAULT_BROKERAGE_NAME = "The CRE Model";
 const DEFAULT_PREPARED_BY = "The CRE Model";
 
@@ -130,15 +130,8 @@ const BORDER_THIN: Partial<ExcelJS.Borders> = {
   right: { style: "thin", color: { argb: COLORS.border } },
 };
 
-const BORDER_MEDIUM: Partial<ExcelJS.Borders> = {
-  top: { style: "medium", color: { argb: COLORS.darkGray } },
-  left: { style: "medium", color: { argb: COLORS.darkGray } },
-  bottom: { style: "medium", color: { argb: COLORS.darkGray } },
-  right: { style: "medium", color: { argb: COLORS.darkGray } },
-};
-
-const BORDER_THICK_TOP: Partial<ExcelJS.Borders> = {
-  top: { style: "thick", color: { argb: COLORS.black } },
+const BORDER_RULE_TOP: Partial<ExcelJS.Borders> = {
+  top: { style: "thin", color: { argb: COLORS.border } },
 };
 
 const NOTE_CATEGORY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
@@ -280,6 +273,35 @@ function buildCategorizedNoteSummary(rawNotes: string): string {
     .join("\n");
 }
 
+function wrapTextByApproxChars(text: string, maxCharsPerLine: number): string[] {
+  const clean = normalizeText(text);
+  if (!clean) return [];
+  const words = clean.replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxCharsPerLine) {
+      current = candidate;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word;
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function splitCellTextForContinuation(text: string, maxLinesPerRow: number, maxCharsPerLine: number): string[] {
+  const lines = wrapTextByApproxChars(text, maxCharsPerLine);
+  if (lines.length === 0) return [""];
+  const chunks: string[] = [];
+  for (let i = 0; i < lines.length; i += maxLinesPerRow) {
+    chunks.push(lines.slice(i, i + maxLinesPerRow).join("\n"));
+  }
+  return chunks;
+}
+
 function applyCellFormat(cell: ExcelJS.Cell, format: CellFormat): void {
   switch (format) {
     case "currency0":
@@ -299,7 +321,7 @@ function applyCellFormat(cell: ExcelJS.Cell, format: CellFormat): void {
       cell.alignment = { horizontal: "right", vertical: "middle" };
       break;
     case "date":
-      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.alignment = { horizontal: "left", vertical: "middle" };
       break;
     default:
       cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
@@ -367,7 +389,7 @@ function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: bool
     fitToPage: true,
     fitToWidth: 1,
     fitToHeight: 0,
-    horizontalCentered: true,
+    horizontalCentered: false,
     margins: {
       left: 0.25,
       right: 0.25,
@@ -381,20 +403,6 @@ function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: bool
   if (options.repeatRow) {
     const setup = sheet.pageSetup as unknown as { printTitlesRow?: string };
     setup.printTitlesRow = `${options.repeatRow}:${options.repeatRow}`;
-  }
-}
-
-function applyOuterBorder(sheet: ExcelJS.Worksheet, startRow: number, endRow: number, startCol: number, endCol: number): void {
-  for (let r = startRow; r <= endRow; r++) {
-    for (let c = startCol; c <= endCol; c++) {
-      const cell = sheet.getCell(r, c);
-      const base = { ...(cell.border ?? {}) };
-      if (r === startRow) base.top = { style: "medium", color: { argb: COLORS.black } };
-      if (r === endRow) base.bottom = { style: "medium", color: { argb: COLORS.black } };
-      if (c === startCol) base.left = { style: "medium", color: { argb: COLORS.black } };
-      if (c === endCol) base.right = { style: "medium", color: { argb: COLORS.black } };
-      cell.border = base;
-    }
   }
 }
 
@@ -514,24 +522,11 @@ function applyBrandHeader(
   const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
   const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
-  const brokerageName = normalizeText(meta.brokerageName, DEFAULT_BROKERAGE_NAME);
-
-  sheet.mergeCells(1, 1, 2, totalCols);
-  const top = sheet.getCell(1, 1);
-  top.value = `${sectionTitle}\n${sectionSubtitle}`;
-  top.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-  top.font = { name: "Aptos", bold: true, size: 13, color: { argb: COLORS.white } };
-  top.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-  sheet.getRow(1).height = 24;
-  sheet.getRow(2).height = 24;
-
-  sheet.mergeCells(3, 1, 3, totalCols);
-  const dateCell = sheet.getCell(3, 1);
-  dateCell.value = `REPORT DATE  ${reportDate}`;
-  dateCell.font = { name: "Aptos", bold: true, size: 10, color: { argb: COLORS.darkGray } };
-  dateCell.alignment = { horizontal: "center", vertical: "middle" };
-  sheet.getRow(3).height = 20;
-  drawHorizontalSeparator(sheet, 3, 1, totalCols);
+  sheet.views = [{ showGridLines: false }];
+  sheet.getRow(1).height = EXCEL_THEME.rowHeights.headerTop;
+  sheet.getRow(2).height = EXCEL_THEME.rowHeights.headerMid;
+  sheet.getRow(3).height = EXCEL_THEME.rowHeights.headerMid;
+  sheet.getRow(4).height = EXCEL_THEME.rowHeights.headerBottom;
 
   const leftEndCol = Math.max(1, Math.floor(totalCols / 3));
   const rightStartCol = Math.max(leftEndCol + 1, totalCols - Math.floor(totalCols / 3) + 1);
@@ -540,39 +535,42 @@ function applyBrandHeader(
 
   placeImageInBox(workbook, sheet, brokerageLogo, {
     col: 1,
-    row: 4,
+    row: 1,
     widthPx: Math.max(120, leftEndCol * 64),
-    heightPx: LOGO_BOX_H_PX,
+    heightPx: LOGO_BOX_H_PX + 8,
     paddingPx: PADDING_PX,
   });
   if (rightStartCol <= totalCols) {
     placeImageInBox(workbook, sheet, clientLogo, {
       col: rightStartCol,
-      row: 4,
+      row: 1,
       widthPx: Math.max(120, (totalCols - rightStartCol + 1) * 64),
-      heightPx: LOGO_BOX_H_PX,
+      heightPx: LOGO_BOX_H_PX + 8,
       paddingPx: PADDING_PX,
     });
   }
 
   if (!brokerageLogo) {
-    sheet.mergeCells(4, 1, 4, leftEndCol);
-    const brokerageCell = sheet.getCell(4, 1);
-    brokerageCell.value = brokerageName;
-    brokerageCell.font = { name: "Aptos", size: 11, bold: true, color: { argb: COLORS.text } };
+    sheet.mergeCells(1, 1, 3, leftEndCol);
+    const brokerageCell = sheet.getCell(1, 1);
+    brokerageCell.value = "";
     brokerageCell.alignment = { horizontal: "left", vertical: "middle" };
   }
   if (centerStartCol <= centerEndCol) {
-    sheet.mergeCells(4, centerStartCol, 4, centerEndCol);
-    const centerCell = sheet.getCell(4, centerStartCol);
-    centerCell.value = sectionTitle;
-    centerCell.font = { name: "Aptos", size: 11, bold: true, color: { argb: COLORS.text } };
-    centerCell.alignment = { horizontal: "center", vertical: "middle" };
+    sheet.mergeCells(1, centerStartCol, 3, centerEndCol);
+    const centerCell = sheet.getCell(1, centerStartCol);
+    centerCell.value = `${sectionTitle}\n${sectionSubtitle}\n${reportDate}`;
+    centerCell.font = {
+      name: EXCEL_THEME.font.family,
+      size: EXCEL_THEME.font.sectionSize,
+      bold: true,
+      color: { argb: COLORS.text },
+    };
+    centerCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   }
-  sheet.getRow(4).height = 30;
   drawHorizontalSeparator(sheet, 4, 1, totalCols);
 
-  return HEADER_HEIGHT_ROWS + 1;
+  return HEADER_HEIGHT_ROWS + 2;
 }
 
 function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], results: EngineResult[]): WorkbookScenario[] {
@@ -727,20 +725,24 @@ function createCoverSheet(
   meta: WorkbookBrandingMeta
 ): void {
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Cover", "Cover", usedSheetNames));
-  sheet.columns = Array.from({ length: COVER_WIDTH_COLS }, () => ({ width: 14 }));
+  sheet.columns = Array.from({ length: COVER_WIDTH_COLS }, () => ({ width: 15 }));
   sheet.views = [{ showGridLines: false }];
-  sheet.properties.defaultRowHeight = 22;
+  sheet.properties.defaultRowHeight = EXCEL_THEME.rowHeights.coverMeta;
 
   sheet.mergeCells(1, 1, 5, COVER_WIDTH_COLS);
   const titleBand = sheet.getCell(1, 1);
   titleBand.value = "THE COMMERCIAL REAL ESTATE MODEL\nLease Financial Analysis";
   titleBand.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-  titleBand.font = { name: "Aptos", bold: true, size: 26, color: { argb: COLORS.white } };
+  titleBand.font = {
+    name: EXCEL_THEME.font.family,
+    bold: true,
+    size: EXCEL_THEME.font.titleSize,
+    color: { argb: COLORS.white },
+  };
   titleBand.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-  for (let r = 1; r <= 5; r++) sheet.getRow(r).height = 28;
+  for (let r = 1; r <= 5; r++) sheet.getRow(r).height = EXCEL_THEME.rowHeights.coverBand;
 
   const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
-  const brokerage = normalizeText(meta.brokerageName, DEFAULT_BROKERAGE_NAME);
   const client = normalizeText(meta.clientName, "Client");
   const preparedBy = normalizeText(meta.preparedBy, DEFAULT_PREPARED_BY);
   const market = normalizeText(meta.market, "");
@@ -748,20 +750,37 @@ function createCoverSheet(
 
   const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
+
+  sheet.mergeCells(7, 1, 11, 5);
+  const brokerageBox = sheet.getCell(7, 1);
+  brokerageBox.value = "";
+  brokerageBox.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+  brokerageBox.border = {
+    top: { style: "thin", color: { argb: COLORS.border } },
+    left: { style: "thin", color: { argb: COLORS.border } },
+    bottom: { style: "thin", color: { argb: COLORS.border } },
+    right: { style: "thin", color: { argb: COLORS.border } },
+  };
+
   placeImageInBox(workbook, sheet, brokerageLogo, {
     col: 1,
     row: 7,
-    widthPx: LOGO_BOX_W_PX,
-    heightPx: 80,
+    widthPx: 320,
+    heightPx: 90,
     paddingPx: PADDING_PX,
   });
 
-  if (!brokerageLogo) {
-    sheet.mergeCells(7, 1, 9, 4);
-    const cell = sheet.getCell(7, 1);
-    cell.value = brokerage;
-    cell.font = { name: "Aptos", bold: true, size: 15, color: { argb: COLORS.text } };
-    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  for (let r = 7; r <= 11; r++) {
+    for (let c = 6; c <= COVER_WIDTH_COLS; c++) {
+      const cell = sheet.getCell(r, c);
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+      const border: Partial<ExcelJS.Borders> = {};
+      if (r === 7) border.top = { style: "thin", color: { argb: COLORS.border } };
+      if (r === 11) border.bottom = { style: "thin", color: { argb: COLORS.border } };
+      if (c === 6) border.left = { style: "thin", color: { argb: COLORS.border } };
+      if (c === COVER_WIDTH_COLS) border.right = { style: "thin", color: { argb: COLORS.border } };
+      cell.border = { ...(cell.border ?? {}), ...border };
+    }
   }
 
   const detailRows: Array<{ label: string; value: string }> = [
@@ -776,37 +795,41 @@ function createCoverSheet(
   sheet.mergeCells(7, 6, 8, COVER_WIDTH_COLS);
   const stackTitle = sheet.getCell(7, 6);
   stackTitle.value = detailRows.map((row) => row.label).join("\n");
-  stackTitle.font = { name: "Aptos", bold: true, size: 9, color: { argb: COLORS.darkGray } };
+  stackTitle.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.labelSize, color: { argb: COLORS.secondaryText } };
   stackTitle.alignment = { horizontal: "left", vertical: "top", wrapText: true };
 
   sheet.mergeCells(9, 6, 10, COVER_WIDTH_COLS);
   const stackValues = sheet.getCell(9, 6);
   stackValues.value = detailRows.map((row) => row.value).join("\n");
-  stackValues.font = { name: "Aptos", bold: true, size: 13, color: { argb: COLORS.text } };
+  stackValues.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
   stackValues.alignment = { horizontal: "left", vertical: "top", wrapText: true };
 
   if (clientLogo) {
+    sheet.mergeCells(12, 1, 16, 5);
+    const clientBox = sheet.getCell(12, 1);
+    clientBox.value = "";
+    clientBox.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+    clientBox.border = {
+      top: { style: "thin", color: { argb: COLORS.border } },
+      left: { style: "thin", color: { argb: COLORS.border } },
+      bottom: { style: "thin", color: { argb: COLORS.border } },
+      right: { style: "thin", color: { argb: COLORS.border } },
+    };
     placeImageInBox(workbook, sheet, clientLogo, {
-      col: 6,
-      row: 9,
-      widthPx: 210,
-      heightPx: 40,
+      col: 1,
+      row: 12,
+      widthPx: 320,
+      heightPx: 90,
       paddingPx: PADDING_PX,
     });
   }
 
   drawHorizontalSeparator(sheet, 6, 1, COVER_WIDTH_COLS);
-  drawHorizontalSeparator(sheet, 11, 1, COVER_WIDTH_COLS);
-
-  const footerRow = 13;
-  sheet.mergeCells(footerRow, 1, footerRow, COVER_WIDTH_COLS);
-  const footer = sheet.getCell(footerRow, 1);
-  footer.value = `Template Version ${TEMPLATE_VERSION}`;
-  footer.alignment = { horizontal: "center", vertical: "middle" };
-  footer.font = { name: "Aptos", size: 10, color: { argb: "FF666666" } };
-
-  autoAdjustRowHeights(sheet, 1, footerRow);
-  applyPrintSettings(sheet, { landscape: false, lastRow: footerRow, lastCol: COVER_WIDTH_COLS });
+  for (let row = 7; row <= 16; row++) {
+    sheet.getRow(row).height = EXCEL_THEME.rowHeights.coverMeta;
+  }
+  autoAdjustRowHeights(sheet, 1, 16);
+  applyPrintSettings(sheet, { landscape: false, lastRow: 16, lastCol: COVER_WIDTH_COLS });
 }
 
 function createSummarySheet(
@@ -817,20 +840,28 @@ function createSummarySheet(
 ): void {
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Summary Comparison", "Summary Comparison", usedSheetNames));
   const cols = scenarios.length + 1;
-  sheet.getColumn(1).width = 38;
-  for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 2).width = 24;
+  sheet.getColumn(1).width = 34;
+  for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 2).width = 28;
 
   const startRow = applyBrandHeader(workbook, sheet, meta, cols, "SUMMARY COMPARISON", "Institutional scenario matrix");
+  const headerRow = startRow;
 
-  sheet.getCell(startRow, 1).value = "Metric";
-  sheet.getCell(startRow, 1).font = { name: "Aptos", bold: true, color: { argb: COLORS.white } };
-  sheet.getCell(startRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.darkGray } };
+  sheet.getRow(headerRow).height = EXCEL_THEME.rowHeights.tableHeader + 6;
+  sheet.getCell(headerRow, 1).value = "Metric";
+  sheet.getCell(headerRow, 1).font = {
+    name: EXCEL_THEME.font.family,
+    bold: true,
+    size: EXCEL_THEME.font.sectionSize,
+    color: { argb: COLORS.white },
+  };
+  sheet.getCell(headerRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  sheet.getCell(headerRow, 1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   scenarios.forEach((scenario, idx) => {
-    const cell = sheet.getCell(startRow, idx + 2);
+    const cell = sheet.getCell(headerRow, idx + 2);
     cell.value = scenario.name;
-    cell.font = { name: "Aptos", bold: true, color: { argb: COLORS.white } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.darkGray } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
 
   type SummaryRow =
@@ -870,56 +901,88 @@ function createSummarySheet(
     { type: "metric", label: "Notes", format: "text", getter: (s) => s.notes },
   ];
 
-  let row = startRow + 1;
-  let shade = false;
+  let row = headerRow + 1;
   for (const def of rows) {
     if (def.type === "section") {
       sheet.mergeCells(row, 1, row, cols);
       const cell = sheet.getCell(row, 1);
       cell.value = def.label;
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-      cell.font = { name: "Aptos", bold: true, color: { argb: COLORS.white }, size: 11 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+      cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText }, size: EXCEL_THEME.font.labelSize };
       cell.alignment = { horizontal: "left", vertical: "middle" };
+      for (let c = 1; c <= cols; c++) {
+        const sectionCell = sheet.getCell(row, c);
+        sectionCell.border = {
+          ...(sectionCell.border ?? {}),
+          top: { style: "thin", color: { argb: COLORS.darkGray } },
+        };
+      }
+      sheet.getRow(row).height = EXCEL_THEME.rowHeights.body;
       row += 1;
-      shade = false;
       continue;
     }
 
-    const rowFill = shade ? COLORS.lightGray : COLORS.white;
+    if (def.label === "Notes") {
+      const noteChunks = scenarios.map((scenario) =>
+        splitCellTextForContinuation(String(def.getter(scenario) ?? ""), 5, 54)
+      );
+      const chunkCount = Math.max(1, ...noteChunks.map((segments) => segments.length));
+      for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
+        const labelCell = sheet.getCell(row, 1);
+        labelCell.value = chunkIndex === 0 ? "Notes" : "Notes (cont.)";
+        labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+        labelCell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.text }, size: EXCEL_THEME.font.bodySize };
+        labelCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+        scenarios.forEach((_, idx) => {
+          const cell = sheet.getCell(row, idx + 2);
+          cell.value = noteChunks[idx][chunkIndex] || "";
+          cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+          cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+        });
+        for (let c = 1; c <= cols; c++) {
+          const cell = sheet.getCell(row, c);
+          cell.border = {
+            ...(cell.border ?? {}),
+            bottom: { style: "thin", color: { argb: COLORS.border } },
+          };
+        }
+        sheet.getRow(row).height = Math.max(EXCEL_THEME.rowHeights.notesMin, 78);
+        row += 1;
+      }
+      continue;
+    }
+
     const labelCell = sheet.getCell(row, 1);
     labelCell.value = def.label;
-    labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rowFill } };
-    labelCell.font = { name: "Aptos", bold: true, color: { argb: COLORS.text }, size: 10 };
+    labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+    labelCell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.text }, size: EXCEL_THEME.font.bodySize };
     labelCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
     scenarios.forEach((scenario, idx) => {
       const value = def.getter(scenario);
       const cell = sheet.getCell(row, idx + 2);
       cell.value = typeof value === "number" ? Number(value.toFixed(6)) : value;
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rowFill } };
+      cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
       applyCellFormat(cell, def.format);
-      if (def.format === "text") {
+      if (def.format === "text" || def.format === "date") {
         cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
       }
     });
-    shade = !shade;
+    for (let c = 1; c <= cols; c++) {
+      const cell = sheet.getCell(row, c);
+      cell.border = {
+        ...(cell.border ?? {}),
+        bottom: { style: "thin", color: { argb: COLORS.border } },
+      };
+    }
+    sheet.getRow(row).height = EXCEL_THEME.rowHeights.body;
     row += 1;
   }
   const endRow = row - 1;
-
-  for (let r = startRow; r <= endRow; r++) {
-    for (let c = 1; c <= cols; c++) {
-      const cell = sheet.getCell(r, c);
-      cell.border = { ...(cell.border ?? {}), ...BORDER_THIN };
-      cell.font = { ...(cell.font ?? {}), name: "Aptos" };
-    }
-  }
-  applyOuterBorder(sheet, startRow, endRow, 1, cols);
-
-  sheet.views = [{ state: "frozen", xSplit: 1, ySplit: startRow, showGridLines: false }];
-  autoSizeColumns(sheet, 10, 40);
-  sheet.getColumn(1).width = Math.max(36, sheet.getColumn(1).width ?? 36);
-  autoAdjustRowHeights(sheet, startRow, endRow);
-  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: cols, repeatRow: startRow });
+  sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
+  autoSizeColumns(sheet, 12, 42);
+  sheet.getColumn(1).width = Math.max(34, sheet.getColumn(1).width ?? 34);
+  autoAdjustRowHeights(sheet, headerRow, endRow);
+  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
 }
 
 function createEqualizedSheet(
@@ -947,15 +1010,17 @@ function createEqualizedSheet(
   rowBorderFill(sheet, startRow, 1, cols);
 
   const headerRow = startRow + 2;
+  sheet.getRow(headerRow).height = EXCEL_THEME.rowHeights.tableHeader;
   sheet.getCell(headerRow, 1).value = "Metric";
-  sheet.getCell(headerRow, 1).font = { name: "Aptos", bold: true, color: { argb: COLORS.white } };
-  sheet.getCell(headerRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.darkGray } };
+  sheet.getCell(headerRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
+  sheet.getCell(headerRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  sheet.getCell(headerRow, 1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(headerRow, idx + 2);
     cell.value = scenario.name;
-    cell.font = { name: "Aptos", bold: true, color: { argb: COLORS.white } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.darkGray } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
 
   const metricsRows: Array<{
@@ -1012,26 +1077,28 @@ function createEqualizedSheet(
     const fill = idx % 2 === 0 ? COLORS.white : COLORS.lightGray;
     const label = sheet.getCell(row, 1);
     label.value = metric.label;
-    label.font = { name: "Aptos", bold: true, color: { argb: COLORS.text } };
+    label.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.text } };
     label.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    label.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
     scenarios.forEach((scenario, cIdx) => {
       const cell = sheet.getCell(row, cIdx + 2);
       const value = metric.getter(scenario);
       cell.value = typeof value === "number" ? Number(value.toFixed(6)) : value;
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
       if (typeof value === "number") applyCellFormat(cell, metric.format);
-      else cell.alignment = { horizontal: "center", vertical: "middle" };
+      else cell.alignment = { horizontal: "left", vertical: "middle" };
     });
+    for (let c = 1; c <= cols; c++) {
+      const rowCell = sheet.getCell(row, c);
+      rowCell.border = {
+        ...(rowCell.border ?? {}),
+        bottom: { style: "thin", color: { argb: COLORS.border } },
+      };
+    }
     row += 1;
   });
 
   const endRow = row - 1;
-  for (let r = headerRow; r <= endRow; r++) {
-    for (let c = 1; c <= cols; c++) {
-      sheet.getCell(r, c).border = { ...(sheet.getCell(r, c).border ?? {}), ...BORDER_THIN };
-    }
-  }
-  applyOuterBorder(sheet, headerRow, endRow, 1, cols);
   sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
   autoSizeColumns(sheet, 12, 38);
   autoAdjustRowHeights(sheet, startRow, endRow);
@@ -1054,20 +1121,21 @@ function createMonthlyGrossMatrixSheet(
 
   const startRow = applyBrandHeader(workbook, sheet, meta, cols, "MONTHLY GROSS CASH FLOW MATRIX", "Institutional side-by-side monthly totals");
   const headerRow = startRow;
+  sheet.getRow(headerRow).height = EXCEL_THEME.rowHeights.tableHeader;
   sheet.getCell(headerRow, 1).value = "Month #";
   sheet.getCell(headerRow, 2).value = "Date";
   for (let c = 1; c <= 2; c++) {
     const cell = sheet.getCell(headerRow, c);
-    cell.font = { name: "Aptos", bold: true, color: { argb: COLORS.white } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.darkGray } };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   }
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(headerRow, idx + 3);
     cell.value = scenario.name;
-    cell.font = { name: "Aptos", bold: true, color: { argb: COLORS.white } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.darkGray } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
 
   const starts = scenarios.map((s) => parseIsoDate(s.commencementDate)).filter((d): d is Date => d !== null);
@@ -1102,8 +1170,8 @@ function createMonthlyGrossMatrixSheet(
     sheet.getCell(row, 2).value = displayDate;
     sheet.getCell(row, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
     sheet.getCell(row, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-    sheet.getCell(row, 1).alignment = { horizontal: "center", vertical: "middle" };
-    sheet.getCell(row, 2).alignment = { horizontal: "center", vertical: "middle" };
+    sheet.getCell(row, 1).alignment = { horizontal: "right", vertical: "middle" };
+    sheet.getCell(row, 2).alignment = { horizontal: "left", vertical: "middle" };
 
     scenarios.forEach((scenario, idx) => {
       const start = parseIsoDate(scenario.commencementDate);
@@ -1114,12 +1182,19 @@ function createMonthlyGrossMatrixSheet(
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
       if (value == null || Number.isNaN(value)) {
         cell.value = "—";
-        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.alignment = { horizontal: "left", vertical: "middle" };
       } else {
         cell.value = Number(value.toFixed(4));
         applyCellFormat(cell, "currency0");
       }
     });
+    for (let c = 1; c <= cols; c++) {
+      const rowCell = sheet.getCell(row, c);
+      rowCell.border = {
+        ...(rowCell.border ?? {}),
+        bottom: { style: "thin", color: { argb: COLORS.border } },
+      };
+    }
     row += 1;
   }
 
@@ -1138,18 +1213,14 @@ function createMonthlyGrossMatrixSheet(
   for (let c = 1; c <= cols; c++) {
     const cell = sheet.getCell(totalRow, c);
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-    cell.border = { ...(cell.border ?? {}), ...BORDER_THICK_TOP, ...BORDER_THIN };
+    cell.border = {
+      ...(cell.border ?? {}),
+      ...BORDER_RULE_TOP,
+      bottom: { style: "thin", color: { argb: COLORS.border } },
+    };
   }
 
   const endRow = totalRow;
-  for (let r = headerRow; r <= endRow; r++) {
-    for (let c = 1; c <= cols; c++) {
-      const cell = sheet.getCell(r, c);
-      cell.border = { ...(cell.border ?? {}), ...BORDER_THIN };
-      cell.font = { ...(cell.font ?? {}), name: "Aptos" };
-    }
-  }
-  applyOuterBorder(sheet, headerRow, endRow, 1, cols);
   sheet.views = [{ state: "frozen", xSplit: 2, ySplit: headerRow, showGridLines: false }];
   autoSizeColumns(sheet, 10, 34);
   autoAdjustRowHeights(sheet, headerRow, endRow);
@@ -1179,6 +1250,7 @@ function createAppendixSheet(
   rowBorderFill(sheet, startRow, 1, cols);
 
   const headerRow = startRow + 2;
+  sheet.getRow(headerRow).height = EXCEL_THEME.rowHeights.tableHeader;
   const headers = [
     "Month #",
     "Date",
@@ -1193,9 +1265,9 @@ function createAppendixSheet(
   headers.forEach((h, idx) => {
     const cell = sheet.getCell(headerRow, idx + 1);
     cell.value = h;
-    cell.font = { name: "Aptos", bold: true, color: { argb: COLORS.white } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.darkGray } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
 
   let row = headerRow + 1;
@@ -1231,6 +1303,10 @@ function createAppendixSheet(
       if (c === 1) applyCellFormat(cell, "integer");
       else if (c === 2) applyCellFormat(cell, "date");
       else applyCellFormat(cell, "currency0");
+      cell.border = {
+        ...(cell.border ?? {}),
+        bottom: { style: "thin", color: { argb: COLORS.border } },
+      };
     }
     row += 1;
   });
@@ -1250,18 +1326,20 @@ function createAppendixSheet(
   for (let c = 1; c <= cols; c++) {
     const cell = sheet.getCell(totalsRow, c);
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-    cell.border = { ...(cell.border ?? {}), ...BORDER_THICK_TOP, ...BORDER_THIN };
+    cell.border = {
+      ...(cell.border ?? {}),
+      ...BORDER_RULE_TOP,
+      bottom: { style: "thin", color: { argb: COLORS.border } },
+    };
   }
 
   const endRow = totalsRow;
   for (let r = headerRow; r <= endRow; r++) {
     for (let c = 1; c <= cols; c++) {
       const cell = sheet.getCell(r, c);
-      cell.border = { ...(cell.border ?? {}), ...BORDER_THIN };
-      cell.font = { ...(cell.font ?? {}), name: "Aptos" };
+      cell.font = { ...(cell.font ?? {}), name: EXCEL_THEME.font.family };
     }
   }
-  applyOuterBorder(sheet, headerRow, endRow, 1, cols);
   sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
   autoSizeColumns(sheet, 10, 28);
   autoAdjustRowHeights(sheet, startRow, endRow);

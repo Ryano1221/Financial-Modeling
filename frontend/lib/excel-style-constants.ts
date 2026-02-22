@@ -1,0 +1,45 @@
+export const EXCEL_THEME = {
+  colors: {
+    black: "FF000000",
+    white: "FFFFFFFF",
+    text: "FF0F1115",
+    secondaryText: "FF6B7280",
+    border: "FFD1D5DB",
+    mutedFill: "FFF8FAFC",
+    sectionRule: "FF111827",
+  },
+  font: {
+    family: "Aptos",
+    titleSize: 26,
+    subtitleSize: 11,
+    sectionSize: 10,
+    labelSize: 9,
+    bodySize: 10,
+    smallSize: 8,
+  },
+  spacing: {
+    coverCols: 12,
+    headerRows: 4,
+    logoBoxWidthPx: 280,
+    logoBoxHeightPx: 58,
+    logoPaddingPx: 10,
+    sectionTopPad: 1,
+  },
+  rowHeights: {
+    coverBand: 30,
+    coverMeta: 26,
+    headerTop: 17,
+    headerMid: 22,
+    headerBottom: 17,
+    tableHeader: 24,
+    body: 22,
+    notesMin: 26,
+  },
+  numberFormats: {
+    currency0: '"$"#,##0;[Red]-"$"#,##0',
+    currency2: '"$"#,##0.00;[Red]-"$"#,##0.00',
+    percent2: "0.00%",
+    integer: "#,##0",
+  },
+} as const;
+
