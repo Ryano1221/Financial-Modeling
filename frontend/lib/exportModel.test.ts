@@ -7,6 +7,36 @@ import {
 } from "./exportModel";
 import type { LeaseScenarioCanonical } from "./lease-engine/canonical-schema";
 
+function findRowByFirstCell(sheet: ExcelJS.Worksheet | undefined, needle: string): number | null {
+  if (!sheet) return null;
+  let found: number | null = null;
+  sheet.eachRow((row, rowNumber) => {
+    if (found != null) return;
+    const val = row.getCell(1).value;
+    if (typeof val === "string" && val.trim() === needle) {
+      found = rowNumber;
+    }
+  });
+  return found;
+}
+
+function findRowByCellValue(
+  sheet: ExcelJS.Worksheet | undefined,
+  col: number,
+  needle: string
+): number | null {
+  if (!sheet) return null;
+  let found: number | null = null;
+  sheet.eachRow((row, rowNumber) => {
+    if (found != null) return;
+    const val = row.getCell(col).value;
+    if (typeof val === "string" && val.trim() === needle) {
+      found = rowNumber;
+    }
+  });
+  return found;
+}
+
 describe("exportModel institutional workbook", () => {
   it("exposes required summary labels", () => {
     expect(SUMMARY_MATRIX_ROW_LABELS).toContain("Building name");
@@ -15,7 +45,7 @@ describe("exportModel institutional workbook", () => {
   });
 
   it("template version is defined", () => {
-    expect(TEMPLATE_VERSION).toBe("2.0");
+    expect(TEMPLATE_VERSION).toBe("3.0");
   });
 
   it("builds required workbook sheets and branded headers", async () => {
@@ -52,7 +82,9 @@ describe("exportModel institutional workbook", () => {
         amortizeOop: false,
       },
       otherCashFlows: { oneTimeCosts: [], brokerFee: 0, securityDepositMonths: 0 },
-      notes: "Renewal option available.",
+      notes:
+        "Renewal option available with long explanatory language for wrapping checks. " +
+        "ROFR exists. Parking ratio applies. Operating expense exclusions include controllable costs.",
     };
 
     const buffer = await buildBrokerWorkbook([scenario], 0.08, {
@@ -75,12 +107,47 @@ describe("exportModel institutional workbook", () => {
     expect((cover?.getCell("A1").value as string) ?? "").toContain("THE COMMERCIAL REAL ESTATE MODEL");
 
     const summary = workbook.getWorksheet("Summary Comparison");
-    expect(summary?.getCell(1, 1).value).toBe("Metric");
+    const metricRow = findRowByFirstCell(summary, "Metric");
+    expect(metricRow).not.toBeNull();
     expect(summary?.getColumn(1).width).toBeGreaterThanOrEqual(34);
-    expect(summary?.getCell("A2").value).toBe("PREMISES");
+    const premisesRow = findRowByFirstCell(summary, "PREMISES");
+    expect(premisesRow).not.toBeNull();
 
     const monthly = workbook.getWorksheet("Monthly Gross Cash Flow Matrix");
-    expect(monthly?.getCell(1, 1).value).toBe("Month #");
-    expect(monthly?.getCell(1, 2).value).toBe("Date");
+    const monthHeaderRow = findRowByFirstCell(monthly, "Month #");
+    expect(monthHeaderRow).not.toBeNull();
+    if (monthHeaderRow != null && monthly) {
+      expect(monthly.getCell(monthHeaderRow, 2).value).toBe("Date");
+
+      const month0Row = monthHeaderRow + 1;
+      expect(monthly.getCell(month0Row, 1).value).toBe(0);
+      expect(monthly.getCell(month0Row, 2).value).toBe("PRE COMMENCEMENT");
+
+      const totalRow = findRowByCellValue(monthly, 2, "Total Estimated Obligation");
+      expect(totalRow).not.toBeNull();
+      if (totalRow != null) {
+        const formulaCell = monthly.getCell(totalRow, 3).value as ExcelJS.CellFormulaValue;
+        expect(formulaCell).toHaveProperty("formula");
+        expect(formulaCell.formula).toMatch(/^SUM\([A-Z]+\d+:[A-Z]+\d+\)$/);
+      }
+    }
+
+    const notesRow = findRowByCellValue(summary, 1, "Notes");
+    expect(notesRow).not.toBeNull();
+    if (summary && notesRow != null) {
+      const noteCell = summary.getCell(notesRow, 2);
+      expect(noteCell.alignment?.wrapText).toBe(true);
+      expect((summary.getRow(notesRow).height ?? 0)).toBeGreaterThan(20);
+    }
+
+    const appendix = workbook.worksheets.find((sheet) => sheet.name.startsWith("Appendix"));
+    expect(appendix).toBeDefined();
+    const appendixTotalsRow = findRowByCellValue(appendix, 2, "Totals");
+    expect(appendixTotalsRow).not.toBeNull();
+    if (appendix && appendixTotalsRow != null) {
+      const grossTotal = appendix.getCell(appendixTotalsRow, 7).value as ExcelJS.CellFormulaValue;
+      expect(grossTotal).toHaveProperty("formula");
+      expect(grossTotal.formula).toMatch(/^SUM\([A-Z]+\d+:[A-Z]+\d+\)$/);
+    }
   });
 });
