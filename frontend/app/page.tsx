@@ -1061,6 +1061,13 @@ export default function Home() {
     setExportExcelError(null);
     try {
       const canonical = scenarios.map(scenarioToCanonical);
+      const reportMeta = buildReportMeta();
+      const excelMeta = {
+        brokerageName: brokerageName.trim() || "theCREmodel",
+        clientName: reportMeta.prepared_for || "Client",
+        reportDate: reportMeta.report_date || undefined,
+        preparedBy: reportMeta.prepared_by || defaultPreparedByFromAuth || "theCREmodel",
+      };
       let buffer: ArrayBuffer | null = null;
       let usedFallback = false;
       try {
@@ -1076,9 +1083,9 @@ export default function Home() {
             });
             return { response: res, scenarioName };
           });
-          buffer = await buildBrokerWorkbookFromCanonicalResponses(items);
+          buffer = await buildBrokerWorkbookFromCanonicalResponses(items, excelMeta);
         } else {
-          buffer = await buildBrokerWorkbook(canonical, globalDiscountRate);
+          buffer = await buildBrokerWorkbook(canonical, globalDiscountRate, excelMeta);
         }
       } catch (primaryErr) {
         console.error("[exportExcelDeck] broker workbook failed; falling back to legacy workbook", primaryErr);
@@ -1098,7 +1105,7 @@ export default function Home() {
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, brokerageName, defaultPreparedByFromAuth]);
 
   const engineResults = useMemo(() => {
     const included = includedScenarios;

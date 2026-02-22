@@ -1,72 +1,138 @@
-/**
- * Broker-grade Excel export: professional underwriting model format.
- * Sheet 1: Summary Matrix (with Template Version cell)
- * Sheet 2+: Per-scenario with Section A (Inputs), B (Monthly Cash Flow), C (Annual Summary), D (Broker Metrics)
- * Hidden: {Name}_Monthly per option.
- * Formatting: bold headers, currency, percentage, two decimal precision, no raw floats.
- */
-
 import ExcelJS from "exceljs";
 import type { LeaseScenarioCanonical } from "@/lib/lease-engine/canonical-schema";
-import type { EngineResult, MonthlyRow, AnnualRow } from "@/lib/lease-engine/monthly-engine";
+import type { EngineResult, MonthlyRow } from "@/lib/lease-engine/monthly-engine";
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
-import type { CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
+import type { CanonicalComputeResponse } from "@/lib/types";
 
-/** Locked for regression tests: do not change order or labels. */
+export const TEMPLATE_VERSION = "2.0";
+
 export const SUMMARY_MATRIX_ROW_LABELS = [
+  "Document type",
   "Building name",
   "Suite / floor",
+  "Street address",
   "RSF",
-  "Lease type",
-  "Term (months)",
   "Commencement",
   "Expiration",
-  "Base rent ($/RSF/yr)",
-  "Avg gross rent/month",
-  "Avg all-in cost/month",
-  "Avg all-in cost/year",
-  "Avg cost/RSF/year",
-  "NPV @ discount rate",
+  "Lease type",
+  "Term (months)",
+  "Rent (nominal)",
+  "OpEx (nominal)",
+  "OpEx escalation %",
+  "Discount rate",
+  "Parking cost ($/spot/month, pre-tax)",
+  "Parking sales tax %",
+  "Parking cost ($/spot/month, after tax)",
+  "Parking cost (annual)",
+  "TI budget",
+  "TI allowance",
+  "TI out of pocket",
   "Total obligation",
+  "NPV cost",
+  "Avg cost/year",
+  "Avg cost/SF/year",
   "Equalized avg cost/RSF/yr",
-  "Discount rate used",
   "Notes",
 ] as const;
 
-export const TEMPLATE_VERSION = "1.0";
-
-const CURRENCY_FORMAT = '"$"#,##0.00';
-const PERCENT_FORMAT = "0.00%";
-const NUMBER_FORMAT = "0.00";
-const INTEGER_FORMAT = "#,##0";
-
-type ValueFormat = "text" | "integer" | "number" | "currency" | "currency_psf" | "percent" | "date";
-
-const HEADER_FILL: ExcelJS.Fill = {
-  type: "pattern",
-  pattern: "solid",
-  fgColor: { argb: "FF1F2937" },
+const BRAND_COLORS = {
+  black: "FF000000",
+  accentRed: "FFE10600",
+  lightGray: "FFF2F2F2",
+  darkGray: "FF1A1A1A",
+  white: "FFFFFFFF",
+  border: "FFB5B5B5",
+  text: "FF111111",
 };
 
-const SUBHEADER_FILL: ExcelJS.Fill = {
-  type: "pattern",
-  pattern: "solid",
-  fgColor: { argb: "FFE5E7EB" },
+const BORDER_THIN: Partial<ExcelJS.Borders> = {
+  top: { style: "thin", color: { argb: BRAND_COLORS.border } },
+  left: { style: "thin", color: { argb: BRAND_COLORS.border } },
+  bottom: { style: "thin", color: { argb: BRAND_COLORS.border } },
+  right: { style: "thin", color: { argb: BRAND_COLORS.border } },
 };
 
-const LABEL_FILL: ExcelJS.Fill = {
-  type: "pattern",
-  pattern: "solid",
-  fgColor: { argb: "FFF3F4F6" },
+const BORDER_MEDIUM: Partial<ExcelJS.Borders> = {
+  top: { style: "medium", color: { argb: BRAND_COLORS.darkGray } },
+  left: { style: "medium", color: { argb: BRAND_COLORS.darkGray } },
+  bottom: { style: "medium", color: { argb: BRAND_COLORS.darkGray } },
+  right: { style: "medium", color: { argb: BRAND_COLORS.darkGray } },
 };
 
-const THIN_BORDER: Partial<ExcelJS.Borders> = {
-  top: { style: "thin", color: { argb: "FFD1D5DB" } },
-  left: { style: "thin", color: { argb: "FFD1D5DB" } },
-  bottom: { style: "thin", color: { argb: "FFD1D5DB" } },
-  right: { style: "thin", color: { argb: "FFD1D5DB" } },
+const BORDER_THICK: Partial<ExcelJS.Borders> = {
+  top: { style: "thick", color: { argb: BRAND_COLORS.black } },
+  left: { style: "thick", color: { argb: BRAND_COLORS.black } },
+  bottom: { style: "thick", color: { argb: BRAND_COLORS.black } },
+  right: { style: "thick", color: { argb: BRAND_COLORS.black } },
 };
+
+const CURRENCY_NO_CENTS = '"$"#,##0;[Red]-"$"#,##0';
+const CURRENCY_PSf = '"$"#,##0.00';
+const PERCENT_2 = "0.00%";
+
+type CellFormat = "text" | "currency0" | "currency2" | "percent" | "integer" | "date";
+
+export interface WorkbookBrandingMeta {
+  brokerageName?: string;
+  clientName?: string;
+  reportDate?: string;
+  preparedBy?: string;
+}
+
+interface WorkbookMonthlyRow {
+  monthIndex: number;
+  date: string;
+  baseRent: number;
+  opex: number;
+  parking: number;
+  tiAmort: number;
+  concessions: number;
+  totalCost: number;
+  cumulativeCost: number;
+  discountedValue: number;
+}
+
+interface WorkbookScenario {
+  id: string;
+  name: string;
+  documentType: string;
+  buildingName: string;
+  suiteFloor: string;
+  streetAddress: string;
+  rsf: number;
+  leaseType: string;
+  termMonths: number;
+  commencementDate: string;
+  expirationDate: string;
+  rentNominal: number;
+  opexNominal: number;
+  opexEscalationPct: number;
+  discountRate: number;
+  parkingCostPerSpotPreTax: number;
+  parkingSalesTaxPct: number;
+  parkingCostPerSpotAfterTax: number;
+  parkingCostAnnual: number;
+  tiBudget: number;
+  tiAllowance: number;
+  tiOutOfPocket: number;
+  totalObligation: number;
+  npvCost: number;
+  avgCostYear: number;
+  avgCostPsfYear: number;
+  equalizedAvgCostPsfYear: number;
+  notes: string;
+  monthlyRows: WorkbookMonthlyRow[];
+}
+
+interface EqualizedScenarioMetrics {
+  avgGrossRentPsfYear: number;
+  avgGrossRentMonth: number;
+  avgCostPsfYear: number;
+  avgCostMonth: number;
+  totalCost: number;
+  npv: number;
+}
 
 const NOTE_CATEGORY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   { label: "Renewal / extension", regex: /\brenew(al)?\b|\bextend\b/i },
@@ -86,11 +152,52 @@ function safeDiv(numerator: number, denominator: number): number {
   return numerator / denominator;
 }
 
-function canonicalSuiteOrFloor(suite?: string | null, floor?: string | null): string {
-  const su = (suite ?? "").trim();
-  if (su) return su;
-  const fl = (floor ?? "").trim();
-  return fl ? `Floor ${fl}` : "";
+function parseIsoDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const normalized = value.replace(/\./g, "-").replace(/\//g, "-");
+  const parts = normalized.split("-").map((p) => Number(p));
+  if (parts.length !== 3 || parts.some((p) => Number.isNaN(p))) return null;
+  const [first, second, third] = parts;
+  const year = first > 31 ? first : third;
+  const month = first > 31 ? second : first;
+  const day = first > 31 ? third : second;
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
+function formatDateMmDdYyyy(value?: string | null): string {
+  const date = parseIsoDate(value);
+  if (!date) return value ?? "";
+  const mm = `${date.getUTCMonth() + 1}`.padStart(2, "0");
+  const dd = `${date.getUTCDate()}`.padStart(2, "0");
+  const yyyy = `${date.getUTCFullYear()}`;
+  return `${mm}.${dd}.${yyyy}`;
+}
+
+function toIsoDate(date: Date): string {
+  const y = `${date.getUTCFullYear()}`;
+  const m = `${date.getUTCMonth() + 1}`.padStart(2, "0");
+  const d = `${date.getUTCDate()}`.padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function addMonths(date: Date, offset: number): Date {
+  const clone = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+  clone.setUTCMonth(clone.getUTCMonth() + offset);
+  return clone;
+}
+
+function monthDiffInclusive(start: Date, end: Date): number {
+  return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth()) + 1;
+}
+
+function buildMonthTimeline(start: Date, end: Date): Date[] {
+  const months = monthDiffInclusive(start, end);
+  return Array.from({ length: Math.max(0, months) }, (_, idx) => addMonths(start, idx));
+}
+
+function normalizeText(value: string | undefined | null, fallback = ""): string {
+  return (value ?? fallback).toString().trim();
 }
 
 function splitNoteFragments(raw: string): string[] {
@@ -134,7 +241,7 @@ function buildCategorizedNoteSummary(rawNotes: string): string {
 }
 
 function sanitizeSheetName(name: string, fallback: string): string {
-  const cleaned = (name || fallback).replace(/[/\\?*\[\]]/g, "").trim();
+  const cleaned = (name || fallback).replace(/[/\\?*\[\]:]/g, "").trim();
   const base = cleaned || fallback;
   return base.slice(0, 31).trim() || fallback.slice(0, 31);
 }
@@ -159,959 +266,729 @@ function makeUniqueSheetName(name: string, fallback: string, used: Set<string>):
   return fallbackName;
 }
 
-function applyValueFormat(cell: ExcelJS.Cell, format: ValueFormat): void {
-  if (format === "currency") {
-    cell.numFmt = CURRENCY_FORMAT;
-    cell.alignment = { horizontal: "right" };
+function applyCellFormat(cell: ExcelJS.Cell, format: CellFormat): void {
+  if (format === "currency0") {
+    cell.numFmt = CURRENCY_NO_CENTS;
+    cell.alignment = { horizontal: "right", vertical: "middle" };
     return;
   }
-  if (format === "currency_psf") {
-    cell.numFmt = CURRENCY_FORMAT;
-    cell.alignment = { horizontal: "right" };
+  if (format === "currency2") {
+    cell.numFmt = CURRENCY_PSf;
+    cell.alignment = { horizontal: "right", vertical: "middle" };
     return;
   }
   if (format === "percent") {
-    cell.numFmt = PERCENT_FORMAT;
-    cell.alignment = { horizontal: "right" };
+    cell.numFmt = PERCENT_2;
+    cell.alignment = { horizontal: "right", vertical: "middle" };
     return;
   }
   if (format === "integer") {
-    cell.numFmt = INTEGER_FORMAT;
-    cell.alignment = { horizontal: "right" };
-    return;
-  }
-  if (format === "number") {
-    cell.numFmt = NUMBER_FORMAT;
-    cell.alignment = { horizontal: "right" };
+    cell.numFmt = "#,##0";
+    cell.alignment = { horizontal: "right", vertical: "middle" };
     return;
   }
   if (format === "date") {
-    cell.alignment = { horizontal: "right" };
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+    return;
+  }
+  cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+}
+
+function setSheetPrintSettings(sheet: ExcelJS.Worksheet, opts: { landscape: boolean; repeatHeaderRow?: number }): void {
+  sheet.pageSetup = {
+    ...sheet.pageSetup,
+    orientation: opts.landscape ? "landscape" : "portrait",
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    horizontalCentered: true,
+    margins: {
+      left: 0.25,
+      right: 0.25,
+      top: 0.45,
+      bottom: 0.45,
+      header: 0.2,
+      footer: 0.2,
+    },
+  };
+  if (opts.repeatHeaderRow) {
+    const pageSetup = sheet.pageSetup as unknown as { printTitlesRow?: string };
+    pageSetup.printTitlesRow = `${opts.repeatHeaderRow}:${opts.repeatHeaderRow}`;
   }
 }
 
-function extractClauseHighlights(rawNotes: string): Array<{ category: string; detail: string }> {
-  const parts = splitNoteFragments(rawNotes);
-  if (parts.length === 0) return [];
-  const rows: Array<{ category: string; detail: string }> = [];
-  for (const part of parts) {
-    rows.push({ category: classifyNoteCategory(part), detail: part });
-  }
-  if (rows.length > 0) return rows;
-  return [{ category: "General", detail: (rawNotes || "").trim() }];
-}
-
-function styleSummaryMatrixGrid(sheet: ExcelJS.Worksheet, rows: number, cols: number): void {
-  for (let c = 1; c <= cols; c++) {
-    for (let r = 1; r <= rows; r++) {
-      const cell = sheet.getCell(r, c);
-      cell.border = THIN_BORDER;
-      if (r === 2) {
-        cell.fill = HEADER_FILL;
-        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      } else if (c === 1 && r >= 3) {
-        cell.fill = LABEL_FILL;
-        cell.font = { bold: true, color: { argb: "FF111827" } };
-      } else if (r % 2 === 1 && r >= 3) {
-        cell.fill = SUBHEADER_FILL;
-      }
-    }
-  }
-  sheet.getCell(1, 1).font = { bold: true };
-  sheet.getCell(1, 2).font = { bold: true };
-}
-
-function styleWrappedNotesRow(sheet: ExcelJS.Worksheet, row: number, cols: number): void {
-  if (row <= 0) return;
-  const notesRow = sheet.getRow(row);
-  notesRow.height = 90;
-  for (let col = 2; col <= cols; col++) {
-    const cell = sheet.getCell(row, col);
-    cell.alignment = { vertical: "top", horizontal: "left", wrapText: true };
-  }
-}
-
-function addMonthlyComparisonSheet(
-  workbook: ExcelJS.Workbook,
-  usedSheetNames: Set<string>,
-  rowsByScenario: Array<{ name: string; rows: Array<{ monthIndex: number; date: string; totalCost: number }> }>
-): void {
-  if (rowsByScenario.length === 0) return;
-  const sheetName = makeUniqueSheetName("Monthly Comparison", "Monthly Comparison", usedSheetNames);
-  const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 2, xSplit: 2 }] });
-  sheet.getColumn(1).width = 10;
-  sheet.getColumn(2).width = 14;
-  sheet.mergeCells(1, 1, 2, 1);
-  sheet.mergeCells(1, 2, 2, 2);
-  sheet.getCell(1, 1).value = "Month";
-  sheet.getCell(1, 2).value = "Date";
-  sheet.getCell(1, 1).font = { bold: true };
-  sheet.getCell(1, 2).font = { bold: true };
-  sheet.getCell(1, 1).alignment = { vertical: "middle", horizontal: "center" };
-  sheet.getCell(1, 2).alignment = { vertical: "middle", horizontal: "center" };
-
-  rowsByScenario.forEach((scenario, i) => {
-    const col = 3 + i * 2;
-    sheet.getColumn(col).width = 18;
-    sheet.getColumn(col + 1).width = 18;
-    sheet.mergeCells(1, col, 1, col + 1);
-    sheet.getCell(1, col).value = scenario.name;
-    sheet.getCell(2, col).value = "Monthly cost";
-    sheet.getCell(2, col + 1).value = "Annualized";
-    sheet.getCell(1, col).font = { bold: true };
-    sheet.getCell(2, col).font = { bold: true };
-    sheet.getCell(2, col + 1).font = { bold: true };
-    sheet.getCell(1, col).alignment = { horizontal: "center" };
-  });
-
-  const maxMonths = rowsByScenario.reduce((max, s) => Math.max(max, s.rows.length), 0);
-  for (let m = 0; m < maxMonths; m++) {
-    const row = m + 3;
-    sheet.getCell(row, 1).value = m + 1;
-    const firstDate = rowsByScenario.find((s) => s.rows[m])?.rows[m]?.date ?? "";
-    sheet.getCell(row, 2).value = firstDate;
-    rowsByScenario.forEach((scenario, i) => {
-      const src = scenario.rows[m];
-      if (!src) return;
-      const col = 3 + i * 2;
-      sheet.getCell(row, col).value = src.totalCost;
-      sheet.getCell(row, col + 1).value = src.totalCost * 12;
-      sheet.getCell(row, col).numFmt = CURRENCY_FORMAT;
-      sheet.getCell(row, col + 1).numFmt = CURRENCY_FORMAT;
-      sheet.getCell(row, col).alignment = { horizontal: "right" };
-      sheet.getCell(row, col + 1).alignment = { horizontal: "right" };
-    });
-  }
-
-  const totalCols = 2 + rowsByScenario.length * 2;
-  for (let c = 1; c <= totalCols; c++) {
-    for (let r = 1; r <= maxMonths + 2; r++) {
-      const cell = sheet.getCell(r, c);
-      cell.border = THIN_BORDER;
-      if (r <= 2) {
-        cell.fill = HEADER_FILL;
-        cell.font = { ...(cell.font ?? {}), bold: true, color: { argb: "FFFFFFFF" } };
-      }
-    }
-  }
-}
-
-function addNotesAndClausesSheet(
-  workbook: ExcelJS.Workbook,
-  usedSheetNames: Set<string>,
-  rows: Array<{ scenario: string; sourceLabel: string; text: string }>
-): void {
-  const sheetName = makeUniqueSheetName("Notes & Clauses", "Notes & Clauses", usedSheetNames);
-  const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 1 }] });
-  sheet.columns = [
-    { header: "Scenario", key: "scenario", width: 28 },
-    { header: "Category", key: "category", width: 22 },
-    { header: "Detail", key: "detail", width: 120 },
-    { header: "Source", key: "source", width: 24 },
+function setView(sheet: ExcelJS.Worksheet, opts: { xSplit?: number; ySplit?: number }): void {
+  sheet.views = [
+    {
+      state: (opts.xSplit || opts.ySplit) ? "frozen" : "normal",
+      xSplit: opts.xSplit ?? 0,
+      ySplit: opts.ySplit ?? 0,
+      showGridLines: false,
+    },
   ];
-  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  sheet.getRow(1).fill = HEADER_FILL;
+}
 
-  for (const row of rows) {
-    const highlights = extractClauseHighlights(row.text);
-    if (highlights.length === 0) {
-      sheet.addRow({
-        scenario: row.scenario,
-        category: "No clause extracted",
-        detail: "No notable clauses detected. Review source lease language directly for ROFR/ROFO/renewal and OpEx exclusions.",
-        source: row.sourceLabel,
-      });
-      continue;
-    }
-    for (const highlight of highlights) {
-      sheet.addRow({
-        scenario: row.scenario,
-        category: highlight.category,
-        detail: highlight.detail,
-        source: row.sourceLabel,
-      });
-    }
-  }
-
-  sheet.eachRow((row, rowNumber) => {
-    if (rowNumber > 1 && rowNumber % 2 === 0) {
-      row.fill = SUBHEADER_FILL;
-    }
-    row.eachCell((cell) => {
-      cell.border = THIN_BORDER;
-      if (rowNumber > 1) {
-        cell.alignment = { vertical: "top", wrapText: true };
+function autoSizeColumns(sheet: ExcelJS.Worksheet, min = 10, max = 42): void {
+  sheet.columns?.forEach((column) => {
+    if (!column || typeof column.eachCell !== "function") return;
+    let longest = min;
+    column.eachCell({ includeEmpty: true }, (cell) => {
+      const raw = cell.value;
+      let text = "";
+      if (raw == null) text = "";
+      else if (typeof raw === "object" && "richText" in raw && Array.isArray(raw.richText)) {
+        text = raw.richText.map((run) => run.text).join("");
+      } else if (typeof raw === "object" && "text" in raw && typeof raw.text === "string") {
+        text = raw.text;
+      } else {
+        text = `${raw}`;
       }
+      const longestLine = text
+        .split("\n")
+        .reduce((acc, line) => Math.max(acc, line.trim().length), 0);
+      longest = Math.max(longest, longestLine + 2);
     });
+    column.width = Math.min(max, Math.max(min, longest));
   });
 }
 
-/**
- * Build professional underwriting workbook from canonical scenarios.
- * Uses existing lease-engine; adds Section A/B/C/D structure and formatting.
- */
-export async function buildBrokerWorkbook(
+function applyOuterBorder(sheet: ExcelJS.Worksheet, startRow: number, endRow: number, startCol: number, endCol: number): void {
+  for (let row = startRow; row <= endRow; row++) {
+    for (let col = startCol; col <= endCol; col++) {
+      const cell = sheet.getCell(row, col);
+      const base = { ...(cell.border ?? {}) };
+      if (row === startRow) base.top = BORDER_THICK.top;
+      if (row === endRow) base.bottom = BORDER_THICK.bottom;
+      if (col === startCol) base.left = BORDER_THICK.left;
+      if (col === endCol) base.right = BORDER_THICK.right;
+      cell.border = base;
+    }
+  }
+}
+
+function buildWorkbookScenariosFromCanonical(
   scenarios: LeaseScenarioCanonical[],
-  globalDiscountRate: number = 0.08
-): Promise<ExcelJS.Buffer> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "TheCREmodel";
-  workbook.created = new Date();
-  const usedSheetNames = new Set<string>();
-
-  const results: EngineResult[] = scenarios.map((s) => runMonthlyEngine(s, globalDiscountRate));
-
-  // ---- Sheet 1: Summary Matrix ----
-  const summarySheet = workbook.addWorksheet(
-    makeUniqueSheetName("Summary Matrix", "Summary Matrix", usedSheetNames),
-    { views: [{ state: "frozen", ySplit: 2 }] }
-  );
-  summarySheet.getColumn(1).width = 32;
-  summarySheet.getCell(1, 1).value = "Template Version";
-  summarySheet.getCell(1, 2).value = TEMPLATE_VERSION;
-  summarySheet.getCell(2, 1).value = "Metric";
-  summarySheet.getCell(2, 1).font = { bold: true };
-  results.forEach((r, i) => {
-    const col = i + 2;
-    summarySheet.getColumn(col).width = 18;
-    summarySheet.getCell(2, col).value = r.scenarioName;
-    summarySheet.getCell(2, col).font = { bold: true };
-  });
-  const metricRows: Array<{
-    label: string;
-    format: ValueFormat;
-    get: (m: EngineResult["metrics"]) => string | number;
-  }> = [
-    { label: "Building name", format: "text", get: (m) => m.buildingName },
-    { label: "Suite / floor", format: "text", get: (m) => m.suiteName },
-    { label: "RSF", format: "integer", get: (m) => m.rsf },
-    { label: "Lease type", format: "text", get: (m) => m.leaseType },
-    { label: "Term (months)", format: "integer", get: (m) => m.termMonths },
-    { label: "Commencement", format: "date", get: (m) => m.commencementDate },
-    { label: "Expiration", format: "date", get: (m) => m.expirationDate },
-    { label: "Base rent ($/RSF/yr)", format: "currency_psf", get: (m) => m.baseRentPsfYr },
-    { label: "Avg gross rent/month", format: "currency", get: (m) => m.avgGrossRentPerMonth },
-    { label: "Avg all-in cost/month", format: "currency", get: (m) => m.avgAllInCostPerMonth },
-    { label: "Avg all-in cost/year", format: "currency", get: (m) => m.avgAllInCostPerYear },
-    { label: "Avg cost/RSF/year", format: "currency_psf", get: (m) => m.avgCostPsfYr },
-    { label: "NPV @ discount rate", format: "currency", get: (m) => m.npvAtDiscount },
-    { label: "Total obligation", format: "currency", get: (m) => m.totalObligation },
-    { label: "Equalized avg cost/RSF/yr", format: "currency_psf", get: (m) => m.equalizedAvgCostPsfYr },
-    { label: "Discount rate used", format: "percent", get: (m) => m.discountRateUsed },
-    { label: "Notes", format: "text", get: (m) => buildCategorizedNoteSummary(m.notes ?? "") },
-  ];
-  metricRows.forEach(({ label, get, format }, rowIndex) => {
-    const row = rowIndex + 3;
-    summarySheet.getCell(row, 1).value = label;
-    summarySheet.getCell(row, 1).font = { bold: true };
-    results.forEach((res, colIndex) => {
-      const val = get(res.metrics);
-      const cell = summarySheet.getCell(row, colIndex + 2);
-      cell.value = typeof val === "number" ? Number(val.toFixed(2)) : String(val ?? "");
-      applyValueFormat(cell, format);
-    });
-  });
-
-  const supplementalRows: Array<{
-    label: string;
-    format: ValueFormat;
-    get: (scenario: LeaseScenarioCanonical, result: EngineResult) => string | number;
-  }> = [
-    { label: "Annual base rent escalation", format: "percent", get: (s) => s.rentSchedule?.annualEscalationPercent ?? 0 },
-    { label: "Base operating expenses ($/RSF/yr)", format: "currency_psf", get: (s) => s.expenseSchedule?.baseOpexPsfYr ?? 0 },
-    { label: "Annual opex escalation", format: "percent", get: (s) => s.expenseSchedule?.annualEscalationPercent ?? 0 },
-    {
-      label: "Rent abatement",
-      format: "text",
-      get: (s) => {
-        const months = s.rentSchedule?.abatement?.months ?? 0;
-        const t = s.rentSchedule?.abatement?.type ?? "none";
-        return months > 0 ? `${months} months (${t})` : "None";
-      },
-    },
-    {
-      label: "Parking ratio (/1,000 SF)",
-      format: "number",
-      get: (s) => {
-        const spaces = s.parkingSchedule?.spacesAllotted ?? 0;
-        return safeDiv(spaces, s.partyAndPremises?.rentableSqFt ?? 0) * 1000;
-      },
-    },
-    { label: "Allotted parking spaces", format: "integer", get: (s) => s.parkingSchedule?.spacesAllotted ?? 0 },
-    {
-      label: "Parking cost ($/spot/month, pre-tax)",
-      format: "currency",
-      get: (_s, r) => r.metrics.parkingCostPerSpotMonthlyPreTax ?? safeDiv(r.metrics.parkingCostPerSpotMonthly ?? 0, 1 + (r.metrics.parkingSalesTaxPercent ?? 0)),
-    },
-    { label: "Parking cost ($/spot/month, after tax)", format: "currency", get: (_s, r) => r.metrics.parkingCostPerSpotMonthly ?? 0 },
-    { label: "Parking sales tax %", format: "percent", get: (_s, r) => r.metrics.parkingSalesTaxPercent ?? 0.0825 },
-    { label: "Monthly parking cost", format: "currency", get: (_s, r) => safeDiv(r.metrics.parkingCostAnnual, 12) },
-    { label: "TI budget ($/SF)", format: "currency_psf", get: (s) => safeDiv(s.tiSchedule?.budgetTotal ?? 0, s.partyAndPremises?.rentableSqFt ?? 0) },
-    { label: "TI allowance ($/SF)", format: "currency_psf", get: (s) => safeDiv(s.tiSchedule?.allowanceFromLandlord ?? 0, s.partyAndPremises?.rentableSqFt ?? 0) },
-    { label: "Up-front capex ($/SF)", format: "currency_psf", get: (s) => safeDiv(Math.max(0, s.tiSchedule?.outOfPocket ?? 0), s.partyAndPremises?.rentableSqFt ?? 0) },
-    { label: "Up-front capex (gross)", format: "currency", get: (s) => Math.max(0, s.tiSchedule?.outOfPocket ?? 0) },
-    { label: "Average gross rent/SF/year", format: "currency_psf", get: (_s, r) => safeDiv(r.metrics.avgGrossRentPerYear, r.metrics.rsf) },
-    { label: "Average gross rent/year", format: "currency", get: (_s, r) => r.metrics.avgGrossRentPerYear },
-    {
-      label: "Equalized average cost/month",
-      format: "currency",
-      get: (_s, r) => safeDiv(r.metrics.equalizedAvgCostPsfYr * r.metrics.rsf, 12),
-    },
-    { label: "Equalized average cost/year", format: "currency", get: (_s, r) => r.metrics.equalizedAvgCostPsfYr * r.metrics.rsf },
-  ];
-
-  const supplementalStart = metricRows.length + 4;
-  summarySheet.getCell(supplementalStart - 1, 1).value = "Additional lease economics";
-  summarySheet.getCell(supplementalStart - 1, 1).font = { bold: true };
-  results.forEach((_, i) => {
-    summarySheet.getCell(supplementalStart - 1, i + 2).value = "";
-  });
-  supplementalRows.forEach(({ label, get, format }, rowIndex) => {
-    const row = supplementalStart + rowIndex;
-    summarySheet.getCell(row, 1).value = label;
-    summarySheet.getCell(row, 1).font = { bold: true };
-    results.forEach((res, colIndex) => {
-      const val = get(scenarios[colIndex], res);
-      const cell = summarySheet.getCell(row, colIndex + 2);
-      cell.value = typeof val === "number" ? Number(val.toFixed(2)) : String(val ?? "");
-      applyValueFormat(cell, format);
-    });
-  });
-  styleSummaryMatrixGrid(summarySheet, supplementalStart + supplementalRows.length - 1, results.length + 1);
-  const notesRowIndex = metricRows.findIndex((row) => row.label === "Notes");
-  if (notesRowIndex >= 0) {
-    styleWrappedNotesRow(summarySheet, 3 + notesRowIndex, results.length + 1);
-  }
-
-  // ---- Sheet 2+: Individual scenario sheets ----
-  for (let idx = 0; idx < scenarios.length; idx++) {
-    const scenario = scenarios[idx];
+  results: EngineResult[]
+): WorkbookScenario[] {
+  return scenarios.map((scenario, idx) => {
     const result = results[idx];
-    const sheetName = makeUniqueSheetName(scenario.name || `Option ${idx + 1}`, `Option ${idx + 1}`, usedSheetNames);
-    const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 4 }] });
-    sheet.getColumn(1).width = 34;
-    sheet.getColumn(2).width = 26;
-    sheet.getColumn(3).width = 18;
-    sheet.getColumn(4).width = 18;
-    sheet.getColumn(5).width = 18;
-    sheet.getColumn(6).width = 18;
-    sheet.getColumn(7).width = 18;
-    sheet.getColumn(8).width = 18;
-    sheet.getColumn(9).width = 18;
-    sheet.getColumn(10).width = 18;
-
-    let row = 1;
-
-    // SECTION A — Inputs
-    sheet.getCell(row, 1).value = "SECTION A — Inputs";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    const tiBudgetPsf = safeDiv(scenario.tiSchedule?.budgetTotal ?? 0, scenario.partyAndPremises?.rentableSqFt ?? 0);
-    const tiAllowancePsf = safeDiv(scenario.tiSchedule?.allowanceFromLandlord ?? 0, scenario.partyAndPremises?.rentableSqFt ?? 0);
-    const upFrontCapexGross = Math.max(0, scenario.tiSchedule?.outOfPocket ?? 0);
-    const upFrontCapexPsf = safeDiv(upFrontCapexGross, scenario.partyAndPremises?.rentableSqFt ?? 0);
-    const parkingSpaces = scenario.parkingSchedule?.spacesAllotted ?? 0;
-    const parkingRatio = safeDiv(parkingSpaces, scenario.partyAndPremises?.rentableSqFt ?? 0) * 1000;
-    const parkingCostPerSpotMonthlyPreTax =
-      result.metrics.parkingCostPerSpotMonthlyPreTax
+    const parkingPreTax = result.metrics.parkingCostPerSpotMonthlyPreTax
       ?? safeDiv(result.metrics.parkingCostPerSpotMonthly ?? 0, 1 + (result.metrics.parkingSalesTaxPercent ?? 0));
-    const parkingCostPerSpotMonthly = result.metrics.parkingCostPerSpotMonthly ?? 0;
-    const parkingSalesTaxPercent = result.metrics.parkingSalesTaxPercent ?? 0.0825;
-    const parkingMonthly = safeDiv(result.metrics.parkingCostAnnual, 12);
-    const inputRows: Array<{ label: string; value: string | number; format: ValueFormat }> = [
-      { label: "Scenario name", value: scenario.name ?? "", format: "text" },
-      { label: "Building name", value: scenario.partyAndPremises?.premisesLabel ?? "", format: "text" },
-      { label: "Suite / floor", value: scenario.partyAndPremises?.floorsOrSuite ?? "", format: "text" },
-      { label: "Premises", value: scenario.partyAndPremises?.premisesName ?? "", format: "text" },
-      { label: "Rentable square footage", value: scenario.partyAndPremises?.rentableSqFt ?? 0, format: "integer" },
-      { label: "Lease type", value: scenario.expenseSchedule?.leaseType ?? "", format: "text" },
-      { label: "Lease term (months)", value: scenario.datesAndTerm?.leaseTermMonths ?? 0, format: "integer" },
-      { label: "Commencement date", value: scenario.datesAndTerm?.commencementDate ?? "", format: "date" },
-      { label: "Expiration date", value: scenario.datesAndTerm?.expirationDate ?? "", format: "date" },
-      { label: "Base rent ($/RSF/yr)", value: scenario.rentSchedule?.steps?.[0]?.ratePsfYr ?? 0, format: "currency_psf" },
-      { label: "Annual base rent escalation %", value: scenario.rentSchedule?.annualEscalationPercent ?? 0, format: "percent" },
-      { label: "Rent abatement months", value: scenario.rentSchedule?.abatement?.months ?? 0, format: "integer" },
-      { label: "Base OpEx ($/RSF/yr)", value: scenario.expenseSchedule?.baseOpexPsfYr ?? 0, format: "currency_psf" },
-      { label: "Annual OpEx escalation %", value: scenario.expenseSchedule?.annualEscalationPercent ?? 0, format: "percent" },
-      { label: "Parking ratio (/1,000 SF)", value: parkingRatio, format: "number" },
-      { label: "Allotted parking spaces", value: parkingSpaces, format: "integer" },
-      { label: "Parking cost ($/spot/month, pre-tax)", value: parkingCostPerSpotMonthlyPreTax, format: "currency" },
-      { label: "Parking cost ($/spot/month, after tax)", value: parkingCostPerSpotMonthly, format: "currency" },
-      { label: "Parking sales tax %", value: parkingSalesTaxPercent, format: "percent" },
-      { label: "Monthly parking cost", value: parkingMonthly, format: "currency" },
-      { label: "TI budget ($/SF)", value: tiBudgetPsf, format: "currency_psf" },
-      { label: "TI allowance ($/SF)", value: tiAllowancePsf, format: "currency_psf" },
-      { label: "Up-front capex ($/SF)", value: upFrontCapexPsf, format: "currency_psf" },
-      { label: "Up-front capex (gross)", value: upFrontCapexGross, format: "currency" },
-      { label: "TI budget", value: scenario.tiSchedule?.budgetTotal ?? 0, format: "currency" },
-      { label: "TI allowance", value: scenario.tiSchedule?.allowanceFromLandlord ?? 0, format: "currency" },
-      { label: "TI out of pocket", value: scenario.tiSchedule?.outOfPocket ?? 0, format: "currency" },
-      { label: "Amortize TI", value: scenario.tiSchedule?.amortizeOop ? "Yes" : "No", format: "text" },
-      { label: "Parking (annual)", value: result.metrics.parkingCostAnnual, format: "currency" },
-      { label: "Scenario notes", value: scenario.notes ?? "", format: "text" },
-    ];
-    inputRows.forEach(({ label, value, format }) => {
-      sheet.getCell(row, 1).value = label;
-      sheet.getCell(row, 1).font = { bold: true };
-      const cell = sheet.getCell(row, 2);
-      cell.value = typeof value === "number" ? Number(value.toFixed(2)) : value;
-      applyValueFormat(cell, format);
-      cell.alignment = format === "text" ? { wrapText: true, vertical: "top" } : cell.alignment;
-      sheet.getCell(row, 1).border = THIN_BORDER;
-      sheet.getCell(row, 2).border = THIN_BORDER;
-      row++;
-    });
-    row += 2;
-
-    // SECTION B — Monthly Cash Flow Table
-    sheet.getCell(row, 1).value = "SECTION B — Monthly Cash Flow Table";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    const monthlyHeaderRow = row;
-    const monthlyHeaders = ["Month", "Date", "Base Rent", "Opex", "Parking", "TI Amort", "Concessions", "Total Cost", "Cumulative", "Discounted"];
-    monthlyHeaders.forEach((h, c) => {
-      sheet.getCell(row, c + 1).value = h;
-      sheet.getCell(row, c + 1).font = { bold: true };
-      sheet.getCell(row, c + 1).fill = HEADER_FILL;
-      sheet.getCell(row, c + 1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-      sheet.getCell(row, c + 1).border = THIN_BORDER;
-    });
-    row++;
-    const monthlyStartRow = row;
-    result.monthly.forEach((mo: MonthlyRow) => {
-      sheet.getCell(row, 1).value = mo.monthIndex + 1;
-      sheet.getCell(row, 2).value = mo.periodStart;
-      sheet.getCell(row, 3).value = parseFloat(mo.baseRent.toFixed(2));
-      sheet.getCell(row, 4).value = parseFloat(mo.opex.toFixed(2));
-      sheet.getCell(row, 5).value = parseFloat(mo.parking.toFixed(2));
-      sheet.getCell(row, 6).value = parseFloat(mo.tiAmortization.toFixed(2));
-      sheet.getCell(row, 7).value = 0;
-      sheet.getCell(row, 8).value = parseFloat(mo.total.toFixed(2));
-      sheet.getCell(row, 9).value = parseFloat(mo.cumulativeCost.toFixed(2));
-      sheet.getCell(row, 10).value = parseFloat(mo.discountedValue.toFixed(2));
-      for (let c = 1; c <= 10; c++) sheet.getCell(row, c).border = THIN_BORDER;
-      for (let c = 3; c <= 10; c++) applyValueFormat(sheet.getCell(row, c), "currency");
-      row++;
-    });
-    const monthlyEndRow = row - 1;
-    row += 2;
-
-    // SECTION C — Annual Summary
-    sheet.getCell(row, 1).value = "SECTION C — Annual Summary";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    const annualHeaderRow = row;
-    const annualHeaders = ["Year", "Total Cost", "Avg $/RSF", "Cumulative", "Discounted"];
-    annualHeaders.forEach((h, c) => {
-      sheet.getCell(row, c + 1).value = h;
-      sheet.getCell(row, c + 1).fill = HEADER_FILL;
-      sheet.getCell(row, c + 1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-      sheet.getCell(row, c + 1).border = THIN_BORDER;
-    });
-    row++;
-    const annualStartRow = row;
-    let cumAnn = 0;
-    let discAnn = 0;
-    result.annual.forEach((yr: AnnualRow, yi: number) => {
-      cumAnn += yr.total;
-      const monthlyRate = Math.pow(1 + result.discountRateUsed, 1 / 12) - 1;
-      const startM = yi * 12;
-      let pv = 0;
-      for (let m = 0; m < 12 && startM + m < result.monthly.length; m++) {
-        pv += result.monthly[startM + m].total / Math.pow(1 + monthlyRate, startM + m);
-      }
-      discAnn += pv;
-      sheet.getCell(row, 1).value = yr.leaseYear;
-      sheet.getCell(row, 2).value = parseFloat(yr.total.toFixed(2));
-      sheet.getCell(row, 3).value = result.metrics.rsf > 0 ? parseFloat((yr.total / result.metrics.rsf).toFixed(2)) : 0;
-      sheet.getCell(row, 4).value = parseFloat(cumAnn.toFixed(2));
-      sheet.getCell(row, 5).value = parseFloat(discAnn.toFixed(2));
-      for (let c = 1; c <= 5; c++) sheet.getCell(row, c).border = THIN_BORDER;
-      applyValueFormat(sheet.getCell(row, 2), "currency");
-      applyValueFormat(sheet.getCell(row, 3), "currency_psf");
-      applyValueFormat(sheet.getCell(row, 4), "currency");
-      applyValueFormat(sheet.getCell(row, 5), "currency");
-      row++;
-    });
-    const annualEndRow = row - 1;
-    row += 2;
-
-    // SECTION D — Broker Metrics
-    sheet.getCell(row, 1).value = "SECTION D — Broker Metrics";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    const m = result.metrics;
-    const brokerRows: [string, string | number][] = [
-      ["Total obligation", parseFloat(m.totalObligation.toFixed(2))],
-      ["NPV", parseFloat(m.npvAtDiscount.toFixed(2))],
-      ["Equalized Avg Cost / RSF / Yr", parseFloat(m.equalizedAvgCostPsfYr.toFixed(2))],
-      ["Effective rent (avg gross/month)", parseFloat(m.avgGrossRentPerMonth.toFixed(2))],
-      ["TI value (allowance)", parseFloat(m.tiAllowance.toFixed(2))],
-      ["Free rent value", scenario.rentSchedule?.abatement ? "See abatement" : 0],
-      ["Parking total (nominal)", parseFloat(m.parkingCostAnnual.toFixed(2))],
-    ];
-    brokerRows.forEach(([label, val]) => {
-      sheet.getCell(row, 1).value = label;
-      sheet.getCell(row, 1).font = { bold: true };
-      sheet.getCell(row, 2).value = val;
-      sheet.getCell(row, 1).border = THIN_BORDER;
-      sheet.getCell(row, 2).border = THIN_BORDER;
-      if (typeof val === "number") applyValueFormat(sheet.getCell(row, 2), "currency");
-      row++;
-    });
-
-    // Hidden monthly sheet (source of truth)
-    const monthlySheetName = makeUniqueSheetName(`${sheetName}_Monthly`, `Option ${idx + 1}_Monthly`, usedSheetNames);
-    const monthlySheet = workbook.addWorksheet(monthlySheetName, { state: "hidden" });
-    ["Month", "Date", "Base Rent", "Opex", "Parking", "TI Amort", "Concessions", "Total Cost", "Cumulative", "Discounted"].forEach((h, c) => {
-      monthlySheet.getCell(1, c + 1).value = h;
-      monthlySheet.getCell(1, c + 1).font = { bold: true };
-    });
-    result.monthly.forEach((mo: MonthlyRow, i: number) => {
-      const r = i + 2;
-      monthlySheet.getCell(r, 1).value = mo.monthIndex + 1;
-      monthlySheet.getCell(r, 2).value = mo.periodStart;
-      monthlySheet.getCell(r, 3).value = mo.baseRent;
-      monthlySheet.getCell(r, 4).value = mo.opex;
-      monthlySheet.getCell(r, 5).value = mo.parking;
-      monthlySheet.getCell(r, 6).value = mo.tiAmortization;
-      monthlySheet.getCell(r, 7).value = 0;
-      monthlySheet.getCell(r, 8).value = mo.total;
-      monthlySheet.getCell(r, 9).value = mo.cumulativeCost;
-      monthlySheet.getCell(r, 10).value = mo.discountedValue;
-    });
-    for (let c = 1; c <= 10; c++) {
-      monthlySheet.getColumn(c).width = c === 2 ? 14 : 16;
-    }
-    for (let r = 1; r <= result.monthly.length + 1; r++) {
-      for (let c = 1; c <= 10; c++) {
-        monthlySheet.getCell(r, c).border = THIN_BORDER;
-      }
-    }
-
-    // Keep key section headers visually distinct.
-    [monthlyHeaderRow, annualHeaderRow].forEach((r) => {
-      for (let c = 1; c <= 10; c++) {
-        if (sheet.getCell(r, c).value) {
-          sheet.getCell(r, c).fill = HEADER_FILL;
-          sheet.getCell(r, c).font = { bold: true, color: { argb: "FFFFFFFF" } };
-        }
-      }
-    });
-    if (monthlyEndRow >= monthlyStartRow) {
-      for (let r = monthlyStartRow; r <= monthlyEndRow; r++) {
-        if ((r - monthlyStartRow) % 2 === 1) {
-          for (let c = 1; c <= 10; c++) sheet.getCell(r, c).fill = SUBHEADER_FILL;
-        }
-      }
-    }
-    if (annualEndRow >= annualStartRow) {
-      for (let r = annualStartRow; r <= annualEndRow; r++) {
-        if ((r - annualStartRow) % 2 === 1) {
-          for (let c = 1; c <= 5; c++) sheet.getCell(r, c).fill = SUBHEADER_FILL;
-        }
-      }
-    }
-  }
-
-  addMonthlyComparisonSheet(
-    workbook,
-    usedSheetNames,
-    results.map((result) => ({
-      name: result.scenarioName,
-      rows: result.monthly.map((row) => ({
+    return {
+      id: scenario.id,
+      name: result.scenarioName || scenario.name,
+      documentType: "Lease",
+      buildingName: normalizeText(result.metrics.buildingName, scenario.partyAndPremises.premisesLabel ?? scenario.partyAndPremises.premisesName),
+      suiteFloor: normalizeText(result.metrics.suiteName, scenario.partyAndPremises.floorsOrSuite ?? ""),
+      streetAddress: normalizeText(scenario.partyAndPremises.premisesName),
+      rsf: result.metrics.rsf,
+      leaseType: result.metrics.leaseType.toUpperCase(),
+      termMonths: result.metrics.termMonths,
+      commencementDate: result.metrics.commencementDate,
+      expirationDate: result.metrics.expirationDate,
+      rentNominal: result.monthly.reduce((sum, row) => sum + row.baseRent, 0),
+      opexNominal: result.monthly.reduce((sum, row) => sum + row.opex, 0),
+      opexEscalationPct: scenario.expenseSchedule.annualEscalationPercent,
+      discountRate: result.metrics.discountRateUsed,
+      parkingCostPerSpotPreTax: parkingPreTax,
+      parkingSalesTaxPct: result.metrics.parkingSalesTaxPercent ?? 0.0825,
+      parkingCostPerSpotAfterTax: result.metrics.parkingCostPerSpotMonthly ?? 0,
+      parkingCostAnnual: result.metrics.parkingCostAnnual,
+      tiBudget: scenario.tiSchedule.budgetTotal,
+      tiAllowance: scenario.tiSchedule.allowanceFromLandlord,
+      tiOutOfPocket: Math.max(0, scenario.tiSchedule.outOfPocket),
+      totalObligation: result.metrics.totalObligation,
+      npvCost: result.metrics.npvAtDiscount,
+      avgCostYear: result.metrics.avgAllInCostPerYear,
+      avgCostPsfYear: result.metrics.avgCostPsfYr,
+      equalizedAvgCostPsfYear: result.metrics.equalizedAvgCostPsfYr,
+      notes: buildCategorizedNoteSummary(`${scenario.notes ?? ""}\n${result.metrics.notes ?? ""}`.trim()),
+      monthlyRows: result.monthly.map((row) => ({
         monthIndex: row.monthIndex,
         date: row.periodStart,
+        baseRent: row.baseRent,
+        opex: row.opex,
+        parking: row.parking,
+        tiAmort: row.tiAmortization,
+        concessions: 0,
         totalCost: row.total,
+        cumulativeCost: row.cumulativeCost,
+        discountedValue: row.discountedValue,
       })),
-    }))
-  );
-  addNotesAndClausesSheet(
-    workbook,
-    usedSheetNames,
-    scenarios.map((scenario, i) => ({
-      scenario: results[i].scenarioName,
-      sourceLabel: "Scenario notes",
-      text: `${scenario.notes ?? ""}\n${results[i].metrics.notes ?? ""}`.trim(),
-    }))
-  );
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  return buffer as ExcelJS.Buffer;
+    };
+  });
 }
 
-/**
- * Build broker workbook from backend CanonicalComputeResponse (production path).
- * Uses Summary Matrix + Section A/B/C/D + hidden monthly from response.
- */
-export async function buildBrokerWorkbookFromCanonicalResponses(
+function buildWorkbookScenariosFromCanonicalResponses(
   items: { response: CanonicalComputeResponse; scenarioName: string }[]
+): WorkbookScenario[] {
+  return items.map((item, idx) => {
+    const c = item.response.normalized_canonical_lease;
+    const m = item.response.metrics;
+    const parkingPreTax = c.parking_rate_monthly ?? 0;
+    const parkingTax = c.parking_sales_tax_rate ?? 0.0825;
+    const notesText = [
+      m.notes ?? "",
+      String(c.notes ?? ""),
+      ...(item.response.warnings ?? []),
+      ...(item.response.assumptions ?? []),
+    ].filter(Boolean).join(". ");
+    return {
+      id: `canonical-${idx + 1}`,
+      name: item.scenarioName,
+      documentType: normalizeText(c.document_type_detected, "Lease"),
+      buildingName: normalizeText(m.building_name, c.building_name ?? m.premises_name),
+      suiteFloor: normalizeText(m.suite || m.floor ? [m.suite, m.floor ? `Floor ${m.floor}` : ""].filter(Boolean).join(" / ") : ""),
+      streetAddress: normalizeText(m.address, c.address ?? ""),
+      rsf: m.rsf,
+      leaseType: normalizeText(m.lease_type, c.lease_type ?? "").toUpperCase(),
+      termMonths: m.term_months,
+      commencementDate: m.commencement_date,
+      expirationDate: m.expiration_date,
+      rentNominal: m.base_rent_total,
+      opexNominal: m.opex_total,
+      opexEscalationPct: c.opex_growth_rate ?? 0,
+      discountRate: m.discount_rate_annual,
+      parkingCostPerSpotPreTax: parkingPreTax,
+      parkingSalesTaxPct: parkingTax,
+      parkingCostPerSpotAfterTax: parkingPreTax * (1 + parkingTax),
+      parkingCostAnnual: m.parking_total,
+      tiBudget: m.ti_value_total,
+      tiAllowance: m.ti_value_total,
+      tiOutOfPocket: 0,
+      totalObligation: m.total_obligation_nominal,
+      npvCost: m.npv_cost,
+      avgCostYear: safeDiv(m.total_obligation_nominal, Math.max(1, m.term_months / 12)),
+      avgCostPsfYear: m.avg_all_in_cost_psf_year,
+      equalizedAvgCostPsfYear: m.equalized_avg_cost_psf_year,
+      notes: buildCategorizedNoteSummary(notesText),
+      monthlyRows: item.response.monthly_rows.map((row) => ({
+        monthIndex: row.month_index,
+        date: row.date,
+        baseRent: row.base_rent,
+        opex: row.opex,
+        parking: row.parking,
+        tiAmort: row.ti_amort,
+        concessions: row.concessions,
+        totalCost: row.total_cost,
+        cumulativeCost: row.cumulative_cost,
+        discountedValue: row.discounted_value,
+      })),
+    };
+  });
+}
+
+function computeEqualizedMetrics(
+  scenarios: WorkbookScenario[]
+): { start: Date | null; end: Date | null; metrics: Record<string, EqualizedScenarioMetrics> } {
+  if (scenarios.length === 0) return { start: null, end: null, metrics: {} };
+  const commDates = scenarios
+    .map((scenario) => parseIsoDate(scenario.commencementDate))
+    .filter((date): date is Date => date !== null);
+  const expDates = scenarios
+    .map((scenario) => parseIsoDate(scenario.expirationDate))
+    .filter((date): date is Date => date !== null);
+  if (commDates.length === 0 || expDates.length === 0) return { start: null, end: null, metrics: {} };
+
+  const start = new Date(Math.max(...commDates.map((date) => date.getTime())));
+  const end = new Date(Math.min(...expDates.map((date) => date.getTime())));
+  if (end.getTime() < start.getTime()) return { start, end, metrics: {} };
+
+  const windowDays = Math.max(1, Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1);
+  const output: Record<string, EqualizedScenarioMetrics> = {};
+  for (const scenario of scenarios) {
+    const rows = scenario.monthlyRows.filter((row) => {
+      const date = parseIsoDate(row.date);
+      if (!date) return false;
+      return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
+    });
+    const monthCount = Math.max(1, rows.length);
+    const annualDivisor = windowDays / 365;
+    const grossTotal = rows.reduce((sum, row) => sum + row.baseRent + row.opex + row.parking, 0);
+    const recurringTotal = grossTotal;
+    const totalCost = rows.reduce((sum, row) => sum + row.totalCost, 0);
+    const monthlyRate = Math.pow(1 + (scenario.discountRate || 0.08), 1 / 12) - 1;
+    const npv = rows.reduce((sum, row, idx) => sum + row.totalCost / Math.pow(1 + monthlyRate, idx), 0);
+    output[scenario.id] = {
+      avgGrossRentPsfYear: safeDiv(grossTotal, Math.max(1, scenario.rsf) * annualDivisor),
+      avgGrossRentMonth: safeDiv(grossTotal, monthCount),
+      avgCostPsfYear: safeDiv(recurringTotal, Math.max(1, scenario.rsf) * annualDivisor),
+      avgCostMonth: safeDiv(recurringTotal, monthCount),
+      totalCost,
+      npv,
+    };
+  }
+  return { start, end, metrics: output };
+}
+
+function createCoverSheet(
+  workbook: ExcelJS.Workbook,
+  usedNames: Set<string>,
+  meta: WorkbookBrandingMeta,
+  scenarioCount: number
+): void {
+  const sheet = workbook.addWorksheet(makeUniqueSheetName("Cover", "Cover", usedNames));
+  setView(sheet, {});
+  setSheetPrintSettings(sheet, { landscape: false });
+  sheet.pageSetup.verticalCentered = true;
+  sheet.properties.defaultRowHeight = 24;
+  sheet.columns = new Array(8).fill(null).map(() => ({ width: 18 }));
+
+  sheet.mergeCells("A1:H3");
+  const header = sheet.getCell("A1");
+  header.value = "THE COMMERCIAL REAL ESTATE MODEL\nLease Financial Analysis";
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.black } };
+  header.font = { color: { argb: BRAND_COLORS.white }, bold: true, size: 22, name: "Aptos" };
+  header.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+
+  const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
+  const brokerage = normalizeText(meta.brokerageName, "theCREmodel");
+  const client = normalizeText(meta.clientName, "Client");
+  const preparedBy = normalizeText(meta.preparedBy, "theCREmodel");
+
+  const rightMetaRows: Array<[string, string]> = [
+    ["Brokerage", brokerage],
+    ["Client", client],
+    ["Report date", reportDate],
+    ["Prepared by", preparedBy],
+    ["Scenarios", `${scenarioCount}`],
+  ];
+  let row = 6;
+  for (const [label, value] of rightMetaRows) {
+    sheet.mergeCells(row, 5, row, 6);
+    sheet.mergeCells(row, 7, row, 8);
+    const labelCell = sheet.getCell(row, 5);
+    const valueCell = sheet.getCell(row, 7);
+    labelCell.value = label.toUpperCase();
+    valueCell.value = value;
+    labelCell.font = { bold: true, size: 10, color: { argb: BRAND_COLORS.darkGray }, name: "Aptos" };
+    valueCell.font = { bold: true, size: 12, color: { argb: BRAND_COLORS.text }, name: "Aptos" };
+    labelCell.alignment = { horizontal: "right", vertical: "middle" };
+    valueCell.alignment = { horizontal: "right", vertical: "middle" };
+    row += 2;
+  }
+
+  sheet.mergeCells("A6:D15");
+  const leftBlock = sheet.getCell("A6");
+  leftBlock.value = "Institutional comparison workbook\nPrepared for brokerage delivery\nPrint-ready formatted export";
+  leftBlock.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+  leftBlock.font = { name: "Aptos", size: 14, color: { argb: BRAND_COLORS.text } };
+
+  sheet.mergeCells("A20:H20");
+  const footer = sheet.getCell("A20");
+  footer.value = `Template Version ${TEMPLATE_VERSION}`;
+  footer.font = { name: "Aptos", size: 10, color: { argb: "FF666666" } };
+  footer.alignment = { horizontal: "center", vertical: "middle" };
+}
+
+function createSummaryComparisonSheet(workbook: ExcelJS.Workbook, usedNames: Set<string>, scenarios: WorkbookScenario[]): void {
+  const sheet = workbook.addWorksheet(makeUniqueSheetName("Summary Comparison", "Summary Comparison", usedNames));
+  setView(sheet, { xSplit: 1, ySplit: 1 });
+  setSheetPrintSettings(sheet, { landscape: true, repeatHeaderRow: 1 });
+  sheet.properties.defaultRowHeight = 22;
+
+  const scenarioColCount = scenarios.length;
+  sheet.getColumn(1).width = 34;
+  for (let i = 0; i < scenarioColCount; i++) {
+    sheet.getColumn(i + 2).width = 26;
+  }
+
+  sheet.getCell(1, 1).value = "Metric";
+  sheet.getCell(1, 1).font = { bold: true, color: { argb: BRAND_COLORS.white }, name: "Aptos" };
+  sheet.getCell(1, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.darkGray } };
+  sheet.getCell(1, 1).alignment = { horizontal: "left", vertical: "middle" };
+  scenarios.forEach((scenario, idx) => {
+    const cell = sheet.getCell(1, idx + 2);
+    cell.value = scenario.name;
+    cell.font = { bold: true, color: { argb: BRAND_COLORS.white }, name: "Aptos" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.darkGray } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  });
+
+  type SummaryRow = { type: "section"; label: string } | {
+    type: "metric";
+    label: string;
+    format: CellFormat;
+    getValue: (scenario: WorkbookScenario) => string | number;
+  };
+
+  const rows: SummaryRow[] = [
+    { type: "section", label: "PREMISES" },
+    { type: "metric", label: "Document type", format: "text", getValue: (s) => s.documentType },
+    { type: "metric", label: "Building name", format: "text", getValue: (s) => s.buildingName },
+    { type: "metric", label: "Suite / floor", format: "text", getValue: (s) => s.suiteFloor },
+    { type: "metric", label: "Street address", format: "text", getValue: (s) => s.streetAddress },
+    { type: "metric", label: "RSF", format: "integer", getValue: (s) => s.rsf },
+    { type: "metric", label: "Commencement", format: "date", getValue: (s) => formatDateMmDdYyyy(s.commencementDate) },
+    { type: "metric", label: "Expiration", format: "date", getValue: (s) => formatDateMmDdYyyy(s.expirationDate) },
+    { type: "section", label: "RENT STRUCTURE" },
+    { type: "metric", label: "Lease type", format: "text", getValue: (s) => s.leaseType },
+    { type: "metric", label: "Term (months)", format: "integer", getValue: (s) => s.termMonths },
+    { type: "metric", label: "Rent (nominal)", format: "currency0", getValue: (s) => s.rentNominal },
+    { type: "metric", label: "OpEx (nominal)", format: "currency0", getValue: (s) => s.opexNominal },
+    { type: "metric", label: "OpEx escalation %", format: "percent", getValue: (s) => s.opexEscalationPct },
+    { type: "metric", label: "Discount rate", format: "percent", getValue: (s) => s.discountRate },
+    { type: "section", label: "PARKING" },
+    { type: "metric", label: "Parking cost ($/spot/month, pre-tax)", format: "currency0", getValue: (s) => s.parkingCostPerSpotPreTax },
+    { type: "metric", label: "Parking sales tax %", format: "percent", getValue: (s) => s.parkingSalesTaxPct },
+    { type: "metric", label: "Parking cost ($/spot/month, after tax)", format: "currency0", getValue: (s) => s.parkingCostPerSpotAfterTax },
+    { type: "metric", label: "Parking cost (annual)", format: "currency0", getValue: (s) => s.parkingCostAnnual },
+    { type: "section", label: "TI / CAPEX" },
+    { type: "metric", label: "TI budget", format: "currency0", getValue: (s) => s.tiBudget },
+    { type: "metric", label: "TI allowance", format: "currency0", getValue: (s) => s.tiAllowance },
+    { type: "metric", label: "TI out of pocket", format: "currency0", getValue: (s) => s.tiOutOfPocket },
+    { type: "section", label: "SUMMARY METRICS" },
+    { type: "metric", label: "Total obligation", format: "currency0", getValue: (s) => s.totalObligation },
+    { type: "metric", label: "NPV cost", format: "currency0", getValue: (s) => s.npvCost },
+    { type: "metric", label: "Avg cost/year", format: "currency0", getValue: (s) => s.avgCostYear },
+    { type: "metric", label: "Avg cost/SF/year", format: "currency2", getValue: (s) => s.avgCostPsfYear },
+    { type: "metric", label: "Equalized avg cost/RSF/yr", format: "currency2", getValue: (s) => s.equalizedAvgCostPsfYear },
+    { type: "metric", label: "Notes", format: "text", getValue: (s) => s.notes || "• No notable notes extracted." },
+  ];
+
+  let row = 2;
+  let shadeToggle = false;
+  for (const item of rows) {
+    if (item.type === "section") {
+      sheet.mergeCells(row, 1, row, scenarioColCount + 1);
+      const sectionCell = sheet.getCell(row, 1);
+      sectionCell.value = item.label;
+      sectionCell.font = { bold: true, color: { argb: BRAND_COLORS.white }, name: "Aptos", size: 11 };
+      sectionCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.black } };
+      sectionCell.alignment = { horizontal: "left", vertical: "middle" };
+      row += 1;
+      shadeToggle = false;
+      continue;
+    }
+    const labelCell = sheet.getCell(row, 1);
+    labelCell.value = item.label;
+    labelCell.font = { bold: true, color: { argb: BRAND_COLORS.text }, name: "Aptos", size: 10 };
+    labelCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    const rowFill = shadeToggle ? BRAND_COLORS.lightGray : BRAND_COLORS.white;
+    labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rowFill } };
+
+    scenarios.forEach((scenario, idx) => {
+      const valueCell = sheet.getCell(row, idx + 2);
+      const value = item.getValue(scenario);
+      valueCell.value = typeof value === "number" ? Number(value.toFixed(4)) : value;
+      valueCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rowFill } };
+      applyCellFormat(valueCell, item.format);
+      if (item.format === "text") {
+        valueCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+      }
+    });
+
+    if (item.label === "Notes") {
+      const maxLines = Math.max(
+        3,
+        ...scenarios.map((scenario) => Math.min(12, (item.getValue(scenario).toString().split("\n").length)))
+      );
+      sheet.getRow(row).height = maxLines * 14;
+    }
+    shadeToggle = !shadeToggle;
+    row += 1;
+  }
+
+  const endRow = row - 1;
+  for (let r = 1; r <= endRow; r++) {
+    for (let c = 1; c <= scenarioColCount + 1; c++) {
+      const cell = sheet.getCell(r, c);
+      cell.border = { ...(cell.border ?? {}), ...BORDER_THIN };
+      cell.font = { ...(cell.font ?? {}), name: "Aptos" };
+    }
+  }
+  for (let c = 2; c <= scenarioColCount + 1; c++) {
+    for (let r = 1; r <= endRow; r++) {
+      const cell = sheet.getCell(r, c);
+      cell.border = {
+        ...(cell.border ?? {}),
+        left: c === 2 ? BORDER_MEDIUM.left : cell.border?.left ?? BORDER_THIN.left,
+      };
+    }
+  }
+  applyOuterBorder(sheet, 1, endRow, 1, scenarioColCount + 1);
+  autoSizeColumns(sheet, 12, 40);
+  sheet.getColumn(1).width = Math.max(34, sheet.getColumn(1).width ?? 34);
+}
+
+function createEqualizedSheet(workbook: ExcelJS.Workbook, usedNames: Set<string>, scenarios: WorkbookScenario[]): void {
+  const sheet = workbook.addWorksheet(makeUniqueSheetName("Equalized Metrics", "Equalized Metrics", usedNames));
+  setView(sheet, { xSplit: 1, ySplit: 6 });
+  setSheetPrintSettings(sheet, { landscape: true, repeatHeaderRow: 6 });
+  sheet.properties.defaultRowHeight = 22;
+
+  const metrics = computeEqualizedMetrics(scenarios);
+  const columnCount = scenarios.length + 1;
+  sheet.getColumn(1).width = 40;
+  for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 2).width = 24;
+
+  sheet.mergeCells(1, 1, 1, columnCount);
+  sheet.getCell(1, 1).value = "EQUALIZED METRICS — Overlapping Lease Period";
+  sheet.getCell(1, 1).font = { bold: true, color: { argb: BRAND_COLORS.white }, size: 14, name: "Aptos" };
+  sheet.getCell(1, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.black } };
+  sheet.getCell(1, 1).alignment = { horizontal: "left", vertical: "middle" };
+
+  sheet.mergeCells(2, 1, 2, columnCount);
+  sheet.getCell(2, 1).value = "";
+  sheet.getCell(2, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.accentRed } };
+  sheet.getRow(2).height = 5;
+
+  sheet.mergeCells(4, 1, 4, columnCount);
+  if (!metrics.start || !metrics.end || metrics.end.getTime() < metrics.start.getTime()) {
+    sheet.getCell(4, 1).value = "No overlapping lease term for equalized comparison.";
+  } else {
+    sheet.getCell(4, 1).value = `Equalized Period: ${formatDateMmDdYyyy(toIsoDate(metrics.start))} - ${formatDateMmDdYyyy(toIsoDate(metrics.end))}`;
+  }
+  sheet.getCell(4, 1).font = { bold: true, name: "Aptos", size: 11, color: { argb: BRAND_COLORS.text } };
+  sheet.getCell(4, 1).alignment = { horizontal: "left", vertical: "middle" };
+
+  sheet.getCell(6, 1).value = "Metric";
+  sheet.getCell(6, 1).font = { bold: true, color: { argb: BRAND_COLORS.white }, name: "Aptos" };
+  sheet.getCell(6, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.darkGray } };
+  scenarios.forEach((scenario, idx) => {
+    const cell = sheet.getCell(6, idx + 2);
+    cell.value = scenario.name;
+    cell.font = { bold: true, color: { argb: BRAND_COLORS.white }, name: "Aptos" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.darkGray } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  });
+
+  const rows: Array<{ label: string; format: CellFormat; getter: (scenario: WorkbookScenario) => number | string }> = [
+    { label: "Equalized avg gross rent/SF/year", format: "currency2", getter: (s) => metrics.metrics[s.id]?.avgGrossRentPsfYear ?? 0 },
+    { label: "Equalized avg gross rent/month", format: "currency0", getter: (s) => metrics.metrics[s.id]?.avgGrossRentMonth ?? 0 },
+    { label: "Equalized avg cost/SF/year", format: "currency2", getter: (s) => metrics.metrics[s.id]?.avgCostPsfYear ?? 0 },
+    { label: "Equalized avg cost/month", format: "currency0", getter: (s) => metrics.metrics[s.id]?.avgCostMonth ?? 0 },
+    { label: "Equalized total cost", format: "currency0", getter: (s) => metrics.metrics[s.id]?.totalCost ?? 0 },
+    { label: "Equalized NPV (t0=start)", format: "currency0", getter: (s) => metrics.metrics[s.id]?.npv ?? 0 },
+  ];
+
+  let row = 7;
+  rows.forEach((rowDef, idx) => {
+    const fill = idx % 2 === 0 ? BRAND_COLORS.white : BRAND_COLORS.lightGray;
+    sheet.getCell(row, 1).value = rowDef.label;
+    sheet.getCell(row, 1).font = { bold: true, color: { argb: BRAND_COLORS.text }, name: "Aptos" };
+    sheet.getCell(row, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    scenarios.forEach((scenario, cIdx) => {
+      const cell = sheet.getCell(row, cIdx + 2);
+      const value = rowDef.getter(scenario);
+      cell.value = typeof value === "number" ? Number(value.toFixed(4)) : value;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+      applyCellFormat(cell, rowDef.format);
+    });
+    row += 1;
+  });
+
+  const endRow = row - 1;
+  for (let r = 6; r <= endRow; r++) {
+    for (let c = 1; c <= columnCount; c++) {
+      const cell = sheet.getCell(r, c);
+      cell.border = { ...(cell.border ?? {}), ...BORDER_THIN };
+      cell.font = { ...(cell.font ?? {}), name: "Aptos" };
+    }
+  }
+  applyOuterBorder(sheet, 6, endRow, 1, columnCount);
+  autoSizeColumns(sheet, 12, 38);
+}
+
+function createMonthlyGrossMatrixSheet(workbook: ExcelJS.Workbook, usedNames: Set<string>, scenarios: WorkbookScenario[]): void {
+  const sheet = workbook.addWorksheet(
+    makeUniqueSheetName("Monthly Gross Cash Flow Matrix", "Monthly Gross Cash Flow Matrix", usedNames)
+  );
+  setView(sheet, { xSplit: 2, ySplit: 1 });
+  setSheetPrintSettings(sheet, { landscape: true, repeatHeaderRow: 1 });
+  sheet.properties.defaultRowHeight = 22;
+
+  const allDates = scenarios
+    .flatMap((scenario) => scenario.monthlyRows.map((row) => parseIsoDate(row.date)))
+    .filter((date): date is Date => date !== null);
+  if (allDates.length === 0) {
+    sheet.getCell(1, 1).value = "No monthly cash flow data available.";
+    return;
+  }
+
+  const start = new Date(Math.min(...allDates.map((date) => date.getTime())));
+  const end = new Date(Math.max(...allDates.map((date) => date.getTime())));
+  const timeline = buildMonthTimeline(start, end);
+
+  sheet.getColumn(1).width = 10;
+  sheet.getColumn(2).width = 14;
+  scenarios.forEach((_, idx) => { sheet.getColumn(idx + 3).width = 22; });
+
+  const headers = ["Month #", "Date", ...scenarios.map((scenario) => scenario.name)];
+  headers.forEach((header, idx) => {
+    const cell = sheet.getCell(1, idx + 1);
+    cell.value = header;
+    cell.font = { bold: true, color: { argb: BRAND_COLORS.white }, name: "Aptos" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.darkGray } };
+    cell.alignment = { horizontal: idx < 2 ? "center" : "left", vertical: "middle", wrapText: true };
+    cell.border = BORDER_THIN;
+  });
+
+  const monthlyMaps = scenarios.map((scenario) => {
+    const map = new Map<string, number>();
+    scenario.monthlyRows.forEach((row) => map.set(row.date, row.totalCost));
+    return map;
+  });
+
+  timeline.forEach((monthDate, idx) => {
+    const row = idx + 2;
+    const fill = idx % 2 === 0 ? BRAND_COLORS.white : BRAND_COLORS.lightGray;
+    sheet.getCell(row, 1).value = idx + 1;
+    sheet.getCell(row, 2).value = formatDateMmDdYyyy(toIsoDate(monthDate));
+    sheet.getCell(row, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    sheet.getCell(row, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    sheet.getCell(row, 1).alignment = { horizontal: "center", vertical: "middle" };
+    sheet.getCell(row, 2).alignment = { horizontal: "center", vertical: "middle" };
+
+    scenarios.forEach((_, scenarioIdx) => {
+      const col = scenarioIdx + 3;
+      const cell = sheet.getCell(row, col);
+      const iso = toIsoDate(monthDate);
+      const value = monthlyMaps[scenarioIdx].get(iso);
+      cell.value = value == null ? "—" : Number(value.toFixed(4));
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+      if (value == null) {
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+      } else {
+        applyCellFormat(cell, "currency0");
+      }
+    });
+  });
+
+  const endRow = timeline.length + 1;
+  for (let r = 1; r <= endRow; r++) {
+    for (let c = 1; c <= scenarios.length + 2; c++) {
+      const cell = sheet.getCell(r, c);
+      cell.border = { ...(cell.border ?? {}), ...BORDER_THIN };
+      cell.font = { ...(cell.font ?? {}), name: "Aptos" };
+    }
+  }
+  applyOuterBorder(sheet, 1, endRow, 1, scenarios.length + 2);
+  autoSizeColumns(sheet, 10, 38);
+}
+
+function createAppendixSheet(workbook: ExcelJS.Workbook, usedNames: Set<string>, scenario: WorkbookScenario): void {
+  const sheetName = makeUniqueSheetName(`Appendix — ${scenario.name}`, `Appendix ${scenario.name}`, usedNames);
+  const sheet = workbook.addWorksheet(sheetName);
+  setView(sheet, { ySplit: 5 });
+  setSheetPrintSettings(sheet, { landscape: true, repeatHeaderRow: 5 });
+  sheet.properties.defaultRowHeight = 22;
+
+  sheet.columns = [
+    { width: 10 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 16 },
+    { width: 16 },
+    { width: 16 },
+  ];
+
+  sheet.mergeCells("A1:J2");
+  const header = sheet.getCell("A1");
+  header.value = `Appendix — ${scenario.name}`;
+  header.font = { bold: true, size: 14, color: { argb: BRAND_COLORS.white }, name: "Aptos" };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.black } };
+  header.alignment = { horizontal: "left", vertical: "middle" };
+
+  sheet.mergeCells("A3:J3");
+  const sub = sheet.getCell("A3");
+  sub.value = `Detailed monthly cash flows | ${formatDateMmDdYyyy(scenario.commencementDate)} - ${formatDateMmDdYyyy(scenario.expirationDate)}`;
+  sub.font = { bold: false, size: 10, color: { argb: BRAND_COLORS.text }, name: "Aptos" };
+  sub.alignment = { horizontal: "left", vertical: "middle" };
+
+  const headers = [
+    "Month #",
+    "Date",
+    "Base Rent",
+    "OpEx",
+    "Parking",
+    "TI Amort",
+    "Concessions",
+    "Gross Monthly",
+    "Cumulative",
+    "Discounted PV",
+  ];
+  headers.forEach((title, idx) => {
+    const cell = sheet.getCell(5, idx + 1);
+    cell.value = title;
+    cell.font = { bold: true, color: { argb: BRAND_COLORS.white }, name: "Aptos" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BRAND_COLORS.darkGray } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = BORDER_THIN;
+  });
+
+  scenario.monthlyRows.forEach((rowValue, idx) => {
+    const row = idx + 6;
+    const fill = idx % 2 === 0 ? BRAND_COLORS.white : BRAND_COLORS.lightGray;
+    const values: Array<string | number> = [
+      rowValue.monthIndex + 1,
+      formatDateMmDdYyyy(rowValue.date),
+      rowValue.baseRent,
+      rowValue.opex,
+      rowValue.parking,
+      rowValue.tiAmort,
+      rowValue.concessions,
+      rowValue.totalCost,
+      rowValue.cumulativeCost,
+      rowValue.discountedValue,
+    ];
+    values.forEach((value, colIdx) => {
+      const cell = sheet.getCell(row, colIdx + 1);
+      cell.value = typeof value === "number" ? Number(value.toFixed(4)) : value;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+      if (colIdx === 0) applyCellFormat(cell, "integer");
+      else if (colIdx === 1) applyCellFormat(cell, "date");
+      else applyCellFormat(cell, "currency0");
+      cell.border = BORDER_THIN;
+      cell.font = { ...(cell.font ?? {}), name: "Aptos" };
+    });
+  });
+
+  const endRow = scenario.monthlyRows.length + 5;
+  applyOuterBorder(sheet, 5, endRow, 1, 10);
+  autoSizeColumns(sheet, 10, 28);
+}
+
+function buildWorkbookInternal(
+  scenarios: WorkbookScenario[],
+  meta?: WorkbookBrandingMeta
 ): Promise<ExcelJS.Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TheCREmodel";
   workbook.created = new Date();
-  const usedSheetNames = new Set<string>();
+  const usedNames = new Set<string>();
 
-  const summarySheet = workbook.addWorksheet(
-    makeUniqueSheetName("Summary Matrix", "Summary Matrix", usedSheetNames),
-    { views: [{ state: "frozen", ySplit: 2 }] }
-  );
-  summarySheet.getColumn(1).width = 32;
-  summarySheet.getCell(1, 1).value = "Template Version";
-  summarySheet.getCell(1, 2).value = TEMPLATE_VERSION;
-  summarySheet.getCell(2, 1).value = "Metric";
-  summarySheet.getCell(2, 1).font = { bold: true };
-  items.forEach((item, i) => {
-    const col = i + 2;
-    summarySheet.getColumn(col).width = 18;
-    summarySheet.getCell(2, col).value = item.scenarioName;
-    summarySheet.getCell(2, col).font = { bold: true };
-  });
-  const metricRows: Array<{
-    label: string;
-    format: ValueFormat;
-    get: (m: CanonicalMetrics) => string | number;
-  }> = [
-    { label: "Building name", format: "text", get: (m) => m.building_name ?? "" },
-    { label: "Suite / floor", format: "text", get: (m) => canonicalSuiteOrFloor(m.suite, m.floor) },
-    { label: "RSF", format: "integer", get: (m) => m.rsf ?? 0 },
-    { label: "Lease type", format: "text", get: (m) => m.lease_type ?? "" },
-    { label: "Term (months)", format: "integer", get: (m) => m.term_months ?? 0 },
-    { label: "Commencement", format: "date", get: (m) => m.commencement_date ?? "" },
-    { label: "Expiration", format: "date", get: (m) => m.expiration_date ?? "" },
-    { label: "Base rent ($/RSF/yr)", format: "currency_psf", get: (m) => m.base_rent_avg_psf_year ?? 0 },
-    { label: "Avg gross rent/month", format: "currency", get: (m) => safeDiv((m.base_rent_total ?? 0) + (m.opex_total ?? 0) + (m.parking_total ?? 0), Math.max(1, m.term_months ?? 1)) },
-    { label: "Avg all-in cost/month", format: "currency", get: (m) => safeDiv(m.total_obligation_nominal ?? 0, Math.max(1, m.term_months ?? 1)) },
-    { label: "Avg all-in cost/year", format: "currency", get: (m) => safeDiv(m.total_obligation_nominal ?? 0, Math.max(1, (m.term_months ?? 1) / 12)) },
-    { label: "Avg cost/RSF/year", format: "currency_psf", get: (m) => m.avg_all_in_cost_psf_year ?? 0 },
-    { label: "NPV @ discount rate", format: "currency", get: (m) => m.npv_cost ?? 0 },
-    { label: "Total obligation", format: "currency", get: (m) => m.total_obligation_nominal ?? 0 },
-    { label: "Equalized avg cost/RSF/yr", format: "currency_psf", get: (m) => m.equalized_avg_cost_psf_year ?? 0 },
-    { label: "Discount rate used", format: "percent", get: (m) => m.discount_rate_annual ?? 0.08 },
-    { label: "Notes", format: "text", get: (m) => buildCategorizedNoteSummary(m.notes ?? "") },
-  ];
+  createCoverSheet(workbook, usedNames, meta ?? {}, scenarios.length);
+  createSummaryComparisonSheet(workbook, usedNames, scenarios);
+  createEqualizedSheet(workbook, usedNames, scenarios);
+  createMonthlyGrossMatrixSheet(workbook, usedNames, scenarios);
+  scenarios.forEach((scenario) => createAppendixSheet(workbook, usedNames, scenario));
 
-  metricRows.forEach(({ label, get, format }, rowIndex) => {
-    const row = rowIndex + 3;
-    summarySheet.getCell(row, 1).value = label;
-    summarySheet.getCell(row, 1).font = { bold: true };
-    items.forEach((item, colIndex) => {
-      const val = get(item.response.metrics);
-      const cell = summarySheet.getCell(row, colIndex + 2);
-      cell.value = typeof val === "number" ? Number(val.toFixed(2)) : String(val ?? "");
-      applyValueFormat(cell, format);
-    });
-  });
-
-  const supplementalRows: Array<{
-    label: string;
-    format: ValueFormat;
-    get: (m: CanonicalMetrics, c: CanonicalComputeResponse["normalized_canonical_lease"]) => string | number;
-  }> = [
-    { label: "Annual base rent escalation", format: "percent", get: (m) => m.term_months > 12 ? safeDiv((m.base_rent_avg_psf_year ?? 0), (m.base_rent_avg_psf_year ?? 1)) - 1 : 0 },
-    { label: "Base operating expenses ($/RSF/yr)", format: "currency_psf", get: (m, c) => c.opex_psf_year_1 ?? m.opex_avg_psf_year ?? 0 },
-    { label: "Annual opex escalation", format: "percent", get: (_m, c) => c.opex_growth_rate ?? 0 },
-    { label: "Rent abatement", format: "text", get: (_m, c) => (c.free_rent_months ?? 0) > 0 ? `${c.free_rent_months} months` : "None" },
-    { label: "Parking ratio (/1,000 SF)", format: "number", get: (m, c) => safeDiv(c.parking_count ?? 0, m.rsf ?? 0) * 1000 },
-    { label: "Allotted parking spaces", format: "integer", get: (_m, c) => c.parking_count ?? 0 },
-    { label: "Parking cost ($/spot/month, pre-tax)", format: "currency", get: (_m, c) => c.parking_rate_monthly ?? 0 },
-    {
-      label: "Parking cost ($/spot/month, after tax)",
-      format: "currency",
-      get: (_m, c) => (c.parking_rate_monthly ?? 0) * (1 + (c.parking_sales_tax_rate ?? 0)),
-    },
-    { label: "Parking sales tax %", format: "percent", get: (_m, c) => c.parking_sales_tax_rate ?? 0.0825 },
-    {
-      label: "Monthly parking cost",
-      format: "currency",
-      get: (_m, c) => (c.parking_rate_monthly ?? 0) * (c.parking_count ?? 0) * (1 + (c.parking_sales_tax_rate ?? 0)),
-    },
-    { label: "TI budget ($/SF)", format: "currency_psf", get: () => 0 },
-    { label: "TI allowance ($/SF)", format: "currency_psf", get: (_m, c) => c.ti_allowance_psf ?? 0 },
-    { label: "Up-front capex ($/SF)", format: "currency_psf", get: () => 0 },
-    { label: "Up-front capex (gross)", format: "currency", get: () => 0 },
-    {
-      label: "Average gross rent/SF/year",
-      format: "currency_psf",
-      get: (m) => safeDiv((m.base_rent_total ?? 0) + (m.opex_total ?? 0) + (m.parking_total ?? 0), Math.max(1, (m.term_months ?? 1) / 12) * Math.max(1, m.rsf ?? 1)),
-    },
-    {
-      label: "Average gross rent/year",
-      format: "currency",
-      get: (m) => safeDiv((m.base_rent_total ?? 0) + (m.opex_total ?? 0) + (m.parking_total ?? 0), Math.max(1, (m.term_months ?? 1) / 12)),
-    },
-    {
-      label: "Equalized average cost/month",
-      format: "currency",
-      get: (m) => safeDiv((m.equalized_avg_cost_psf_year ?? 0) * (m.rsf ?? 0), 12),
-    },
-    { label: "Equalized average cost/year", format: "currency", get: (m) => (m.equalized_avg_cost_psf_year ?? 0) * (m.rsf ?? 0) },
-  ];
-
-  const supplementalStart = metricRows.length + 4;
-  summarySheet.getCell(supplementalStart - 1, 1).value = "Additional lease economics";
-  summarySheet.getCell(supplementalStart - 1, 1).font = { bold: true };
-  items.forEach((_, i) => {
-    summarySheet.getCell(supplementalStart - 1, i + 2).value = "";
-  });
-  supplementalRows.forEach(({ label, get, format }, rowIndex) => {
-    const row = supplementalStart + rowIndex;
-    summarySheet.getCell(row, 1).value = label;
-    summarySheet.getCell(row, 1).font = { bold: true };
-    items.forEach((item, colIndex) => {
-      const val = get(item.response.metrics, item.response.normalized_canonical_lease);
-      const cell = summarySheet.getCell(row, colIndex + 2);
-      cell.value = typeof val === "number" ? Number(val.toFixed(2)) : String(val ?? "");
-      applyValueFormat(cell, format);
-    });
-  });
-  styleSummaryMatrixGrid(summarySheet, supplementalStart + supplementalRows.length - 1, items.length + 1);
-  const notesRowIndex = metricRows.findIndex((row) => row.label === "Notes");
-  if (notesRowIndex >= 0) {
-    styleWrappedNotesRow(summarySheet, 3 + notesRowIndex, items.length + 1);
-  }
-
-  for (let idx = 0; idx < items.length; idx++) {
-    const { response, scenarioName } = items[idx];
-    const c = response.normalized_canonical_lease;
-    const m = response.metrics;
-    const sheetName = makeUniqueSheetName(scenarioName || `Option ${idx + 1}`, `Option ${idx + 1}`, usedSheetNames);
-    const sheet = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 4 }] });
-    sheet.getColumn(1).width = 34;
-    sheet.getColumn(2).width = 26;
-    sheet.getColumn(3).width = 18;
-    sheet.getColumn(4).width = 18;
-    sheet.getColumn(5).width = 18;
-    sheet.getColumn(6).width = 18;
-    sheet.getColumn(7).width = 18;
-    sheet.getColumn(8).width = 18;
-    sheet.getColumn(9).width = 18;
-    sheet.getColumn(10).width = 18;
-    let row = 1;
-    sheet.getCell(row, 1).value = "SECTION A — Inputs";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    const parkingRatio = safeDiv(c.parking_count ?? 0, m.rsf ?? 0) * 1000;
-    const parkingCostPerSpotMonthlyPreTax = c.parking_rate_monthly ?? 0;
-    const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + (c.parking_sales_tax_rate ?? 0));
-    const parkingSalesTaxPercent = c.parking_sales_tax_rate ?? 0.0825;
-    const parkingMonthly = (c.parking_rate_monthly ?? 0) * (c.parking_count ?? 0) * (1 + (c.parking_sales_tax_rate ?? 0));
-    const grossAnnual = safeDiv((m.base_rent_total ?? 0) + (m.opex_total ?? 0) + (m.parking_total ?? 0), Math.max(1, (m.term_months ?? 1) / 12));
-    const inputRows: Array<{ label: string; value: string | number; format: ValueFormat }> = [
-      { label: "Scenario name", value: scenarioName, format: "text" },
-      { label: "Building name", value: m.building_name ?? c.building_name ?? "", format: "text" },
-      { label: "Suite / floor", value: canonicalSuiteOrFloor(m.suite ?? c.suite, m.floor ?? c.floor), format: "text" },
-      { label: "Premises", value: m.premises_name ?? c.premises_name ?? "", format: "text" },
-      { label: "Rentable square footage", value: m.rsf ?? 0, format: "integer" },
-      { label: "Lease type", value: m.lease_type ?? c.lease_type ?? "", format: "text" },
-      { label: "Lease term (months)", value: m.term_months ?? 0, format: "integer" },
-      { label: "Commencement date", value: m.commencement_date ?? "", format: "date" },
-      { label: "Expiration date", value: m.expiration_date ?? "", format: "date" },
-      { label: "Base rent ($/RSF/yr)", value: m.base_rent_avg_psf_year ?? 0, format: "currency_psf" },
-      { label: "Base OpEx ($/RSF/yr)", value: m.opex_avg_psf_year ?? 0, format: "currency_psf" },
-      { label: "Annual OpEx escalation %", value: c.opex_growth_rate ?? 0, format: "percent" },
-      { label: "Rent abatement months", value: c.free_rent_months ?? 0, format: "integer" },
-      { label: "Parking ratio (/1,000 SF)", value: parkingRatio, format: "number" },
-      { label: "Allotted parking spaces", value: c.parking_count ?? 0, format: "integer" },
-      { label: "Parking cost ($/spot/month, pre-tax)", value: parkingCostPerSpotMonthlyPreTax, format: "currency" },
-      { label: "Parking cost ($/spot/month, after tax)", value: parkingCostPerSpotMonthly, format: "currency" },
-      { label: "Parking sales tax %", value: parkingSalesTaxPercent, format: "percent" },
-      { label: "Monthly parking cost", value: parkingMonthly, format: "currency" },
-      { label: "TI allowance ($/SF)", value: c.ti_allowance_psf ?? 0, format: "currency_psf" },
-      { label: "TI allowance", value: m.ti_value_total ?? 0, format: "currency" },
-      { label: "Parking (annual)", value: m.parking_total ?? 0, format: "currency" },
-      { label: "Average gross rent/year", value: grossAnnual, format: "currency" },
-      { label: "Total obligation", value: m.total_obligation_nominal ?? 0, format: "currency" },
-      { label: "NPV", value: m.npv_cost ?? 0, format: "currency" },
-      {
-        label: "Notes",
-        value: buildCategorizedNoteSummary(`${m.notes ?? ""}\n${String(c.notes ?? "")}`.trim()),
-        format: "text",
-      },
-    ];
-    inputRows.forEach(({ label, value, format }) => {
-      sheet.getCell(row, 1).value = label;
-      sheet.getCell(row, 1).font = { bold: true };
-      const cell = sheet.getCell(row, 2);
-      cell.value = typeof value === "number" ? Number(value.toFixed(2)) : value;
-      applyValueFormat(cell, format);
-      cell.alignment = format === "text" ? { wrapText: true, vertical: "top" } : cell.alignment;
-      sheet.getCell(row, 1).border = THIN_BORDER;
-      sheet.getCell(row, 2).border = THIN_BORDER;
-      row++;
-    });
-    row += 2;
-    sheet.getCell(row, 1).value = "SECTION B — Monthly Cash Flow Table";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    const monthlyHeaderRow = row;
-    ["Month", "Date", "Base Rent", "Opex", "Parking", "TI Amort", "Concessions", "Total Cost", "Cumulative", "Discounted"].forEach((h, c) => {
-      sheet.getCell(row, c + 1).value = h;
-      sheet.getCell(row, c + 1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-      sheet.getCell(row, c + 1).fill = HEADER_FILL;
-      sheet.getCell(row, c + 1).border = THIN_BORDER;
-    });
-    row++;
-    const monthlyStartRow = row;
-    response.monthly_rows.forEach((mo) => {
-      sheet.getCell(row, 1).value = mo.month_index + 1;
-      sheet.getCell(row, 2).value = mo.date;
-      sheet.getCell(row, 3).value = mo.base_rent;
-      sheet.getCell(row, 4).value = mo.opex;
-      sheet.getCell(row, 5).value = mo.parking;
-      sheet.getCell(row, 6).value = mo.ti_amort;
-      sheet.getCell(row, 7).value = mo.concessions;
-      sheet.getCell(row, 8).value = mo.total_cost;
-      sheet.getCell(row, 9).value = mo.cumulative_cost;
-      sheet.getCell(row, 10).value = mo.discounted_value;
-      for (let c = 1; c <= 10; c++) sheet.getCell(row, c).border = THIN_BORDER;
-      for (let c = 3; c <= 10; c++) applyValueFormat(sheet.getCell(row, c), "currency");
-      row++;
-    });
-    const monthlyEndRow = row - 1;
-    row += 2;
-    sheet.getCell(row, 1).value = "SECTION C — Annual Summary";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    const annualHeaderRow = row;
-    ["Year", "Total Cost", "Avg $/RSF", "Cumulative", "Discounted"].forEach((h, c) => {
-      sheet.getCell(row, c + 1).value = h;
-      sheet.getCell(row, c + 1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-      sheet.getCell(row, c + 1).fill = HEADER_FILL;
-      sheet.getCell(row, c + 1).border = THIN_BORDER;
-    });
-    row++;
-    const annualStartRow = row;
-    response.annual_rows.forEach((yr) => {
-      sheet.getCell(row, 1).value = yr.year_index + 1;
-      sheet.getCell(row, 2).value = yr.total_cost;
-      sheet.getCell(row, 3).value = yr.avg_cost_psf_year;
-      sheet.getCell(row, 4).value = yr.cumulative_cost;
-      sheet.getCell(row, 5).value = yr.discounted_value;
-      for (let c = 1; c <= 5; c++) sheet.getCell(row, c).border = THIN_BORDER;
-      applyValueFormat(sheet.getCell(row, 2), "currency");
-      applyValueFormat(sheet.getCell(row, 3), "currency_psf");
-      applyValueFormat(sheet.getCell(row, 4), "currency");
-      applyValueFormat(sheet.getCell(row, 5), "currency");
-      row++;
-    });
-    const annualEndRow = row - 1;
-    row += 2;
-    sheet.getCell(row, 1).value = "SECTION D — Broker Metrics";
-    sheet.getCell(row, 1).font = { bold: true, size: 12 };
-    row += 2;
-    [
-      ["Total obligation", m.total_obligation_nominal],
-      ["NPV", m.npv_cost],
-      ["Equalized Avg Cost / RSF / Yr", m.equalized_avg_cost_psf_year],
-      ["TI value (allowance)", m.ti_value_total],
-      ["Parking total", m.parking_total],
-    ].forEach(([label, val]) => {
-      sheet.getCell(row, 1).value = label;
-      sheet.getCell(row, 1).font = { bold: true };
-      sheet.getCell(row, 2).value = typeof val === "number" ? val : "";
-      sheet.getCell(row, 1).border = THIN_BORDER;
-      sheet.getCell(row, 2).border = THIN_BORDER;
-      if (typeof val === "number") applyValueFormat(sheet.getCell(row, 2), "currency");
-      row++;
-    });
-    const monthlySheetName = makeUniqueSheetName(`${sheetName}_Monthly`, `Option ${idx + 1}_Monthly`, usedSheetNames);
-    const monthlySheet = workbook.addWorksheet(monthlySheetName, { state: "hidden" });
-    ["Month", "Date", "Base Rent", "Opex", "Parking", "TI Amort", "Concessions", "Total Cost", "Cumulative", "Discounted"].forEach((h, c) => {
-      monthlySheet.getCell(1, c + 1).value = h;
-      monthlySheet.getCell(1, c + 1).font = { bold: true };
-    });
-    response.monthly_rows.forEach((mo, i) => {
-      const r = i + 2;
-      monthlySheet.getCell(r, 1).value = mo.month_index + 1;
-      monthlySheet.getCell(r, 2).value = mo.date;
-      monthlySheet.getCell(r, 3).value = mo.base_rent;
-      monthlySheet.getCell(r, 4).value = mo.opex;
-      monthlySheet.getCell(r, 5).value = mo.parking;
-      monthlySheet.getCell(r, 6).value = mo.ti_amort;
-      monthlySheet.getCell(r, 7).value = mo.concessions;
-      monthlySheet.getCell(r, 8).value = mo.total_cost;
-      monthlySheet.getCell(r, 9).value = mo.cumulative_cost;
-      monthlySheet.getCell(r, 10).value = mo.discounted_value;
-    });
-    for (let c = 1; c <= 10; c++) {
-      monthlySheet.getColumn(c).width = c === 2 ? 14 : 16;
-    }
-    for (let r = 1; r <= response.monthly_rows.length + 1; r++) {
-      for (let c = 1; c <= 10; c++) monthlySheet.getCell(r, c).border = THIN_BORDER;
-    }
-
-    [monthlyHeaderRow, annualHeaderRow].forEach((r) => {
-      for (let c = 1; c <= 10; c++) {
-        if (sheet.getCell(r, c).value) {
-          sheet.getCell(r, c).fill = HEADER_FILL;
-          sheet.getCell(r, c).font = { bold: true, color: { argb: "FFFFFFFF" } };
-        }
-      }
-    });
-    if (monthlyEndRow >= monthlyStartRow) {
-      for (let r = monthlyStartRow; r <= monthlyEndRow; r++) {
-        if ((r - monthlyStartRow) % 2 === 1) {
-          for (let c = 1; c <= 10; c++) sheet.getCell(r, c).fill = SUBHEADER_FILL;
-        }
-      }
-    }
-    if (annualEndRow >= annualStartRow) {
-      for (let r = annualStartRow; r <= annualEndRow; r++) {
-        if ((r - annualStartRow) % 2 === 1) {
-          for (let c = 1; c <= 5; c++) sheet.getCell(r, c).fill = SUBHEADER_FILL;
-        }
-      }
-    }
-  }
-
-  addMonthlyComparisonSheet(
-    workbook,
-    usedSheetNames,
-    items.map((item) => ({
-      name: item.scenarioName,
-      rows: item.response.monthly_rows.map((row) => ({
-        monthIndex: row.month_index,
-        date: row.date,
-        totalCost: row.total_cost,
-      })),
-    }))
-  );
-  addNotesAndClausesSheet(
-    workbook,
-    usedSheetNames,
-    items.flatMap((item) => [
-      {
-        scenario: item.scenarioName,
-        sourceLabel: "Metrics notes",
-        text: item.response.metrics.notes ?? "",
-      },
-      {
-        scenario: item.scenarioName,
-        sourceLabel: "Canonical notes",
-        text: String(item.response.normalized_canonical_lease.notes ?? ""),
-      },
-      {
-        scenario: item.scenarioName,
-        sourceLabel: "Assumptions",
-        text: (item.response.assumptions ?? []).join(". "),
-      },
-      {
-        scenario: item.scenarioName,
-        sourceLabel: "Warnings",
-        text: (item.response.warnings ?? []).join(". "),
-      },
-    ])
-  );
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  return buffer as ExcelJS.Buffer;
+  return workbook.xlsx.writeBuffer() as Promise<ExcelJS.Buffer>;
 }
 
-/**
- * Export workbook (alias: use broker format).
- * Delegates to buildBrokerWorkbook for broker-grade output.
- */
+export async function buildBrokerWorkbook(
+  scenarios: LeaseScenarioCanonical[],
+  globalDiscountRate: number = 0.08,
+  meta?: WorkbookBrandingMeta
+): Promise<ExcelJS.Buffer> {
+  const results: EngineResult[] = scenarios.map((scenario) => runMonthlyEngine(scenario, globalDiscountRate));
+  const workbookScenarios = buildWorkbookScenariosFromCanonical(scenarios, results);
+  return buildWorkbookInternal(workbookScenarios, meta);
+}
+
+export async function buildBrokerWorkbookFromCanonicalResponses(
+  items: { response: CanonicalComputeResponse; scenarioName: string }[],
+  meta?: WorkbookBrandingMeta
+): Promise<ExcelJS.Buffer> {
+  const workbookScenarios = buildWorkbookScenariosFromCanonicalResponses(items);
+  return buildWorkbookInternal(workbookScenarios, meta);
+}
+
 export async function buildWorkbook(
   scenarios: LeaseScenarioCanonical[],
   globalDiscountRate: number = 0.08
