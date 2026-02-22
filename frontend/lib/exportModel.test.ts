@@ -103,8 +103,18 @@ describe("exportModel institutional workbook", () => {
     expect(workbook.getWorksheet("Monthly Gross Cash Flow Matrix")).toBeDefined();
     expect(workbook.worksheets.some((sheet) => sheet.name.startsWith("Appendix"))).toBe(true);
 
+    workbook.worksheets.forEach((ws) => {
+      const primaryView = ws.views?.[0] as (ExcelJS.WorksheetView & { style?: string }) | undefined;
+      expect(primaryView?.style).toBe("pageLayout");
+      expect(ws.pageSetup.fitToWidth).toBe(1);
+      expect(ws.pageSetup.fitToHeight).toBe(0);
+      expect(ws.getImages().length).toBeGreaterThan(0);
+    });
+
     const cover = workbook.getWorksheet("Cover");
     expect((cover?.getCell("A1").value as string) ?? "").toContain("THE COMMERCIAL REAL ESTATE MODEL");
+    const snapshotRow = findRowByFirstCell(cover, "SCENARIO SNAPSHOT");
+    expect(snapshotRow).not.toBeNull();
 
     const summary = workbook.getWorksheet("Summary Comparison");
     const metricRow = findRowByFirstCell(summary, "Metric");

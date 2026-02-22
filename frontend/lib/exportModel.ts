@@ -5,6 +5,7 @@ import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse } from "@/lib/types";
 import { EXCEL_THEME } from "@/lib/excel-style-constants";
+import { CRE_DEFAULT_LOGO_DATA_URL } from "@/lib/default-brokerage-logo-data-url";
 
 export const TEMPLATE_VERSION = "3.0";
 
@@ -382,7 +383,9 @@ function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: bool
   sheet.views = [{
     ...(sheet.views?.[0] ?? {}),
     showGridLines: false,
-  }];
+    style: "pageLayout",
+    zoomScale: 100,
+  } as ExcelJS.WorksheetView];
   sheet.pageSetup = {
     ...sheet.pageSetup,
     orientation: options.landscape ? "landscape" : "portrait",
@@ -404,6 +407,10 @@ function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: bool
     const setup = sheet.pageSetup as unknown as { printTitlesRow?: string };
     setup.printTitlesRow = `${options.repeatRow}:${options.repeatRow}`;
   }
+}
+
+function resolveBrokerageLogoParsed(dataUrl?: string | null): ParsedImage | null {
+  return parseImageDataUrl(dataUrl) || parseImageDataUrl(CRE_DEFAULT_LOGO_DATA_URL);
 }
 
 function decodeBase64(base64: string): Uint8Array {
@@ -520,53 +527,73 @@ function applyBrandHeader(
   sectionSubtitle: string
 ): number {
   const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
-  const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
+  const brokerageLogo = resolveBrokerageLogoParsed(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
   sheet.views = [{ showGridLines: false }];
-  sheet.getRow(1).height = EXCEL_THEME.rowHeights.headerTop;
-  sheet.getRow(2).height = EXCEL_THEME.rowHeights.headerMid;
-  sheet.getRow(3).height = EXCEL_THEME.rowHeights.headerMid;
-  sheet.getRow(4).height = EXCEL_THEME.rowHeights.headerBottom;
+  sheet.getRow(1).height = 22;
+  sheet.getRow(2).height = 22;
+  sheet.getRow(3).height = 26;
+  sheet.getRow(4).height = 26;
+
+  sheet.mergeCells(1, 1, 2, totalCols);
+  const band = sheet.getCell(1, 1);
+  band.value = `${sectionTitle}\n${sectionSubtitle}`;
+  band.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  band.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.subtitleSize, bold: true, color: { argb: COLORS.white } };
+  band.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
 
   const leftEndCol = Math.max(1, Math.floor(totalCols / 3));
   const rightStartCol = Math.max(leftEndCol + 1, totalCols - Math.floor(totalCols / 3) + 1);
   const centerStartCol = leftEndCol + 1;
   const centerEndCol = Math.max(centerStartCol, rightStartCol - 1);
 
-  placeImageInBox(workbook, sheet, brokerageLogo, {
+  const brokeragePlaced = placeImageInBox(workbook, sheet, brokerageLogo, {
     col: 1,
-    row: 1,
+    row: 3,
     widthPx: Math.max(120, leftEndCol * 64),
-    heightPx: LOGO_BOX_H_PX + 8,
+    heightPx: LOGO_BOX_H_PX + 18,
     paddingPx: PADDING_PX,
   });
-  if (rightStartCol <= totalCols) {
-    placeImageInBox(workbook, sheet, clientLogo, {
-      col: rightStartCol,
-      row: 1,
-      widthPx: Math.max(120, (totalCols - rightStartCol + 1) * 64),
-      heightPx: LOGO_BOX_H_PX + 8,
-      paddingPx: PADDING_PX,
-    });
-  }
-
-  if (!brokerageLogo) {
-    sheet.mergeCells(1, 1, 3, leftEndCol);
-    const brokerageCell = sheet.getCell(1, 1);
-    brokerageCell.value = "";
-    brokerageCell.alignment = { horizontal: "left", vertical: "middle" };
-  }
-  if (centerStartCol <= centerEndCol) {
-    sheet.mergeCells(1, centerStartCol, 3, centerEndCol);
-    const centerCell = sheet.getCell(1, centerStartCol);
-    centerCell.value = `${sectionTitle}\n${sectionSubtitle}\n${reportDate}`;
-    centerCell.font = {
+  if (!brokeragePlaced) {
+    sheet.mergeCells(3, 1, 4, leftEndCol);
+    const fallback = sheet.getCell(3, 1);
+    fallback.value = normalizeText(meta.brokerageName, DEFAULT_BROKERAGE_NAME);
+    fallback.font = {
       name: EXCEL_THEME.font.family,
       size: EXCEL_THEME.font.sectionSize,
       bold: true,
       color: { argb: COLORS.text },
     };
-    centerCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    fallback.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  }
+  if (rightStartCol <= totalCols) {
+    placeImageInBox(workbook, sheet, clientLogo, {
+      col: rightStartCol,
+      row: 3,
+      widthPx: Math.max(120, (totalCols - rightStartCol + 1) * 64),
+      heightPx: LOGO_BOX_H_PX + 18,
+      paddingPx: PADDING_PX,
+    });
+  }
+
+  if (centerStartCol <= centerEndCol) {
+    sheet.mergeCells(3, centerStartCol, 4, centerEndCol);
+    const centerCell = sheet.getCell(3, centerStartCol);
+    centerCell.value = `REPORT DATE\n${reportDate}`;
+    centerCell.font = {
+      name: EXCEL_THEME.font.family,
+      size: EXCEL_THEME.font.labelSize,
+      bold: true,
+      color: { argb: COLORS.secondaryText },
+    };
+    centerCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    const dateValueCell = sheet.getCell(4, centerStartCol);
+    dateValueCell.font = {
+      name: EXCEL_THEME.font.family,
+      size: EXCEL_THEME.font.bodySize,
+      bold: true,
+      color: { argb: COLORS.text },
+    };
   }
   drawHorizontalSeparator(sheet, 4, 1, totalCols);
 
@@ -727,9 +754,11 @@ function createCoverSheet(
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Cover", "Cover", usedSheetNames));
   sheet.columns = Array.from({ length: COVER_WIDTH_COLS }, () => ({ width: 15 }));
   sheet.views = [{ showGridLines: false }];
-  sheet.properties.defaultRowHeight = EXCEL_THEME.rowHeights.coverMeta;
+  sheet.properties.defaultRowHeight = 26;
 
-  sheet.mergeCells(1, 1, 5, COVER_WIDTH_COLS);
+  for (let c = 1; c <= COVER_WIDTH_COLS; c++) sheet.getColumn(c).width = c <= 7 ? 14 : 15;
+
+  sheet.mergeCells(1, 1, 4, COVER_WIDTH_COLS);
   const titleBand = sheet.getCell(1, 1);
   titleBand.value = "THE COMMERCIAL REAL ESTATE MODEL\nLease Financial Analysis";
   titleBand.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
@@ -740,7 +769,8 @@ function createCoverSheet(
     color: { argb: COLORS.white },
   };
   titleBand.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-  for (let r = 1; r <= 5; r++) sheet.getRow(r).height = EXCEL_THEME.rowHeights.coverBand;
+  for (let r = 1; r <= 4; r++) sheet.getRow(r).height = 32;
+  sheet.getRow(5).height = 10;
 
   const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
   const client = normalizeText(meta.clientName, "Client");
@@ -748,11 +778,11 @@ function createCoverSheet(
   const market = normalizeText(meta.market, "");
   const submarket = normalizeText(meta.submarket, "");
 
-  const brokerageLogo = parseImageDataUrl(meta.brokerageLogoDataUrl);
+  const brokerageLogo = resolveBrokerageLogoParsed(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
 
-  sheet.mergeCells(7, 1, 11, 5);
-  const brokerageBox = sheet.getCell(7, 1);
+  sheet.mergeCells(6, 1, 10, 7);
+  const brokerageBox = sheet.getCell(6, 1);
   brokerageBox.value = "";
   brokerageBox.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
   brokerageBox.border = {
@@ -762,22 +792,51 @@ function createCoverSheet(
     right: { style: "thin", color: { argb: COLORS.border } },
   };
 
-  placeImageInBox(workbook, sheet, brokerageLogo, {
+  const brokeragePlaced = placeImageInBox(workbook, sheet, brokerageLogo, {
     col: 1,
-    row: 7,
-    widthPx: 320,
-    heightPx: 90,
+    row: 6,
+    widthPx: 430,
+    heightPx: 120,
     paddingPx: PADDING_PX,
   });
+  if (!brokeragePlaced) {
+    const fallback = sheet.getCell(6, 1);
+    fallback.value = normalizeText(meta.brokerageName, DEFAULT_BROKERAGE_NAME);
+    fallback.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.text } };
+    fallback.alignment = { horizontal: "left", vertical: "middle" };
+  }
 
-  for (let r = 7; r <= 11; r++) {
-    for (let c = 6; c <= COVER_WIDTH_COLS; c++) {
+  sheet.mergeCells(11, 1, 15, 7);
+  const clientBox = sheet.getCell(11, 1);
+  clientBox.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+  clientBox.border = {
+    top: { style: "thin", color: { argb: COLORS.border } },
+    left: { style: "thin", color: { argb: COLORS.border } },
+    bottom: { style: "thin", color: { argb: COLORS.border } },
+    right: { style: "thin", color: { argb: COLORS.border } },
+  };
+  if (clientLogo) {
+    placeImageInBox(workbook, sheet, clientLogo, {
+      col: 1,
+      row: 11,
+      widthPx: 430,
+      heightPx: 120,
+      paddingPx: PADDING_PX,
+    });
+  } else {
+    clientBox.value = `PREPARED FOR\n${client}`;
+    clientBox.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.sectionSize, bold: true, color: { argb: COLORS.text } };
+    clientBox.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  }
+
+  for (let r = 6; r <= 15; r++) {
+    for (let c = 8; c <= COVER_WIDTH_COLS; c++) {
       const cell = sheet.getCell(r, c);
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
       const border: Partial<ExcelJS.Borders> = {};
-      if (r === 7) border.top = { style: "thin", color: { argb: COLORS.border } };
-      if (r === 11) border.bottom = { style: "thin", color: { argb: COLORS.border } };
-      if (c === 6) border.left = { style: "thin", color: { argb: COLORS.border } };
+      if (r === 6) border.top = { style: "thin", color: { argb: COLORS.border } };
+      if (r === 15) border.bottom = { style: "thin", color: { argb: COLORS.border } };
+      if (c === 8) border.left = { style: "thin", color: { argb: COLORS.border } };
       if (c === COVER_WIDTH_COLS) border.right = { style: "thin", color: { argb: COLORS.border } };
       cell.border = { ...(cell.border ?? {}), ...border };
     }
@@ -792,44 +851,90 @@ function createCoverSheet(
     { label: "Scenario Count", value: String(scenarios.length) },
   ].filter((row) => row.value.trim().length > 0);
 
-  sheet.mergeCells(7, 6, 8, COVER_WIDTH_COLS);
-  const stackTitle = sheet.getCell(7, 6);
-  stackTitle.value = detailRows.map((row) => row.label).join("\n");
-  stackTitle.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.labelSize, color: { argb: COLORS.secondaryText } };
-  stackTitle.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+  let metaRow = 6;
+  for (const detail of detailRows) {
+    if (metaRow > 14) break;
+    sheet.mergeCells(metaRow, 8, metaRow, COVER_WIDTH_COLS);
+    const labelCell = sheet.getCell(metaRow, 8);
+    labelCell.value = detail.label.toUpperCase();
+    labelCell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.labelSize, color: { argb: COLORS.secondaryText } };
+    labelCell.alignment = { horizontal: "left", vertical: "middle" };
 
-  sheet.mergeCells(9, 6, 10, COVER_WIDTH_COLS);
-  const stackValues = sheet.getCell(9, 6);
-  stackValues.value = detailRows.map((row) => row.value).join("\n");
-  stackValues.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
-  stackValues.alignment = { horizontal: "left", vertical: "top", wrapText: true };
-
-  if (clientLogo) {
-    sheet.mergeCells(12, 1, 16, 5);
-    const clientBox = sheet.getCell(12, 1);
-    clientBox.value = "";
-    clientBox.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
-    clientBox.border = {
-      top: { style: "thin", color: { argb: COLORS.border } },
-      left: { style: "thin", color: { argb: COLORS.border } },
-      bottom: { style: "thin", color: { argb: COLORS.border } },
-      right: { style: "thin", color: { argb: COLORS.border } },
-    };
-    placeImageInBox(workbook, sheet, clientLogo, {
-      col: 1,
-      row: 12,
-      widthPx: 320,
-      heightPx: 90,
-      paddingPx: PADDING_PX,
-    });
+    sheet.mergeCells(metaRow + 1, 8, metaRow + 1, COVER_WIDTH_COLS);
+    const valueCell = sheet.getCell(metaRow + 1, 8);
+    valueCell.value = detail.value;
+    valueCell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+    valueCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    drawHorizontalSeparator(sheet, metaRow + 1, 8, COVER_WIDTH_COLS);
+    metaRow += 2;
   }
 
-  drawHorizontalSeparator(sheet, 6, 1, COVER_WIDTH_COLS);
-  for (let row = 7; row <= 16; row++) {
-    sheet.getRow(row).height = EXCEL_THEME.rowHeights.coverMeta;
+  const scenarioBandRow = 17;
+  sheet.mergeCells(scenarioBandRow, 1, scenarioBandRow, COVER_WIDTH_COLS);
+  const scenarioBand = sheet.getCell(scenarioBandRow, 1);
+  scenarioBand.value = "SCENARIO SNAPSHOT";
+  scenarioBand.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  scenarioBand.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
+  scenarioBand.alignment = { horizontal: "left", vertical: "middle" };
+
+  const headerRow = 18;
+  sheet.getCell(headerRow, 1).value = "Scenario";
+  sheet.getCell(headerRow, 9).value = "NPV Cost";
+  sheet.getCell(headerRow, 11).value = "Total Obligation";
+  sheet.mergeCells(headerRow, 1, headerRow, 8);
+  sheet.mergeCells(headerRow, 9, headerRow, 10);
+  sheet.mergeCells(headerRow, 11, headerRow, 12);
+  for (const col of [1, 9, 11]) {
+    const cell = sheet.getCell(headerRow, col);
+    cell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.labelSize, color: { argb: COLORS.secondaryText } };
+    cell.alignment = col === 1 ? { horizontal: "left", vertical: "middle" } : { horizontal: "right", vertical: "middle" };
   }
-  autoAdjustRowHeights(sheet, 1, 16);
-  applyPrintSettings(sheet, { landscape: false, lastRow: 16, lastCol: COVER_WIDTH_COLS });
+  drawHorizontalSeparator(sheet, headerRow, 1, COVER_WIDTH_COLS);
+
+  const ranked = [...scenarios].sort((a, b) => a.npvCost - b.npvCost).slice(0, 8);
+  const minRows = 6;
+  const rowsToRender = Math.max(minRows, ranked.length);
+  let row = 19;
+  for (let i = 0; i < rowsToRender; i++) {
+    const scenario = ranked[i];
+    const fill = i % 2 === 0 ? COLORS.white : COLORS.lightGray;
+    sheet.mergeCells(row, 1, row, 8);
+    sheet.mergeCells(row, 9, row, 10);
+    sheet.mergeCells(row, 11, row, 12);
+
+    const nameCell = sheet.getCell(row, 1);
+    nameCell.value = scenario?.name ?? "—";
+    nameCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, bold: !!scenario, color: { argb: COLORS.text } };
+    nameCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+
+    const npvCell = sheet.getCell(row, 9);
+    npvCell.value = scenario ? Number(scenario.npvCost.toFixed(4)) : "";
+    npvCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    if (scenario) applyCellFormat(npvCell, "currency0");
+    else npvCell.alignment = { horizontal: "right", vertical: "middle" };
+
+    const totalCell = sheet.getCell(row, 11);
+    totalCell.value = scenario ? Number(scenario.totalObligation.toFixed(4)) : "";
+    totalCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    if (scenario) applyCellFormat(totalCell, "currency0");
+    else totalCell.alignment = { horizontal: "right", vertical: "middle" };
+
+    for (let c = 1; c <= COVER_WIDTH_COLS; c++) {
+      const cell = sheet.getCell(row, c);
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+      cell.border = { ...(cell.border ?? {}), bottom: { style: "thin", color: { argb: COLORS.border } } };
+    }
+    row += 1;
+  }
+
+  const coverEndRow = row;
+  drawHorizontalSeparator(sheet, 5, 1, COVER_WIDTH_COLS);
+  for (let rowIdx = 6; rowIdx <= coverEndRow; rowIdx++) {
+    sheet.getRow(rowIdx).height = rowIdx >= 19 ? 24 : EXCEL_THEME.rowHeights.coverMeta;
+  }
+  autoAdjustRowHeights(sheet, 1, coverEndRow);
+  applyPrintSettings(sheet, { landscape: true, lastRow: coverEndRow, lastCol: COVER_WIDTH_COLS });
 }
 
 function createSummarySheet(
@@ -1335,6 +1440,7 @@ function createAppendixSheet(
   }
 
   const endRow = totalsRow;
+  const appendixLandscape = widths.reduce((sum, w) => sum + w, 0) > 95;
   for (let r = headerRow; r <= endRow; r++) {
     for (let c = 1; c <= cols; c++) {
       const cell = sheet.getCell(r, c);
@@ -1344,7 +1450,7 @@ function createAppendixSheet(
   sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
   autoSizeColumns(sheet, 10, 28);
   autoAdjustRowHeights(sheet, startRow, endRow);
-  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
+  applyPrintSettings(sheet, { landscape: appendixLandscape, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
 }
 
 function rowBorderFill(sheet: ExcelJS.Worksheet, row: number, startCol: number, endCol: number): void {
