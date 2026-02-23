@@ -64,7 +64,12 @@ from scenario_extract import (
 )
 from reports_store import load_report, save_report, REPORTS_DIR
 from routes.api import router as api_router
-from routes.extract_lease import build_extract_response
+try:
+    from routes.extract_lease import build_extract_response
+except Exception:  # noqa: BLE001
+    # Keep startup resilient if optional extraction route module is missing in a deploy image.
+    def build_extract_response(*, file_bytes: bytes, filename: str, content_type: str, canonical_lease: CanonicalLease | None = None):
+        raise RuntimeError("optional routes.extract_lease module unavailable")
 from routes.webhooks import router as webhooks_router
 from brands import get_brand, list_brands
 from services.input_normalizer import (
