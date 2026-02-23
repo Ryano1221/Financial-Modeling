@@ -1095,13 +1095,13 @@ function createSummarySheet(
     color: { argb: COLORS.text },
   };
   sheet.getCell(headerRow, metricCol).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-  sheet.getCell(headerRow, metricCol).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  sheet.getCell(headerRow, metricCol).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(headerRow, scenarioStartCol + idx);
     cell.value = scenario.name;
     cell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
 
   type SummaryRow =
@@ -1172,9 +1172,8 @@ function createSummarySheet(
       cell.value = typeof value === "number" ? Number(value.toFixed(6)) : value;
       cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
       applyCellFormat(cell, def.format);
-      if (def.format === "text" || def.format === "date") {
-        cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
-      }
+      // Keep Summary Comparison consistently aligned across all columns/rows.
+      cell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
     });
     for (let c = metricCol; c <= layoutLastCol; c++) {
       const cell = sheet.getCell(row, c);
