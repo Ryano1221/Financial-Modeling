@@ -6,6 +6,12 @@
 import type { ScenarioInput, CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
 import type { BackendCanonicalLease, BackendRentScheduleStep, BackendPhaseInStep } from "@/lib/types";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
+import {
+  effectiveTiAllowancePsf,
+  effectiveTiBudgetTotal,
+  normalizeTiSourceOfTruth,
+  syncTiFields,
+} from "@/lib/ti";
 
 function toNumber(value: unknown, fallback: number = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -131,6 +137,9 @@ export function scenarioInputToBackendCanonical(
   );
   const hasFreeRange = Number.isFinite(freeStart) && Number.isFinite(freeEnd) && freeEnd >= freeStart;
   const freeRentMonths = hasFreeRange ? (freeEnd - freeStart + 1) : Math.max(0, Math.floor(Number(s.free_rent_months ?? 0) || 0));
+  const tiAllowancePsf = effectiveTiAllowancePsf(s);
+  const tiBudgetTotal = effectiveTiBudgetTotal(s);
+  const tiSource = normalizeTiSourceOfTruth(s.ti_source_of_truth, "psf");
   return {
     scenario_id: scenarioId ?? "",
     scenario_name: scenarioName ?? s.name,
@@ -174,7 +183,9 @@ export function scenarioInputToBackendCanonical(
     parking_count: s.parking_spaces ?? 0,
     parking_rate_monthly: s.parking_cost_monthly_per_space ?? 0,
     parking_sales_tax_rate: s.parking_sales_tax_rate ?? 0.0825,
-    ti_allowance_psf: s.ti_allowance_psf ?? 0,
+    ti_allowance_psf: tiAllowancePsf,
+    ti_budget_total: tiBudgetTotal,
+    ti_source_of_truth: tiSource,
     notes: s.notes ?? "",
   };
 }
@@ -207,7 +218,7 @@ export function backendCanonicalToScenarioInput(
   const computedMonths = period ? Math.max(0, freeEnd - freeStart + 1) : Math.max(0, fallbackMonths);
   const opexMode = c.expense_structure_type === "base_year" ? "base_year" : "nnn";
   const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
-  return {
+  const scenario: ScenarioInput = {
     name: displayName,
     document_type_detected: (c.document_type_detected ?? "").toString().trim() || undefined,
     building_name: c.building_name ?? "",
@@ -225,6 +236,8 @@ export function backendCanonicalToScenarioInput(
     free_rent_end_month: freeEnd,
     free_rent_abatement_type: c.free_rent_scope === "gross" ? "gross" : "base",
     ti_allowance_psf: c.ti_allowance_psf ?? 0,
+    ti_budget_total: typeof c.ti_budget_total === "number" ? c.ti_budget_total : undefined,
+    ti_source_of_truth: normalizeTiSourceOfTruth(c.ti_source_of_truth, "psf"),
     opex_mode: opexMode,
     base_opex_psf_yr: c.opex_psf_year_1 ?? 0,
     base_year_opex_psf_yr: c.expense_stop_psf ?? c.opex_psf_year_1 ?? 0,
@@ -234,6 +247,7 @@ export function backendCanonicalToScenarioInput(
     parking_cost_monthly_per_space: c.parking_rate_monthly ?? 0,
     parking_sales_tax_rate: c.parking_sales_tax_rate ?? 0.0825,
   };
+  return syncTiFields(scenario);
 }
 
 /** Map backend CanonicalComputeResponse to frontend EngineResult for SummaryMatrix/charts. */
@@ -272,7 +286,9 @@ export function canonicalResponseToEngineResult(
     parkingSalesTaxPercent: parkingSalesTaxRate,
     parkingCostAnnual: m.parking_total ?? 0,
     tiBudget: m.ti_value_total ?? 0,
-    tiAllowance: m.ti_value_total ?? 0,
+    tiAllowance:
+      toNumber(normalized?.ti_allowance_psf, 0) ||
+      (m.rsf && m.rsf > 0 ? toNumber(m.ti_value_total, 0) / m.rsf : 0),
     tiOutOfPocket: 0,
     grossTiOutOfPocket: 0,
     avgGrossRentPerMonth: (m.base_rent_total ?? 0) / 12,

@@ -3,6 +3,13 @@
 import { useEffect, useState } from "react";
 import type { ScenarioWithId, ScenarioInput, RentStep, OpexMode } from "@/lib/types";
 import { buildPremisesName } from "@/lib/canonical-api";
+import {
+  effectiveTiAllowancePsf,
+  effectiveTiBudgetTotal,
+  hasValidRsfForTi,
+  normalizeTiSourceOfTruth,
+  syncTiFields,
+} from "@/lib/ti";
 
 interface ScenarioFormProps {
   scenario: ScenarioWithId | null;
@@ -28,6 +35,8 @@ const defaultScenarioInput: ScenarioInput = {
   free_rent_end_month: 2,
   free_rent_abatement_type: "base",
   ti_allowance_psf: 50,
+  ti_budget_total: 500000,
+  ti_source_of_truth: "psf",
   opex_mode: "nnn",
   base_opex_psf_yr: 10,
   base_year_opex_psf_yr: 10,
@@ -301,9 +310,18 @@ export function ScenarioForm({
     value: ScenarioInput[K]
   ) => {
     if (!scenario) return;
-    let next = { ...scenario, [key]: value };
+    let next = { ...scenario, [key]: value } as ScenarioWithId;
     if (key === "commencement" || key === "expiration" || key === "free_rent_months" || key === "free_rent_start_month" || key === "free_rent_abatement_type") {
       next = applyFreeRentConsistency(next);
+    }
+    if (key === "ti_allowance_psf") {
+      next.ti_source_of_truth = "psf";
+    }
+    if (key === "ti_budget_total") {
+      next.ti_source_of_truth = "total";
+    }
+    if (key === "ti_source_of_truth" || key === "ti_allowance_psf" || key === "ti_budget_total" || key === "rsf") {
+      next = syncTiFields(next);
     }
     if (key === "building_name" || key === "suite" || key === "floor") {
       const label = buildPremisesName(next.building_name, next.suite, next.floor);
@@ -360,6 +378,10 @@ export function ScenarioForm({
 
   const inputClass = "input-premium mt-1 block w-full";
   const btnSecondary = "btn-premium btn-premium-secondary w-full sm:w-auto";
+  const tiSourceOfTruth = normalizeTiSourceOfTruth(scenario?.ti_source_of_truth, "psf");
+  const tiBudgetTotal = scenario ? effectiveTiBudgetTotal(scenario) : 0;
+  const tiAllowancePsf = scenario ? effectiveTiAllowancePsf(scenario) : 0;
+  const canDeriveTi = scenario ? hasValidRsfForTi(scenario.rsf) : false;
 
   if (!scenario) {
     return (
@@ -523,13 +545,64 @@ export function ScenarioForm({
             type="number"
             min={0}
             step={0.01}
-            value={scenario.ti_allowance_psf}
-            onChange={(e) =>
-              update("ti_allowance_psf", Number(e.target.value))
-            }
+            value={scenario.ti_allowance_psf ?? tiAllowancePsf}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              update("ti_allowance_psf", Number.isFinite(value) ? Math.max(0, value) : 0);
+            }}
             className={inputClass}
           />
+          <p className="mt-1 text-xs text-slate-400">
+            {tiSourceOfTruth === "psf"
+              ? "Locked to $/SF (source of truth)."
+              : canDeriveTi
+                ? `Derived from total: ${tiAllowancePsf.toFixed(2)}`
+                : "Derived from total: —"}
+          </p>
         </label>
+        <label className="block">
+          <span className="text-sm text-slate-300">TI budget (total $)</span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={scenario.ti_budget_total ?? tiBudgetTotal}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              update("ti_budget_total", Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
+            }}
+            className={inputClass}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            {tiSourceOfTruth === "total"
+              ? "Locked to total $ (source of truth)."
+              : canDeriveTi
+                ? `Derived from $/SF: ${Math.round(tiBudgetTotal).toLocaleString("en-US")}`
+                : "Derived from $/SF: —"}
+          </p>
+        </label>
+        <div className="block sm:col-span-2 xl:col-span-3">
+          <span className="text-sm text-slate-300">Source of truth</span>
+          <div className="mt-1 inline-flex border border-slate-300/30 bg-slate-950/60">
+            <button
+              type="button"
+              onClick={() => update("ti_source_of_truth", "psf")}
+              className={`px-3 py-2 text-xs uppercase tracking-[0.12em] ${tiSourceOfTruth === "psf" ? "bg-white text-black" : "text-slate-200"}`}
+            >
+              Lock $/SF
+            </button>
+            <button
+              type="button"
+              onClick={() => update("ti_source_of_truth", "total")}
+              className={`px-3 py-2 text-xs uppercase tracking-[0.12em] border-l border-slate-300/30 ${tiSourceOfTruth === "total" ? "bg-white text-black" : "text-slate-200"}`}
+            >
+              Lock total $
+            </button>
+          </div>
+          {!canDeriveTi && (
+            <p className="mt-2 text-xs text-amber-200">Enter RSF to calculate TI.</p>
+          )}
+        </div>
         <label className="block">
           <span className="text-sm text-slate-300">Opex mode</span>
           <select

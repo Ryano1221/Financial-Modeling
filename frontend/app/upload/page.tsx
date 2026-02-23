@@ -6,6 +6,7 @@ import { useState, useCallback } from "react";
 import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import { formatCurrencyPerSF, formatDateISO, formatMonths, formatPercent, formatRSF } from "@/lib/format";
 import type { LeaseExtraction, ScenarioInput, RentStep } from "@/lib/types";
+import { round0, syncTiFields } from "@/lib/ti";
 
 function formatExtractedDisplay(key: string, value: unknown): string {
   if (value == null) return "—";
@@ -38,12 +39,13 @@ function extractionToScenario(ext: LeaseExtraction, edits: Record<string, string
   if (rent_steps.length === 0) rent_steps = [{ start: 0, end: 59, rate_psf_yr: 30 }];
   const free_rent_months = num("free_rent") ?? (ext.free_rent?.value as number) ?? 0;
   const ti_allowance_psf = num("ti_allowance") ?? (ext.ti_allowance?.value as number) ?? 0;
+  const ti_budget_total = round0(ti_allowance_psf * Math.max(0, rsf));
   const base_opex_psf_yr = num("base_opex_psf_yr") ?? 10;
   const base_year_opex_psf_yr = num("base_year_opex_psf_yr") ?? 10;
   const opex_growth = num("opex_growth") ?? 0.03;
   const discount_rate_annual = num("discount_rate_annual") ?? 0.08;
 
-  return {
+  return syncTiFields({
     name: "From lease upload",
     rsf,
     commencement,
@@ -51,12 +53,14 @@ function extractionToScenario(ext: LeaseExtraction, edits: Record<string, string
     rent_steps,
     free_rent_months,
     ti_allowance_psf,
+    ti_budget_total,
+    ti_source_of_truth: "psf",
     opex_mode: "nnn",
     base_opex_psf_yr,
     base_year_opex_psf_yr,
     opex_growth,
     discount_rate_annual,
-  };
+  });
 }
 
 export default function UploadPage() {

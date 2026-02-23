@@ -4,6 +4,11 @@
 
 import type { ScenarioWithId } from "@/lib/types";
 import type { LeaseScenarioCanonical } from "./canonical-schema";
+import {
+  effectiveTiAllowancePsf,
+  effectiveTiBudgetTotal,
+  round0,
+} from "@/lib/ti";
 
 function monthDiff(start: string, end: string): number {
   const [y1, m1, d1] = start.split("-").map(Number);
@@ -29,7 +34,9 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const parkingSpaces = s.parking_spaces ?? 0;
   const parkingCost = s.parking_cost_monthly_per_space ?? 0;
   const parkingSalesTax = s.parking_sales_tax_rate ?? 0.0825;
-  const tiAllowanceTotal = s.ti_allowance_psf * rsf;
+  const tiBudgetTotal = effectiveTiBudgetTotal(s);
+  const tiAllowancePsf = effectiveTiAllowancePsf(s);
+  const tiAllowanceTotal = rsf > 0 ? round0(tiAllowancePsf * rsf) : tiBudgetTotal;
 
   return {
     id: s.id,
@@ -87,7 +94,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       annualEscalationPercent: 0,
     },
     tiSchedule: {
-      budgetTotal: tiAllowanceTotal,
+      budgetTotal: tiBudgetTotal,
       allowanceFromLandlord: tiAllowanceTotal,
       outOfPocket: 0,
       amortizeOop: false,

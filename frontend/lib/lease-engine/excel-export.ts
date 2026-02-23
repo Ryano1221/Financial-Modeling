@@ -94,7 +94,7 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   parkingSalesTaxPercent: "Parking sales tax %",
   parkingCostAnnual: "Parking cost (annual)",
   tiBudget: "TI budget",
-  tiAllowance: "TI allowance",
+  tiAllowance: "TI allowance ($/SF)",
   tiOutOfPocket: "TI out of pocket",
   grossTiOutOfPocket: "Gross TI out of pocket",
   avgGrossRentPerMonth: "Avg gross rent/month",
@@ -166,6 +166,7 @@ export function formatMetricValue(key: string, value: unknown): string {
   if (value == null) return "";
   if (key === "notes") return formatNotesByCategory(String(value));
   if (typeof value === "number") {
+    if (key === "tiAllowance") return formatCurrencyPerSF(value);
     if (key === "discountRateUsed") return formatPercent(value, { decimals: 1 });
     if (key === "escalationPercent" || key === "opexEscalationPercent" || key === "parkingSalesTaxPercent") return formatPercent(value);
     if (key === "rsf") return formatRSF(value);
@@ -266,7 +267,7 @@ export async function buildWorkbook(
     const ti = scenario.tiSchedule;
     [
       ["TI budget", ti.budgetTotal],
-      ["TI allowance", ti.allowanceFromLandlord],
+      ["TI allowance ($/SF)", scenario.partyAndPremises.rentableSqFt > 0 ? ti.allowanceFromLandlord / scenario.partyAndPremises.rentableSqFt : 0],
       ["TI out of pocket", ti.outOfPocket],
       ["Amortize TI", ti.amortizeOop ? "Yes" : "No"],
       ["Amortization rate", ti.amortizationRateAnnual ?? ""],

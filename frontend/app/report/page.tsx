@@ -22,6 +22,7 @@ import {
 } from "@/lib/format";
 import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import type { ReportData } from "@/lib/types";
+import { effectiveTiAllowancePsf, effectiveTiBudgetTotal } from "@/lib/ti";
 
 type ScenarioEntry = ReportData["scenarios"][number];
 
@@ -191,8 +192,8 @@ function deriveScenario(entry: ScenarioEntry): DerivedScenario {
   const parkingCostPerSpotMonthlyPreTax = parkingRate;
   const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + parkingSalesTaxRate);
   const parkingMonthly = parkingSpaces * parkingCostPerSpotMonthly;
-  const tiAllowancePsf = toNumber(scenario.ti_allowance_psf);
-  const tiAllowanceGross = tiAllowancePsf * rsf;
+  const tiAllowancePsf = effectiveTiAllowancePsf(scenario);
+  const tiAllowanceGross = effectiveTiBudgetTotal(scenario);
   const oneTimeCosts = Array.isArray(scenario.one_time_costs)
     ? scenario.one_time_costs.reduce((sum, c) => sum + toNumber(c.amount), 0)
     : 0;

@@ -1,6 +1,7 @@
 /** Matches backend Scenario / CashflowResult */
 
 export type OpexMode = "nnn" | "base_year";
+export type TiSourceOfTruth = "psf" | "total";
 
 export interface RentStep {
   start: number;
@@ -42,6 +43,8 @@ export interface ScenarioInput {
   free_rent_end_month?: number; // 0-based, inclusive
   free_rent_abatement_type?: FreeRentAbatementType;
   ti_allowance_psf: number;
+  ti_budget_total?: number;
+  ti_source_of_truth?: TiSourceOfTruth;
   opex_mode: OpexMode;
   base_opex_psf_yr: number;
   base_year_opex_psf_yr: number;
@@ -72,6 +75,8 @@ export interface RenewalInput {
   rent_steps: RentStep[];
   free_rent_months: number;
   ti_allowance_psf: number;
+  ti_budget_total?: number;
+  ti_source_of_truth?: TiSourceOfTruth;
   opex_mode: OpexMode;
   base_opex_psf_yr: number;
   base_year_opex_psf_yr: number;
@@ -85,6 +90,8 @@ export interface RelocationInput {
   rent_steps: RentStep[];
   free_rent_months: number;
   ti_allowance_psf: number;
+  ti_budget_total?: number;
+  ti_source_of_truth?: TiSourceOfTruth;
   moving_costs_total?: number;
   it_cabling_cost?: number;
   signage_cost?: number;
@@ -307,6 +314,8 @@ export interface BackendCanonicalLease {
   parking_rate_monthly?: number;
   parking_sales_tax_rate?: number;
   ti_allowance_psf?: number;
+  ti_budget_total?: number;
+  ti_source_of_truth?: TiSourceOfTruth;
   notes?: string;
   document_type_detected?: string;
   [key: string]: unknown;

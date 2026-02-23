@@ -44,6 +44,13 @@ import {
   getPremisesDisplayName,
   normalizeLeaseType,
 } from "@/lib/canonical-api";
+import {
+  effectiveTiAllowancePsf,
+  effectiveTiBudgetTotal,
+  hasValidRsfForTi,
+  normalizeTiSourceOfTruth,
+  syncTiFields,
+} from "@/lib/ti";
 import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
 import type { CanonicalComputeResponse } from "@/lib/types";
 import type { SupabaseAuthSession } from "@/lib/supabase";
@@ -308,7 +315,9 @@ function normalizeScenarioParkingTax<T extends ScenarioInput | ScenarioWithId>(s
 }
 
 function normalizeScenarioEconomics<T extends ScenarioInput | ScenarioWithId>(scenario: T): T {
-  return normalizeScenarioParkingTax(normalizeScenarioDiscountRate(scenario));
+  return syncTiFields(
+    normalizeScenarioParkingTax(normalizeScenarioDiscountRate(scenario))
+  ) as T;
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -386,6 +395,12 @@ async function fetchComputeCanonical(
 /** Normalize scenario for API: ensure free_rent_months is int (backend accepts int or list; we always send int). */
 function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
   const { id: _id, ...rest } = s;
+  const tiSource = normalizeTiSourceOfTruth(
+    (rest as { ti_source_of_truth?: "psf" | "total" }).ti_source_of_truth,
+    "psf"
+  );
+  const tiAllowancePsf = effectiveTiAllowancePsf(rest);
+  const tiBudgetTotal = effectiveTiBudgetTotal(rest);
   const raw = (rest as { free_rent_months?: number | number[] }).free_rent_months;
   const free_rent_months =
     Array.isArray(raw) ? Math.max(0, raw.length) : typeof raw === "number" ? Math.max(0, Math.floor(raw)) : rest.free_rent_months ?? 0;
@@ -395,6 +410,9 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
     (rest as { free_rent_abatement_type?: string }).free_rent_abatement_type === "gross" ? "gross" : "base";
   const payload: Omit<ScenarioWithId, "id"> = {
     ...rest,
+    ti_allowance_psf: tiAllowancePsf,
+    ti_budget_total: tiBudgetTotal,
+    ti_source_of_truth: tiSource,
     free_rent_months,
     free_rent_start_month: startMonthRaw,
     free_rent_end_month: Math.max(startMonthRaw, Math.floor(Number((rest as { free_rent_end_month?: number }).free_rent_end_month ?? endMonthDerived) || endMonthDerived)),
@@ -528,7 +546,10 @@ export default function Home() {
         const normalized = normalizeScenarioEconomics(s);
         if (
           normalized.discount_rate_annual !== s.discount_rate_annual ||
-          normalized.parking_sales_tax_rate !== s.parking_sales_tax_rate
+          normalized.parking_sales_tax_rate !== s.parking_sales_tax_rate ||
+          normalized.ti_allowance_psf !== s.ti_allowance_psf ||
+          normalized.ti_budget_total !== s.ti_budget_total ||
+          normalized.ti_source_of_truth !== s.ti_source_of_truth
         ) {
           changed = true;
           return normalized;
@@ -828,11 +849,11 @@ export default function Home() {
   }, []);
 
   const addScenario = useCallback(() => {
-    const newScenario: ScenarioWithId = {
+    const newScenario: ScenarioWithId = normalizeScenarioEconomics({
       id: nextId(),
       ...defaultScenarioInput,
       discount_rate_annual: globalDiscountRate,
-    };
+    });
     setScenarios((prev) => [...prev, newScenario]);
     setSelectedId(null);
     setResults((prev) => {
@@ -888,20 +909,21 @@ export default function Home() {
   }, [scenarios]);
 
   const updateScenario = useCallback((updated: ScenarioWithId) => {
+    const normalized = normalizeScenarioEconomics(updated);
     setScenarios((prev) =>
-      prev.map((s) => (s.id === updated.id ? updated : s))
+      prev.map((s) => (s.id === normalized.id ? normalized : s))
     );
     // Invalidate stale compute outputs so summaries/charts reflect latest edits.
     setResults((prev) => {
-      if (!(updated.id in prev)) return prev;
+      if (!(normalized.id in prev)) return prev;
       const next = { ...prev };
-      delete next[updated.id];
+      delete next[normalized.id];
       return next;
     });
     setCanonicalComputeCache((prev) => {
-      if (!(updated.id in prev)) return prev;
+      if (!(normalized.id in prev)) return prev;
       const next = { ...prev };
-      delete next[updated.id];
+      delete next[normalized.id];
       return next;
     });
   }, []);
@@ -1028,6 +1050,15 @@ export default function Home() {
       setExportPdfError("Add at least one scenario.");
       return;
     }
+    const tiRsfIssue = scenarios.find(
+      (s) =>
+        !hasValidRsfForTi(s.rsf) &&
+        (effectiveTiBudgetTotal(s) > 0 || effectiveTiAllowancePsf(s) > 0)
+    );
+    if (tiRsfIssue) {
+      setExportPdfError(`Fix RSF before export for "${tiRsfIssue.name}". Enter RSF to calculate TI.`);
+      return;
+    }
     setExportPdfLoading(true);
     setExportPdfError(null);
     try {
@@ -1143,6 +1174,15 @@ export default function Home() {
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
       setExportExcelError("Add at least one scenario.");
+      return;
+    }
+    const tiRsfIssue = scenarios.find(
+      (s) =>
+        !hasValidRsfForTi(s.rsf) &&
+        (effectiveTiBudgetTotal(s) > 0 || effectiveTiAllowancePsf(s) > 0)
+    );
+    if (tiRsfIssue) {
+      setExportExcelError(`Fix RSF before export for "${tiRsfIssue.name}". Enter RSF to calculate TI.`);
       return;
     }
     setExportExcelLoading(true);

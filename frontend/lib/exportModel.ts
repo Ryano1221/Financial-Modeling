@@ -28,7 +28,7 @@ export const SUMMARY_MATRIX_ROW_LABELS = [
   "Parking cost ($/spot/month, after tax)",
   "Parking cost (annual)",
   "TI budget",
-  "TI allowance",
+  "TI allowance ($/SF)",
   "TI out of pocket",
   "Total obligation",
   "NPV cost",
@@ -159,6 +159,20 @@ type ParsedImage = {
 function normalizeText(value: unknown, fallback = ""): string {
   const text = String(value ?? "").trim();
   return text || fallback;
+}
+
+function normalizeDocumentType(value: unknown): string {
+  const raw = normalizeText(value, "unknown").toLowerCase();
+  const normalized = raw.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized) return "Unknown";
+  const keepUpper = new Set(["loi", "rfp", "rofr", "rofo"]);
+  return normalized
+    .split(" ")
+    .map((word) => {
+      if (keepUpper.has(word)) return word.toUpperCase();
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
 }
 
 function safeDiv(numerator: number, denominator: number): number {
@@ -704,7 +718,7 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
     return {
       id: scenario.id,
       name: normalizeText(result.scenarioName, scenario.name),
-      documentType: normalizeText(scenario.documentTypeDetected, "Lease"),
+      documentType: normalizeDocumentType(scenario.documentTypeDetected),
       buildingName: normalizeText(result.metrics.buildingName, scenario.partyAndPremises.premisesLabel ?? scenario.partyAndPremises.premisesName),
       suiteFloor: normalizeText(result.metrics.suiteName, scenario.partyAndPremises.floorsOrSuite ?? ""),
       streetAddress: normalizeText(scenario.partyAndPremises.premisesName),
@@ -722,7 +736,10 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
       parkingCostPerSpotAfterTax: result.metrics.parkingCostPerSpotMonthly ?? 0,
       parkingCostAnnual: result.metrics.parkingCostAnnual ?? 0,
       tiBudget: scenario.tiSchedule.budgetTotal ?? 0,
-      tiAllowance: scenario.tiSchedule.allowanceFromLandlord ?? 0,
+      tiAllowance:
+        result.metrics.rsf > 0
+          ? (scenario.tiSchedule.allowanceFromLandlord ?? 0) / result.metrics.rsf
+          : 0,
       tiOutOfPocket: Math.max(0, scenario.tiSchedule.outOfPocket ?? 0),
       totalObligation: result.metrics.totalObligation,
       npvCost: result.metrics.npvAtDiscount,
@@ -764,7 +781,7 @@ function buildScenariosFromCanonicalResponses(items: { response: CanonicalComput
     return {
       id: `canonical-${idx + 1}`,
       name: normalizeText(item.scenarioName, `Scenario ${idx + 1}`),
-      documentType: normalizeText(c.document_type_detected, "Lease"),
+      documentType: normalizeDocumentType(c.document_type_detected),
       buildingName: normalizeText(m.building_name, c.building_name ?? m.premises_name),
       suiteFloor: normalizeText([m.suite || c.suite || "", m.floor || c.floor ? `Floor ${m.floor || c.floor}` : ""].filter(Boolean).join(" / ")),
       streetAddress: normalizeText(m.address, c.address ?? ""),
@@ -782,7 +799,9 @@ function buildScenariosFromCanonicalResponses(items: { response: CanonicalComput
       parkingCostPerSpotAfterTax: parkingPreTax * (1 + parkingTax),
       parkingCostAnnual: m.parking_total ?? 0,
       tiBudget: m.ti_value_total ?? 0,
-      tiAllowance: m.ti_value_total ?? 0,
+      tiAllowance:
+        (typeof c.ti_allowance_psf === "number" && Number.isFinite(c.ti_allowance_psf) ? c.ti_allowance_psf : 0) ||
+        (m.rsf > 0 ? (m.ti_value_total ?? 0) / m.rsf : 0),
       tiOutOfPocket: 0,
       totalObligation: m.total_obligation_nominal ?? 0,
       npvCost: m.npv_cost ?? 0,
@@ -1130,7 +1149,7 @@ function createSummarySheet(
     { type: "metric", label: "Parking cost (annual)", format: "currency0", getter: (s) => s.parkingCostAnnual },
     { type: "section", label: "TI / CAPEX" },
     { type: "metric", label: "TI budget", format: "currency0", getter: (s) => s.tiBudget },
-    { type: "metric", label: "TI allowance", format: "currency0", getter: (s) => s.tiAllowance },
+    { type: "metric", label: "TI allowance ($/SF)", format: "currency2", getter: (s) => s.tiAllowance },
     { type: "metric", label: "TI out of pocket", format: "currency0", getter: (s) => s.tiOutOfPocket },
     { type: "section", label: "SUMMARY METRICS" },
     { type: "metric", label: "Total obligation", format: "currency0", getter: (s) => s.totalObligation },
