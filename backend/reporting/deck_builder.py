@@ -1802,7 +1802,7 @@ def CoverPage(entries: list[dict[str, Any]], theme: DeckTheme) -> str:
         <div class="cover-hero-strip">
           <p class="kicker">Investor Financial Analysis</p>
           <h1>Lease Economics Comparison Deck</h1>
-          <p class="cover-subtitle">Institutional-grade multi-scenario comparison prepared for client decision-making.</p>
+          <p class="cover-subtitle">Multi-scenario comparison prepared for client decision-making.</p>
         </div>
         <div class="cover-brand-row">
           <div>{logo}</div>

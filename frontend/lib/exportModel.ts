@@ -228,6 +228,26 @@ function monthKey(value?: string | null): string {
   return `${d.getUTCFullYear()}-${`${d.getUTCMonth() + 1}`.padStart(2, "0")}`;
 }
 
+function normalizeMonthlyRowsForTiExport(
+  rows: WorkbookMonthlyRow[],
+  tiAllowanceTotal: number
+): WorkbookMonthlyRow[] {
+  if (!rows.length) return rows;
+  const normalized = rows.map((row) => ({ ...row }));
+  const allowance = Math.max(0, Number(tiAllowanceTotal) || 0);
+  if (allowance > 0) {
+    const monthZeroIdx = normalized.findIndex((row) => row.monthIndex === 0);
+    const targetIdx = monthZeroIdx >= 0 ? monthZeroIdx : 0;
+    normalized[targetIdx].grossCashFlow += allowance;
+  }
+  let cumulative = 0;
+  for (const row of normalized) {
+    cumulative += row.grossCashFlow;
+    row.cumulativeCost = cumulative;
+  }
+  return normalized;
+}
+
 function sanitizeSheetName(name: string, fallback: string): string {
   const cleaned = (name || fallback).replace(/[\\/*?:\[\]]/g, "").trim();
   const base = cleaned || fallback;
@@ -700,7 +720,9 @@ function applyBrandHeader(
 function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], results: EngineResult[]): WorkbookScenario[] {
   return scenarios.map((scenario, idx) => {
     const result = results[idx];
-    const monthlyRows: WorkbookMonthlyRow[] = result.monthly.map((m) => ({
+    const tiAllowanceTotal = Math.max(0, scenario.tiSchedule.allowanceFromLandlord ?? 0);
+    const tiBudgetTotal = Math.max(0, scenario.tiSchedule.budgetTotal ?? 0);
+    const monthlyRowsRaw: WorkbookMonthlyRow[] = result.monthly.map((m) => ({
       monthIndex: m.monthIndex,
       date: m.periodStart,
       baseRent: m.baseRent,
@@ -711,8 +733,11 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
       cumulativeCost: m.cumulativeCost,
       discountedValue: m.discountedValue,
     }));
+    const monthlyRows = normalizeMonthlyRowsForTiExport(monthlyRowsRaw, tiAllowanceTotal);
     const monthlyGrossSum = monthlyRows.reduce((sum, row) => sum + row.grossCashFlow, 0);
     const monthZeroResidual = Math.max(0, result.metrics.totalObligation - monthlyGrossSum);
+    const tiNetImpact = tiBudgetTotal - tiAllowanceTotal;
+    const totalObligationForExport = monthlyGrossSum + monthZeroResidual + tiNetImpact;
     const parkingPreTax = result.metrics.parkingCostPerSpotMonthlyPreTax
       ?? safeDiv(result.metrics.parkingCostPerSpotMonthly, 1 + (result.metrics.parkingSalesTaxPercent || 0));
     return {
@@ -735,13 +760,13 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
       parkingSalesTaxPct: result.metrics.parkingSalesTaxPercent ?? 0.0825,
       parkingCostPerSpotAfterTax: result.metrics.parkingCostPerSpotMonthly ?? 0,
       parkingCostAnnual: result.metrics.parkingCostAnnual ?? 0,
-      tiBudget: scenario.tiSchedule.budgetTotal ?? 0,
+      tiBudget: tiBudgetTotal,
       tiAllowance:
         result.metrics.rsf > 0
-          ? (scenario.tiSchedule.allowanceFromLandlord ?? 0) / result.metrics.rsf
+          ? tiAllowanceTotal / result.metrics.rsf
           : 0,
       tiOutOfPocket: Math.max(0, scenario.tiSchedule.outOfPocket ?? 0),
-      totalObligation: result.metrics.totalObligation,
+      totalObligation: totalObligationForExport,
       npvCost: result.metrics.npvAtDiscount,
       avgCostYear: result.metrics.avgAllInCostPerYear,
       avgCostPsfYear: result.metrics.avgCostPsfYr,
@@ -764,7 +789,16 @@ function buildScenariosFromCanonicalResponses(
     })?.extraction_summary?.document_type_detected ?? "").trim();
     const responseDocType = (c.document_type_detected ?? "").trim();
     const resolvedDocType = item.documentTypeDetected?.trim() || responseDocType || extractionSummaryDocType || "unknown";
-    const monthlyRows: WorkbookMonthlyRow[] = item.response.monthly_rows.map((row) => ({
+    const tiAllowancePsf = typeof c.ti_allowance_psf === "number" && Number.isFinite(c.ti_allowance_psf)
+      ? c.ti_allowance_psf
+      : 0;
+    const tiAllowanceTotal = Math.max(0, tiAllowancePsf * Math.max(0, Number(m.rsf) || 0));
+    const tiBudgetTotal = Math.max(
+      0,
+      typeof c.ti_budget_total === "number" && Number.isFinite(c.ti_budget_total) ? c.ti_budget_total : 0,
+      m.ti_value_total ?? 0
+    );
+    const monthlyRowsRaw: WorkbookMonthlyRow[] = item.response.monthly_rows.map((row) => ({
       monthIndex: row.month_index,
       date: row.date,
       baseRent: row.base_rent,
@@ -775,8 +809,11 @@ function buildScenariosFromCanonicalResponses(
       cumulativeCost: row.cumulative_cost,
       discountedValue: row.discounted_value,
     }));
+    const monthlyRows = normalizeMonthlyRowsForTiExport(monthlyRowsRaw, tiAllowanceTotal);
     const monthlyGrossSum = monthlyRows.reduce((sum, row) => sum + row.grossCashFlow, 0);
     const monthZeroResidual = Math.max(0, (m.total_obligation_nominal ?? 0) - monthlyGrossSum);
+    const tiNetImpact = tiBudgetTotal - tiAllowanceTotal;
+    const totalObligationForExport = monthlyGrossSum + monthZeroResidual + tiNetImpact;
     const parkingPreTax = c.parking_rate_monthly ?? 0;
     const parkingTax = c.parking_sales_tax_rate ?? 0.0825;
     const notesText = [
@@ -805,12 +842,10 @@ function buildScenariosFromCanonicalResponses(
       parkingSalesTaxPct: parkingTax,
       parkingCostPerSpotAfterTax: parkingPreTax * (1 + parkingTax),
       parkingCostAnnual: m.parking_total ?? 0,
-      tiBudget: m.ti_value_total ?? 0,
-      tiAllowance:
-        (typeof c.ti_allowance_psf === "number" && Number.isFinite(c.ti_allowance_psf) ? c.ti_allowance_psf : 0) ||
-        (m.rsf > 0 ? (m.ti_value_total ?? 0) / m.rsf : 0),
+      tiBudget: tiBudgetTotal,
+      tiAllowance: tiAllowancePsf || (m.rsf > 0 ? tiAllowanceTotal / m.rsf : 0),
       tiOutOfPocket: 0,
-      totalObligation: m.total_obligation_nominal ?? 0,
+      totalObligation: totalObligationForExport,
       npvCost: m.npv_cost ?? 0,
       avgCostYear: safeDiv(m.total_obligation_nominal ?? 0, Math.max(1, (m.term_months ?? 1) / 12)),
       avgCostPsfYear: m.avg_all_in_cost_psf_year ?? 0,
@@ -1398,7 +1433,7 @@ function createMonthlyGrossMatrixSheet(
     meta,
     cols,
     "MONTHLY GROSS CASH FLOW MATRIX",
-    "Institutional side-by-side monthly totals",
+    "Side-by-side monthly totals",
     { clientLogoStartCol: lastScenarioLeftCol, clientLogoEndCol: lastScenarioRightCol }
   );
   const headerRow = startRow;
@@ -1588,7 +1623,7 @@ function createMonthlyGrossMatrixSheet(
 
   const endRow = totalRow;
   sheet.getColumn(1).width = 10;
-  sheet.getColumn(2).width = 14;
+  sheet.getColumn(2).width = 24;
   for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 3).width = 22;
   autoAdjustRowHeights(sheet, headerRow, endRow);
   applyPrintSettings(sheet, {
