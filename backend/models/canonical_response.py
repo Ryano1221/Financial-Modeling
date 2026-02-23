@@ -4,7 +4,7 @@ Response models for canonical compute and normalize endpoints.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -81,6 +81,26 @@ class ExtractionSummary(BaseModel):
     sections_searched: List[str] = Field(default_factory=list)
 
 
+class ProvenanceSpan(BaseModel):
+    """Evidence trace for one extracted field candidate."""
+    page: Optional[int] = None
+    snippet: Optional[str] = None
+    bbox: Optional[List[float]] = None
+    source: str = ""
+    source_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class ReviewTask(BaseModel):
+    """Server-side extraction review task emitted for low confidence fields."""
+    field_path: str
+    severity: str = Field(description="info | warn | blocker")
+    issue_code: str
+    message: str
+    candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    recommended_value: Any = None
+    evidence: List[ProvenanceSpan] = Field(default_factory=list)
+
+
 class NormalizerResponse(BaseModel):
     """Response from POST /normalize when confidence < threshold or missing fields."""
     canonical_lease: CanonicalLease
@@ -90,3 +110,8 @@ class NormalizerResponse(BaseModel):
     clarification_questions: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     extraction_summary: ExtractionSummary = Field(default_factory=ExtractionSummary)
+    provenance: Dict[str, List[ProvenanceSpan]] = Field(default_factory=dict)
+    review_tasks: List[ReviewTask] = Field(default_factory=list)
+    export_allowed: bool = True
+    extraction_confidence: Dict[str, Any] = Field(default_factory=dict)
+    canonical_extraction: Dict[str, Any] = Field(default_factory=dict)
