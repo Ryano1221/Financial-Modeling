@@ -1256,13 +1256,13 @@ function createEqualizedSheet(
   sheet.getCell(headerRow, 1).value = "Metric";
   sheet.getCell(headerRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
   sheet.getCell(headerRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-  sheet.getCell(headerRow, 1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  sheet.getCell(headerRow, 1).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(headerRow, idx + 2);
     cell.value = scenario.name;
     cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
 
   const metricsRows: Array<{
@@ -1383,14 +1383,14 @@ function createMonthlyGrossMatrixSheet(
     const cell = sheet.getCell(headerRow, c);
     cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   }
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(headerRow, idx + 3);
     cell.value = scenario.name;
     cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
 
   const starts = scenarios.map((s) => parseIsoDate(s.commencementDate)).filter((d): d is Date => d !== null);
@@ -1529,7 +1529,7 @@ function createAppendixSheet(
     cell.value = h;
     cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.white } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
 
   let row = headerRow + 1;
