@@ -72,6 +72,8 @@ class DeckRenderPlan:
     notes_safety: int = 0
     monthly_safety: int = 0
     annual_safety: int = 0
+    executive_summary_safety: int = 0
+    cost_visuals_safety: int = 0
 
     def orientation_for(self, kind: str, default: str) -> str:
         return self.orientation_overrides.get(kind, default)
@@ -2172,7 +2174,8 @@ def _cost_visuals_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> 
                 orientation=plan.orientation_for("cost_visuals", "landscape"),
             )
         ]
-    chunk_size = 5
+    # Smaller chunks as safety increases to guarantee fit for very dense labels/data.
+    chunk_size = max(2, 5 - max(0, plan.cost_visuals_safety))
     pages: list[DeckPage] = []
     orientation = plan.orientation_for("cost_visuals", "landscape")
     for i in range(0, len(entries), chunk_size):
@@ -2202,9 +2205,14 @@ def _cost_visuals_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> 
     return pages
 
 
-def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
-    ranking = sorted(entries, key=lambda e: _safe_float(e["result"].get("npv_cost"), 0.0))
-    ranking_display = ranking[:8]
+def _executive_summary_page(
+    entries: list[dict[str, Any]],
+    *,
+    start_index: int = 0,
+    total_count: int | None = None,
+    include_key_points: bool = True,
+) -> str:
+    ranking_display = entries
     ranking_items = "".join(
         f"""
         <li>
@@ -2215,8 +2223,30 @@ def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
         """
         for e in ranking_display
     )
-    omitted = max(0, len(ranking) - len(ranking_display))
-    omitted_line = f"<p class='matrix-footnote'>+ {omitted} additional option(s) are ranked in the comparison matrix.</p>" if omitted else ""
+    resolved_total = total_count if total_count is not None else len(entries)
+    shown_end = min(resolved_total, start_index + len(ranking_display))
+    range_label = f"Showing options {start_index + 1}-{shown_end} of {resolved_total}."
+    omitted = max(0, resolved_total - shown_end)
+    omitted_line = (
+        f"<p class='matrix-footnote'>{_esc(range_label)} {omitted} option(s) continue on the next executive summary page.</p>"
+        if omitted
+        else f"<p class='matrix-footnote'>{_esc(range_label)}</p>"
+    )
+    key_points_html = (
+        """
+        <article class="panel">
+          <h3>Key decision points</h3>
+          <ul class="bullet-list">
+            <li>Confirm legal option rights: renewal/extension, ROFR/ROFO, termination, assignment/sublease.</li>
+            <li>Validate OpEx mechanics: exclusions, expense caps, and NNN vs. base-year interpretation.</li>
+            <li>Reconcile free-rent and TI economics with occupancy timing and capital availability.</li>
+            <li>Confirm parking terms and non-rent charges that may materially affect all-in occupancy costs.</li>
+          </ul>
+        </article>
+        """
+        if include_key_points
+        else ""
+    )
 
     return f"""
     {SectionTitle("Executive summary", "Decision Snapshot", "Ranking is based on lowest NPV cost (tenant cost perspective).")}
@@ -2226,17 +2256,44 @@ def _executive_summary_page(entries: list[dict[str, Any]]) -> str:
         <ol class="ranking-list">{ranking_items}</ol>
         {omitted_line}
       </article>
-      <article class="panel">
-        <h3>Key decision points</h3>
-        <ul class="bullet-list">
-          <li>Confirm legal option rights: renewal/extension, ROFR/ROFO, termination, assignment/sublease.</li>
-          <li>Validate OpEx mechanics: exclusions, expense caps, and NNN vs. base-year interpretation.</li>
-          <li>Reconcile free-rent and TI economics with occupancy timing and capital availability.</li>
-          <li>Confirm parking terms and non-rent charges that may materially affect all-in occupancy costs.</li>
-        </ul>
-      </article>
+      {key_points_html}
     </div>
     """
+
+
+def _executive_summary_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[DeckPage]:
+    ranking = sorted(entries, key=lambda e: _safe_float(e["result"].get("npv_cost"), 0.0))
+    if not ranking:
+        return [
+            DeckPage(
+                body_html=_executive_summary_page([], start_index=0, total_count=0, include_key_points=True),
+                section_label="Executive summary",
+                include_frame=True,
+                kind="executive_summary",
+                orientation=plan.orientation_for("executive_summary", "landscape"),
+            )
+        ]
+    # Always landscape; reduce rows per page as safety increases to avoid clipping.
+    per_page = max(3, 8 - max(0, plan.executive_summary_safety))
+    pages: list[DeckPage] = []
+    orientation = plan.orientation_for("executive_summary", "landscape")
+    for idx in range(0, len(ranking), per_page):
+        subset = ranking[idx : idx + per_page]
+        pages.append(
+            DeckPage(
+                body_html=_executive_summary_page(
+                    subset,
+                    start_index=idx,
+                    total_count=len(ranking),
+                    include_key_points=(idx == 0),
+                ),
+                section_label="Executive summary",
+                include_frame=True,
+                kind="executive_summary",
+                orientation=orientation,
+            )
+        )
+    return pages
 
 
 def _lease_abstracts_page(entries: list[dict[str, Any]]) -> str:
@@ -2937,15 +2994,7 @@ def build_report_deck_html(data: dict[str, Any], plan: DeckRenderPlan | None = N
             orientation=active_plan.orientation_for("cover", "landscape"),
         )
     )
-    page_payloads.append(
-        DeckPage(
-            body_html=_executive_summary_page(entries),
-            section_label="Executive summary",
-            include_frame=True,
-            kind="executive_summary",
-            orientation=active_plan.orientation_for("executive_summary", "portrait"),
-        )
-    )
+    page_payloads.extend(_executive_summary_pages(entries, active_plan))
     page_payloads.extend(_matrix_pages(entries, active_plan))
     page_payloads.extend(_monthly_gross_pages(entries, active_plan))
     page_payloads.extend(_notes_pages(entries, active_plan))
@@ -3047,9 +3096,18 @@ def _adjust_plan_for_overflow(plan: DeckRenderPlan, issues: list[dict[str, Any]]
             "monthly_cashflow_appendix",
             "monthly_gross_matrix",
             "scenario_summary",
+            "executive_summary",
+            "cost_visuals",
         }:
             plan.orientation_overrides[kind] = "landscape"
             changed = True
+        if _safe_float(issue.get("overflowPx"), 0.0) > 0.0:
+            if kind == "executive_summary":
+                plan.executive_summary_safety += 1
+                changed = True
+            elif kind == "cost_visuals":
+                plan.cost_visuals_safety += 1
+                changed = True
 
     if any(_safe_float(i.get("overflowPx"), 0.0) > 0.0 for i in overflow):
         if plan.font_scale > MIN_FONT_SCALE:
