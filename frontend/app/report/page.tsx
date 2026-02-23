@@ -47,6 +47,9 @@ type DerivedScenario = {
   baseOpexPsf: number;
   opexEscalation: number;
   freeRentMonths: number;
+  abatementAmount: number;
+  abatementType: string;
+  abatementAppliedWhen: string;
   parkingSpaces: number;
   parkingRatio: number;
   parkingCostPerSpotMonthlyPreTax: number;
@@ -117,6 +120,112 @@ function rentEscalationFromSteps(steps: Array<{ start: number; end: number; rate
   if (!first || !next || first.rate <= 0) return 0;
   const yearsBetween = Math.max(1 / 12, (next.start - first.start) / 12);
   return Math.pow(next.rate / first.rate, 1 / yearsBetween) - 1;
+}
+
+type ScenarioAbatementPeriod = {
+  start_month: number;
+  end_month: number;
+  abatement_type: "base" | "gross";
+};
+
+function normalizeAbatementPeriodsForScenario(
+  scenario: ScenarioEntry["scenario"]
+): ScenarioAbatementPeriod[] {
+  const explicit = Array.isArray(scenario.abatement_periods)
+    ? scenario.abatement_periods
+        .map((period) => {
+          const start = Math.max(0, Math.floor(toNumber(period.start_month)));
+          const end = Math.max(start, Math.floor(toNumber(period.end_month, start)));
+          return {
+            start_month: start,
+            end_month: end,
+            abatement_type: period.abatement_type === "gross" ? "gross" as const : "base" as const,
+          };
+        })
+        .filter((period) => period.end_month >= period.start_month)
+    : [];
+  if (explicit.length > 0) {
+    return explicit.sort((a, b) => (a.start_month - b.start_month) || (a.end_month - b.end_month));
+  }
+
+  const freeMonths = Math.max(0, Math.floor(toNumber(scenario.free_rent_months)));
+  if (freeMonths <= 0) return [];
+  const start = Math.max(0, Math.floor(toNumber(scenario.free_rent_start_month)));
+  const fallbackEnd = start + freeMonths - 1;
+  const end = Math.max(start, Math.floor(toNumber(scenario.free_rent_end_month, fallbackEnd)));
+  return [{
+    start_month: start,
+    end_month: end,
+    abatement_type: scenario.free_rent_abatement_type === "gross" ? "gross" : "base",
+  }];
+}
+
+function formatAbatementAppliedWhen(periods: ScenarioAbatementPeriod[]): string {
+  if (periods.length === 0) return "—";
+  return periods
+    .map((period) => {
+      const start = period.start_month + 1;
+      const end = period.end_month + 1;
+      return start === end ? `M${start}` : `M${start}-M${end}`;
+    })
+    .join(", ");
+}
+
+function formatAbatementType(periods: ScenarioAbatementPeriod[]): string {
+  if (periods.length === 0) return "None";
+  const uniqueScopes = Array.from(new Set(periods.map((period) => period.abatement_type)));
+  if (uniqueScopes.length === 1) {
+    return uniqueScopes[0] === "gross" ? "Gross rent" : "Base rent";
+  }
+  return "Mixed base/gross";
+}
+
+function estimateAbatementAmount(
+  scenario: ScenarioEntry["scenario"],
+  periods: ScenarioAbatementPeriod[],
+  rsf: number,
+  termMonths: number
+): number {
+  if (periods.length === 0 || rsf <= 0 || termMonths <= 0) return 0;
+  const cappedTerm = Math.max(0, termMonths);
+  const baseByMonth = new Array<number>(cappedTerm).fill(0);
+  for (const step of scenario.rent_steps ?? []) {
+    const start = Math.max(0, Math.floor(toNumber(step.start)));
+    const end = Math.min(cappedTerm - 1, Math.max(start, Math.floor(toNumber(step.end, start))));
+    const monthly = (toNumber(step.rate_psf_yr) * rsf) / 12;
+    for (let month = start; month <= end; month += 1) {
+      baseByMonth[month] = monthly;
+    }
+  }
+
+  const opexByMonth = new Array<number>(cappedTerm).fill(0);
+  if (scenario.opex_mode === "nnn") {
+    const baseOpex = Math.max(0, toNumber(scenario.base_opex_psf_yr));
+    const growth = Math.max(0, toNumber(scenario.opex_growth));
+    for (let month = 0; month < cappedTerm; month += 1) {
+      const yearIdx = Math.floor(month / 12);
+      const annualOpex = baseOpex * Math.pow(1 + growth, yearIdx);
+      opexByMonth[month] = (annualOpex * rsf) / 12;
+    }
+  }
+
+  const applyBase = new Array<boolean>(cappedTerm).fill(false);
+  const applyOpex = new Array<boolean>(cappedTerm).fill(false);
+  for (const period of periods) {
+    const start = Math.max(0, Math.floor(toNumber(period.start_month)));
+    const end = Math.min(cappedTerm - 1, Math.max(start, Math.floor(toNumber(period.end_month, start))));
+    for (let month = start; month <= end; month += 1) {
+      applyBase[month] = true;
+      if (period.abatement_type === "gross") applyOpex[month] = true;
+    }
+  }
+
+  let amount = 0;
+  for (let month = 0; month < cappedTerm; month += 1) {
+    if (applyBase[month]) amount += baseByMonth[month] ?? 0;
+    if (applyOpex[month]) amount += opexByMonth[month] ?? 0;
+  }
+  return Math.max(0, amount);
 }
 
 function extractClauses(notes: string): ClauseHit[] {
@@ -201,6 +310,8 @@ function deriveScenario(entry: ScenarioEntry): DerivedScenario {
   const avgGrossRentMonth = safeDiv(toNumber(result.rent_nominal) + toNumber(result.opex_nominal), Math.max(1, termMonths));
   const avgGrossRentYear = avgGrossRentMonth * 12;
   const notes = (scenario.notes || "").trim();
+  const abatementPeriods = normalizeAbatementPeriodsForScenario(scenario);
+  const abatementAmount = estimateAbatementAmount(scenario, abatementPeriods, rsf, termMonths);
 
   return {
     name: scenario.name,
@@ -218,6 +329,9 @@ function deriveScenario(entry: ScenarioEntry): DerivedScenario {
     baseOpexPsf: toNumber(scenario.base_opex_psf_yr),
     opexEscalation: toNumber(scenario.opex_growth),
     freeRentMonths: toNumber(scenario.free_rent_months),
+    abatementAmount,
+    abatementType: formatAbatementType(abatementPeriods),
+    abatementAppliedWhen: formatAbatementAppliedWhen(abatementPeriods),
     parkingSpaces,
     parkingRatio: safeDiv(parkingSpaces, safeDiv(rsf, 1000)),
     parkingCostPerSpotMonthlyPreTax,
@@ -322,7 +436,9 @@ function ReportContent() {
     { label: "Annual base rent escalation", value: (d) => formatPercent(d.baseRentEscalation) },
     { label: "Base operating expenses", value: (d) => formatCurrencyPerSF(d.baseOpexPsf) },
     { label: "Annual opex escalation", value: (d) => formatPercent(d.opexEscalation) },
-    { label: "Rent abatement", value: (d) => `${formatNumber(d.freeRentMonths)} months` },
+    { label: "Abatement amount", value: (d) => formatCurrency(d.abatementAmount) },
+    { label: "Abatement type", value: (d) => d.abatementType },
+    { label: "Abatement applied", value: (d) => d.abatementAppliedWhen },
     { label: "Parking ratio", value: (d) => `${formatNumber(d.parkingRatio, { decimals: 2 })}/1,000 SF` },
     { label: "Allotted parking spaces", value: (d) => formatNumber(d.parkingSpaces) },
     { label: "Parking cost ($/spot/month, pre-tax)", value: (d) => formatCurrency(d.parkingCostPerSpotMonthlyPreTax) },

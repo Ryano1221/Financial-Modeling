@@ -54,6 +54,9 @@ export const METRIC_LABELS: (keyof OptionMetrics)[] = [
   "expirationDate",
   "baseRentPsfYr",
   "escalationPercent",
+  "abatementAmount",
+  "abatementType",
+  "abatementAppliedWhen",
   "opexPsfYr",
   "opexEscalationPercent",
   "parkingCostPerSpotMonthlyPreTax",
@@ -87,6 +90,9 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   expirationDate: "Lease expiration date",
   baseRentPsfYr: "Base rent ($/RSF/yr)",
   escalationPercent: "Rent escalation %",
+  abatementAmount: "Abatement amount",
+  abatementType: "Abatement type",
+  abatementAppliedWhen: "Abatement applied",
   opexPsfYr: "Operating expenses ($/RSF/yr)",
   opexEscalationPercent: "OpEx escalation %",
   parkingCostPerSpotMonthlyPreTax: "Parking cost ($/spot/month, pre-tax)",
@@ -165,7 +171,9 @@ function formatNotesByCategory(raw: string): string {
 export function formatMetricValue(key: string, value: unknown): string {
   if (value == null) return "";
   if (key === "notes") return formatNotesByCategory(String(value));
+  if (key === "abatementType" || key === "abatementAppliedWhen") return String(value);
   if (typeof value === "number") {
+    if (key === "abatementAmount") return formatCurrency(value);
     if (key === "tiBudget") return formatCurrencyPerSF(value);
     if (key === "tiAllowance") return formatCurrencyPerSF(value);
     if (key === "discountRateUsed") return formatPercent(value, { decimals: 1 });

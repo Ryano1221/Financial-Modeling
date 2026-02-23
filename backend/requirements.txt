@@ -8,6 +8,9 @@ python-multipart>=0.0.9
 
 # Lease extraction (PDF/DOCX + LLM)
 pypdf>=4.0.0
+PyMuPDF>=1.24.0
+pdfplumber>=0.11.0
+jsonschema>=4.23.0
 openai>=1.0.0
 python-docx>=1.0.0
 # OCR (optional; needs tesseract/poppler on system for scanned PDFs)
@@ -24,6 +27,7 @@ alembic>=1.13.0
 
 # Auth (optional; for Clerk JWT)
 PyJWT>=2.8.0
+svix>=1.26.0
 
 # Billing & storage (optional)
 stripe>=8.0.0

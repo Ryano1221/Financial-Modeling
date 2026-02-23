@@ -67,6 +67,9 @@ export interface OptionMetrics {
   expirationDate: string;
   baseRentPsfYr: number;
   escalationPercent: number;
+  abatementAmount: number;
+  abatementType: string;
+  abatementAppliedWhen: string;
   opexPsfYr: number;
   opexEscalationPercent: number;
   parkingCostPerSpotMonthlyPreTax: number;
@@ -177,6 +180,31 @@ function normalizeParkingAbatementRanges(
     });
   }
   return ranges.sort((a, b) => (a.start - b.start) || (a.end - b.end));
+}
+
+function formatAbatementType(ranges: NormalizedAbatementRange[]): string {
+  if (ranges.length === 0) return "None";
+  const scopes = Array.from(new Set(ranges.map((range) => range.appliesTo)));
+  const types = Array.from(new Set(ranges.map((range) => range.type)));
+
+  const scopeLabel = scopes.length === 1
+    ? (scopes[0] === "gross" ? "Gross rent" : "Base rent")
+    : "Mixed base/gross";
+  const typeLabel = types.length === 1
+    ? (types[0] === "partial" ? "Partial" : "Full")
+    : "Mixed full/partial";
+  return `${scopeLabel} (${typeLabel})`;
+}
+
+function formatAbatementAppliedWhen(ranges: NormalizedAbatementRange[]): string {
+  if (ranges.length === 0) return "—";
+  return ranges
+    .map((range) => {
+      const start = range.start + 1;
+      const end = range.end + 1;
+      return start === end ? `M${start}` : `M${start}-M${end}`;
+    })
+    .join(", ");
 }
 
 /** Build monthly base rent from steps and abatement */
@@ -362,13 +390,19 @@ export function runMonthlyEngine(
     termMonths,
     scenario.parkingSchedule.parkingAbatements
   );
+  const baseRentBeforeAbatement = monthlyBaseRent(
+    termMonths,
+    scenario.rentSchedule.steps,
+    effectiveRsf,
+    []
+  );
   const baseRent = monthlyBaseRent(
     termMonths,
     scenario.rentSchedule.steps,
     effectiveRsf,
     normalizedAbatements
   );
-  const opex = monthlyOpex(
+  const opexBeforeAbatement = monthlyOpex(
     termMonths,
     scenario.expenseSchedule.baseOpexPsfYr,
     scenario.expenseSchedule.baseYearOpexPsfYr,
@@ -376,6 +410,7 @@ export function runMonthlyEngine(
     scenario.expenseSchedule.leaseType,
     effectiveRsf
   );
+  const opex = [...opexBeforeAbatement];
   const parking = monthlyParking(
     termMonths,
     scenario.parkingSchedule.slots,
@@ -481,6 +516,15 @@ export function runMonthlyEngine(
   }
 
   const totalObligation = total.reduce((a, b) => a + b, 0);
+  const baseAbatementValue = baseRentBeforeAbatement.reduce(
+    (sum, value, idx) => sum + Math.max(0, value - (baseRent[idx] ?? 0)),
+    0
+  );
+  const opexAbatementValue = opexBeforeAbatement.reduce(
+    (sum, value, idx) => sum + Math.max(0, value - (opex[idx] ?? 0)),
+    0
+  );
+  const abatementAmount = Math.max(0, baseAbatementValue + opexAbatementValue);
   const npv = total.reduce((acc, cf, t) => acc + cf / Math.pow(1 + monthlyRate, t), 0);
   const years = termMonths / 12;
   const avgRsfTerm = effectiveRsf.length > 0 ? effectiveRsf.reduce((a, b) => a + b, 0) / effectiveRsf.length : rsf;
@@ -512,6 +556,9 @@ export function runMonthlyEngine(
     expirationDate: scenario.datesAndTerm.expirationDate,
     baseRentPsfYr: firstStep?.ratePsfYr ?? 0,
     escalationPercent: scenario.rentSchedule.annualEscalationPercent * 100,
+    abatementAmount,
+    abatementType: formatAbatementType(normalizedAbatements),
+    abatementAppliedWhen: formatAbatementAppliedWhen(normalizedAbatements),
     opexPsfYr: scenario.expenseSchedule.baseOpexPsfYr,
     opexEscalationPercent: scenario.expenseSchedule.annualEscalationPercent * 100,
     parkingCostPerSpotMonthlyPreTax,

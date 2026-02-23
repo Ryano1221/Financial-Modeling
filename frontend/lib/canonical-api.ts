@@ -30,6 +30,30 @@ function monthDiff(comm: string, exp: string): number {
   return Math.max(0, m);
 }
 
+function formatAbatementTypeFromPeriods(
+  periods: Array<{ scope?: string | null }>
+): string {
+  if (periods.length === 0) return "None";
+  const scopes = Array.from(
+    new Set(periods.map((period) => (period.scope === "gross" ? "gross" : "base")))
+  );
+  if (scopes.length === 1) return scopes[0] === "gross" ? "Gross rent (Full)" : "Base rent (Full)";
+  return "Mixed base/gross (Full)";
+}
+
+function formatAbatementAppliedFromPeriods(
+  periods: Array<{ start_month: number; end_month: number }>
+): string {
+  if (periods.length === 0) return "—";
+  return periods
+    .map((period) => {
+      const start = Math.max(0, Math.floor(Number(period.start_month) || 0)) + 1;
+      const end = Math.max(start, Math.floor(Number(period.end_month) || (start - 1)) + 1);
+      return start === end ? `M${start}` : `M${start}-M${end}`;
+    })
+    .join(", ");
+}
+
 export const LEASE_TYPE_ENUM = [
   "NNN",
   "Gross",
@@ -325,6 +349,27 @@ export function canonicalResponseToEngineResult(
 ): EngineResult {
   const m = res.metrics;
   const normalized = res.normalized_canonical_lease;
+  const abatementPeriods = Array.isArray(normalized?.free_rent_periods)
+    ? normalized.free_rent_periods
+        .map((period) => ({
+          start_month: Math.max(0, Math.floor(Number(period.start_month) || 0)),
+          end_month: Math.max(0, Math.floor(Number(period.end_month) || 0)),
+          scope: period.scope === "gross" ? "gross" : "base",
+        }))
+        .filter((period) => period.end_month >= period.start_month)
+    : [];
+  const fallbackMonths = Math.max(0, Math.floor(Number(normalized?.free_rent_months ?? 0) || 0));
+  const effectiveAbatementPeriods = abatementPeriods.length > 0
+    ? abatementPeriods
+    : (
+        fallbackMonths > 0
+          ? [{
+              start_month: 0,
+              end_month: Math.max(0, fallbackMonths - 1),
+              scope: normalized?.free_rent_scope === "gross" ? "gross" : "base",
+            }]
+          : []
+      );
   const termMonths = m.term_months ?? 0;
   const parkingCount = Math.max(0, toNumber(normalized?.parking_count, 0));
   const parkingRateMonthly = Math.max(0, toNumber(normalized?.parking_rate_monthly, 0));
@@ -346,6 +391,9 @@ export function canonicalResponseToEngineResult(
     expirationDate: m.expiration_date ?? "",
     baseRentPsfYr: m.base_rent_avg_psf_year ?? 0,
     escalationPercent: 0,
+    abatementAmount: toNumber(m.free_rent_value_total, 0),
+    abatementType: formatAbatementTypeFromPeriods(effectiveAbatementPeriods),
+    abatementAppliedWhen: formatAbatementAppliedFromPeriods(effectiveAbatementPeriods),
     opexPsfYr: m.opex_avg_psf_year ?? 0,
     opexEscalationPercent: toNumber(normalized?.opex_growth_rate, 0),
     parkingCostPerSpotMonthlyPreTax: parkingRateMonthly,
