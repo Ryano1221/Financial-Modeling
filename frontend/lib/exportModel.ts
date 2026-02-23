@@ -1440,8 +1440,8 @@ function createMonthlyGrossMatrixSheet(
   sheet.getCell(tiInfoRow, 2).value = "Tenant improvements (Year 0 / PLC)";
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(tiInfoRow, idx + 3);
-    cell.value = formatMetricValue("tiBudget", scenario.tiBudget);
-    cell.alignment = { horizontal: "right", vertical: "middle" };
+    cell.value = Number((scenario.tiBudget || 0).toFixed(4));
+    applyCellFormat(cell, "currency0");
     cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
   });
@@ -1459,8 +1459,8 @@ function createMonthlyGrossMatrixSheet(
   scenarios.forEach((scenario, idx) => {
     const parkingTotal = scenario.monthlyRows.reduce((sum, monthlyRow) => sum + (monthlyRow.parking || 0), 0);
     const cell = sheet.getCell(parkingInfoRow, idx + 3);
-    cell.value = formatCurrency(parkingTotal);
-    cell.alignment = { horizontal: "right", vertical: "middle" };
+    cell.value = Number(parkingTotal.toFixed(4));
+    applyCellFormat(cell, "currency0");
     cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
   });
