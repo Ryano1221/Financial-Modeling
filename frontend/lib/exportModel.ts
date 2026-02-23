@@ -502,7 +502,15 @@ function placeImageInBox(
   workbook: ExcelJS.Workbook,
   sheet: ExcelJS.Worksheet,
   parsed: ParsedImage | null,
-  box: { col: number; row: number; widthPx: number; heightPx: number; paddingPx?: number }
+  box: {
+    col: number;
+    row: number;
+    widthPx: number;
+    heightPx: number;
+    paddingPx?: number;
+    alignX?: "left" | "right" | "center";
+    alignY?: "top" | "middle" | "bottom";
+  }
 ): boolean {
   if (!parsed) return false;
   const padding = Math.max(0, box.paddingPx ?? PADDING_PX);
@@ -515,9 +523,18 @@ function placeImageInBox(
     targetHeight = innerHeight;
     targetWidth = Math.floor(targetHeight * ratio);
   }
+  const alignX = box.alignX ?? "left";
+  const alignY = box.alignY ?? "top";
+  const freeX = Math.max(0, innerWidth - targetWidth);
+  const freeY = Math.max(0, innerHeight - targetHeight);
+  const offsetX = alignX === "right" ? freeX : alignX === "center" ? Math.floor(freeX / 2) : 0;
+  const offsetY = alignY === "bottom" ? freeY : alignY === "middle" ? Math.floor(freeY / 2) : 0;
   const imageId = workbook.addImage({ base64: parsed.dataUrl, extension: parsed.extension });
   sheet.addImage(imageId, {
-    tl: { col: box.col - 1 + (padding / 64), row: box.row - 1 + (padding / 20) },
+    tl: {
+      col: box.col - 1 + ((padding + offsetX) / 64),
+      row: box.row - 1 + ((padding + offsetY) / 20),
+    },
     ext: { width: Math.max(20, targetWidth), height: Math.max(20, targetHeight) },
   });
   return true;
@@ -603,6 +620,8 @@ function applyBrandHeader(
       widthPx: Math.max(80, (rightEndCol - rightStartCol + 1) * 64),
       heightPx: LOGO_BOX_H_PX + 18,
       paddingPx: PADDING_PX,
+      alignX: "right",
+      alignY: "middle",
     });
   }
 

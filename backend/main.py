@@ -318,6 +318,7 @@ def _try_supabase_user(request: Request) -> dict[str, str] | None:
         return _require_supabase_user(request)
     except HTTPException as exc:
         if exc.status_code == 401:
+            logging.getLogger("uvicorn.error").info("auth_fallback_to_default reason=unauthenticated")
             return None
         raise
 
@@ -330,7 +331,7 @@ def _admin_headers() -> dict[str, str]:
     }
 
 
-def _load_user_settings(user_id: str) -> dict[str, str]:
+def _load_user_settings_with_presence(user_id: str) -> tuple[dict[str, str], bool]:
     encoded_user = urllib_parse.quote(user_id, safe="")
     status, payload = _http_json_request(
         (
@@ -343,16 +344,23 @@ def _load_user_settings(user_id: str) -> dict[str, str]:
     if status >= 400:
         raise HTTPException(status_code=503, detail="Failed to load user settings from Supabase")
     rows = payload if isinstance(payload, list) else []
+    row_found = bool(rows)
     row = rows[0] if rows else {}
     if not isinstance(row, dict):
         row = {}
-    return {
+    settings = {
         "user_id": user_id,
         "brokerage_name": str(row.get("brokerage_name") or "").strip(),
         "brokerage_logo_url": str(row.get("brokerage_logo_url") or "").strip(),
         "created_at": str(row.get("created_at") or "").strip(),
         "updated_at": str(row.get("updated_at") or "").strip(),
     }
+    return settings, row_found
+
+
+def _load_user_settings(user_id: str) -> dict[str, str]:
+    settings, _ = _load_user_settings_with_presence(user_id)
+    return settings
 
 
 def _upsert_user_settings(user_id: str, *, brokerage_name: Optional[str], brokerage_logo_url: Optional[str]) -> dict[str, str]:
@@ -494,10 +502,16 @@ def _load_default_brokerage_logo_bytes() -> tuple[bytes | None, str | None]:
 def _resolve_branding(request: Request, user: dict[str, str] | None = None) -> dict[str, str | bytes | None]:
     user = user or _try_supabase_user(request)
     default_logo_bytes, default_logo_content_type = _load_default_brokerage_logo_bytes()
+    auth_present = bool(user)
+    row_found = False
+    logo_url_present = False
 
     if not user:
         resolved = {
             "user_id": None,
+            "auth_present": "false",
+            "user_settings_row_found": "false",
+            "brokerage_logo_url_present": "false",
             "source": "default",
             "brokerage_name": DEFAULT_CREMODEL_BRAND_NAME,
             "logo_bytes": default_logo_bytes,
@@ -505,9 +519,10 @@ def _resolve_branding(request: Request, user: dict[str, str] | None = None) -> d
             "logo_storage_path": None,
         }
     else:
-        settings = _load_user_settings(user["id"])
+        settings, row_found = _load_user_settings_with_presence(user["id"])
         brokerage_name = str(settings.get("brokerage_name") or "").strip() or DEFAULT_CREMODEL_BRAND_NAME
         logo_path = str(settings.get("brokerage_logo_url") or "").strip()
+        logo_url_present = bool(logo_path)
         logo_bytes, logo_content_type = (None, None)
         source = "default"
         if logo_path:
@@ -519,6 +534,9 @@ def _resolve_branding(request: Request, user: dict[str, str] | None = None) -> d
             logo_content_type = default_logo_content_type
         resolved = {
             "user_id": user["id"],
+            "auth_present": "true",
+            "user_settings_row_found": "true" if row_found else "false",
+            "brokerage_logo_url_present": "true" if logo_url_present else "false",
             "source": source,
             "brokerage_name": brokerage_name,
             "logo_bytes": logo_bytes,
@@ -527,9 +545,12 @@ def _resolve_branding(request: Request, user: dict[str, str] | None = None) -> d
         }
 
     logging.getLogger("uvicorn.error").info(
-        "resolved_branding_source=%s user_id=%s logo_bytes_length=%s",
-        resolved.get("source"),
+        "branding_resolver auth_present=%s user_id=%s user_settings_row_found=%s brokerage_logo_url_present=%s resolved_branding_source=%s logo_bytes_length=%s",
+        "true" if auth_present else "false",
         resolved.get("user_id") or "none",
+        resolved.get("user_settings_row_found") or "false",
+        resolved.get("brokerage_logo_url_present") or "false",
+        resolved.get("source"),
         len(resolved.get("logo_bytes") or b""),
     )
     return resolved
@@ -3938,6 +3959,15 @@ def create_report(req: CreateReportRequest, request: Request) -> CreateReportRes
     user = _require_supabase_user(request)
     user_id = user["id"]
     resolved_branding = _resolve_branding(request, user)
+    logging.getLogger("uvicorn.error").info(
+        "export_branding auth_present=%s user_id=%s user_settings_row_found=%s brokerage_logo_url_present=%s resolved_branding_source=%s resolved_logo_bytes_length=%s",
+        resolved_branding.get("auth_present") or "true",
+        resolved_branding.get("user_id") or user_id,
+        resolved_branding.get("user_settings_row_found") or "false",
+        resolved_branding.get("brokerage_logo_url_present") or "false",
+        resolved_branding.get("source") or "default",
+        len(resolved_branding.get("logo_bytes") or b""),
+    )
 
     branding = req.branding.model_dump(exclude_none=True) if req.branding else {}
     # Never trust brokerage/org branding keys from client.
