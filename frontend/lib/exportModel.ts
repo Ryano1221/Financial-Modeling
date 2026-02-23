@@ -35,7 +35,6 @@ export const SUMMARY_MATRIX_ROW_LABELS = [
   "Avg cost/year",
   "Avg cost/SF/year",
   "Equalized avg cost/RSF/yr",
-  "Notes",
 ] as const;
 
 export interface WorkbookBrandingMeta {
@@ -606,7 +605,7 @@ function applyBrandHeader(
 
   sheet.mergeCells(1, 1, 2, totalCols);
   const band = sheet.getCell(1, 1);
-  band.value = `${sectionTitle}\n${sectionSubtitle}`;
+  band.value = sectionSubtitle ? `${sectionTitle}\n${sectionSubtitle}` : sectionTitle;
   band.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
   band.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.subtitleSize, bold: true, color: { argb: COLORS.white } };
   band.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
@@ -670,7 +669,7 @@ function applyBrandHeader(
       bold: true,
       color: { argb: COLORS.secondaryText },
     };
-    centerCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    centerCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
     const dateValueCell = sheet.getCell(4, centerStartCol);
     dateValueCell.font = {
       name: EXCEL_THEME.font.family,
@@ -866,11 +865,19 @@ function createCoverSheet(
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
   const equalizedWindow = computeEqualizedWindow(scenarios);
   const rankedScenarios = [...scenarios].sort((a, b) => a.npvCost - b.npvCost);
-  const bestScenario = rankedScenarios[0];
-  const bestEqualized =
-    bestScenario && equalizedWindow.start && equalizedWindow.end && equalizedWindow.end.getTime() >= equalizedWindow.start.getTime()
-      ? computeEqualizedMetrics(bestScenario, equalizedWindow.start, equalizedWindow.end)
-      : null;
+  const equalizedAcrossScenarios =
+    equalizedWindow.start && equalizedWindow.end && equalizedWindow.end.getTime() >= equalizedWindow.start.getTime()
+      ? rankedScenarios.map((scenario) => computeEqualizedMetrics(scenario, equalizedWindow.start!, equalizedWindow.end!))
+      : [];
+  const averagePricePerSf = rankedScenarios.length > 0
+    ? rankedScenarios.reduce((sum, scenario) => sum + scenario.avgCostPsfYear, 0) / rankedScenarios.length
+    : 0;
+  const equalizedPricePerSf = equalizedAcrossScenarios.length > 0
+    ? equalizedAcrossScenarios.reduce((sum, metric) => sum + metric.avgCostPsfYear, 0) / equalizedAcrossScenarios.length
+    : 0;
+  const equalizedTotalObligation = equalizedAcrossScenarios.length > 0
+    ? Math.min(...equalizedAcrossScenarios.map((metric) => metric.totalCost))
+    : 0;
 
   const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   const usd2 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -974,15 +981,15 @@ function createCoverSheet(
   const metricCards = [
     {
       label: "Equalized Total Obligation",
-      value: bestEqualized ? usd0.format(bestEqualized.totalCost) : "—",
+      value: equalizedAcrossScenarios.length > 0 ? usd0.format(equalizedTotalObligation) : "—",
     },
     {
       label: "Average Price / SF",
-      value: bestScenario ? `${usd2.format(bestScenario.avgCostPsfYear)} / SF` : "—",
+      value: rankedScenarios.length > 0 ? `${usd2.format(averagePricePerSf)} / SF` : "—",
     },
     {
       label: "Equalized Price / SF",
-      value: bestEqualized ? `${usd2.format(bestEqualized.avgCostPsfYear)} / SF` : "—",
+      value: equalizedAcrossScenarios.length > 0 ? `${usd2.format(equalizedPricePerSf)} / SF` : "—",
     },
   ];
   const cardTopRow = metricsBandRow + 1;
@@ -1052,8 +1059,7 @@ function createCoverSheet(
   drawHorizontalSeparator(sheet, headerRow, 1, COVER_WIDTH_COLS);
 
   const ranked = rankedScenarios.slice(0, 8);
-  const minRows = 6;
-  const rowsToRender = Math.max(minRows, ranked.length);
+  const rowsToRender = Math.max(1, ranked.length);
   let row = headerRow + 1;
   for (let i = 0; i < rowsToRender; i++) {
     const scenario = ranked[i];
@@ -1105,8 +1111,7 @@ function createSummarySheet(
 ): void {
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Summary Comparison", "Summary Comparison", usedSheetNames));
   const metricCol = 1;
-  const spacerCol = 2;
-  const scenarioStartCol = 3;
+  const scenarioStartCol = 2;
   const scenarioColSpan = 1;
   const scenarioCount = Math.max(1, scenarios.length);
   const lastScenarioLeftCol = scenarioStartCol + (scenarioCount - 1) * scenarioColSpan;
@@ -1115,9 +1120,8 @@ function createSummarySheet(
   const layoutLastCol = tableLastCol;
 
   sheet.getColumn(metricCol).width = 28;
-  sheet.getColumn(spacerCol).width = 2;
   for (let i = 0; i < scenarios.length; i++) {
-    sheet.getColumn(scenarioStartCol + i).width = 24;
+    sheet.getColumn(scenarioStartCol + i).width = 25;
   }
 
   applyBrandHeader(
@@ -1126,7 +1130,7 @@ function createSummarySheet(
     meta,
     layoutLastCol,
     "SUMMARY COMPARISON",
-    "Institutional scenario matrix",
+    "",
     { clientLogoStartCol: lastScenarioLeftCol, clientLogoEndCol: lastScenarioRightCol }
   );
   const headerRow = 6;
@@ -1140,15 +1144,13 @@ function createSummarySheet(
     color: { argb: COLORS.text },
   };
   sheet.getCell(headerRow, metricCol).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-  sheet.getCell(headerRow, metricCol).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-  sheet.getCell(headerRow, spacerCol).value = "";
-  sheet.getCell(headerRow, spacerCol).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+  sheet.getCell(headerRow, metricCol).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(headerRow, scenarioStartCol + idx);
     cell.value = scenario.name;
     cell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-    cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
 
   type SummaryRow =
@@ -1185,7 +1187,6 @@ function createSummarySheet(
     { type: "metric", label: "Avg cost/year", format: "currency0", getter: (s) => s.avgCostYear },
     { type: "metric", label: "Avg cost/SF/year", format: "currency2", getter: (s) => s.avgCostPsfYear },
     { type: "metric", label: "Equalized avg cost/RSF/yr", format: "currency2", getter: (s) => s.equalizedAvgCostPsfYear },
-    { type: "metric", label: "Notes", format: "text", getter: () => "See Notes sheet" },
   ];
 
   let row = headerRow + 1;
@@ -1214,8 +1215,6 @@ function createSummarySheet(
     labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
     labelCell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.text }, size: EXCEL_THEME.font.bodySize };
     labelCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
-    sheet.getCell(row, spacerCol).value = "";
-    sheet.getCell(row, spacerCol).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
     scenarios.forEach((scenario, idx) => {
       const value = def.getter(scenario);
       const cell = sheet.getCell(row, scenarioStartCol + idx);
@@ -1236,7 +1235,23 @@ function createSummarySheet(
     sheet.getRow(row).height = EXCEL_THEME.rowHeights.body;
     row += 1;
   }
-  const endRow = row - 1;
+  const noteRow = row;
+  sheet.mergeCells(noteRow, metricCol, noteRow, layoutLastCol);
+  const noteCell = sheet.getCell(noteRow, metricCol);
+  noteCell.value = "Notes are listed in full on the Notes sheet.";
+  noteCell.font = {
+    name: EXCEL_THEME.font.family,
+    size: EXCEL_THEME.font.labelSize,
+    color: { argb: COLORS.secondaryText },
+    italic: true,
+  };
+  noteCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  for (let c = metricCol; c <= layoutLastCol; c++) {
+    const cell = sheet.getCell(noteRow, c);
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+  }
+
+  const endRow = noteRow;
   autoAdjustRowHeights(sheet, headerRow, endRow);
   applyPrintSettings(sheet, {
     landscape: true,
@@ -1443,7 +1458,7 @@ function createMonthlyGrossMatrixSheet(
   let row = headerRow + 1;
   const month0Row = row;
   sheet.getCell(row, 1).value = 0;
-  sheet.getCell(row, 2).value = "PRE COMMENCEMENT";
+  sheet.getCell(row, 2).value = "PRE LEASE COMMENCEMENT";
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(row, idx + 3);
     cell.value = Number(scenario.monthZeroGross.toFixed(4));
@@ -1563,7 +1578,7 @@ function createAppendixSheet(
 
   let row = headerRow + 1;
   sheet.getCell(row, 1).value = 0;
-  sheet.getCell(row, 2).value = "PRE COMMENCEMENT";
+  sheet.getCell(row, 2).value = "PRE LEASE COMMENCEMENT";
   sheet.getCell(row, 3).value = 0;
   sheet.getCell(row, 4).value = 0;
   sheet.getCell(row, 5).value = 0;
@@ -1684,28 +1699,60 @@ function createNotesSheet(
 
   let row = headerRow + 1;
   for (const scenario of scenarios) {
-    const scenarioCell = sheet.getCell(row, scenarioCol);
+    const scenarioHeaderRow = row;
+    const scenarioCell = sheet.getCell(scenarioHeaderRow, scenarioCol);
     scenarioCell.value = scenario.name;
     scenarioCell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
-    scenarioCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+    scenarioCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
     scenarioCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
 
-    const notesCell = sheet.getCell(row, notesCol);
-    notesCell.value = normalizeText(scenario.notes, "No notable clauses captured from extraction.");
-    notesCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
-    notesCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
-    notesCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
-
-    for (let c = 1; c <= totalCols; c++) {
-      const cell = sheet.getCell(row, c);
-      cell.border = { ...(cell.border ?? {}), bottom: { style: "thin", color: { argb: COLORS.border } } };
-      if (c >= 3) {
-        cell.value = "";
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
-      }
+    const scenarioLabelCell = sheet.getCell(scenarioHeaderRow, notesCol);
+    scenarioLabelCell.value = "Full extracted notes";
+    scenarioLabelCell.font = {
+      name: EXCEL_THEME.font.family,
+      bold: true,
+      size: EXCEL_THEME.font.labelSize,
+      color: { argb: COLORS.secondaryText },
+    };
+    scenarioLabelCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    scenarioLabelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+    for (let c = 3; c <= totalCols; c++) {
+      const filler = sheet.getCell(scenarioHeaderRow, c);
+      filler.value = "";
+      filler.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
     }
-
+    for (let c = 1; c <= totalCols; c++) {
+      const cell = sheet.getCell(scenarioHeaderRow, c);
+      cell.border = { ...(cell.border ?? {}), top: { style: "thin", color: { argb: COLORS.border } } };
+    }
     row += 1;
+
+    const noteLines = splitNoteFragments(scenario.notes);
+    const linesToRender = noteLines.length > 0 ? noteLines : ["No notable clauses captured from extraction."];
+    for (const line of linesToRender) {
+      const bulletCell = sheet.getCell(row, scenarioCol);
+      bulletCell.value = "•";
+      bulletCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+      bulletCell.alignment = { horizontal: "center", vertical: "top" };
+      bulletCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+
+      const notesCell = sheet.getCell(row, notesCol);
+      notesCell.value = line;
+      notesCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+      notesCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+      notesCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+
+      for (let c = 3; c <= totalCols; c++) {
+        const filler = sheet.getCell(row, c);
+        filler.value = "";
+        filler.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+      }
+      for (let c = 1; c <= totalCols; c++) {
+        const cell = sheet.getCell(row, c);
+        cell.border = { ...(cell.border ?? {}), bottom: { style: "thin", color: { argb: COLORS.border } } };
+      }
+      row += 1;
+    }
   }
 
   const endRow = row - 1;

@@ -42,7 +42,7 @@ describe("exportModel institutional workbook", () => {
   it("exposes required summary labels", () => {
     expect(SUMMARY_MATRIX_ROW_LABELS).toContain("Building name");
     expect(SUMMARY_MATRIX_ROW_LABELS).toContain("NPV cost");
-    expect(SUMMARY_MATRIX_ROW_LABELS).toContain("Notes");
+    expect(SUMMARY_MATRIX_ROW_LABELS).not.toContain("Notes");
   });
 
   it("template version is defined", () => {
@@ -147,14 +147,14 @@ describe("exportModel institutional workbook", () => {
     const premisesRow = findRowByFirstCell(summary, "PREMISES");
     expect(premisesRow).not.toBeNull();
     if (summary && metricRow != null) {
-      const headerVals = [3, 4, 5, 6].map((col) => summary.getCell(metricRow, col).value);
+      const headerVals = [2, 3, 4, 5].map((col) => summary.getCell(metricRow, col).value);
       expect(headerVals.filter(Boolean).length).toBe(4);
-      expect(summary.getCell(metricRow, 7).value).toBeNull();
+      expect(summary.getCell(metricRow, 6).value).toBeNull();
       const notesMetricRow = findRowByCellValue(summary, 1, "Notes");
-      expect(notesMetricRow).not.toBeNull();
-      if (notesMetricRow != null) {
-        expect(summary.pageSetup.printArea).toBe(`A1:F${notesMetricRow}`);
-      }
+      expect(notesMetricRow).toBeNull();
+      const notesHintRow = findRowByFirstCell(summary, "Notes are listed in full on the Notes sheet.");
+      expect(notesHintRow).not.toBeNull();
+      if (notesHintRow != null) expect(summary.pageSetup.printArea).toBe(`A1:E${notesHintRow}`);
       expect(summary.pageSetup.horizontalCentered).toBe(true);
 
       const images = summary.getImages();
@@ -163,8 +163,8 @@ describe("exportModel institutional workbook", () => {
         const tlCol = range?.tl?.col ?? 0;
         return Math.max(max, tlCol);
       }, 0);
-      // last scenario block starts at column F (zero-index 5) for 4 scenarios.
-      expect(Math.floor(maxImageTlCol)).toBe(5);
+      // last scenario block starts at column E (zero-index 4) for 4 scenarios.
+      expect(Math.floor(maxImageTlCol)).toBe(4);
     }
 
     const equalized = workbook.getWorksheet("Equalized Metrics");
@@ -185,7 +185,7 @@ describe("exportModel institutional workbook", () => {
 
       const month0Row = monthHeaderRow + 1;
       expect(monthly.getCell(month0Row, 1).value).toBe(0);
-      expect(monthly.getCell(month0Row, 2).value).toBe("PRE COMMENCEMENT");
+      expect(monthly.getCell(month0Row, 2).value).toBe("PRE LEASE COMMENCEMENT");
 
       const totalRow = findRowByCellValue(monthly, 2, "Total Estimated Obligation");
       expect(totalRow).not.toBeNull();
@@ -202,13 +202,14 @@ describe("exportModel institutional workbook", () => {
       expect(Math.floor(maxImageTlCol)).toBe(5);
     }
 
-    const notesRow = findRowByCellValue(summary, 1, "Notes");
-    expect(notesRow).not.toBeNull();
-    if (summary && notesRow != null) {
-      const noteCell = summary.getCell(notesRow, 3);
-      expect(noteCell.alignment?.wrapText).toBe(true);
-      expect((summary.getRow(notesRow).height ?? 0)).toBeGreaterThanOrEqual(20);
-      expect(noteCell.value).toBe("See Notes sheet");
+    const notesSheet = workbook.getWorksheet("Notes");
+    expect(notesSheet).toBeDefined();
+    if (notesSheet) {
+      const firstBulletRow = findRowByCellValue(notesSheet, 1, "•");
+      expect(firstBulletRow).not.toBeNull();
+      if (firstBulletRow != null) {
+        expect(notesSheet.getCell(firstBulletRow, 2).alignment?.wrapText).toBe(true);
+      }
     }
 
     const appendix = workbook.worksheets.find((sheet) => sheet.name.startsWith("Appendix"));
