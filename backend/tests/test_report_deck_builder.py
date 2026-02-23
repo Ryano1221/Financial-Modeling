@@ -283,6 +283,6 @@ def test_monthly_gross_cashflow_matrix_includes_month0_and_timeline_alignment():
 
     html = build_report_deck_html(payload)
     assert "Monthly Gross Cash Flows (All Scenarios)" in html
-    assert "Pre Commencement" in html
+    assert "Pre Lease Commencement" in html
     assert "<th>Month #</th>" in html
     assert "<th>Date</th>" in html

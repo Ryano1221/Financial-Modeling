@@ -1410,28 +1410,28 @@ def _consolidated_monthly_gross_rows(entries: list[dict[str, Any]]) -> list[dict
     rows: list[dict[str, Any]] = [
         {
             "month_no": "0",
-            "date_text": "Pre Commencement",
+            "date_text": "Pre Lease Commencement",
             "values": [_fmt_currency(w.get("month0_value"), precision=0) for w in windows],
         }
     ]
 
     rows.append(
         {
-            "month_no": "TB",
+            "month_no": "TIB",
             "date_text": "TI budget (Year 0 / PLC)",
             "values": [_fmt_currency(w.get("ti_budget_year0_value"), precision=0) for w in windows],
         }
     )
     rows.append(
         {
-            "month_no": "TA",
+            "month_no": "TIA",
             "date_text": "TI allowance credit (Year 0 / PLC)",
             "values": [_fmt_currency(w.get("ti_allowance_year0_value"), precision=0) for w in windows],
         }
     )
     rows.append(
         {
-            "month_no": "TN",
+            "month_no": "TIN",
             "date_text": "TI net impact (budget - allowance)",
             "values": [_fmt_currency(w.get("ti_net_year0_value"), precision=0) for w in windows],
         }
@@ -1472,8 +1472,8 @@ def _consolidated_monthly_gross_rows(entries: list[dict[str, Any]]) -> list[dict
 
 def _monthly_gross_matrix_table(entries: list[dict[str, Any]], rows: list[dict[str, Any]]) -> str:
     scenario_count = max(1, len(entries))
-    month_col = 7.5
-    date_col = 12.5
+    month_col = 8.0
+    date_col = 16.0
     scenario_col = max(9.0, (100.0 - month_col - date_col) / scenario_count)
     colgroup = (
         f'<col style="width:{month_col:.2f}%"/>'

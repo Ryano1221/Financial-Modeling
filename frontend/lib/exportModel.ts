@@ -1389,7 +1389,7 @@ function createMonthlyGrossMatrixSheet(
   const lastScenarioLeftCol = scenarioStartCol + (scenarioCount - 1) * scenarioColSpan;
   const lastScenarioRightCol = lastScenarioLeftCol + scenarioColSpan - 1;
   sheet.getColumn(1).width = 10;
-  sheet.getColumn(2).width = 14;
+  sheet.getColumn(2).width = 24;
   for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 3).width = 22;
 
   const startRow = applyBrandHeader(
@@ -1443,7 +1443,7 @@ function createMonthlyGrossMatrixSheet(
   row += 1;
 
   const tiBudgetRow = row;
-  sheet.getCell(tiBudgetRow, 1).value = "TB";
+  sheet.getCell(tiBudgetRow, 1).value = "TIB";
   sheet.getCell(tiBudgetRow, 2).value = "TI budget (Year 0 / PLC)";
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(tiBudgetRow, idx + 3);
@@ -1462,7 +1462,7 @@ function createMonthlyGrossMatrixSheet(
   row += 1;
 
   const tiAllowanceRow = row;
-  sheet.getCell(tiAllowanceRow, 1).value = "TA";
+  sheet.getCell(tiAllowanceRow, 1).value = "TIA";
   sheet.getCell(tiAllowanceRow, 2).value = "TI allowance credit (Year 0 / PLC)";
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(tiAllowanceRow, idx + 3);
@@ -1481,7 +1481,7 @@ function createMonthlyGrossMatrixSheet(
   row += 1;
 
   const tiNetRow = row;
-  sheet.getCell(tiNetRow, 1).value = "TN";
+  sheet.getCell(tiNetRow, 1).value = "TIN";
   sheet.getCell(tiNetRow, 2).value = "TI net impact (budget - allowance)";
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(tiNetRow, idx + 3);
@@ -1610,7 +1610,7 @@ function createAppendixSheet(
     makeUniqueSheetName(`Appendix — ${scenario.name}`, `Appendix ${scenario.name}`, usedSheetNames)
   );
   const cols = 9;
-  const widths = [10, 14, 14, 14, 14, 14, 16, 16, 16];
+  const widths = [10, 24, 14, 14, 14, 14, 16, 16, 16];
   widths.forEach((w, idx) => { sheet.getColumn(idx + 1).width = w; });
 
   const startRow = applyBrandHeader(workbook, sheet, meta, cols, "APPENDIX — MONTHLY CASH FLOWS", scenario.name);
