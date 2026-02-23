@@ -71,3 +71,11 @@ def test_extract_lease_hints_parses_loi_term_suite_and_opex_from_docx_style_text
     assert hints["opex_psf_year_1"] == 14.26
     assert hints["opex_source_year"] == 2026
 
+
+def test_regex_prefill_prefers_tia_per_sf_over_total_budget() -> None:
+    text = (
+        "Tenant Improvement Allowance (TIA): $35.00 per RSF.\n"
+        "Tenant Improvement Budget: $240,000 total buildout allowance.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") == 35.0

@@ -8,6 +8,7 @@ import {
   effectiveTiBudgetTotal,
   hasValidRsfForTi,
   round0,
+  round2,
 } from "@/lib/ti";
 
 interface ScenarioFormProps {
@@ -412,8 +413,8 @@ export function ScenarioForm({
       next = applyParkingAbatementConsistency(next);
     }
     if (key === "ti_allowance_psf") {
-      const isBudgetLocked = next.ti_source_of_truth === "total";
-      if (!isBudgetLocked) {
+      const hasExplicitBudget = Number(scenario.ti_budget_total ?? 0) > 0;
+      if (!hasExplicitBudget) {
         const rsf = Math.max(0, Number(next.rsf) || 0);
         next.ti_budget_total = rsf > 0 ? round0(Math.max(0, Number(next.ti_allowance_psf) || 0) * rsf) : 0;
         next.ti_source_of_truth = "psf";
@@ -428,9 +429,20 @@ export function ScenarioForm({
         next.ti_source_of_truth = "psf";
       }
     }
-    if (key === "rsf" && next.ti_source_of_truth !== "total") {
-      const rsf = Math.max(0, Number(next.rsf) || 0);
-      next.ti_budget_total = rsf > 0 ? round0(Math.max(0, Number(next.ti_allowance_psf) || 0) * rsf) : 0;
+    if (key === "rsf") {
+      const newRsf = Math.max(0, Number(next.rsf) || 0);
+      const oldRsf = Math.max(0, Number(scenario.rsf) || 0);
+      const hasExplicitBudget = Number(scenario.ti_budget_total ?? 0) > 0;
+      if (!hasExplicitBudget) {
+        next.ti_budget_total = newRsf > 0 ? round0(Math.max(0, Number(next.ti_allowance_psf) || 0) * newRsf) : 0;
+      } else if (scenario.ti_source_of_truth === "psf" && oldRsf > 0) {
+        const lockedBudgetPsf = round2((Number(scenario.ti_budget_total ?? 0) || 0) / oldRsf);
+        next.ti_budget_total = newRsf > 0 ? round0(lockedBudgetPsf * newRsf) : 0;
+        next.ti_source_of_truth = "psf";
+      } else {
+        next.ti_budget_total = round0(Math.max(0, Number(scenario.ti_budget_total ?? 0) || 0));
+        next.ti_source_of_truth = "total";
+      }
     }
     if (key === "building_name" || key === "suite" || key === "floor") {
       const label = buildPremisesName(next.building_name, next.suite, next.floor);
@@ -594,6 +606,34 @@ export function ScenarioForm({
   const tiBudgetTotal = scenario ? effectiveTiBudgetTotal(scenario) : 0;
   const tiAllowancePsf = scenario ? effectiveTiAllowancePsf(scenario) : 0;
   const canDeriveTi = scenario ? hasValidRsfForTi(scenario.rsf) : false;
+  const derivedAllowanceTotal = scenario && canDeriveTi
+    ? round0((Math.max(0, Number(scenario.ti_allowance_psf) || 0) * Math.max(0, Number(scenario.rsf) || 0)))
+    : 0;
+  const tiBudgetPsf = scenario && canDeriveTi
+    ? round2(tiBudgetTotal / Math.max(1, Number(scenario.rsf) || 1))
+    : 0;
+  const tiBudgetSource = (scenario?.ti_source_of_truth === "total" ? "total" : "psf");
+
+  const setTiBudgetSource = (source: "psf" | "total") => {
+    if (!scenario) return;
+    onUpdate({
+      ...scenario,
+      ti_source_of_truth: source,
+      ti_budget_total: round0(Math.max(0, Number(scenario.ti_budget_total ?? tiBudgetTotal) || 0)),
+    });
+  };
+
+  const updateTiBudgetPsf = (value: number) => {
+    if (!scenario) return;
+    const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+    const rsf = Math.max(0, Number(scenario.rsf) || 0);
+    const total = rsf > 0 ? round0(safeValue * rsf) : 0;
+    onUpdate({
+      ...scenario,
+      ti_budget_total: total,
+      ti_source_of_truth: "psf",
+    });
+  };
 
   if (!scenario) {
     return (
@@ -860,11 +900,26 @@ export function ScenarioForm({
             />
           </label>
           <p className="mt-2 text-xs text-slate-400">
-            Used directly for TI allowance in comparisons and exports.
+            Derived allowance total: {canDeriveTi ? `$${new Intl.NumberFormat("en-US").format(derivedAllowanceTotal)}` : "—"}
           </p>
         </div>
         <div className="block rounded-xl border border-slate-300/20 bg-slate-900/30 p-3">
           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mb-2">Tenant improvement budget</p>
+          <label className="block">
+            <span className="text-sm text-slate-300">TI budget ($/SF)</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={tiBudgetPsf}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                updateTiBudgetPsf(value);
+              }}
+              className={inputClass}
+              disabled={!canDeriveTi}
+            />
+          </label>
           <label className="block">
             <span className="text-sm text-slate-300">TI budget (total $)</span>
             <input
@@ -879,8 +934,29 @@ export function ScenarioForm({
               className={inputClass}
             />
           </label>
+          <div className="mt-3">
+            <span className="text-sm text-slate-300">Source of truth</span>
+            <div className="mt-1 inline-flex rounded-lg border border-slate-300/30 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setTiBudgetSource("psf")}
+                className={`px-3 py-2 text-xs tracking-[0.2em] ${tiBudgetSource === "psf" ? "bg-slate-100 text-slate-900" : "bg-transparent text-slate-200 hover:bg-slate-800/40"}`}
+              >
+                LOCK $/SF
+              </button>
+              <button
+                type="button"
+                onClick={() => setTiBudgetSource("total")}
+                className={`px-3 py-2 text-xs tracking-[0.2em] border-l border-slate-300/30 ${tiBudgetSource === "total" ? "bg-slate-100 text-slate-900" : "bg-transparent text-slate-200 hover:bg-slate-800/40"}`}
+              >
+                LOCK TOTAL $
+              </button>
+            </div>
+          </div>
           <p className="mt-2 text-xs text-slate-400">
-            Defaults from allowance only when no explicit TI budget is entered.
+            {Number(scenario.ti_budget_total ?? 0) > 0
+              ? `Locked to ${tiBudgetSource === "total" ? "total $" : "$/SF"} (source of truth).`
+              : "Defaults from TI allowance until a TI budget is entered."}
           </p>
         </div>
         {!canDeriveTi && (

@@ -324,6 +324,12 @@ _RE_TI = re.compile(
     r"(?i)\b(?:ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b[^\n$]{0,100}\$?\s*[\d,]+(?:\.\d+)?",
     re.I,
 )
+_RE_TIA_KEYWORD = re.compile(
+    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
+)
+_RE_PSF_AMOUNT = re.compile(
+    r"(?i)\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/|per)?\s*(?:rentable\s+)?(?:rsf|sf|psf|sq\.?\s*ft\.?)\b"
+)
 _RE_FREE_RENT = re.compile(
     r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b[^\n]{0,50}?\(?(\d{1,2})\)?\s*(?:months?)?",
     re.I,
@@ -990,15 +996,39 @@ def _regex_prefill(text: str) -> dict:
         prefill["term_months"] = int(term_months)
         if comm and not exp:
             prefill["expiration"] = _expiration_from_term_months(_safe_date(comm), term_months).isoformat()
-    # TI allowance ($/sf)
-    m = _RE_TI.search(text)
-    if m:
-        nums = _RE_NUM.findall(m.group(0))
-        if nums:
+    # TI allowance ($/sf): prioritize explicit per-SF language and TIA cues.
+    ti_allowance_psf = None
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for idx, line in enumerate(lines):
+        if not _RE_TIA_KEYWORD.search(line):
+            continue
+        window = " ".join(lines[idx: idx + 3])
+        low_window = window.lower()
+        if "e.g" in low_window or "example" in low_window:
+            continue
+        for amount_match in _RE_PSF_AMOUNT.finditer(window):
             try:
-                prefill["ti_allowance_psf"] = float(nums[0].replace(",", ""))
+                value = float(amount_match.group(1).replace(",", ""))
             except ValueError:
-                pass
+                continue
+            if 0 <= value <= 500:
+                ti_allowance_psf = value
+                break
+        if ti_allowance_psf is not None:
+            break
+    if ti_allowance_psf is None:
+        m = _RE_TI.search(text)
+        if m:
+            nums = _RE_NUM.findall(m.group(0))
+            if nums:
+                try:
+                    fallback_val = float(nums[0].replace(",", ""))
+                    if 0 <= fallback_val <= 500:
+                        ti_allowance_psf = fallback_val
+                except ValueError:
+                    pass
+    if ti_allowance_psf is not None:
+        prefill["ti_allowance_psf"] = float(ti_allowance_psf)
     # Free rent months
     m = _RE_FREE_RENT.search(text)
     if m:
