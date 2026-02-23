@@ -383,7 +383,7 @@ function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: bool
   sheet.views = [{
     ...(sheet.views?.[0] ?? {}),
     showGridLines: false,
-    style: "pageLayout",
+    style: "pageBreakPreview",
     zoomScale: 100,
   } as ExcelJS.WorksheetView];
   sheet.pageSetup = {
@@ -408,6 +408,11 @@ function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: bool
     setup.printTitlesRow = `${options.repeatRow}:${options.repeatRow}`;
   }
 }
+
+type HeaderLayoutOptions = {
+  clientLogoStartCol?: number;
+  clientLogoEndCol?: number;
+};
 
 function resolveBrokerageLogoParsed(dataUrl?: string | null): ParsedImage | null {
   return parseImageDataUrl(dataUrl) || parseImageDataUrl(CRE_DEFAULT_LOGO_DATA_URL);
@@ -524,7 +529,8 @@ function applyBrandHeader(
   meta: WorkbookBrandingMeta,
   totalCols: number,
   sectionTitle: string,
-  sectionSubtitle: string
+  sectionSubtitle: string,
+  options?: HeaderLayoutOptions
 ): number {
   const reportDate = formatDateMmDdYyyy(meta.reportDate ?? toIsoDate(new Date()));
   const brokerageLogo = resolveBrokerageLogoParsed(meta.brokerageLogoDataUrl);
@@ -543,7 +549,15 @@ function applyBrandHeader(
   band.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
 
   const leftEndCol = Math.max(1, Math.floor(totalCols / 3));
-  const rightStartCol = Math.max(leftEndCol + 1, totalCols - Math.floor(totalCols / 3) + 1);
+  const defaultRightStartCol = Math.max(leftEndCol + 1, totalCols - Math.floor(totalCols / 3) + 1);
+  const rightStartCol = Math.max(
+    leftEndCol + 1,
+    Math.min(totalCols, options?.clientLogoStartCol ?? defaultRightStartCol)
+  );
+  const rightEndCol = Math.max(
+    rightStartCol,
+    Math.min(totalCols, options?.clientLogoEndCol ?? totalCols)
+  );
   const centerStartCol = leftEndCol + 1;
   const centerEndCol = Math.max(centerStartCol, rightStartCol - 1);
 
@@ -566,11 +580,11 @@ function applyBrandHeader(
     };
     fallback.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   }
-  if (rightStartCol <= totalCols) {
+  if (rightStartCol <= rightEndCol) {
     placeImageInBox(workbook, sheet, clientLogo, {
       col: rightStartCol,
       row: 3,
-      widthPx: Math.max(120, (totalCols - rightStartCol + 1) * 64),
+      widthPx: Math.max(80, (rightEndCol - rightStartCol + 1) * 64),
       heightPx: LOGO_BOX_H_PX + 18,
       paddingPx: PADDING_PX,
     });
@@ -947,16 +961,17 @@ function createSummarySheet(
   const metricCol = 1;
   const spacerCol = 2;
   const scenarioStartCol = 3;
-  const tableLastCol = scenarioStartCol + scenarios.length - 1;
-  const layoutLastCol = Math.max(14, tableLastCol);
+  const scenarioColSpan = 1;
+  const scenarioCount = Math.max(1, scenarios.length);
+  const lastScenarioLeftCol = scenarioStartCol + (scenarioCount - 1) * scenarioColSpan;
+  const lastScenarioRightCol = lastScenarioLeftCol + scenarioColSpan - 1;
+  const tableLastCol = lastScenarioRightCol;
+  const layoutLastCol = tableLastCol;
 
   sheet.getColumn(metricCol).width = 28;
   sheet.getColumn(spacerCol).width = 2;
   for (let i = 0; i < scenarios.length; i++) {
     sheet.getColumn(scenarioStartCol + i).width = 24;
-  }
-  for (let c = tableLastCol + 1; c <= layoutLastCol; c++) {
-    sheet.getColumn(c).width = 6;
   }
 
   const startRow = applyBrandHeader(
@@ -965,7 +980,8 @@ function createSummarySheet(
     meta,
     layoutLastCol,
     "SUMMARY COMPARISON",
-    "Institutional scenario matrix"
+    "Institutional scenario matrix",
+    { clientLogoStartCol: lastScenarioLeftCol, clientLogoEndCol: lastScenarioRightCol }
   );
   const headerRow = 6;
 
@@ -988,12 +1004,6 @@ function createSummarySheet(
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
     cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
-  for (let c = tableLastCol + 1; c <= layoutLastCol; c++) {
-    const cell = sheet.getCell(headerRow, c);
-    cell.value = "";
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
-    cell.border = { bottom: { style: "thin", color: { argb: COLORS.border } } };
-  }
 
   type SummaryRow =
     | { type: "section"; label: string }
@@ -1076,11 +1086,6 @@ function createSummarySheet(
         ...(cell.border ?? {}),
         bottom: { style: "thin", color: { argb: COLORS.border } },
       };
-    }
-    for (let c = tableLastCol + 1; c <= layoutLastCol; c++) {
-      const cell = sheet.getCell(row, c);
-      cell.value = "";
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
     }
     sheet.getRow(row).height = EXCEL_THEME.rowHeights.body;
     row += 1;

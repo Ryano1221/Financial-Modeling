@@ -6,6 +6,7 @@ import {
   buildBrokerWorkbook,
 } from "./exportModel";
 import type { LeaseScenarioCanonical } from "./lease-engine/canonical-schema";
+import { CRE_DEFAULT_LOGO_DATA_URL } from "./default-brokerage-logo-data-url";
 
 function findRowByFirstCell(sheet: ExcelJS.Worksheet | undefined, needle: string): number | null {
   if (!sheet) return null;
@@ -92,6 +93,7 @@ describe("exportModel institutional workbook", () => {
       clientName: "Client A",
       reportDate: "2026-02-22",
       preparedBy: "Analyst",
+      clientLogoDataUrl: CRE_DEFAULT_LOGO_DATA_URL,
     });
 
     const workbook = new ExcelJS.Workbook();
@@ -105,7 +107,7 @@ describe("exportModel institutional workbook", () => {
 
     workbook.worksheets.forEach((ws) => {
       const primaryView = ws.views?.[0] as (ExcelJS.WorksheetView & { style?: string }) | undefined;
-      expect(primaryView?.style).toBe("pageLayout");
+      expect(primaryView?.style).toBe("pageBreakPreview");
       expect(ws.pageSetup.fitToWidth).toBe(1);
       expect(ws.pageSetup.fitToHeight).toBe(0);
       expect(ws.getImages().length).toBeGreaterThan(0);
@@ -122,6 +124,26 @@ describe("exportModel institutional workbook", () => {
     expect(summary?.getColumn(1).width).toBeGreaterThanOrEqual(28);
     const premisesRow = findRowByFirstCell(summary, "PREMISES");
     expect(premisesRow).not.toBeNull();
+    if (summary && metricRow != null) {
+      const scenarioHeaderCount = [summary.getCell(metricRow, 3).value].filter(Boolean).length;
+      expect(scenarioHeaderCount).toBe(1);
+      expect(summary.getCell(metricRow, 4).value).toBeNull();
+      const notesMetricRow = findRowByCellValue(summary, 1, "Notes");
+      expect(notesMetricRow).not.toBeNull();
+      if (notesMetricRow != null) {
+        expect(summary.pageSetup.printArea).toBe(`A1:C${notesMetricRow}`);
+      }
+
+      const images = summary.getImages();
+      const maxImageTlCol = images.reduce((max, img) => {
+        const range = img.range as unknown as { tl?: { col?: number } };
+        const tlCol = range?.tl?.col ?? 0;
+        return Math.max(max, tlCol);
+      }, 0);
+      // last scenario block starts at column C (zero-index 2)
+      expect(maxImageTlCol).toBeGreaterThanOrEqual(2);
+      expect(maxImageTlCol).toBeLessThan(3);
+    }
 
     const monthly = workbook.getWorksheet("Monthly Gross Cash Flow Matrix");
     const monthHeaderRow = findRowByFirstCell(monthly, "Month #");

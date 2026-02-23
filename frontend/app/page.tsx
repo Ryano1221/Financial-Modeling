@@ -1149,16 +1149,20 @@ export default function Home() {
       const canonical = scenarios.map(scenarioToCanonical);
       const reportMeta = buildReportMeta();
       const hasSavedBrokerageBranding = Boolean(
-        authSession && (organizationBranding?.has_logo || brokerageName.trim())
+        authSession && organizationBranding?.has_logo && (
+          organizationBranding?.logo_data_url || organizationBranding?.logo_asset_bytes
+        )
       );
-      const resolvedBrokerageName = hasSavedBrokerageBranding
-        ? (brokerageName.trim() || CRE_DEFAULT_BROKERAGE_NAME)
+      const resolvedBrokerageName = authSession
+        ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
         : CRE_DEFAULT_BROKERAGE_NAME;
       const resolvedPreparedBy = reportMeta.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
-      const savedBrokerageLogo = organizationBranding?.logo_data_url
-        || (organizationBranding?.logo_asset_bytes
-          ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
-          : null);
+      const savedBrokerageLogo = authSession
+        ? (organizationBranding?.logo_data_url
+          || (organizationBranding?.logo_asset_bytes
+            ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+            : null))
+        : null;
       const fallbackBrokerageLogo = await getDefaultBrokerageLogoDataUrl();
       const brokerageLogoSource = hasSavedBrokerageBranding
         ? (savedBrokerageLogo || fallbackBrokerageLogo)
@@ -1215,7 +1219,7 @@ export default function Home() {
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, brokerageName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl]);
 
   const engineResults = useMemo(() => {
     const included = includedScenarios;
