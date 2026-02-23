@@ -865,19 +865,12 @@ function createCoverSheet(
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
   const equalizedWindow = computeEqualizedWindow(scenarios);
   const rankedScenarios = [...scenarios].sort((a, b) => a.npvCost - b.npvCost);
-  const equalizedAcrossScenarios =
-    equalizedWindow.start && equalizedWindow.end && equalizedWindow.end.getTime() >= equalizedWindow.start.getTime()
-      ? rankedScenarios.map((scenario) => computeEqualizedMetrics(scenario, equalizedWindow.start!, equalizedWindow.end!))
-      : [];
-  const averagePricePerSf = rankedScenarios.length > 0
-    ? rankedScenarios.reduce((sum, scenario) => sum + scenario.avgCostPsfYear, 0) / rankedScenarios.length
-    : 0;
-  const equalizedPricePerSf = equalizedAcrossScenarios.length > 0
-    ? equalizedAcrossScenarios.reduce((sum, metric) => sum + metric.avgCostPsfYear, 0) / equalizedAcrossScenarios.length
-    : 0;
-  const equalizedTotalObligation = equalizedAcrossScenarios.length > 0
-    ? Math.min(...equalizedAcrossScenarios.map((metric) => metric.totalCost))
-    : 0;
+  const equalizedByScenarioId = new Map<string, EqualizedMetrics>();
+  if (equalizedWindow.start && equalizedWindow.end && equalizedWindow.end.getTime() >= equalizedWindow.start.getTime()) {
+    rankedScenarios.forEach((scenario) => {
+      equalizedByScenarioId.set(scenario.id, computeEqualizedMetrics(scenario, equalizedWindow.start!, equalizedWindow.end!));
+    });
+  }
 
   const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   const usd2 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -970,73 +963,7 @@ function createCoverSheet(
     metaRow += 2;
   }
 
-  const metricsBandRow = 16;
-  sheet.mergeCells(metricsBandRow, 1, metricsBandRow, COVER_WIDTH_COLS);
-  const metricsBand = sheet.getCell(metricsBandRow, 1);
-  metricsBand.value = "KEY FINANCIAL METRICS";
-  metricsBand.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-  metricsBand.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
-  metricsBand.alignment = { horizontal: "left", vertical: "middle" };
-
-  const metricCards = [
-    {
-      label: "Equalized Total Obligation",
-      value: equalizedAcrossScenarios.length > 0 ? usd0.format(equalizedTotalObligation) : "—",
-    },
-    {
-      label: "Average Price / SF",
-      value: rankedScenarios.length > 0 ? `${usd2.format(averagePricePerSf)} / SF` : "—",
-    },
-    {
-      label: "Equalized Price / SF",
-      value: equalizedAcrossScenarios.length > 0 ? `${usd2.format(equalizedPricePerSf)} / SF` : "—",
-    },
-  ];
-  const cardTopRow = metricsBandRow + 1;
-  const cardBottomRow = metricsBandRow + 2;
-  const cardSpan = 4;
-  metricCards.forEach((metric, idx) => {
-    const cardStartCol = 1 + idx * cardSpan;
-    const cardEndCol = cardStartCol + cardSpan - 1;
-    sheet.mergeCells(cardTopRow, cardStartCol, cardTopRow, cardEndCol);
-    sheet.mergeCells(cardBottomRow, cardStartCol, cardBottomRow, cardEndCol);
-    const labelCell = sheet.getCell(cardTopRow, cardStartCol);
-    labelCell.value = metric.label.toUpperCase();
-    labelCell.font = {
-      name: EXCEL_THEME.font.family,
-      bold: true,
-      size: EXCEL_THEME.font.labelSize,
-      color: { argb: COLORS.secondaryText },
-    };
-    labelCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-    labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
-
-    const valueCell = sheet.getCell(cardBottomRow, cardStartCol);
-    valueCell.value = metric.value;
-    valueCell.font = {
-      name: EXCEL_THEME.font.family,
-      bold: true,
-      size: EXCEL_THEME.font.bodySize,
-      color: { argb: COLORS.text },
-    };
-    valueCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-    valueCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
-
-    for (let r = cardTopRow; r <= cardBottomRow; r++) {
-      for (let c = cardStartCol; c <= cardEndCol; c++) {
-        const cell = sheet.getCell(r, c);
-        cell.border = {
-          ...(cell.border ?? {}),
-          top: r === cardTopRow ? { style: "thin", color: { argb: COLORS.border } } : undefined,
-          bottom: r === cardBottomRow ? { style: "thin", color: { argb: COLORS.border } } : undefined,
-          left: c === cardStartCol ? { style: "thin", color: { argb: COLORS.border } } : undefined,
-          right: c === cardEndCol ? { style: "thin", color: { argb: COLORS.border } } : undefined,
-        };
-      }
-    }
-  });
-
-  const scenarioBandRow = 20;
+  const scenarioBandRow = 16;
   sheet.mergeCells(scenarioBandRow, 1, scenarioBandRow, COVER_WIDTH_COLS);
   const scenarioBand = sheet.getCell(scenarioBandRow, 1);
   scenarioBand.value = "SCENARIO SNAPSHOT";
@@ -1044,14 +971,18 @@ function createCoverSheet(
   scenarioBand.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
   scenarioBand.alignment = { horizontal: "left", vertical: "middle" };
 
-  const headerRow = 21;
+  const headerRow = 17;
   sheet.getCell(headerRow, 1).value = "Scenario";
-  sheet.getCell(headerRow, 9).value = "NPV Cost";
-  sheet.getCell(headerRow, 11).value = "Total Obligation";
-  sheet.mergeCells(headerRow, 1, headerRow, 8);
+  sheet.getCell(headerRow, 5).value = "NPV Cost";
+  sheet.getCell(headerRow, 7).value = "Total Obligation";
+  sheet.getCell(headerRow, 9).value = "Equalized Total Obligation";
+  sheet.getCell(headerRow, 11).value = "Average Price / SF";
+  sheet.getCell(headerRow, 12).value = "Equalized Price / SF";
+  sheet.mergeCells(headerRow, 1, headerRow, 4);
+  sheet.mergeCells(headerRow, 5, headerRow, 6);
+  sheet.mergeCells(headerRow, 7, headerRow, 8);
   sheet.mergeCells(headerRow, 9, headerRow, 10);
-  sheet.mergeCells(headerRow, 11, headerRow, 12);
-  for (const col of [1, 9, 11]) {
+  for (const col of [1, 5, 7, 9, 11, 12]) {
     const cell = sheet.getCell(headerRow, col);
     cell.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.labelSize, color: { argb: COLORS.secondaryText } };
     cell.alignment = col === 1 ? { horizontal: "left", vertical: "middle" } : { horizontal: "right", vertical: "middle" };
@@ -1063,10 +994,12 @@ function createCoverSheet(
   let row = headerRow + 1;
   for (let i = 0; i < rowsToRender; i++) {
     const scenario = ranked[i];
+    const equalized = scenario ? equalizedByScenarioId.get(scenario.id) ?? null : null;
     const fill = i % 2 === 0 ? COLORS.white : COLORS.lightGray;
-    sheet.mergeCells(row, 1, row, 8);
+    sheet.mergeCells(row, 1, row, 4);
+    sheet.mergeCells(row, 5, row, 6);
+    sheet.mergeCells(row, 7, row, 8);
     sheet.mergeCells(row, 9, row, 10);
-    sheet.mergeCells(row, 11, row, 12);
 
     const nameCell = sheet.getCell(row, 1);
     nameCell.value = scenario?.name ?? "—";
@@ -1074,17 +1007,35 @@ function createCoverSheet(
     nameCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
     nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
 
-    const npvCell = sheet.getCell(row, 9);
+    const npvCell = sheet.getCell(row, 5);
     npvCell.value = scenario ? Number(scenario.npvCost.toFixed(4)) : "";
     npvCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
     if (scenario) applyCellFormat(npvCell, "currency0");
     else npvCell.alignment = { horizontal: "right", vertical: "middle" };
 
-    const totalCell = sheet.getCell(row, 11);
+    const totalCell = sheet.getCell(row, 7);
     totalCell.value = scenario ? Number(scenario.totalObligation.toFixed(4)) : "";
     totalCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
     if (scenario) applyCellFormat(totalCell, "currency0");
     else totalCell.alignment = { horizontal: "right", vertical: "middle" };
+
+    const equalizedTotalCell = sheet.getCell(row, 9);
+    equalizedTotalCell.value = equalized ? Number(equalized.totalCost.toFixed(4)) : "—";
+    equalizedTotalCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+    if (equalized) applyCellFormat(equalizedTotalCell, "currency0");
+    else equalizedTotalCell.alignment = { horizontal: "right", vertical: "middle" };
+
+    const avgPriceCell = sheet.getCell(row, 11);
+    avgPriceCell.value = scenario ? `${usd2.format(scenario.avgCostPsfYear)} / SF` : "—";
+    avgPriceCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+    avgPriceCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+    avgPriceCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+
+    const equalizedPriceCell = sheet.getCell(row, 12);
+    equalizedPriceCell.value = equalized ? `${usd2.format(equalized.avgCostPsfYear)} / SF` : "—";
+    equalizedPriceCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+    equalizedPriceCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+    equalizedPriceCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
 
     for (let c = 1; c <= COVER_WIDTH_COLS; c++) {
       const cell = sheet.getCell(row, c);
@@ -1100,7 +1051,7 @@ function createCoverSheet(
     sheet.getRow(rowIdx).height = rowIdx >= headerRow + 1 ? 24 : EXCEL_THEME.rowHeights.coverMeta;
   }
   autoAdjustRowHeights(sheet, 1, coverEndRow);
-  applyPrintSettings(sheet, { landscape: true, lastRow: coverEndRow, lastCol: COVER_WIDTH_COLS });
+  applyPrintSettings(sheet, { landscape: true, lastRow: coverEndRow, lastCol: COVER_WIDTH_COLS, fitToHeight: 1 });
 }
 
 function createSummarySheet(

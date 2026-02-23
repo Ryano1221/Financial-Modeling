@@ -38,6 +38,25 @@ function findRowByCellValue(
   return found;
 }
 
+function findCellAnywhere(
+  sheet: ExcelJS.Worksheet | undefined,
+  needle: string
+): { row: number; col: number } | null {
+  if (!sheet) return null;
+  let found: { row: number; col: number } | null = null;
+  sheet.eachRow((row, rowNumber) => {
+    if (found != null) return;
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      if (found != null) return;
+      const val = cell.value;
+      if (typeof val === "string" && val.trim() === needle) {
+        found = { row: rowNumber, col: colNumber };
+      }
+    });
+  });
+  return found;
+}
+
 describe("exportModel institutional workbook", () => {
   it("exposes required summary labels", () => {
     expect(SUMMARY_MATRIX_ROW_LABELS).toContain("Building name");
@@ -120,7 +139,7 @@ describe("exportModel institutional workbook", () => {
       const primaryView = ws.views?.[0] as (ExcelJS.WorksheetView & { style?: string }) | undefined;
       expect(primaryView?.style).toBe("pageBreakPreview");
       expect(ws.pageSetup.fitToWidth).toBe(1);
-      if (ws.name === "Summary Comparison") {
+      if (ws.name === "Summary Comparison" || ws.name === "Cover") {
         expect(ws.pageSetup.fitToHeight).toBe(1);
       } else {
         expect(ws.pageSetup.fitToHeight).toBe(0);
@@ -133,12 +152,13 @@ describe("exportModel institutional workbook", () => {
     const snapshotRow = findRowByFirstCell(cover, "SCENARIO SNAPSHOT");
     expect(snapshotRow).not.toBeNull();
     const keyMetricsRow = findRowByFirstCell(cover, "KEY FINANCIAL METRICS");
-    expect(keyMetricsRow).not.toBeNull();
-    if (cover && keyMetricsRow != null) {
-      expect(cover.getCell(keyMetricsRow + 1, 1).value).toBe("EQUALIZED TOTAL OBLIGATION");
-      expect(cover.getCell(keyMetricsRow + 1, 5).value).toBe("AVERAGE PRICE / SF");
-      expect(cover.getCell(keyMetricsRow + 1, 9).value).toBe("EQUALIZED PRICE / SF");
-    }
+    expect(keyMetricsRow).toBeNull();
+    const eqTotalHeader = findCellAnywhere(cover, "Equalized Total Obligation");
+    const avgPsfHeader = findCellAnywhere(cover, "Average Price / SF");
+    const eqPsfHeader = findCellAnywhere(cover, "Equalized Price / SF");
+    expect(eqTotalHeader).not.toBeNull();
+    expect(avgPsfHeader).not.toBeNull();
+    expect(eqPsfHeader).not.toBeNull();
 
     const summary = workbook.getWorksheet("Summary Comparison");
     const metricRow = findRowByFirstCell(summary, "Metric");
