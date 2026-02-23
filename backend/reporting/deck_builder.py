@@ -717,19 +717,82 @@ def _extract_phase_steps(scenario: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(out, key=lambda r: (r["start"], r["end"]))
 
 
-def _free_rent_range(scenario: dict[str, Any], month_base: int) -> tuple[int, int] | None:
-    free_months = max(0, _safe_int(scenario.get("free_rent_months"), 0))
-    if free_months <= 0:
+def _free_rent_periods(scenario: dict[str, Any], month_base: int) -> list[dict[str, Any]]:
+    periods: list[dict[str, Any]] = []
+    raw_periods = scenario.get("abatement_periods")
+    if isinstance(raw_periods, list):
+        for period in raw_periods:
+            if not isinstance(period, dict):
+                continue
+            start_i = _safe_int(period.get("start_month"), 0 if month_base == 0 else 1)
+            end_i = _safe_int(period.get("end_month"), start_i)
+            if end_i < start_i:
+                end_i = start_i
+            scope = str(
+                period.get("abatement_type")
+                or period.get("scope")
+                or scenario.get("free_rent_abatement_type")
+                or "base"
+            ).strip().lower()
+            if scope not in {"base", "gross"}:
+                scope = "base"
+            periods.append({"start": start_i, "end": end_i, "scope": scope})
+
+    if not periods:
+        free_months = max(0, _safe_int(scenario.get("free_rent_months"), 0))
+        if free_months > 0:
+            start = scenario.get("free_rent_start_month")
+            end = scenario.get("free_rent_end_month")
+            if start is None:
+                start = 0 if month_base == 0 else 1
+            start_i = _safe_int(start, 0 if month_base == 0 else 1)
+            end_i = _safe_int(end, start_i + free_months - 1)
+            if end_i < start_i:
+                end_i = start_i
+            scope = str(scenario.get("free_rent_abatement_type") or "base").strip().lower()
+            if scope not in {"base", "gross"}:
+                scope = "base"
+            periods.append({"start": start_i, "end": end_i, "scope": scope})
+
+    periods.sort(key=lambda p: (p["start"], p["end"], p["scope"]))
+    return periods
+
+
+def _parking_abatement_periods(scenario: dict[str, Any], month_base: int) -> list[tuple[int, int]]:
+    periods: list[tuple[int, int]] = []
+    raw_periods = scenario.get("parking_abatement_periods")
+    if not isinstance(raw_periods, list):
+        return periods
+    for period in raw_periods:
+        if not isinstance(period, dict):
+            continue
+        start_i = _safe_int(period.get("start_month"), 0 if month_base == 0 else 1)
+        end_i = _safe_int(period.get("end_month"), start_i)
+        if end_i < start_i:
+            end_i = start_i
+        periods.append((start_i, end_i))
+    periods.sort(key=lambda p: (p[0], p[1]))
+    return periods
+
+
+def _free_scope_for_range(periods: list[dict[str, Any]], start_month: int, end_month: int) -> str | None:
+    overlaps = [
+        p for p in periods
+        if not (end_month < _safe_int(p.get("start"), 0) or start_month > _safe_int(p.get("end"), 0))
+    ]
+    if not overlaps:
         return None
-    start = scenario.get("free_rent_start_month")
-    end = scenario.get("free_rent_end_month")
-    if start is None:
-        start = 0 if month_base == 0 else 1
-    start_i = _safe_int(start, 0 if month_base == 0 else 1)
-    end_i = _safe_int(end, start_i + free_months - 1)
-    if end_i < start_i:
-        end_i = start_i
-    return start_i, end_i
+    if any(str(p.get("scope", "base")).strip().lower() == "gross" for p in overlaps):
+        return "gross"
+    return "base"
+
+
+def _parking_abated_for_range(
+    periods: list[tuple[int, int]],
+    start_month: int,
+    end_month: int,
+) -> bool:
+    return any(not (end_month < p_start or start_month > p_end) for p_start, p_end in periods)
 
 
 def _rsf_for_month(month_idx: int, scenario: dict[str, Any], phase_steps: list[dict[str, Any]]) -> float:
@@ -769,8 +832,8 @@ def _scenario_rent_rows(entry: dict[str, Any]) -> list[dict[str, str]]:
         return [], 0
 
     month_base = _month_index_base(steps)
-    free_range = _free_rent_range(scenario, month_base)
-    free_type = str(scenario.get("free_rent_abatement_type") or "base").strip().lower()
+    free_periods = _free_rent_periods(scenario, month_base)
+    parking_periods = _parking_abatement_periods(scenario, month_base)
     phase_steps = _extract_phase_steps(scenario)
     commencement = _parse_date(scenario.get("commencement"))
     base_opex = _safe_float(scenario.get("base_opex_psf_yr"), 0.0)
@@ -779,10 +842,14 @@ def _scenario_rent_rows(entry: dict[str, Any]) -> list[dict[str, str]]:
     expanded: list[dict[str, str]] = []
     for step in steps:
         cuts = {step["start"], step["end"] + 1}
-        if free_range is not None:
-            fs, fe = free_range
+        for period in free_periods:
+            fs = _safe_int(period.get("start"), 0)
+            fe = _safe_int(period.get("end"), fs)
             cuts.add(max(step["start"], fs))
             cuts.add(min(step["end"] + 1, fe + 1))
+        for p_start, p_end in parking_periods:
+            cuts.add(max(step["start"], p_start))
+            cuts.add(min(step["end"] + 1, p_end + 1))
         for phase in phase_steps:
             cuts.add(max(step["start"], phase["start"]))
             cuts.add(min(step["end"] + 1, phase["end"] + 1))
@@ -798,7 +865,9 @@ def _scenario_rent_rows(entry: dict[str, Any]) -> list[dict[str, str]]:
             if seg_end < seg_start:
                 continue
             for cal_start, cal_end in _split_by_calendar_year(seg_start, seg_end, commencement, month_base):
-                in_free = free_range is not None and not (cal_end < free_range[0] or cal_start > free_range[1])
+                free_scope = _free_scope_for_range(free_periods, cal_start, cal_end)
+                in_free = free_scope is not None
+                parking_abated = _parking_abated_for_range(parking_periods, cal_start, cal_end)
                 display_start = cal_start + (1 if month_base == 0 else 0)
                 display_end = cal_end + (1 if month_base == 0 else 0)
                 start_date, end_date = ("—", "—")
@@ -810,19 +879,21 @@ def _scenario_rent_rows(entry: dict[str, Any]) -> list[dict[str, str]]:
                 base_rate = step["rate"]
                 note_bits: list[str] = []
                 if in_free:
-                    if free_type == "gross":
+                    if free_scope == "gross":
                         base_rate = 0.0
-                        note_bits.append("Gross rent abatement")
+                        note_bits.append("Gross rent abatement (base + OpEx)")
                     else:
                         base_rate = 0.0
                         note_bits.append("Base-rent abatement")
+                if parking_abated:
+                    note_bits.append("Parking abatement")
 
                 rsf_for_segment = _rsf_for_month(cal_start, scenario, phase_steps)
                 if phase_steps:
                     note_bits.append("Phase-in occupancy")
 
                 opex_rate = 0.0
-                if not (in_free and free_type == "gross"):
+                if not (in_free and free_scope == "gross"):
                     if commencement is not None:
                         seg_start_offset = cal_start if month_base == 0 else cal_start - 1
                         seg_year = _add_months(commencement, max(0, seg_start_offset)).year
@@ -1058,8 +1129,8 @@ def _scenario_monthly_cashflow_rows(entry: dict[str, Any]) -> list[dict[str, Any
         term_months = max(1, max(step["end"] for step in steps) - min(step["start"] for step in steps) + 1)
 
     phase_steps = _extract_phase_steps(scenario)
-    free_range = _free_rent_range(scenario, month_base)
-    free_type = str(scenario.get("free_rent_abatement_type") or "base").strip().lower()
+    free_periods = _free_rent_periods(scenario, month_base)
+    parking_periods = _parking_abatement_periods(scenario, month_base)
     base_opex = _safe_float(scenario.get("base_opex_psf_yr"), 0.0)
     opex_growth = _safe_float(scenario.get("opex_growth"), 0.0)
     parking_spaces = max(0, _safe_int(scenario.get("parking_spaces"), 0))
@@ -1097,14 +1168,15 @@ def _scenario_monthly_cashflow_rows(entry: dict[str, Any]) -> list[dict[str, Any
             if sublease_start <= sublease_month <= sublease_end:
                 other -= sublease_income
 
-        if free_range is not None:
-            free_start, free_end = free_range
-            in_free = free_start <= month_index <= free_end
+        if free_periods:
+            free_scope = _free_scope_for_range(free_periods, month_index, month_index)
+            in_free = free_scope is not None
             if in_free:
                 base_rent = 0.0
-                if free_type == "gross":
+                if free_scope == "gross":
                     opex = 0.0
-                    parking_after_tax = 0.0
+        if _parking_abated_for_range(parking_periods, month_index, month_index):
+            parking_after_tax = 0.0
 
         gross = base_rent + opex + parking_after_tax + other
         discount_factor = (1.0 / ((1.0 + monthly_discount) ** (month_zero + 1))) if monthly_discount > 0 else 1.0

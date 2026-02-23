@@ -87,7 +87,12 @@ def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple
     Returns (normalized CanonicalLease, warnings).
     """
     warnings: List[str] = []
-    if isinstance(payload, CanonicalLease):
+    payload_from_model = False
+    if isinstance(payload, dict):
+        data = dict(payload)
+    elif hasattr(payload, "model_dump"):
+        # Accept CanonicalLease instances even when imported through a different module alias.
+        payload_from_model = True
         data = payload.model_dump(mode="json")
     else:
         data = dict(payload)
@@ -101,6 +106,30 @@ def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple
     if free_scope not in {"base", "gross"}:
         free_scope = "base"
     data["free_rent_scope"] = free_scope
+    if data.get("free_rent_periods"):
+        normalized_periods: list[dict[str, Any]] = []
+        for period in data.get("free_rent_periods") or []:
+            if not isinstance(period, dict):
+                continue
+            try:
+                start = max(0, int(period.get("start_month", 0)))
+                end = max(start, int(period.get("end_month", start)))
+            except (TypeError, ValueError):
+                continue
+            scope = str(period.get("scope", free_scope) or free_scope).strip().lower()
+            if scope not in {"base", "gross"}:
+                scope = free_scope
+            normalized_periods.append({"start_month": start, "end_month": end, "scope": scope})
+        if payload_from_model and free_scope == "gross" and normalized_periods and not any(
+            p.get("scope") == "gross" for p in normalized_periods
+        ):
+            # Model instances may carry default per-period scope="base" even when global scope is gross.
+            # Honor the global scope to keep canonical compute behavior consistent.
+            normalized_periods = [
+                {"start_month": p["start_month"], "end_month": p["end_month"], "scope": "gross"}
+                for p in normalized_periods
+            ]
+        data["free_rent_periods"] = normalized_periods
     if not data.get("free_rent_periods"):
         start_hint = data.get("free_rent_start_month")
         end_hint = data.get("free_rent_end_month")
@@ -120,7 +149,19 @@ def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple
         if free_months > 0:
             if end is None:
                 end = start + free_months - 1
-            data["free_rent_periods"] = [{"start_month": start, "end_month": end}]
+            data["free_rent_periods"] = [{"start_month": start, "end_month": end, "scope": free_scope}]
+    if data.get("parking_abatement_periods"):
+        normalized_parking_periods: list[dict[str, Any]] = []
+        for period in data.get("parking_abatement_periods") or []:
+            if not isinstance(period, dict):
+                continue
+            try:
+                start = max(0, int(period.get("start_month", 0)))
+                end = max(start, int(period.get("end_month", start)))
+            except (TypeError, ValueError):
+                continue
+            normalized_parking_periods.append({"start_month": start, "end_month": end})
+        data["parking_abatement_periods"] = normalized_parking_periods
 
     # Accept frontend alias
     if "phase_in_schedule" not in data and "phase_in_steps" in data:
@@ -222,18 +263,44 @@ def _effective_rsf_schedule(lease: CanonicalLease, term_months: int) -> List[flo
     return schedule
 
 
-def _free_rent_ranges(lease: CanonicalLease, term_months: int) -> List[tuple[int, int]]:
-    ranges: List[tuple[int, int]] = []
+def _free_rent_ranges(lease: CanonicalLease, term_months: int) -> List[tuple[int, int, str]]:
+    ranges: List[tuple[int, int, str]] = []
     if term_months <= 0:
         return ranges
     if lease.free_rent_periods:
         for period in lease.free_rent_periods:
             start = max(0, int(period.start_month))
             end = min(term_months - 1, max(start, int(period.end_month)))
-            ranges.append((start, end))
+            scope = str(getattr(period, "scope", getattr(lease, "free_rent_scope", "base")) or "base").strip().lower()
+            if scope not in {"base", "gross"}:
+                scope = "base"
+            ranges.append((start, end, scope))
     elif int(lease.free_rent_months or 0) > 0:
         end = min(term_months - 1, int(lease.free_rent_months) - 1)
-        ranges.append((0, max(0, end)))
+        scope = str(getattr(lease, "free_rent_scope", "base") or "base").strip().lower()
+        if scope not in {"base", "gross"}:
+            scope = "base"
+        ranges.append((0, max(0, end), scope))
+    if not ranges:
+        return []
+    ranges.sort(key=lambda r: (r[0], r[1], r[2]))
+    merged: List[tuple[int, int, str]] = []
+    for start, end, scope in ranges:
+        if not merged or scope != merged[-1][2] or start > merged[-1][1] + 1:
+            merged.append((start, end, scope))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end), scope)
+    return merged
+
+
+def _parking_abatement_ranges(lease: CanonicalLease, term_months: int) -> List[tuple[int, int]]:
+    ranges: List[tuple[int, int]] = []
+    if term_months <= 0 or not lease.parking_abatement_periods:
+        return ranges
+    for period in lease.parking_abatement_periods:
+        start = max(0, int(period.start_month))
+        end = min(term_months - 1, max(start, int(period.end_month)))
+        ranges.append((start, end))
     if not ranges:
         return []
     ranges.sort(key=lambda r: (r[0], r[1]))
@@ -271,13 +338,15 @@ def _compute_phase_aware_monthly(
         parking[m] = parking_count * float(lease.parking_rate_monthly or 0.0) * parking_tax_mult * parking_mult
 
     free_ranges = _free_rent_ranges(lease, term_months)
-    scope = str(getattr(lease, "free_rent_scope", "base") or "base").strip().lower()
-    for start, end in free_ranges:
+    for start, end, scope in free_ranges:
         for m in range(start, end + 1):
             rent[m] = 0.0
             if scope == "gross":
                 opex[m] = 0.0
-                parking[m] = 0.0
+    parking_ranges = _parking_abatement_ranges(lease, term_months)
+    for start, end in parking_ranges:
+        for m in range(start, end + 1):
+            parking[m] = 0.0
 
     max_rsf = max(effective_rsf) if effective_rsf else 0.0
     allowance_rsf = max(max_rsf, float(lease.rsf or 0.0))
@@ -406,21 +475,27 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         f"Discount rate {normalized.discount_rate_annual:.2%} applied monthly.",
         "Base rent and opex as provided; no amortization of TI in monthly view.",
     ]
-    free_scope = str(getattr(normalized, "free_rent_scope", "base") or "base").strip().lower()
     if normalized.free_rent_periods:
         period_labels = [
-            f"{int(p.start_month) + 1}-{int(p.end_month) + 1}"
+            f"{int(p.start_month) + 1}-{int(p.end_month) + 1} ({str(getattr(p, 'scope', normalized.free_rent_scope) or normalized.free_rent_scope).strip().lower()})"
             for p in normalized.free_rent_periods
         ]
         assumptions.append(
-            f"Free-rent abatement applied for months {', '.join(period_labels)} as {free_scope}."
+            f"Free-rent abatement applied for months {', '.join(period_labels)}."
         )
     elif int(normalized.free_rent_months or 0) > 0:
+        free_scope = str(getattr(normalized, "free_rent_scope", "base") or "base").strip().lower()
         assumptions.append(
             f"Free-rent abatement applied for months 1-{int(normalized.free_rent_months)} as {free_scope}."
         )
     if phase_enabled:
         assumptions.append("Phase-in RSF schedule applied to monthly base rent, OpEx, and parking calculations.")
+    if normalized.parking_abatement_periods:
+        parking_labels = [
+            f"{int(p.start_month) + 1}-{int(p.end_month) + 1}"
+            for p in normalized.parking_abatement_periods
+        ]
+        assumptions.append(f"Parking abatement applied for months {', '.join(parking_labels)}.")
 
     return CanonicalComputeResponse(
         normalized_canonical_lease=normalized,

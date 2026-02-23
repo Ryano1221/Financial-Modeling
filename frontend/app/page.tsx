@@ -401,18 +401,46 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
   );
   const tiAllowancePsf = effectiveTiAllowancePsf(rest);
   const tiBudgetTotal = effectiveTiBudgetTotal(rest);
+  const normalizedAbatementPeriods = ((rest as { abatement_periods?: Array<{ start_month?: number; end_month?: number; abatement_type?: string }> }).abatement_periods ?? [])
+    .map((period) => {
+      const start = Math.max(0, Math.floor(Number(period.start_month ?? 0) || 0));
+      const end = Math.max(start, Math.floor(Number(period.end_month ?? start) || start));
+      return {
+        start_month: start,
+        end_month: end,
+        abatement_type: period.abatement_type === "gross" ? "gross" as const : "base" as const,
+      };
+    })
+    .filter((period) => period.end_month >= period.start_month)
+    .sort((a, b) => (a.start_month - b.start_month) || (a.end_month - b.end_month));
+  const normalizedParkingAbatementPeriods = ((rest as { parking_abatement_periods?: Array<{ start_month?: number; end_month?: number }> }).parking_abatement_periods ?? [])
+    .map((period) => {
+      const start = Math.max(0, Math.floor(Number(period.start_month ?? 0) || 0));
+      const end = Math.max(start, Math.floor(Number(period.end_month ?? start) || start));
+      return { start_month: start, end_month: end };
+    })
+    .filter((period) => period.end_month >= period.start_month)
+    .sort((a, b) => (a.start_month - b.start_month) || (a.end_month - b.end_month));
   const raw = (rest as { free_rent_months?: number | number[] }).free_rent_months;
-  const free_rent_months =
+  const fallbackFreeRentMonths =
     Array.isArray(raw) ? Math.max(0, raw.length) : typeof raw === "number" ? Math.max(0, Math.floor(raw)) : rest.free_rent_months ?? 0;
-  const startMonthRaw = Math.max(0, Math.floor(Number((rest as { free_rent_start_month?: number }).free_rent_start_month ?? 0) || 0));
-  const endMonthDerived = free_rent_months > 0 ? startMonthRaw + free_rent_months - 1 : startMonthRaw;
-  const freeRentType: "base" | "gross" =
-    (rest as { free_rent_abatement_type?: string }).free_rent_abatement_type === "gross" ? "gross" : "base";
+  const fallbackStartMonthRaw = Math.max(0, Math.floor(Number((rest as { free_rent_start_month?: number }).free_rent_start_month ?? 0) || 0));
+  const fallbackEndMonthDerived = fallbackFreeRentMonths > 0 ? fallbackStartMonthRaw + fallbackFreeRentMonths - 1 : fallbackStartMonthRaw;
+  const firstAbatement = normalizedAbatementPeriods[0];
+  const free_rent_months = normalizedAbatementPeriods.length > 0
+    ? normalizedAbatementPeriods.reduce((sum, period) => sum + Math.max(0, period.end_month - period.start_month + 1), 0)
+    : fallbackFreeRentMonths;
+  const startMonthRaw = firstAbatement?.start_month ?? fallbackStartMonthRaw;
+  const endMonthDerived = firstAbatement?.end_month ?? fallbackEndMonthDerived;
+  const freeRentType: "base" | "gross" = firstAbatement?.abatement_type
+    ?? ((rest as { free_rent_abatement_type?: string }).free_rent_abatement_type === "gross" ? "gross" : "base");
   const payload: Omit<ScenarioWithId, "id"> = {
     ...rest,
     ti_allowance_psf: tiAllowancePsf,
     ti_budget_total: tiBudgetTotal,
     ti_source_of_truth: tiSource,
+    abatement_periods: normalizedAbatementPeriods,
+    parking_abatement_periods: normalizedParkingAbatementPeriods,
     free_rent_months,
     free_rent_start_month: startMonthRaw,
     free_rent_end_month: Math.max(startMonthRaw, Math.floor(Number((rest as { free_rent_end_month?: number }).free_rent_end_month ?? endMonthDerived) || endMonthDerived)),

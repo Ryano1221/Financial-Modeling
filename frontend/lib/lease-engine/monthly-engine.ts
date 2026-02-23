@@ -105,12 +105,86 @@ function getDiscountRate(s: LeaseScenarioCanonical, globalDiscountRate?: number)
   return globalDiscountRate ?? DEFAULT_DISCOUNT_RATE;
 }
 
+type NormalizedAbatementRange = {
+  start: number;
+  end: number;
+  type: "full" | "partial";
+  appliesTo: "base" | "gross";
+  partialRate: number;
+};
+
+type NormalizedParkingAbatementRange = {
+  start: number;
+  end: number;
+  type: "full" | "partial";
+  partialRate: number;
+};
+
+function normalizeAbatementRanges(
+  termMonths: number,
+  primaryAbatement?: RentAbatement,
+  abatementList?: RentAbatement[]
+): NormalizedAbatementRange[] {
+  const source = (abatementList && abatementList.length > 0)
+    ? abatementList
+    : (primaryAbatement ? [primaryAbatement] : []);
+  const ranges: NormalizedAbatementRange[] = [];
+  for (const item of source) {
+    const start = Math.max(0, Math.floor(Number(item.startMonth ?? 0) || 0));
+    const rawMonths = Math.max(0, Math.floor(Number(item.months ?? 0) || 0));
+    const hasExplicitEnd = Number.isFinite(Number(item.endMonth));
+    if (!hasExplicitEnd && rawMonths <= 0) continue;
+    const fallbackEnd = start + rawMonths - 1;
+    const endFromField = hasExplicitEnd ? Math.floor(Number(item.endMonth)) : fallbackEnd;
+    const end = Math.min(termMonths - 1, Math.max(start, endFromField));
+    if (start >= termMonths || end < start) continue;
+    ranges.push({
+      start,
+      end,
+      type: item.type === "partial" ? "partial" : "full",
+      appliesTo: item.appliesTo === "gross" ? "gross" : "base",
+      partialRate: Math.min(1, Math.max(0, Number(item.partialRate ?? 0) || 0)),
+    });
+  }
+  return ranges.sort((a, b) => (a.start - b.start) || (a.end - b.end));
+}
+
+function normalizeParkingAbatementRanges(
+  termMonths: number,
+  parkingAbatements?: Array<{
+    startMonth?: number;
+    endMonth?: number;
+    months?: number;
+    type?: "full" | "partial";
+    partialRate?: number;
+  }>
+): NormalizedParkingAbatementRange[] {
+  const ranges: NormalizedParkingAbatementRange[] = [];
+  for (const item of parkingAbatements ?? []) {
+    const start = Math.max(0, Math.floor(Number(item.startMonth ?? 0) || 0));
+    const rawMonths = Math.max(0, Math.floor(Number(item.months ?? 0) || 0));
+    const hasExplicitEnd = Number.isFinite(Number(item.endMonth));
+    if (!hasExplicitEnd && rawMonths <= 0) continue;
+    const fallbackEnd = start + rawMonths - 1;
+    const endFromField = hasExplicitEnd ? Math.floor(Number(item.endMonth)) : fallbackEnd;
+    const end = Math.min(termMonths - 1, Math.max(start, endFromField));
+    if (start >= termMonths || end < start) continue;
+    ranges.push({
+      start,
+      end,
+      type: item.type === "partial" ? "partial" : "full",
+      partialRate: Math.min(1, Math.max(0, Number(item.partialRate ?? 0) || 0)),
+    });
+  }
+  return ranges.sort((a, b) => (a.start - b.start) || (a.end - b.end));
+}
+
 /** Build monthly base rent from steps and abatement */
 function monthlyBaseRent(
   termMonths: number,
   steps: RentStepCanonical[],
   effectiveRsf: number[],
-  abatement?: RentAbatement
+  abatements: NormalizedAbatementRange[]
 ): number[] {
   const rent = new Array<number>(termMonths).fill(0);
   for (const step of steps) {
@@ -118,14 +192,14 @@ function monthlyBaseRent(
       if (m >= 0) rent[m] = (step.ratePsfYr / 12) * (effectiveRsf[m] ?? 0);
     }
   }
-  if (abatement && abatement.months > 0) {
-    const start = Math.max(0, Math.floor(Number(abatement.startMonth ?? 0) || 0));
-    const end = Math.min(termMonths, start + abatement.months);
-    if (abatement.type === "full") {
-      for (let m = start; m < end; m++) rent[m] = 0;
-    } else {
-      const factor = abatement.partialRate ?? 0;
-      for (let m = start; m < end; m++) rent[m] = rent[m] * (1 - factor);
+  for (const abatement of abatements) {
+    if (abatement.appliesTo !== "base" && abatement.appliesTo !== "gross") continue;
+    for (let m = abatement.start; m <= abatement.end; m += 1) {
+      if (abatement.type === "full") {
+        rent[m] = 0;
+      } else {
+        rent[m] = rent[m] * (1 - abatement.partialRate);
+      }
     }
   }
   return rent;
@@ -279,11 +353,20 @@ export function runMonthlyEngine(
     }))
   );
 
+  const normalizedAbatements = normalizeAbatementRanges(
+    termMonths,
+    scenario.rentSchedule.abatement,
+    scenario.rentSchedule.abatements
+  );
+  const normalizedParkingAbatements = normalizeParkingAbatementRanges(
+    termMonths,
+    scenario.parkingSchedule.parkingAbatements
+  );
   const baseRent = monthlyBaseRent(
     termMonths,
     scenario.rentSchedule.steps,
     effectiveRsf,
-    scenario.rentSchedule.abatement
+    normalizedAbatements
   );
   const opex = monthlyOpex(
     termMonths,
@@ -299,12 +382,23 @@ export function runMonthlyEngine(
     scenario.parkingSchedule.annualEscalationPercent,
     scenario.parkingSchedule.salesTaxPercent ?? 0
   );
-  if (scenario.rentSchedule.abatement?.appliesTo === "gross" && (scenario.rentSchedule.abatement?.months ?? 0) > 0) {
-    const start = Math.max(0, Math.floor(Number(scenario.rentSchedule.abatement.startMonth ?? 0) || 0));
-    const end = Math.min(termMonths, start + (scenario.rentSchedule.abatement.months ?? 0));
-    for (let m = start; m < end; m += 1) {
-      opex[m] = 0;
-      parking[m] = 0;
+  for (const abatement of normalizedAbatements) {
+    if (abatement.appliesTo !== "gross") continue;
+    for (let m = abatement.start; m <= abatement.end; m += 1) {
+      if (abatement.type === "full") {
+        opex[m] = 0;
+      } else {
+        opex[m] = opex[m] * (1 - abatement.partialRate);
+      }
+    }
+  }
+  for (const abatement of normalizedParkingAbatements) {
+    for (let m = abatement.start; m <= abatement.end; m += 1) {
+      if (abatement.type === "full") {
+        parking[m] = 0;
+      } else {
+        parking[m] = parking[m] * (1 - abatement.partialRate);
+      }
     }
   }
   const ti = scenario.tiSchedule.amortizeOop && scenario.tiSchedule.outOfPocket > 0

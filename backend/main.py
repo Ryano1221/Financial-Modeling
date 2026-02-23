@@ -47,6 +47,7 @@ from models import (
     LeaseExtraction,
     NormalizerResponse,
     FreeRentPeriod,
+    ParkingAbatementPeriod,
     PhaseInStep,
     ReportRequest,
     RentScheduleStep,
@@ -63,6 +64,7 @@ from scenario_extract import (
 )
 from reports_store import load_report, save_report, REPORTS_DIR
 from routes.api import router as api_router
+from routes.extract_lease import build_extract_response
 from routes.webhooks import router as webhooks_router
 from brands import get_brand, list_brands
 from services.input_normalizer import (
@@ -2481,6 +2483,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "free_rent_scope": None,
         "free_rent_start_month": None,
         "free_rent_end_month": None,
+        "parking_abatement_periods": [],
         "phase_in_schedule": [],
         "rent_schedule": [],
     }
@@ -2755,6 +2758,40 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["free_rent_end_month"] = max(0, int(free_count) - 1)
             if hints["free_rent_scope"] is None and ("gross" in lower_text):
                 hints["free_rent_scope"] = "gross"
+
+    # ---- Parking abatement range ----
+    parking_abatement_ranges: list[tuple[int, int]] = []
+    parking_range_patterns = [
+        r"(?i)\b(?:parking(?:\s+charges?|\s+rent|\s+fees?)?[^\n]{0,120}?(?:abated|abatement|waived|free))\b[^\n]{0,120}\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b",
+        r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b[^\n]{0,120}\b(?:parking(?:\s+charges?|\s+rent|\s+fees?)?[^\n]{0,40}(?:abated|abatement|waived|free))\b",
+    ]
+    for pattern in parking_range_patterns:
+        for match in re.finditer(pattern, text):
+            start_1 = _coerce_int_token(match.group(1), 0)
+            end_1 = _coerce_int_token(match.group(2), 0)
+            if start_1 > 0 and end_1 >= start_1:
+                parking_abatement_ranges.append((start_1 - 1, end_1 - 1))
+
+    if not parking_abatement_ranges:
+        parking_abatement_count_patterns = [
+            r"(?i)\b(?:first\s+)?(\d{1,3})\s+months?\b[^\n]{0,100}\bparking(?:\s+charges?|\s+rent|\s+fees?)?[^\n]{0,40}\b(?:abated|abatement|waived|free)\b",
+            r"(?i)\bparking(?:\s+charges?|\s+rent|\s+fees?)?[^\n]{0,80}\b(?:abated|abatement|waived|free)\b[^\n]{0,60}\b(\d{1,3})\s+months?\b",
+        ]
+        for pattern in parking_abatement_count_patterns:
+            m = re.search(pattern, text)
+            if not m:
+                continue
+            free_count = _coerce_int_token(m.group(1), 0)
+            if free_count > 0:
+                parking_abatement_ranges.append((0, max(0, free_count - 1)))
+                break
+
+    if parking_abatement_ranges:
+        deduped = sorted({(max(0, s), max(max(0, s), e)) for s, e in parking_abatement_ranges}, key=lambda row: (row[0], row[1]))
+        hints["parking_abatement_periods"] = [
+            {"start_month": start, "end_month": end}
+            for start, end in deduped
+        ]
 
     phase_schedule = _extract_phase_in_schedule(text, term_months_hint=_coerce_int_token(hints.get("term_months"), 0))
     if phase_schedule:
@@ -3181,6 +3218,8 @@ def _build_extraction_summary(
         found.append(f"OpEx table years: {len(getattr(canonical, 'opex_by_calendar_year', {}))}")
     if int(canonical.free_rent_months or 0) > 0:
         found.append(f"Abatement: {int(canonical.free_rent_months)} months ({canonical.free_rent_scope})")
+    if getattr(canonical, "parking_abatement_periods", None):
+        found.append(f"Parking abatement periods: {len(getattr(canonical, 'parking_abatement_periods', []))}")
 
     section_map: dict[str, list[str]] = {
         "building_name": ["Premises/Property"],
@@ -3194,6 +3233,7 @@ def _build_extraction_summary(
         "opex_growth_rate": ["Operating Expenses"],
         "parking_ratio": ["Parking"],
         "parking_count": ["Parking"],
+        "parking_abatement_periods": ["Parking"],
     }
     missing_pretty: list[str] = []
     for field in missing_fields:
@@ -3230,6 +3270,128 @@ def _safe_extraction_warning(err: Exception | str) -> str:
     if "connection" in msg or "network" in msg:
         return "Backend could not reach the extraction provider."
     return "AI extraction fallback was used for this upload."
+
+
+def _empty_extraction_artifacts() -> dict:
+    return {
+        "canonical_extraction": {},
+        "provenance": {},
+        "review_tasks": [],
+        "export_allowed": True,
+        "extraction_confidence": {},
+    }
+
+
+def _canonical_only_extraction(canonical: CanonicalLease, *, doc_type: str = "unknown") -> dict:
+    return {
+        "document": {
+            "doc_type": doc_type,
+            "doc_role": "unknown",
+            "confidence": 0.55,
+            "evidence_spans": [],
+        },
+        "term": {
+            "commencement_date": str(canonical.commencement_date),
+            "expiration_date": str(canonical.expiration_date),
+            "rent_commencement_date": str(canonical.commencement_date),
+            "term_months": int(canonical.term_months),
+        },
+        "premises": {
+            "building_name": canonical.building_name or None,
+            "suite": canonical.suite or None,
+            "floor": canonical.floor or None,
+            "address": canonical.address or None,
+            "rsf": float(canonical.rsf),
+        },
+        "rent_steps": [
+            {
+                "start_month": int(step.start_month),
+                "end_month": int(step.end_month),
+                "rate_psf_annual": float(step.rent_psf_annual),
+                "source": "canonical_normalizer",
+                "source_confidence": 0.9,
+            }
+            for step in canonical.rent_schedule
+        ],
+        "abatements": [
+            {
+                "start_month": int(p.start_month),
+                "end_month": int(p.end_month),
+                "scope": "gross_rent" if str(canonical.free_rent_scope).lower().startswith("gross") else "base_rent_only",
+                "source": "canonical_normalizer",
+            }
+            for p in canonical.free_rent_periods
+        ],
+        "parking_abatements": [
+            {
+                "start_month": int(p.start_month),
+                "end_month": int(p.end_month),
+                "scope": "parking_only",
+                "source": "canonical_normalizer",
+            }
+            for p in getattr(canonical, "parking_abatement_periods", []) or []
+        ],
+        "opex": {
+            "mode": str(canonical.expense_structure_type.value if hasattr(canonical.expense_structure_type, "value") else canonical.expense_structure_type),
+            "base_psf_year_1": float(canonical.opex_psf_year_1),
+            "growth_rate": float(canonical.opex_growth_rate),
+            "cues": [],
+        },
+        "provenance": {},
+        "review_tasks": [],
+        "evidence": [],
+        "confidence": {
+            "overall": 0.8,
+            "status": "yellow",
+            "export_allowed": True,
+            "validation_pass_rate": 1.0,
+            "reconcile_margin": 1.0,
+        },
+        "export_allowed": True,
+    }
+
+
+def _run_extraction_artifacts(
+    *,
+    file_bytes: bytes,
+    filename: str,
+    content_type: str,
+    canonical: CanonicalLease,
+) -> dict:
+    try:
+        extraction = build_extract_response(
+            file_bytes=file_bytes,
+            filename=filename,
+            content_type=content_type,
+            canonical_lease=canonical,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("extraction_pipeline_failed file=%s err=%s", filename, exc)
+        return {
+            "canonical_extraction": _canonical_only_extraction(canonical, doc_type="unknown"),
+            "provenance": {},
+            "review_tasks": [
+                {
+                    "field_path": "pipeline",
+                    "severity": "warn",
+                    "issue_code": "PIPELINE_FALLBACK",
+                    "message": "Extraction pipeline fallback was used due to a backend processing issue.",
+                    "candidates": [],
+                    "recommended_value": None,
+                    "evidence": [],
+                }
+            ],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.55, "status": "yellow", "export_allowed": True},
+        }
+
+    return {
+        "canonical_extraction": extraction,
+        "provenance": extraction.get("provenance") or {},
+        "review_tasks": extraction.get("review_tasks") or [],
+        "export_allowed": bool(extraction.get("export_allowed", True)),
+        "extraction_confidence": extraction.get("confidence") or {},
+    }
 
 
 @app.post("/normalize", response_model=NormalizerResponse)
@@ -3295,6 +3457,7 @@ def _normalize_impl(
     confidence_score = 0.5
     missing: list = []
     questions: list = []
+    extraction_artifacts: dict = _empty_extraction_artifacts()
     extraction_text_for_summary = ""
     extraction_filename_for_summary = ""
 
@@ -3506,6 +3669,25 @@ def _normalize_impl(
                 if term_for_free > 0:
                     existing_end = min(existing_end, max(0, term_for_free - 1))
                 updates["free_rent_periods"] = [FreeRentPeriod(start_month=0, end_month=existing_end)]
+            hint_parking_periods = extracted_hints.get("parking_abatement_periods")
+            if isinstance(hint_parking_periods, list) and hint_parking_periods:
+                parking_periods: list[ParkingAbatementPeriod] = []
+                for period in hint_parking_periods:
+                    if not isinstance(period, dict):
+                        continue
+                    start_month = _coerce_int_token(period.get("start_month"), None)
+                    end_month = _coerce_int_token(period.get("end_month"), start_month)
+                    if start_month is None or end_month is None:
+                        continue
+                    start_i = max(0, int(start_month))
+                    end_i = max(start_i, int(end_month))
+                    if term_for_free > 0:
+                        term_max = max(0, term_for_free - 1)
+                        start_i = min(start_i, term_max)
+                        end_i = min(end_i, term_max)
+                    parking_periods.append(ParkingAbatementPeriod(start_month=start_i, end_month=end_i))
+                if parking_periods:
+                    updates["parking_abatement_periods"] = parking_periods
             suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
             if not suite_val:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
@@ -3837,6 +4019,18 @@ def _normalize_impl(
         doc_type_note = f"Document type detected: {doc_type}."
         if not any("document type detected:" in str(w).lower() for w in warnings):
             warnings.insert(0, doc_type_note)
+        extraction_artifacts = _run_extraction_artifacts(
+            file_bytes=contents,
+            filename=file.filename or "uploaded.pdf",
+            content_type="application/pdf" if fn.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            canonical=canonical,
+        )
+        blockers = [
+            t for t in (extraction_artifacts.get("review_tasks") or [])
+            if str((t or {}).get("severity") or "").lower() == "blocker"
+        ]
+        if blockers:
+            warnings.append(f"Extraction produced {len(blockers)} blocker(s); manual review is required.")
         return (
             NormalizerResponse(
                 canonical_lease=canonical,
@@ -3846,6 +4040,11 @@ def _normalize_impl(
                 clarification_questions=questions,
                 warnings=warnings,
                 extraction_summary=extraction_summary,
+                provenance=extraction_artifacts.get("provenance") or {},
+                review_tasks=extraction_artifacts.get("review_tasks") or [],
+                export_allowed=bool(extraction_artifacts.get("export_allowed", True)),
+                extraction_confidence=extraction_artifacts.get("extraction_confidence") or {},
+                canonical_extraction=extraction_artifacts.get("canonical_extraction") or {},
             ),
             not used_fallback,
         )
@@ -3881,6 +4080,13 @@ def _normalize_impl(
         doc_type_note = f"Document type detected: {doc_type}."
         if not any("document type detected:" in str(w).lower() for w in warnings):
             warnings.insert(0, doc_type_note)
+        extraction_artifacts = {
+            "canonical_extraction": _canonical_only_extraction(canonical, doc_type=doc_type),
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": min(1.0, confidence_score), "status": "yellow", "export_allowed": True},
+        }
         return (
             NormalizerResponse(
                 canonical_lease=canonical,
@@ -3890,6 +4096,11 @@ def _normalize_impl(
                 clarification_questions=questions,
                 warnings=warnings,
                 extraction_summary=extraction_summary,
+                provenance=extraction_artifacts.get("provenance") or {},
+                review_tasks=extraction_artifacts.get("review_tasks") or [],
+                export_allowed=bool(extraction_artifacts.get("export_allowed", True)),
+                extraction_confidence=extraction_artifacts.get("extraction_confidence") or {},
+                canonical_extraction=extraction_artifacts.get("canonical_extraction") or {},
             ),
             True,  # used_ai
         )
@@ -3919,6 +4130,13 @@ def _normalize_impl(
     doc_type_note = f"Document type detected: {doc_type}."
     if not any("document type detected:" in str(w).lower() for w in warnings):
         warnings.insert(0, doc_type_note)
+    extraction_artifacts = {
+        "canonical_extraction": _canonical_only_extraction(canonical, doc_type=doc_type),
+        "provenance": {},
+        "review_tasks": [],
+        "export_allowed": True,
+        "extraction_confidence": {"overall": min(1.0, confidence_score), "status": "yellow", "export_allowed": True},
+    }
     return (
         NormalizerResponse(
             canonical_lease=canonical,
@@ -3928,9 +4146,73 @@ def _normalize_impl(
             clarification_questions=questions,
             warnings=warnings,
             extraction_summary=extraction_summary,
+            provenance=extraction_artifacts.get("provenance") or {},
+            review_tasks=extraction_artifacts.get("review_tasks") or [],
+            export_allowed=bool(extraction_artifacts.get("export_allowed", True)),
+            extraction_confidence=extraction_artifacts.get("extraction_confidence") or {},
+            canonical_extraction=extraction_artifacts.get("canonical_extraction") or {},
         ),
         False,  # used_ai: MANUAL/JSON does not use AI
     )
+
+
+@app.post("/api/extract-lease")
+async def extract_lease_canonical(request: Request):
+    """
+    Authenticated binary extractor endpoint.
+    Accepts raw PDF/DOCX bytes and returns canonical extraction JSON with provenance,
+    review tasks, confidence, and export_allowed gating.
+    """
+    user = _require_supabase_user(request)
+    token = _extract_bearer_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Request body is empty")
+
+    content_type = (request.headers.get("content-type") or "application/pdf").split(";", 1)[0].strip().lower()
+    if content_type not in {
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/octet-stream",
+    }:
+        raise HTTPException(status_code=415, detail="Unsupported content-type. Use application/pdf or DOCX mime type.")
+
+    filename_header = (request.headers.get("x-filename") or "").strip()
+    if filename_header:
+        filename = filename_header
+    elif "wordprocessingml" in content_type:
+        filename = "upload.docx"
+    else:
+        filename = "upload.pdf"
+
+    extraction = build_extract_response(
+        file_bytes=body,
+        filename=filename,
+        content_type=content_type,
+        canonical_lease=None,
+    )
+
+    blockers = [t for t in extraction.get("review_tasks", []) if str(t.get("severity") or "").lower() == "blocker"]
+    _LOG.info(
+        "extract_lease_complete user_id=%s doc_type=%s doc_role=%s gated_fields=%s export_allowed=%s validation_status=%s",
+        user.get("id") or "",
+        ((extraction.get("document") or {}).get("doc_type") or "unknown"),
+        ((extraction.get("document") or {}).get("doc_role") or "unknown"),
+        len(blockers),
+        extraction.get("export_allowed"),
+        ((extraction.get("confidence") or {}).get("status") or "unknown"),
+    )
+
+    return {
+        "canonical_extraction": extraction,
+        "provenance": extraction.get("provenance") or {},
+        "review_tasks": extraction.get("review_tasks") or [],
+        "confidence": extraction.get("confidence") or {},
+        "export_allowed": bool(extraction.get("export_allowed", False)),
+    }
 
 
 @app.post("/generate_scenarios", response_model=GenerateScenariosResponse)

@@ -20,6 +20,7 @@ from models import (
     RentScheduleStep,
     PhaseInStep,
     FreeRentPeriod,
+    ParkingAbatementPeriod,
     Scenario,
     LeaseType,
     EscalationType,
@@ -177,6 +178,18 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         start = max(0, free_rent_start)
         end = max(start, free_rent_end)
         free_rent_periods = [FreeRentPeriod(start_month=start, end_month=end)]
+    parking_abatement_periods: List[ParkingAbatementPeriod] = []
+    raw_parking_periods = data.get("parking_abatement_periods", [])
+    for step in raw_parking_periods or []:
+        if isinstance(step, dict):
+            parking_abatement_periods.append(
+                ParkingAbatementPeriod(
+                    start_month=int(step.get("start_month", 0)),
+                    end_month=int(step.get("end_month", 0)),
+                )
+            )
+        elif isinstance(step, ParkingAbatementPeriod):
+            parking_abatement_periods.append(step)
 
     phase_in_schedule: List[PhaseInStep] = []
     raw_phase_in = data.get("phase_in_schedule", data.get("phase_in_steps", []))
@@ -251,6 +264,7 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         amortization_term_months=int(get("amortization_term_months", 0) or 0),
         free_rent_periods=free_rent_periods,
         rent_abatements=[],
+        parking_abatement_periods=parking_abatement_periods,
         moving_allowance=float(get("moving_allowance", 0) or 0),
         other_concessions=list(get("other_concessions", []) or []),
         renewal_options=[],

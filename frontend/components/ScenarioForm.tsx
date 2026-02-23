@@ -34,6 +34,8 @@ const defaultScenarioInput: ScenarioInput = {
   free_rent_start_month: 0,
   free_rent_end_month: 2,
   free_rent_abatement_type: "base",
+  abatement_periods: [{ start_month: 0, end_month: 2, abatement_type: "base" }],
+  parking_abatement_periods: [],
   ti_allowance_psf: 50,
   ti_budget_total: 500000,
   ti_source_of_truth: "psf",
@@ -116,19 +118,62 @@ export function ScenarioForm({
     return Math.max(1, months);
   };
 
-  const applyFreeRentConsistency = (nextScenario: ScenarioWithId): ScenarioWithId => {
-    const termMonths = termMonthsFromDates(nextScenario.commencement, nextScenario.expiration);
+  const getFallbackAbatementPeriods = (nextScenario: ScenarioWithId): Array<{ start_month: number; end_month: number; abatement_type: "base" | "gross" }> => {
     const start = Math.max(0, Math.floor(Number(nextScenario.free_rent_start_month ?? 0) || 0));
     const months = Math.max(0, Math.floor(Number(nextScenario.free_rent_months ?? 0) || 0));
+    if (months <= 0) return [];
+    const end = Math.max(start, Math.floor(Number(nextScenario.free_rent_end_month ?? (start + months - 1)) || (start + months - 1)));
+    return [{
+      start_month: start,
+      end_month: end,
+      abatement_type: nextScenario.free_rent_abatement_type === "gross" ? "gross" : "base",
+    }];
+  };
+
+  const applyAbatementConsistency = (nextScenario: ScenarioWithId): ScenarioWithId => {
+    const termMonths = termMonthsFromDates(nextScenario.commencement, nextScenario.expiration);
     const maxMonth = Math.max(0, termMonths - 1);
-    const clampedStart = Math.min(start, maxMonth);
-    const derivedEnd = months > 0 ? Math.min(maxMonth, clampedStart + months - 1) : clampedStart;
+    const sourcePeriods = (nextScenario.abatement_periods && nextScenario.abatement_periods.length > 0)
+      ? nextScenario.abatement_periods
+      : getFallbackAbatementPeriods(nextScenario);
+    const normalizedPeriods = sourcePeriods
+      .map((period) => {
+        const start = Math.min(maxMonth, Math.max(0, Math.floor(Number(period.start_month) || 0)));
+        const end = Math.min(maxMonth, Math.max(start, Math.floor(Number(period.end_month) || start)));
+        return {
+          start_month: start,
+          end_month: end,
+          abatement_type: period.abatement_type === "gross" ? "gross" as const : "base" as const,
+        };
+      })
+      .filter((period) => period.end_month >= period.start_month)
+      .sort((a, b) => (a.start_month - b.start_month) || (a.end_month - b.end_month));
+    const firstPeriod = normalizedPeriods[0];
+    const totalMonths = normalizedPeriods.reduce((sum, period) => sum + Math.max(0, period.end_month - period.start_month + 1), 0);
     return {
       ...nextScenario,
-      free_rent_start_month: clampedStart,
-      free_rent_end_month: derivedEnd,
-      free_rent_months: months > 0 ? (derivedEnd - clampedStart + 1) : 0,
-      free_rent_abatement_type: nextScenario.free_rent_abatement_type === "gross" ? "gross" : "base",
+      abatement_periods: normalizedPeriods,
+      free_rent_start_month: firstPeriod?.start_month ?? 0,
+      free_rent_end_month: firstPeriod?.end_month ?? 0,
+      free_rent_months: totalMonths,
+      free_rent_abatement_type: firstPeriod?.abatement_type ?? "base",
+    };
+  };
+
+  const applyParkingAbatementConsistency = (nextScenario: ScenarioWithId): ScenarioWithId => {
+    const termMonths = termMonthsFromDates(nextScenario.commencement, nextScenario.expiration);
+    const maxMonth = Math.max(0, termMonths - 1);
+    const normalizedPeriods = (nextScenario.parking_abatement_periods ?? [])
+      .map((period) => {
+        const start = Math.min(maxMonth, Math.max(0, Math.floor(Number(period.start_month) || 0)));
+        const end = Math.min(maxMonth, Math.max(start, Math.floor(Number(period.end_month) || start)));
+        return { start_month: start, end_month: end };
+      })
+      .filter((period) => period.end_month >= period.start_month)
+      .sort((a, b) => (a.start_month - b.start_month) || (a.end_month - b.end_month));
+    return {
+      ...nextScenario,
+      parking_abatement_periods: normalizedPeriods,
     };
   };
 
@@ -145,10 +190,47 @@ export function ScenarioForm({
     if (!Number.isFinite(displayMonth)) return 0;
     return Math.max(0, Math.floor(displayMonth) - 1);
   };
-  const freeStart = Math.max(0, Math.floor(Number(scenario?.free_rent_start_month ?? 0) || 0));
-  const freeEndFallback = Math.max(freeStart, freeStart + Math.max(0, Math.floor(Number(scenario?.free_rent_months ?? 0) || 0)) - 1);
-  const freeEnd = Math.max(freeStart, Math.floor(Number(scenario?.free_rent_end_month ?? freeEndFallback) || freeEndFallback));
-  const hasFreeRent = (Number(scenario?.free_rent_months) || 0) > 0;
+  const abatementPeriods = (() => {
+    if (!scenario) return [] as Array<{ start_month: number; end_month: number; abatement_type: "base" | "gross" }>;
+    const source = (scenario.abatement_periods && scenario.abatement_periods.length > 0)
+      ? scenario.abatement_periods
+      : getFallbackAbatementPeriods(scenario);
+    return source
+      .map((period) => {
+        const start = Math.max(0, Math.floor(Number(period.start_month) || 0));
+        const end = Math.max(start, Math.floor(Number(period.end_month) || start));
+        return {
+          start_month: start,
+          end_month: end,
+          abatement_type: period.abatement_type === "gross" ? "gross" as const : "base" as const,
+        };
+      })
+      .sort((a, b) => (a.start_month - b.start_month) || (a.end_month - b.end_month));
+  })();
+  const parkingAbatementPeriods = (() => {
+    if (!scenario) return [] as Array<{ start_month: number; end_month: number }>;
+    return (scenario.parking_abatement_periods ?? [])
+      .map((period) => {
+        const start = Math.max(0, Math.floor(Number(period.start_month) || 0));
+        const end = Math.max(start, Math.floor(Number(period.end_month) || start));
+        return { start_month: start, end_month: end };
+      })
+      .sort((a, b) => (a.start_month - b.start_month) || (a.end_month - b.end_month));
+  })();
+  const hasAbatement = abatementPeriods.length > 0;
+  const hasParkingAbatement = parkingAbatementPeriods.length > 0;
+  const abatementSummary = hasAbatement
+    ? abatementPeriods
+        .map((period) =>
+          `M${toDisplayMonth(period.start_month)}-${toDisplayMonth(period.end_month)} (${period.abatement_type === "gross" ? "gross" : "base"})`
+        )
+        .join(", ")
+    : "";
+  const parkingAbatementSummary = hasParkingAbatement
+    ? parkingAbatementPeriods
+        .map((period) => `M${toDisplayMonth(period.start_month)}-${toDisplayMonth(period.end_month)}`)
+        .join(", ")
+    : "";
   const parseDateParts = (iso: string): { year: number; month: number; day: number } | null => {
     const [y, m, d] = String(iso || "").split("-").map(Number);
     if (!y || !m || !d) return null;
@@ -175,9 +257,15 @@ export function ScenarioForm({
     }
     return escalated;
   };
-  const isInFreeRange = (start: number, end: number): boolean => {
-    if (!hasFreeRent) return false;
-    return end >= freeStart && start <= freeEnd;
+  const overlappingAbatementsForRange = (start: number, end: number) => {
+    return abatementPeriods.filter(
+      (period) => !(end < period.start_month || start > period.end_month)
+    );
+  };
+  const overlappingParkingAbatementsForRange = (start: number, end: number) => {
+    return parkingAbatementPeriods.filter(
+      (period) => !(end < period.start_month || start > period.end_month)
+    );
   };
   const formatCurrencyPsf = (value: number): string => `$${(Math.round(value * 100) / 100).toFixed(2)}`;
   const opexRangeLabel = (startMonth: number, endMonth: number): string => {
@@ -265,9 +353,11 @@ export function ScenarioForm({
       boundaries.add(Math.max(0, Math.floor(Number(p.start_month) || 0)));
       boundaries.add(Math.max(0, Math.floor(Number(p.end_month) || 0) + 1));
     });
-    if (hasFreeRent) {
-      boundaries.add(freeStart);
-      boundaries.add(freeEnd + 1);
+    if (hasAbatement) {
+      for (const period of abatementPeriods) {
+        boundaries.add(period.start_month);
+        boundaries.add(period.end_month + 1);
+      }
     }
     let prevYear = calendarYearForMonthIndex(0);
     for (let m = 1; m < termMonths; m += 1) {
@@ -289,8 +379,13 @@ export function ScenarioForm({
       if (end < start) continue;
       const source = scenario.rent_steps.find((s) => start >= s.start && start <= s.end);
       if (!source) continue;
-      const abated = isInFreeRange(start, end);
-      const gross = abated && scenario.free_rent_abatement_type === "gross";
+      const overlaps = overlappingAbatementsForRange(start, end);
+      const abated = overlaps.length > 0;
+      const gross = overlaps.some((period) => period.abatement_type === "gross");
+      const parkingAbated = overlappingParkingAbatementsForRange(start, end).length > 0;
+      const noteParts: string[] = [];
+      if (abated) noteParts.push(gross ? "Gross abatement (base + OpEx)" : "Base-rent abatement");
+      if (parkingAbated) noteParts.push("Parking abatement");
       rows.push({
         start,
         end,
@@ -299,7 +394,7 @@ export function ScenarioForm({
         opexRate: gross ? 0 : opexAnnualAtMonth(start),
         rsfLabel: stepRsfLabel(start, end),
         yearsLabel: leaseYearLabel(start, end),
-        abatementNote: abated ? (gross ? "Gross abatement" : "Base-rent abatement") : "",
+        abatementNote: noteParts.join(" | "),
       });
     }
     return rows;
@@ -311,8 +406,11 @@ export function ScenarioForm({
   ) => {
     if (!scenario) return;
     let next = { ...scenario, [key]: value } as ScenarioWithId;
-    if (key === "commencement" || key === "expiration" || key === "free_rent_months" || key === "free_rent_start_month" || key === "free_rent_abatement_type") {
-      next = applyFreeRentConsistency(next);
+    if (key === "commencement" || key === "expiration" || key === "free_rent_months" || key === "free_rent_start_month" || key === "free_rent_end_month" || key === "free_rent_abatement_type" || key === "abatement_periods") {
+      next = applyAbatementConsistency(next);
+    }
+    if (key === "commencement" || key === "expiration" || key === "parking_abatement_periods") {
+      next = applyParkingAbatementConsistency(next);
     }
     if (key === "ti_allowance_psf") {
       next.ti_source_of_truth = "psf";
@@ -357,6 +455,110 @@ export function ScenarioForm({
       ...scenario,
       rent_steps: scenario.rent_steps.filter((_, i) => i !== index),
     });
+  };
+
+  const updateAbatementPeriods = (
+    periods: Array<{ start_month: number; end_month: number; abatement_type: "base" | "gross" }>
+  ) => {
+    if (!scenario) return;
+    onUpdate(
+      applyAbatementConsistency({
+        ...scenario,
+        abatement_periods: periods,
+      })
+    );
+  };
+
+  const addAbatementPeriod = () => {
+    if (!scenario) return;
+    const source = abatementPeriods.length > 0 ? abatementPeriods : getFallbackAbatementPeriods(scenario);
+    const last = source[source.length - 1];
+    const nextStart = last ? Math.max(0, last.end_month + 1) : 0;
+    updateAbatementPeriods([
+      ...source,
+      {
+        start_month: nextStart,
+        end_month: nextStart,
+        abatement_type: "base",
+      },
+    ]);
+  };
+
+  const editAbatementPeriod = (
+    index: number,
+    field: "start_month" | "end_month" | "abatement_type",
+    value: number | "base" | "gross"
+  ) => {
+    if (!scenario) return;
+    const source = [...abatementPeriods];
+    const period = source[index];
+    if (!period) return;
+    const updated = {
+      ...period,
+      [field]: value,
+    };
+    source[index] = {
+      start_month: Math.max(0, Math.floor(Number(updated.start_month) || 0)),
+      end_month: Math.max(0, Math.floor(Number(updated.end_month) || 0)),
+      abatement_type: updated.abatement_type === "gross" ? "gross" : "base",
+    };
+    updateAbatementPeriods(source);
+  };
+
+  const removeAbatementPeriod = (index: number) => {
+    if (!scenario) return;
+    updateAbatementPeriods(abatementPeriods.filter((_, i) => i !== index));
+  };
+
+  const updateParkingAbatementPeriods = (
+    periods: Array<{ start_month: number; end_month: number }>
+  ) => {
+    if (!scenario) return;
+    onUpdate(
+      applyParkingAbatementConsistency({
+        ...scenario,
+        parking_abatement_periods: periods,
+      })
+    );
+  };
+
+  const addParkingAbatementPeriod = () => {
+    if (!scenario) return;
+    const source = parkingAbatementPeriods;
+    const last = source[source.length - 1];
+    const nextStart = last ? Math.max(0, last.end_month + 1) : 0;
+    updateParkingAbatementPeriods([
+      ...source,
+      {
+        start_month: nextStart,
+        end_month: nextStart,
+      },
+    ]);
+  };
+
+  const editParkingAbatementPeriod = (
+    index: number,
+    field: "start_month" | "end_month",
+    value: number
+  ) => {
+    if (!scenario) return;
+    const source = [...parkingAbatementPeriods];
+    const period = source[index];
+    if (!period) return;
+    const updated = {
+      ...period,
+      [field]: value,
+    };
+    source[index] = {
+      start_month: Math.max(0, Math.floor(Number(updated.start_month) || 0)),
+      end_month: Math.max(0, Math.floor(Number(updated.end_month) || 0)),
+    };
+    updateParkingAbatementPeriods(source);
+  };
+
+  const removeParkingAbatementPeriod = (index: number) => {
+    if (!scenario) return;
+    updateParkingAbatementPeriods(parkingAbatementPeriods.filter((_, i) => i !== index));
   };
 
   const rentStepIssues = (() => {
@@ -506,39 +708,131 @@ export function ScenarioForm({
             placeholder="MM.DD.YYYY"
           />
         </label>
-        <label className="block">
-          <span className="text-sm text-slate-300">Free rent start month</span>
-          <input
-            type="number"
-            min={1}
-            value={toDisplayMonth(scenario.free_rent_start_month ?? 0)}
-            onChange={(e) => update("free_rent_start_month", toInternalMonth(Number(e.target.value)))}
-            className={inputClass}
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm text-slate-300">Free rent (months)</span>
-          <input
-            type="number"
-            min={0}
-            value={scenario.free_rent_months}
-            onChange={(e) =>
-              update("free_rent_months", Number(e.target.value))
-            }
-            className={inputClass}
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm text-slate-300">Abatement type</span>
-          <select
-            value={scenario.free_rent_abatement_type ?? "base"}
-            onChange={(e) => update("free_rent_abatement_type", (e.target.value === "gross" ? "gross" : "base"))}
-            className={inputClass}
-          >
-            <option value="base">Base rent abatement</option>
-            <option value="gross">Gross abatement (base + OpEx + parking)</option>
-          </select>
-        </label>
+        <div className="block sm:col-span-2 xl:col-span-3 rounded-xl border border-slate-300/20 bg-slate-900/30 p-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-sm text-slate-200 font-medium">Abatement schedule</span>
+            <button
+              type="button"
+              onClick={addAbatementPeriod}
+              className="btn-premium btn-premium-secondary px-3 py-2 text-xs"
+            >
+              Add abatement period
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">
+            Add one or more rent-abatement ranges and choose whether each range is base-rent-only or gross (base + OpEx).
+          </p>
+          {abatementPeriods.length === 0 ? (
+            <div className="text-xs text-slate-400 rounded-lg border border-slate-300/20 bg-slate-950/40 px-3 py-2">
+              No abatement periods configured.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {abatementPeriods.map((period, index) => (
+                <div
+                  key={`${period.start_month}-${period.end_month}-${period.abatement_type}-${index}`}
+                  className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_120px] gap-2 items-end rounded-lg border border-slate-300/20 bg-slate-950/35 p-2"
+                >
+                  <label className="block">
+                    <span className="text-[11px] text-slate-400">Start month</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={toDisplayMonth(period.start_month)}
+                      onChange={(e) => editAbatementPeriod(index, "start_month", toInternalMonth(Number(e.target.value)))}
+                      className="input-premium w-full px-2 py-2"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-slate-400">End month</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={toDisplayMonth(period.end_month)}
+                      onChange={(e) => editAbatementPeriod(index, "end_month", toInternalMonth(Number(e.target.value)))}
+                      className="input-premium w-full px-2 py-2"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-slate-400">Type</span>
+                    <select
+                      value={period.abatement_type}
+                      onChange={(e) => editAbatementPeriod(index, "abatement_type", e.target.value === "gross" ? "gross" : "base")}
+                      className="input-premium w-full px-2 py-2"
+                    >
+                      <option value="base">Base rent abatement</option>
+                      <option value="gross">Gross abatement (base + OpEx)</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removeAbatementPeriod(index)}
+                    className="h-10 rounded-lg border border-red-500/45 text-red-200 text-xs font-medium hover:bg-red-500/10"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="block sm:col-span-2 xl:col-span-3 rounded-xl border border-slate-300/20 bg-slate-900/30 p-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-sm text-slate-200 font-medium">Parking abatement schedule</span>
+            <button
+              type="button"
+              onClick={addParkingAbatementPeriod}
+              className="btn-premium btn-premium-secondary px-3 py-2 text-xs"
+            >
+              Add parking period
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mb-3">
+            Use parking abatement when parking charges are reduced or waived independently from rent/OpEx abatement.
+          </p>
+          {parkingAbatementPeriods.length === 0 ? (
+            <div className="text-xs text-slate-400 rounded-lg border border-slate-300/20 bg-slate-950/40 px-3 py-2">
+              No parking abatement periods configured.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {parkingAbatementPeriods.map((period, index) => (
+                <div
+                  key={`${period.start_month}-${period.end_month}-${index}`}
+                  className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px] gap-2 items-end rounded-lg border border-slate-300/20 bg-slate-950/35 p-2"
+                >
+                  <label className="block">
+                    <span className="text-[11px] text-slate-400">Start month</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={toDisplayMonth(period.start_month)}
+                      onChange={(e) => editParkingAbatementPeriod(index, "start_month", toInternalMonth(Number(e.target.value)))}
+                      className="input-premium w-full px-2 py-2"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] text-slate-400">End month</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={toDisplayMonth(period.end_month)}
+                      onChange={(e) => editParkingAbatementPeriod(index, "end_month", toInternalMonth(Number(e.target.value)))}
+                      className="input-premium w-full px-2 py-2"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removeParkingAbatementPeriod(index)}
+                    className="h-10 rounded-lg border border-red-500/45 text-red-200 text-xs font-medium hover:bg-red-500/10"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <label className="block">
           <span className="text-sm text-slate-300">TI allowance ($/SF)</span>
           <input
@@ -712,19 +1006,21 @@ export function ScenarioForm({
           </div>
         </div>
         <div className="mb-3 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-          {scenario.free_rent_months > 0 ? (
-            <>
-              Free rent applies to months{" "}
-              <span className="font-semibold">
-                {toDisplayMonth(scenario.free_rent_start_month ?? 0)}-{toDisplayMonth((scenario.free_rent_end_month ?? Math.max(0, (scenario.free_rent_start_month ?? 0) + scenario.free_rent_months - 1)))}
-              </span>{" "}
-              as{" "}
-              <span className="font-semibold">
-                {scenario.free_rent_abatement_type === "gross" ? "gross abatement" : "base-rent-only abatement"}
-              </span>.
-            </>
+          {hasAbatement || hasParkingAbatement ? (
+            <div className="space-y-0.5">
+              {hasAbatement && (
+                <p>
+                  Rent abatement periods: <span className="font-semibold">{abatementSummary}</span>.
+                </p>
+              )}
+              {hasParkingAbatement && (
+                <p>
+                  Parking abatement periods: <span className="font-semibold">{parkingAbatementSummary}</span>.
+                </p>
+              )}
+            </div>
           ) : (
-            "No free rent / abatement is applied."
+            "No rent or parking abatement is applied."
           )}
         </div>
         {rentStepIssues.length > 0 && (
@@ -820,7 +1116,7 @@ export function ScenarioForm({
         <div className="mt-4 rounded-lg border border-slate-300/20 bg-slate-950/35 p-3">
           <p className="text-xs font-medium text-slate-100 mb-2">Periodized schedule (output)</p>
           <p className="text-[11px] text-slate-400 mb-3">
-            Auto-split by calendar year, phase-in RSF changes, and abatement boundaries. Abated periods show zero cash-flow components.
+            Auto-split by calendar year, phase-in RSF changes, and abatement boundaries. Abated periods adjust base rent, OpEx, and parking by scope.
           </p>
           <div className="hidden xl:grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1fr)] gap-3 px-1 pb-1">
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Start month</span>

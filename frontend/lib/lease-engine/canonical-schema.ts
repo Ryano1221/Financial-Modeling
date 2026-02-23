@@ -26,6 +26,7 @@ export interface PhaseInStepCanonical {
 export interface RentAbatement {
   startDate: string; // YYYY-MM-DD
   startMonth?: number; // 0-based, preferred for lease timeline math
+  endMonth?: number; // 0-based, inclusive (preferred for explicit ranges)
   months: number;
   type: "full" | "partial";
   appliesTo?: "base" | "gross";
@@ -41,6 +42,7 @@ export interface RentScheduleCanonical {
   /** Escalation effective date (first increase) YYYY-MM-DD */
   escalationEffectiveDate?: string;
   abatement?: RentAbatement;
+  abatements?: RentAbatement[];
   /** Pre-LCD total months free rent (legacy) */
   preLcdTotalMonths?: number;
 }
@@ -83,6 +85,14 @@ export interface ParkingScheduleCanonical {
   slots: ParkingSlotCanonical[];
   annualEscalationPercent: number;
   salesTaxPercent?: number;
+  parkingAbatements?: Array<{
+    startDate: string;
+    startMonth?: number;
+    endMonth?: number;
+    months: number;
+    type: "full" | "partial";
+    partialRate?: number;
+  }>;
 }
 
 /** TI and amortization */

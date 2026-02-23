@@ -31,6 +31,7 @@ from .canonical_lease import (
     PhaseInStep,
     FreeRentPeriod,
     RentAbatement,
+    ParkingAbatementPeriod,
     RenewalOption,
     OptionRentStructure,
     LeaseType,
@@ -43,6 +44,8 @@ from .canonical_response import (
     MonthlyRow,
     AnnualRow,
     NormalizerResponse,
+    ProvenanceSpan,
+    ReviewTask,
 )
 
 __all__ = [
@@ -71,6 +74,7 @@ __all__ = [
     "PhaseInStep",
     "FreeRentPeriod",
     "RentAbatement",
+    "ParkingAbatementPeriod",
     "RenewalOption",
     "OptionRentStructure",
     "LeaseType",
@@ -81,4 +85,6 @@ __all__ = [
     "MonthlyRow",
     "AnnualRow",
     "NormalizerResponse",
+    "ProvenanceSpan",
+    "ReviewTask",
 ]

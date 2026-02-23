@@ -17,6 +17,17 @@ export interface PhaseInStep {
 
 export type FreeRentAbatementType = "base" | "gross";
 
+export interface AbatementPeriod {
+  start_month: number; // 0-based, inclusive
+  end_month: number; // 0-based, inclusive
+  abatement_type: FreeRentAbatementType;
+}
+
+export interface ParkingAbatementPeriod {
+  start_month: number; // 0-based, inclusive
+  end_month: number; // 0-based, inclusive
+}
+
 /** One-time cost item (backend). */
 export interface OneTimeCost {
   name: string;
@@ -42,6 +53,8 @@ export interface ScenarioInput {
   free_rent_start_month?: number; // 0-based
   free_rent_end_month?: number; // 0-based, inclusive
   free_rent_abatement_type?: FreeRentAbatementType;
+  abatement_periods?: AbatementPeriod[];
+  parking_abatement_periods?: ParkingAbatementPeriod[];
   ti_allowance_psf: number;
   ti_budget_total?: number;
   ti_source_of_truth?: TiSourceOfTruth;
@@ -77,6 +90,7 @@ export interface RenewalInput {
   ti_allowance_psf: number;
   ti_budget_total?: number;
   ti_source_of_truth?: TiSourceOfTruth;
+  parking_abatement_periods?: ParkingAbatementPeriod[];
   opex_mode: OpexMode;
   base_opex_psf_yr: number;
   base_year_opex_psf_yr: number;
@@ -92,6 +106,7 @@ export interface RelocationInput {
   ti_allowance_psf: number;
   ti_budget_total?: number;
   ti_source_of_truth?: TiSourceOfTruth;
+  parking_abatement_periods?: ParkingAbatementPeriod[];
   moving_costs_total?: number;
   it_cabling_cost?: number;
   signage_cost?: number;
@@ -301,7 +316,8 @@ export interface BackendCanonicalLease {
   term_months: number;
   free_rent_months: number;
   free_rent_scope?: FreeRentAbatementType;
-  free_rent_periods?: Array<{ start_month: number; end_month: number }>;
+  free_rent_periods?: Array<{ start_month: number; end_month: number; scope?: FreeRentAbatementType }>;
+  parking_abatement_periods?: Array<{ start_month: number; end_month: number }>;
   discount_rate_annual: number;
   rent_schedule: BackendRentScheduleStep[];
   phase_in_schedule?: BackendPhaseInStep[];

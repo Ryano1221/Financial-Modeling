@@ -101,6 +101,7 @@ class FreeRentPeriod(BaseModel):
     """A contiguous period of free rent."""
     start_month: int = Field(ge=0)
     end_month: int = Field(ge=0)
+    scope: Literal["base", "gross"] = "base"
 
     @field_validator("end_month")
     @classmethod
@@ -116,6 +117,20 @@ class RentAbatement(BaseModel):
     start_month: int = Field(ge=0)
     end_month: int = Field(ge=0)
     percent_abated: float = Field(ge=0.0, le=100.0, default=100.0)
+
+    @field_validator("end_month")
+    @classmethod
+    def end_ge_start(cls, v: int, info: Any) -> int:
+        start = info.data.get("start_month")
+        if start is not None and v < start:
+            raise ValueError("end_month must be >= start_month")
+        return v
+
+
+class ParkingAbatementPeriod(BaseModel):
+    """Parking-only abatement month range."""
+    start_month: int = Field(ge=0)
+    end_month: int = Field(ge=0)
 
     @field_validator("end_month")
     @classmethod
@@ -212,6 +227,7 @@ class CanonicalLease(BaseModel):
     # --- Concessions ---
     free_rent_periods: List[FreeRentPeriod] = Field(default_factory=list)
     rent_abatements: List[RentAbatement] = Field(default_factory=list)
+    parking_abatement_periods: List[ParkingAbatementPeriod] = Field(default_factory=list)
     moving_allowance: float = Field(ge=0.0, default=0.0)
     other_concessions: List[dict] = Field(default_factory=list)
 
@@ -229,13 +245,10 @@ class CanonicalLease(BaseModel):
         bn = (self.building_name or "").strip()
         su = (self.suite or "").strip()
         fl = (self.floor or "").strip()
-        updates: dict[str, str] = {}
         if bn and su:
-            updates["premises_name"] = f"{bn} Suite {su}"
+            self.premises_name = f"{bn} Suite {su}"
         elif bn and fl:
-            updates["premises_name"] = f"{bn} Floor {fl}"
-        if updates:
-            return self.model_copy(update=updates)
+            self.premises_name = f"{bn} Floor {fl}"
         return self
 
     @field_validator("rent_schedule")

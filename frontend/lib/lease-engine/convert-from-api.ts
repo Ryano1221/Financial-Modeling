@@ -37,6 +37,44 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const tiBudgetTotal = effectiveTiBudgetTotal(s);
   const tiAllowancePsf = effectiveTiAllowancePsf(s);
   const tiAllowanceTotal = rsf > 0 ? round0(tiAllowancePsf * rsf) : tiBudgetTotal;
+  const normalizedAbatements = (s.abatement_periods ?? [])
+    .map((period) => {
+      const start = Math.max(0, Math.floor(Number(period.start_month) || 0));
+      const end = Math.max(start, Math.floor(Number(period.end_month) || start));
+      return {
+        startMonth: start,
+        endMonth: end,
+        months: end - start + 1,
+        startDate: s.commencement,
+        type: "full" as const,
+        appliesTo: period.abatement_type === "gross" ? "gross" as const : "base" as const,
+      };
+    })
+    .filter((period) => period.months > 0);
+  const fallbackAbatement =
+    s.free_rent_months > 0
+      ? {
+          startDate: s.commencement,
+          startMonth: Math.max(0, Math.floor(Number(s.free_rent_start_month ?? 0) || 0)),
+          months: s.free_rent_months,
+          type: "full" as const,
+          appliesTo: s.free_rent_abatement_type === "gross" ? "gross" as const : "base" as const,
+        }
+      : undefined;
+  const effectiveAbatements = normalizedAbatements.length > 0 ? normalizedAbatements : (fallbackAbatement ? [fallbackAbatement] : []);
+  const normalizedParkingAbatements = (s.parking_abatement_periods ?? [])
+    .map((period) => {
+      const start = Math.max(0, Math.floor(Number(period.start_month) || 0));
+      const end = Math.max(start, Math.floor(Number(period.end_month) || start));
+      return {
+        startMonth: start,
+        endMonth: end,
+        months: end - start + 1,
+        startDate: s.commencement,
+        type: "full" as const,
+      };
+    })
+    .filter((period) => period.months > 0);
 
   return {
     id: s.id,
@@ -62,16 +100,8 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
         ratePsfYr: step.rate_psf_yr,
       })),
       annualEscalationPercent: 0,
-      abatement:
-        s.free_rent_months > 0
-          ? {
-              startDate: s.commencement,
-              startMonth: Math.max(0, Math.floor(Number(s.free_rent_start_month ?? 0) || 0)),
-              months: s.free_rent_months,
-              type: "full",
-              appliesTo: s.free_rent_abatement_type === "gross" ? "gross" : "base",
-            }
-          : undefined,
+      abatement: effectiveAbatements[0],
+      abatements: effectiveAbatements.length > 0 ? effectiveAbatements : undefined,
     },
     phaseInSchedule: (s.phase_in_steps ?? []).map((step) => ({
       startMonth: step.start_month,
@@ -92,6 +122,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
           ? [{ type: "unreserved" as const, count: parkingSpaces, costPerSpacePerMonth: parkingCost }]
           : [],
       annualEscalationPercent: 0,
+      parkingAbatements: normalizedParkingAbatements.length > 0 ? normalizedParkingAbatements : undefined,
     },
     tiSchedule: {
       budgetTotal: tiBudgetTotal,
