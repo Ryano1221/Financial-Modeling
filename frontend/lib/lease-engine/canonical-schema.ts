@@ -135,6 +135,8 @@ export interface DatesAndTermCanonical {
 export interface LeaseScenarioCanonical {
   id: string;
   name: string;
+  /** Source document type from extraction, e.g. lease / sublease / counter_proposal */
+  documentTypeDetected?: string;
   /** Global discount rate default 8%; overridden per option if set */
   discountRateAnnual?: number;
   partyAndPremises: PartyAndPremisesCanonical;

@@ -34,6 +34,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   return {
     id: s.id,
     name: s.name,
+    documentTypeDetected: (s.document_type_detected ?? "").trim() || undefined,
     discountRateAnnual: s.discount_rate_annual,
     partyAndPremises: {
       premisesName,

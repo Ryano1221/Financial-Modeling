@@ -704,7 +704,7 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
     return {
       id: scenario.id,
       name: normalizeText(result.scenarioName, scenario.name),
-      documentType: "Lease",
+      documentType: normalizeText(scenario.documentTypeDetected, "Lease"),
       buildingName: normalizeText(result.metrics.buildingName, scenario.partyAndPremises.premisesLabel ?? scenario.partyAndPremises.premisesName),
       suiteFloor: normalizeText(result.metrics.suiteName, scenario.partyAndPremises.floorsOrSuite ?? ""),
       streetAddress: normalizeText(scenario.partyAndPremises.premisesName),
