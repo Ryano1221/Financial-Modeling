@@ -12,6 +12,7 @@ import {
   normalizeTiSourceOfTruth,
   syncTiFields,
 } from "@/lib/ti";
+import { inferRentEscalationPercentFromSteps } from "@/lib/rent-escalation";
 
 function toNumber(value: unknown, fallback: number = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -390,7 +391,13 @@ export function canonicalResponseToEngineResult(
     commencementDate: m.commencement_date ?? "",
     expirationDate: m.expiration_date ?? "",
     baseRentPsfYr: m.base_rent_avg_psf_year ?? 0,
-    escalationPercent: 0,
+    escalationPercent: inferRentEscalationPercentFromSteps(
+      (normalized?.rent_schedule ?? []).map((step) => ({
+        start: step.start_month,
+        end: step.end_month,
+        rate_psf_yr: step.rent_psf_annual,
+      }))
+    ) * 100,
     abatementAmount: toNumber(m.free_rent_value_total, 0),
     abatementType: formatAbatementTypeFromPeriods(effectiveAbatementPeriods),
     abatementAppliedWhen: formatAbatementAppliedFromPeriods(effectiveAbatementPeriods),

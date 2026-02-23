@@ -23,6 +23,7 @@ import {
 import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import type { ReportData } from "@/lib/types";
 import { effectiveTiAllowancePsf, effectiveTiBudgetTotal } from "@/lib/ti";
+import { inferRentEscalationPercentFromSteps } from "@/lib/rent-escalation";
 
 type ScenarioEntry = ReportData["scenarios"][number];
 
@@ -111,15 +112,7 @@ function shortenLabel(name: string, max = 26): string {
 }
 
 function rentEscalationFromSteps(steps: Array<{ start: number; end: number; rate_psf_yr: number }> | undefined): number {
-  if (!steps || steps.length < 2) return 0;
-  const sorted = [...steps]
-    .map((s) => ({ start: toNumber(s.start), rate: toNumber(s.rate_psf_yr) }))
-    .sort((a, b) => a.start - b.start);
-  const first = sorted[0];
-  const next = sorted.find((s) => s.start > first.start && s.rate !== first.rate) ?? sorted[1];
-  if (!first || !next || first.rate <= 0) return 0;
-  const yearsBetween = Math.max(1 / 12, (next.start - first.start) / 12);
-  return Math.pow(next.rate / first.rate, 1 / yearsBetween) - 1;
+  return inferRentEscalationPercentFromSteps(steps);
 }
 
 type ScenarioAbatementPeriod = {

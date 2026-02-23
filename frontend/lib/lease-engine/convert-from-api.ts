@@ -9,6 +9,7 @@ import {
   effectiveTiBudgetTotal,
   round0,
 } from "@/lib/ti";
+import { inferRentEscalationPercentFromSteps } from "@/lib/rent-escalation";
 
 function monthDiff(start: string, end: string): number {
   const [y1, m1, d1] = start.split("-").map(Number);
@@ -99,7 +100,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
         endMonth: step.end,
         ratePsfYr: step.rate_psf_yr,
       })),
-      annualEscalationPercent: 0,
+      annualEscalationPercent: inferRentEscalationPercentFromSteps(s.rent_steps),
       abatement: effectiveAbatements[0],
       abatements: effectiveAbatements.length > 0 ? effectiveAbatements : undefined,
     },
