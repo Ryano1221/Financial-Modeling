@@ -1369,20 +1369,25 @@ def _scenario_monthly_window(entry: dict[str, Any]) -> dict[str, Any]:
         start_month = start_month or min(by_month_start)
         end_month = end_month or max(by_month_start)
 
-    ti_year0 = max(
+    ti_budget_year0 = max(
         0.0,
+        _safe_float(scenario.get("ti_budget_total"), 0.0),
         _safe_float(result.get("ti_value_total"), 0.0),
         _safe_float(result.get("ti_at_0"), 0.0),
-        _safe_float(scenario.get("ti_budget_total"), 0.0),
-        _safe_float(scenario.get("ti_allowance_psf"), 0.0) * max(0.0, _safe_float(scenario.get("rsf"), 0.0)),
     )
+    ti_allowance_total_year0 = max(0.0, _safe_float(scenario.get("ti_allowance_psf"), 0.0)) * max(
+        0.0, _safe_float(scenario.get("rsf"), 0.0)
+    )
+    ti_net_year0 = ti_budget_year0 - ti_allowance_total_year0
 
     return {
         "start_month": start_month,
         "end_month": end_month,
         "gross_by_month": by_month_start,
         "month0_value": _scenario_pre_commencement_amount(entry),
-        "ti_year0_value": ti_year0,
+        "ti_budget_year0_value": ti_budget_year0,
+        "ti_allowance_year0_value": -ti_allowance_total_year0,
+        "ti_net_year0_value": ti_net_year0,
         "parking_total_value": parking_total,
     }
 
@@ -1412,9 +1417,23 @@ def _consolidated_monthly_gross_rows(entries: list[dict[str, Any]]) -> list[dict
 
     rows.append(
         {
-            "month_no": "TI",
-            "date_text": "Tenant improvements (Year 0 / PLC)",
-            "values": [_fmt_currency(w.get("ti_year0_value"), precision=0) for w in windows],
+            "month_no": "TB",
+            "date_text": "TI budget (Year 0 / PLC)",
+            "values": [_fmt_currency(w.get("ti_budget_year0_value"), precision=0) for w in windows],
+        }
+    )
+    rows.append(
+        {
+            "month_no": "TA",
+            "date_text": "TI allowance credit (Year 0 / PLC)",
+            "values": [_fmt_currency(w.get("ti_allowance_year0_value"), precision=0) for w in windows],
+        }
+    )
+    rows.append(
+        {
+            "month_no": "TN",
+            "date_text": "TI net impact (budget - allowance)",
+            "values": [_fmt_currency(w.get("ti_net_year0_value"), precision=0) for w in windows],
         }
     )
     rows.append(

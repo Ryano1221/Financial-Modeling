@@ -1442,22 +1442,62 @@ function createMonthlyGrossMatrixSheet(
   });
   row += 1;
 
-  const tiInfoRow = row;
-  sheet.getCell(tiInfoRow, 1).value = "TI";
-  sheet.getCell(tiInfoRow, 2).value = "Tenant improvements (Year 0 / PLC)";
+  const tiBudgetRow = row;
+  sheet.getCell(tiBudgetRow, 1).value = "TB";
+  sheet.getCell(tiBudgetRow, 2).value = "TI budget (Year 0 / PLC)";
   scenarios.forEach((scenario, idx) => {
-    const cell = sheet.getCell(tiInfoRow, idx + 3);
-    cell.value = Number((scenario.tiBudget || 0).toFixed(4));
+    const cell = sheet.getCell(tiBudgetRow, idx + 3);
+    const budgetTotal = Math.max(0, scenario.tiBudget || 0);
+    cell.value = Number(budgetTotal.toFixed(4));
     applyCellFormat(cell, "currency0");
     cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
   });
-  sheet.getCell(tiInfoRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
-  sheet.getCell(tiInfoRow, 2).font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
-  sheet.getCell(tiInfoRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-  sheet.getCell(tiInfoRow, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-  sheet.getCell(tiInfoRow, 1).alignment = { horizontal: "center", vertical: "middle" };
-  sheet.getCell(tiInfoRow, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  sheet.getCell(tiBudgetRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiBudgetRow, 2).font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiBudgetRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiBudgetRow, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiBudgetRow, 1).alignment = { horizontal: "center", vertical: "middle" };
+  sheet.getCell(tiBudgetRow, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  row += 1;
+
+  const tiAllowanceRow = row;
+  sheet.getCell(tiAllowanceRow, 1).value = "TA";
+  sheet.getCell(tiAllowanceRow, 2).value = "TI allowance credit (Year 0 / PLC)";
+  scenarios.forEach((scenario, idx) => {
+    const cell = sheet.getCell(tiAllowanceRow, idx + 3);
+    const allowanceTotal = Math.max(0, (scenario.tiAllowance || 0) * Math.max(0, scenario.rsf || 0));
+    cell.value = Number((-allowanceTotal).toFixed(4));
+    applyCellFormat(cell, "currency0");
+    cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  });
+  sheet.getCell(tiAllowanceRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiAllowanceRow, 2).font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiAllowanceRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiAllowanceRow, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiAllowanceRow, 1).alignment = { horizontal: "center", vertical: "middle" };
+  sheet.getCell(tiAllowanceRow, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  row += 1;
+
+  const tiNetRow = row;
+  sheet.getCell(tiNetRow, 1).value = "TN";
+  sheet.getCell(tiNetRow, 2).value = "TI net impact (budget - allowance)";
+  scenarios.forEach((scenario, idx) => {
+    const cell = sheet.getCell(tiNetRow, idx + 3);
+    const budgetTotal = Math.max(0, scenario.tiBudget || 0);
+    const allowanceTotal = Math.max(0, (scenario.tiAllowance || 0) * Math.max(0, scenario.rsf || 0));
+    cell.value = Number((budgetTotal - allowanceTotal).toFixed(4));
+    applyCellFormat(cell, "currency0");
+    cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  });
+  sheet.getCell(tiNetRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiNetRow, 2).font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiNetRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiNetRow, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiNetRow, 1).alignment = { horizontal: "center", vertical: "middle" };
+  sheet.getCell(tiNetRow, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   row += 1;
 
   const parkingInfoRow = row;
@@ -1524,7 +1564,15 @@ function createMonthlyGrossMatrixSheet(
   scenarios.forEach((scenario, idx) => {
     const cell = sheet.getCell(totalRow, idx + 3);
     const colLetter = toColumnLetter(idx + 3);
-    cell.value = { formula: `SUM(${colLetter}${month0Row}:${colLetter}${totalRow - 1})` };
+    const firstMonthlyRow = parkingInfoRow + 1;
+    const lastMonthlyRow = totalRow - 1;
+    const monthlyRange =
+      firstMonthlyRow <= lastMonthlyRow
+        ? `,${colLetter}${firstMonthlyRow}:${colLetter}${lastMonthlyRow}`
+        : "";
+    cell.value = {
+      formula: `SUM(${colLetter}${month0Row},${colLetter}${tiNetRow}${monthlyRange})`,
+    };
     cell.font = { name: "Aptos", bold: true, color: { argb: COLORS.text } };
     applyCellFormat(cell, "currency0");
   });
