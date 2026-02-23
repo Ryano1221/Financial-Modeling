@@ -93,7 +93,7 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   parkingCostPerSpotMonthly: "Parking cost ($/spot/month, after tax)",
   parkingSalesTaxPercent: "Parking sales tax %",
   parkingCostAnnual: "Parking cost (annual)",
-  tiBudget: "TI budget",
+  tiBudget: "TI budget ($/SF)",
   tiAllowance: "TI allowance ($/SF)",
   tiOutOfPocket: "TI out of pocket",
   grossTiOutOfPocket: "Gross TI out of pocket",
@@ -166,6 +166,7 @@ export function formatMetricValue(key: string, value: unknown): string {
   if (value == null) return "";
   if (key === "notes") return formatNotesByCategory(String(value));
   if (typeof value === "number") {
+    if (key === "tiBudget") return formatCurrencyPerSF(value);
     if (key === "tiAllowance") return formatCurrencyPerSF(value);
     if (key === "discountRateUsed") return formatPercent(value, { decimals: 1 });
     if (key === "escalationPercent" || key === "opexEscalationPercent" || key === "parkingSalesTaxPercent") return formatPercent(value);

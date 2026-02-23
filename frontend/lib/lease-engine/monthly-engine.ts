@@ -424,7 +424,7 @@ export function runMonthlyEngine(
     parkingCostPerSpotMonthly,
     parkingSalesTaxPercent: parkingTaxPct,
     parkingCostAnnual: parking.reduce((a, b) => a + b, 0),
-    tiBudget: scenario.tiSchedule.budgetTotal,
+    tiBudget: rsf > 0 ? scenario.tiSchedule.budgetTotal / rsf : 0,
     tiAllowance: rsf > 0 ? scenario.tiSchedule.allowanceFromLandlord / rsf : 0,
     tiOutOfPocket: scenario.tiSchedule.outOfPocket,
     grossTiOutOfPocket: scenario.tiSchedule.grossOutOfPocket ?? scenario.tiSchedule.outOfPocket,
