@@ -120,7 +120,11 @@ describe("exportModel institutional workbook", () => {
       const primaryView = ws.views?.[0] as (ExcelJS.WorksheetView & { style?: string }) | undefined;
       expect(primaryView?.style).toBe("pageBreakPreview");
       expect(ws.pageSetup.fitToWidth).toBe(1);
-      expect(ws.pageSetup.fitToHeight).toBe(0);
+      if (ws.name === "Summary Comparison") {
+        expect(ws.pageSetup.fitToHeight).toBe(1);
+      } else {
+        expect(ws.pageSetup.fitToHeight).toBe(0);
+      }
       expect(ws.getImages().length).toBeGreaterThan(0);
     });
 
@@ -144,6 +148,7 @@ describe("exportModel institutional workbook", () => {
       if (notesMetricRow != null) {
         expect(summary.pageSetup.printArea).toBe(`A1:F${notesMetricRow}`);
       }
+      expect(summary.pageSetup.horizontalCentered).toBe(true);
 
       const images = summary.getImages();
       const maxImageTlCol = images.reduce((max, img) => {

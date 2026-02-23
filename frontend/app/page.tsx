@@ -184,6 +184,20 @@ function getDataUrlMime(dataUrl: string | null | undefined): string | null {
 
 async function normalizeLogoDataUrlForExcel(dataUrl: string | null | undefined): Promise<string | null> {
   const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    if (typeof window === "undefined") return null;
+    try {
+      const res = await fetch(raw, { credentials: "omit", cache: "no-store" });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      const mime = (blob.type || "").toLowerCase();
+      if (!mime.startsWith("image/")) return null;
+      return await blobToDataUrl(blob);
+    } catch {
+      return null;
+    }
+  }
   if (!raw.startsWith("data:image/")) return null;
   const mime = getDataUrlMime(raw);
   if (!mime) return null;

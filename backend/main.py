@@ -12,6 +12,7 @@ import traceback
 import uuid
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from urllib import error as urllib_error
@@ -312,6 +313,15 @@ def _require_supabase_user(request: Request) -> dict[str, str]:
     }
 
 
+def _try_supabase_user(request: Request) -> dict[str, str] | None:
+    try:
+        return _require_supabase_user(request)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return None
+        raise
+
+
 def _admin_headers() -> dict[str, str]:
     _supabase_configured(require_service=True)
     return {
@@ -455,17 +465,94 @@ def _storage_download_logo_bytes(object_path: str) -> tuple[bytes | None, str | 
     return body, content_type
 
 
+@lru_cache(maxsize=1)
+def _load_default_brokerage_logo_bytes() -> tuple[bytes | None, str | None]:
+    base = Path(__file__).resolve().parents[1]
+    candidates = [
+        base / "frontend" / "public" / "brand" / "logo.svg",
+        base / "frontend" / "public" / "logo.svg",
+        base / "frontend" / "public" / "logo.png",
+    ]
+    for path in candidates:
+        try:
+            if not path.exists() or not path.is_file():
+                continue
+            raw = path.read_bytes()
+            if not raw:
+                continue
+            suffix = path.suffix.lower()
+            if suffix == ".svg":
+                return raw, "image/svg+xml"
+            if suffix in {".jpg", ".jpeg"}:
+                return raw, "image/jpeg"
+            return raw, "image/png"
+        except Exception:
+            continue
+    return None, None
+
+
+def _resolve_branding(request: Request, user: dict[str, str] | None = None) -> dict[str, str | bytes | None]:
+    user = user or _try_supabase_user(request)
+    default_logo_bytes, default_logo_content_type = _load_default_brokerage_logo_bytes()
+
+    if not user:
+        resolved = {
+            "user_id": None,
+            "source": "default",
+            "brokerage_name": DEFAULT_CREMODEL_BRAND_NAME,
+            "logo_bytes": default_logo_bytes,
+            "logo_content_type": default_logo_content_type,
+            "logo_storage_path": None,
+        }
+    else:
+        settings = _load_user_settings(user["id"])
+        brokerage_name = str(settings.get("brokerage_name") or "").strip() or DEFAULT_CREMODEL_BRAND_NAME
+        logo_path = str(settings.get("brokerage_logo_url") or "").strip()
+        logo_bytes, logo_content_type = (None, None)
+        source = "default"
+        if logo_path:
+            logo_bytes, logo_content_type = _storage_download_logo_bytes(logo_path)
+            if logo_bytes:
+                source = "user_settings"
+        if not logo_bytes:
+            logo_bytes = default_logo_bytes
+            logo_content_type = default_logo_content_type
+        resolved = {
+            "user_id": user["id"],
+            "source": source,
+            "brokerage_name": brokerage_name,
+            "logo_bytes": logo_bytes,
+            "logo_content_type": logo_content_type,
+            "logo_storage_path": logo_path or None,
+        }
+
+    logging.getLogger("uvicorn.error").info(
+        "resolved_branding_source=%s user_id=%s logo_bytes_length=%s",
+        resolved.get("source"),
+        resolved.get("user_id") or "none",
+        len(resolved.get("logo_bytes") or b""),
+    )
+    return resolved
+
+
 def _user_branding_payload(user_id: str, settings: dict[str, str]) -> dict[str, str | bool | None]:
     logo_path = str(settings.get("brokerage_logo_url") or "").strip()
     logo_signed_url = _storage_signed_logo_url(logo_path) if logo_path else None
+    logo_bytes, logo_content_type = _storage_download_logo_bytes(logo_path) if logo_path else (None, None)
+    logo_b64 = base64.b64encode(logo_bytes).decode("ascii") if logo_bytes else None
+    logo_data_url = (
+        f"data:{logo_content_type or 'image/png'};base64,{logo_b64}"
+        if logo_b64
+        else logo_signed_url
+    )
     return {
         "organization_id": user_id,
         "brokerage_name": str(settings.get("brokerage_name") or "").strip() or None,
-        "has_logo": bool(logo_path),
+        "has_logo": bool(logo_path and (logo_b64 or logo_signed_url)),
         "logo_filename": logo_path.split("/")[-1] if logo_path else None,
-        "logo_content_type": None,
-        "logo_data_url": logo_signed_url,
-        "logo_asset_bytes": None,
+        "logo_content_type": logo_content_type,
+        "logo_data_url": logo_data_url,
+        "logo_asset_bytes": logo_b64,
         "logo_storage_path": logo_path or None,
         "theme_hash": hashlib.sha256(f"{user_id}:{logo_path}".encode("utf-8")).hexdigest() if logo_path else None,
         "logo_updated_at": settings.get("updated_at") or None,
@@ -3850,7 +3937,7 @@ def create_report(req: CreateReportRequest, request: Request) -> CreateReportRes
     """
     user = _require_supabase_user(request)
     user_id = user["id"]
-    settings = _load_user_settings(user_id)
+    resolved_branding = _resolve_branding(request, user)
 
     branding = req.branding.model_dump(exclude_none=True) if req.branding else {}
     # Never trust brokerage/org branding keys from client.
@@ -3874,19 +3961,18 @@ def create_report(req: CreateReportRequest, request: Request) -> CreateReportRes
     ):
         branding.pop(key, None)
 
-    brokerage_name = str(settings.get("brokerage_name") or "").strip()
-    effective_brokerage_name = brokerage_name or DEFAULT_CREMODEL_BRAND_NAME
+    effective_brokerage_name = str(resolved_branding.get("brokerage_name") or "").strip() or DEFAULT_CREMODEL_BRAND_NAME
     branding["org_id"] = user_id
     branding["brand_name"] = effective_brokerage_name
     branding["broker_name"] = effective_brokerage_name
     branding["prepared_by_company"] = effective_brokerage_name
 
-    logo_path = str(settings.get("brokerage_logo_url") or "").strip()
+    logo_bytes = resolved_branding.get("logo_bytes")
+    if isinstance(logo_bytes, (bytes, bytearray)) and logo_bytes:
+        branding["logo_asset_bytes"] = base64.b64encode(bytes(logo_bytes)).decode("ascii")
+    logo_path = str(resolved_branding.get("logo_storage_path") or "").strip()
     if logo_path:
-        logo_bytes, _content_type = _storage_download_logo_bytes(logo_path)
-        if logo_bytes:
-            branding["logo_asset_bytes"] = base64.b64encode(logo_bytes).decode("ascii")
-            branding["logo_storage_path"] = logo_path
+        branding["logo_storage_path"] = logo_path
 
     if not branding.get("theme_hash"):
         branding["theme_hash"] = _branding_theme_hash(branding)

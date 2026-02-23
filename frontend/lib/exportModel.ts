@@ -379,7 +379,21 @@ function toColumnLetter(index: number): string {
   return letters;
 }
 
-function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: boolean; lastRow: number; lastCol: number; repeatRow?: number }): void {
+function applyPrintSettings(
+  sheet: ExcelJS.Worksheet,
+  options: {
+    landscape: boolean;
+    lastRow: number;
+    lastCol: number;
+    repeatRow?: number;
+    fitToHeight?: number;
+    horizontalCentered?: boolean;
+    paperSize?: number;
+  }
+): void {
+  // Avoid persisted manual break artifacts from prior template versions.
+  (sheet as unknown as { rowBreaks?: unknown[] }).rowBreaks = [];
+  (sheet as unknown as { columnBreaks?: unknown[] }).columnBreaks = [];
   sheet.views = [{
     ...(sheet.views?.[0] ?? {}),
     showGridLines: false,
@@ -391,8 +405,9 @@ function applyPrintSettings(sheet: ExcelJS.Worksheet, options: { landscape: bool
     orientation: options.landscape ? "landscape" : "portrait",
     fitToPage: true,
     fitToWidth: 1,
-    fitToHeight: 0,
-    horizontalCentered: false,
+    fitToHeight: options.fitToHeight ?? 0,
+    horizontalCentered: options.horizontalCentered ?? false,
+    paperSize: options.paperSize ?? 1, // Letter
     margins: {
       left: 0.25,
       right: 0.25,
@@ -536,10 +551,11 @@ function applyBrandHeader(
   const brokerageLogo = resolveBrokerageLogoParsed(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
   sheet.views = [{ showGridLines: false }];
-  sheet.getRow(1).height = 22;
-  sheet.getRow(2).height = 22;
-  sheet.getRow(3).height = 26;
-  sheet.getRow(4).height = 26;
+  // Keep header compact so Summary fits one printed page.
+  sheet.getRow(1).height = 20;
+  sheet.getRow(2).height = 20;
+  sheet.getRow(3).height = 22;
+  sheet.getRow(4).height = 22;
 
   sheet.mergeCells(1, 1, 2, totalCols);
   const band = sheet.getCell(1, 1);
@@ -1093,7 +1109,15 @@ function createSummarySheet(
   const endRow = row - 1;
   sheet.views = [{ state: "frozen", xSplit: 2, ySplit: headerRow, showGridLines: false }];
   autoAdjustRowHeights(sheet, headerRow, endRow);
-  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: layoutLastCol, repeatRow: headerRow });
+  applyPrintSettings(sheet, {
+    landscape: true,
+    lastRow: endRow,
+    lastCol: layoutLastCol,
+    repeatRow: headerRow,
+    fitToHeight: 1,
+    horizontalCentered: true,
+    paperSize: 1,
+  });
 }
 
 function createEqualizedSheet(
