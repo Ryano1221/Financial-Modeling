@@ -1438,7 +1438,7 @@ def _consolidated_monthly_gross_rows(entries: list[dict[str, Any]]) -> list[dict
     )
     rows.append(
         {
-            "month_no": "PK",
+            "month_no": "PC",
             "date_text": "Parking costs (term total)",
             "values": [_fmt_currency(w.get("parking_total_value"), precision=0) for w in windows],
         }

@@ -1501,7 +1501,7 @@ function createMonthlyGrossMatrixSheet(
   row += 1;
 
   const parkingInfoRow = row;
-  sheet.getCell(parkingInfoRow, 1).value = "PK";
+  sheet.getCell(parkingInfoRow, 1).value = "PC";
   sheet.getCell(parkingInfoRow, 2).value = "Parking costs (term total)";
   scenarios.forEach((scenario, idx) => {
     const parkingTotal = scenario.monthlyRows.reduce((sum, monthlyRow) => sum + (monthlyRow.parking || 0), 0);
