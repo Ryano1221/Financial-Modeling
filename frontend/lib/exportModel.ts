@@ -1104,10 +1104,23 @@ function createEqualizedSheet(
 ): void {
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Equalized Metrics", "Equalized Metrics", usedSheetNames));
   const cols = scenarios.length + 1;
+  const scenarioStartCol = 2;
+  const scenarioColSpan = 1;
+  const scenarioCount = Math.max(1, scenarios.length);
+  const lastScenarioLeftCol = scenarioStartCol + (scenarioCount - 1) * scenarioColSpan;
+  const lastScenarioRightCol = lastScenarioLeftCol + scenarioColSpan - 1;
   sheet.getColumn(1).width = 42;
   for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 2).width = 24;
 
-  const startRow = applyBrandHeader(workbook, sheet, meta, cols, "EQUALIZED METRICS", "Shared overlap period calculations");
+  const startRow = applyBrandHeader(
+    workbook,
+    sheet,
+    meta,
+    cols,
+    "EQUALIZED METRICS",
+    "Shared overlap period calculations",
+    { clientLogoStartCol: lastScenarioLeftCol, clientLogoEndCol: lastScenarioRightCol }
+  );
   const window = computeEqualizedWindow(scenarios);
 
   sheet.mergeCells(startRow, 1, startRow, cols);
@@ -1226,11 +1239,24 @@ function createMonthlyGrossMatrixSheet(
     makeUniqueSheetName("Monthly Gross Cash Flow Matrix", "Monthly Gross Cash Flow Matrix", usedSheetNames)
   );
   const cols = scenarios.length + 2;
+  const scenarioStartCol = 3;
+  const scenarioColSpan = 1;
+  const scenarioCount = Math.max(1, scenarios.length);
+  const lastScenarioLeftCol = scenarioStartCol + (scenarioCount - 1) * scenarioColSpan;
+  const lastScenarioRightCol = lastScenarioLeftCol + scenarioColSpan - 1;
   sheet.getColumn(1).width = 10;
   sheet.getColumn(2).width = 14;
   for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 3).width = 22;
 
-  const startRow = applyBrandHeader(workbook, sheet, meta, cols, "MONTHLY GROSS CASH FLOW MATRIX", "Institutional side-by-side monthly totals");
+  const startRow = applyBrandHeader(
+    workbook,
+    sheet,
+    meta,
+    cols,
+    "MONTHLY GROSS CASH FLOW MATRIX",
+    "Institutional side-by-side monthly totals",
+    { clientLogoStartCol: lastScenarioLeftCol, clientLogoEndCol: lastScenarioRightCol }
+  );
   const headerRow = startRow;
   sheet.getRow(headerRow).height = EXCEL_THEME.rowHeights.tableHeader;
   sheet.getCell(headerRow, 1).value = "Month #";

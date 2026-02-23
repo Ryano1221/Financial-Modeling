@@ -50,7 +50,7 @@ describe("exportModel institutional workbook", () => {
   });
 
   it("builds required workbook sheets and branded headers", async () => {
-    const scenario: LeaseScenarioCanonical = {
+    const baseScenario: LeaseScenarioCanonical = {
       id: "fixture-1",
       name: "Fixture Option",
       discountRateAnnual: 0.08,
@@ -87,8 +87,19 @@ describe("exportModel institutional workbook", () => {
         "Renewal option available with long explanatory language for wrapping checks. " +
         "ROFR exists. Parking ratio applies. Operating expense exclusions include controllable costs.",
     };
+    const scenarios: LeaseScenarioCanonical[] = Array.from({ length: 4 }, (_, idx) => ({
+      ...baseScenario,
+      id: `fixture-${idx + 1}`,
+      name: `Fixture Option ${idx + 1}`,
+      partyAndPremises: {
+        ...baseScenario.partyAndPremises,
+        premisesLabel: `Main Tower ${idx + 1}`,
+        floorsOrSuite: `Suite ${100 + idx}`,
+        rentableSqFt: 5000 + idx * 250,
+      },
+    }));
 
-    const buffer = await buildBrokerWorkbook([scenario], 0.08, {
+    const buffer = await buildBrokerWorkbook(scenarios, 0.08, {
       brokerageName: "Anchor Capital",
       clientName: "Client A",
       reportDate: "2026-02-22",
@@ -125,13 +136,13 @@ describe("exportModel institutional workbook", () => {
     const premisesRow = findRowByFirstCell(summary, "PREMISES");
     expect(premisesRow).not.toBeNull();
     if (summary && metricRow != null) {
-      const scenarioHeaderCount = [summary.getCell(metricRow, 3).value].filter(Boolean).length;
-      expect(scenarioHeaderCount).toBe(1);
-      expect(summary.getCell(metricRow, 4).value).toBeNull();
+      const headerVals = [3, 4, 5, 6].map((col) => summary.getCell(metricRow, col).value);
+      expect(headerVals.filter(Boolean).length).toBe(4);
+      expect(summary.getCell(metricRow, 7).value).toBeNull();
       const notesMetricRow = findRowByCellValue(summary, 1, "Notes");
       expect(notesMetricRow).not.toBeNull();
       if (notesMetricRow != null) {
-        expect(summary.pageSetup.printArea).toBe(`A1:C${notesMetricRow}`);
+        expect(summary.pageSetup.printArea).toBe(`A1:F${notesMetricRow}`);
       }
 
       const images = summary.getImages();
@@ -140,9 +151,18 @@ describe("exportModel institutional workbook", () => {
         const tlCol = range?.tl?.col ?? 0;
         return Math.max(max, tlCol);
       }, 0);
-      // last scenario block starts at column C (zero-index 2)
-      expect(maxImageTlCol).toBeGreaterThanOrEqual(2);
-      expect(maxImageTlCol).toBeLessThan(3);
+      // last scenario block starts at column F (zero-index 5) for 4 scenarios.
+      expect(Math.floor(maxImageTlCol)).toBe(5);
+    }
+
+    const equalized = workbook.getWorksheet("Equalized Metrics");
+    if (equalized) {
+      const maxImageTlCol = equalized.getImages().reduce((max, img) => {
+        const range = img.range as unknown as { tl?: { col?: number } };
+        return Math.max(max, range?.tl?.col ?? 0);
+      }, 0);
+      // scenario start col=2, N=4 => last_left_col=5 => zero-index 4
+      expect(Math.floor(maxImageTlCol)).toBe(4);
     }
 
     const monthly = workbook.getWorksheet("Monthly Gross Cash Flow Matrix");
@@ -162,6 +182,12 @@ describe("exportModel institutional workbook", () => {
         expect(formulaCell).toHaveProperty("formula");
         expect(formulaCell.formula).toMatch(/^SUM\([A-Z]+\d+:[A-Z]+\d+\)$/);
       }
+      const maxImageTlCol = monthly.getImages().reduce((max, img) => {
+        const range = img.range as unknown as { tl?: { col?: number } };
+        return Math.max(max, range?.tl?.col ?? 0);
+      }, 0);
+      // scenario start col=3, N=4 => last_left_col=6 => zero-index 5
+      expect(Math.floor(maxImageTlCol)).toBe(5);
     }
 
     const notesRow = findRowByCellValue(summary, 1, "Notes");

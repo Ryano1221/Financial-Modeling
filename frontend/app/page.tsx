@@ -1051,12 +1051,6 @@ export default function Home() {
         };
       });
       const meta = buildReportMeta();
-      const hasSavedBrokerageBranding = Boolean(
-        authSession && (organizationBranding?.has_logo || brokerageName.trim())
-      );
-      const resolvedBrokerageName = hasSavedBrokerageBranding
-        ? (brokerageName.trim() || CRE_DEFAULT_BROKERAGE_NAME)
-        : CRE_DEFAULT_BROKERAGE_NAME;
       const resolvedPreparedBy = meta.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
       const headers = getAuthHeaders();
       try {
@@ -1066,14 +1060,8 @@ export default function Home() {
           body: JSON.stringify({
             scenarios: scenariosForDeck,
             branding: {
-              org_id: organizationBranding?.organization_id || undefined,
-              theme_hash: organizationBranding?.theme_hash || undefined,
-              logo_asset_bytes: organizationBranding?.logo_asset_bytes || undefined,
-              brand_name: resolvedBrokerageName,
               client_name: meta.prepared_for || "Client",
-              broker_name: resolvedPreparedBy,
               prepared_by_name: resolvedPreparedBy,
-              prepared_by_company: resolvedBrokerageName,
               date: meta.report_date || formatDateMmDdYyyy(new Date()),
               market: meta.market || "",
               submarket: meta.submarket || "",
@@ -1136,7 +1124,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, brokerageName, defaultPreparedByFromAuth, equalizedForExport, authSession]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, defaultPreparedByFromAuth, equalizedForExport, authSession]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
