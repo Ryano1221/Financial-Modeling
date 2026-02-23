@@ -1277,13 +1277,16 @@ def _scenario_pre_commencement_amount(entry: dict[str, Any]) -> float:
 
 def _scenario_monthly_window(entry: dict[str, Any]) -> dict[str, Any]:
     monthly_rows = _scenario_monthly_cashflow_rows(entry)
+    result = entry.get("result") if isinstance(entry.get("result"), dict) else {}
     by_month_start: dict[date, float] = {}
+    parking_total = 0.0
     for row in monthly_rows:
         m_start = _parse_date(row.get("month_start"))
         if m_start is None:
             continue
         key = date(m_start.year, m_start.month, 1)
         by_month_start[key] = _safe_float(row.get("gross"), 0.0)
+        parking_total += _safe_float(row.get("parking"), 0.0)
 
     scenario = entry["scenario"]
     commencement = _parse_date(scenario.get("commencement"))
@@ -1294,11 +1297,21 @@ def _scenario_monthly_window(entry: dict[str, Any]) -> dict[str, Any]:
         start_month = start_month or min(by_month_start)
         end_month = end_month or max(by_month_start)
 
+    ti_year0 = max(
+        0.0,
+        _safe_float(result.get("ti_value_total"), 0.0),
+        _safe_float(result.get("ti_at_0"), 0.0),
+        _safe_float(scenario.get("ti_budget_total"), 0.0),
+        _safe_float(scenario.get("ti_allowance_psf"), 0.0) * max(0.0, _safe_float(scenario.get("rsf"), 0.0)),
+    )
+
     return {
         "start_month": start_month,
         "end_month": end_month,
         "gross_by_month": by_month_start,
         "month0_value": _scenario_pre_commencement_amount(entry),
+        "ti_year0_value": ti_year0,
+        "parking_total_value": parking_total,
     }
 
 
@@ -1324,6 +1337,21 @@ def _consolidated_monthly_gross_rows(entries: list[dict[str, Any]]) -> list[dict
             "values": [_fmt_currency(w.get("month0_value"), precision=0) for w in windows],
         }
     ]
+
+    rows.append(
+        {
+            "month_no": "TI",
+            "date_text": "Tenant improvements (Year 0 / PLC)",
+            "values": [_fmt_currency(w.get("ti_year0_value"), precision=0) for w in windows],
+        }
+    )
+    rows.append(
+        {
+            "month_no": "PK",
+            "date_text": "Parking costs (term total)",
+            "values": [_fmt_currency(w.get("parking_total_value"), precision=0) for w in windows],
+        }
+    )
 
     for idx, month_start in enumerate(month_starts, start=1):
         values: list[str] = []

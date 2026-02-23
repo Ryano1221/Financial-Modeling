@@ -1435,6 +1435,43 @@ function createMonthlyGrossMatrixSheet(
   });
   row += 1;
 
+  const tiInfoRow = row;
+  sheet.getCell(tiInfoRow, 1).value = "TI";
+  sheet.getCell(tiInfoRow, 2).value = "Tenant improvements (Year 0 / PLC)";
+  scenarios.forEach((scenario, idx) => {
+    const cell = sheet.getCell(tiInfoRow, idx + 3);
+    cell.value = formatMetricValue("tiBudget", scenario.tiBudget);
+    cell.alignment = { horizontal: "right", vertical: "middle" };
+    cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  });
+  sheet.getCell(tiInfoRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiInfoRow, 2).font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(tiInfoRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiInfoRow, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(tiInfoRow, 1).alignment = { horizontal: "center", vertical: "middle" };
+  sheet.getCell(tiInfoRow, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  row += 1;
+
+  const parkingInfoRow = row;
+  sheet.getCell(parkingInfoRow, 1).value = "PK";
+  sheet.getCell(parkingInfoRow, 2).value = "Parking costs (term total)";
+  scenarios.forEach((scenario, idx) => {
+    const parkingTotal = scenario.monthlyRows.reduce((sum, monthlyRow) => sum + (monthlyRow.parking || 0), 0);
+    const cell = sheet.getCell(parkingInfoRow, idx + 3);
+    cell.value = formatCurrency(parkingTotal);
+    cell.alignment = { horizontal: "right", vertical: "middle" };
+    cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  });
+  sheet.getCell(parkingInfoRow, 1).font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(parkingInfoRow, 2).font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+  sheet.getCell(parkingInfoRow, 1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(parkingInfoRow, 2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getCell(parkingInfoRow, 1).alignment = { horizontal: "center", vertical: "middle" };
+  sheet.getCell(parkingInfoRow, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  row += 1;
+
   for (let monthOffset = 0; monthOffset < months; monthOffset++) {
     const date = addMonths(earliest, monthOffset);
     const key = monthKey(toIsoDate(date));
