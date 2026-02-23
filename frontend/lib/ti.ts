@@ -41,27 +41,25 @@ export function hasValidRsfForTi(raw: unknown): boolean {
 }
 
 export function effectiveTiBudgetTotal(s: TiLike): number {
-  const source = normalizeTiSourceOfTruth(s.ti_source_of_truth, "psf");
   const total = toNonNegativeOrNull(s.ti_budget_total);
   const psf = toNonNegativeOrNull(s.ti_allowance_psf);
   const rsf = toFiniteNumber(s.rsf);
   const hasRsf = rsf != null && rsf > 0;
 
-  if (source === "total" && total != null) return round0(total);
+  if (total != null && total > 0) return round0(total);
   if (psf != null && hasRsf) return round0(psf * (rsf as number));
   if (total != null) return round0(total);
   return 0;
 }
 
 export function effectiveTiAllowancePsf(s: TiLike): number {
-  const source = normalizeTiSourceOfTruth(s.ti_source_of_truth, "psf");
   const total = toNonNegativeOrNull(s.ti_budget_total);
   const psf = toNonNegativeOrNull(s.ti_allowance_psf);
   const rsf = toFiniteNumber(s.rsf);
   const hasRsf = rsf != null && rsf > 0;
 
-  if (source === "psf" && psf != null) return round2(psf);
-  if (total != null && hasRsf) return round2(total / (rsf as number));
+  if (psf != null && psf > 0) return round2(psf);
+  if (total != null && total > 0 && hasRsf) return round2(total / (rsf as number));
   if (psf != null) return round2(psf);
   return 0;
 }
@@ -76,26 +74,17 @@ export function syncTiFields<T extends TiLike>(scenario: T): T & {
   const hasRsf = rsf != null && rsf > 0;
   let allowance = toNonNegativeOrNull(scenario.ti_allowance_psf);
   let total = toNonNegativeOrNull(scenario.ti_budget_total);
+  const hasExplicitTotal = total != null && total > 0;
+  const hasExplicitAllowance = allowance != null && allowance > 0;
 
-  if (source === "total") {
-    if (total == null) {
-      total = allowance != null && hasRsf ? round0(allowance * (rsf as number)) : 0;
-    }
-    if (hasRsf) {
-      allowance = round2(total / (rsf as number));
-    } else if (allowance == null) {
-      allowance = 0;
-    }
-  } else {
-    if (allowance == null) {
-      allowance = total != null && hasRsf ? round2(total / (rsf as number)) : 0;
-    }
-    if (hasRsf) {
-      total = round0(allowance * (rsf as number));
-    } else if (total == null) {
-      total = 0;
-    }
+  if (!hasExplicitTotal && hasExplicitAllowance && hasRsf) {
+    total = round0((allowance as number) * (rsf as number));
+  } else if (!hasExplicitAllowance && hasExplicitTotal && hasRsf) {
+    allowance = round2((total as number) / (rsf as number));
   }
+
+  if (allowance == null) allowance = 0;
+  if (total == null) total = 0;
 
   return {
     ...scenario,

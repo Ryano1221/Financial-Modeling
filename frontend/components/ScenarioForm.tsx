@@ -7,8 +7,7 @@ import {
   effectiveTiAllowancePsf,
   effectiveTiBudgetTotal,
   hasValidRsfForTi,
-  normalizeTiSourceOfTruth,
-  syncTiFields,
+  round0,
 } from "@/lib/ti";
 
 interface ScenarioFormProps {
@@ -37,7 +36,7 @@ const defaultScenarioInput: ScenarioInput = {
   abatement_periods: [{ start_month: 0, end_month: 2, abatement_type: "base" }],
   parking_abatement_periods: [],
   ti_allowance_psf: 50,
-  ti_budget_total: 500000,
+  ti_budget_total: undefined,
   ti_source_of_truth: "psf",
   opex_mode: "nnn",
   base_opex_psf_yr: 10,
@@ -413,13 +412,25 @@ export function ScenarioForm({
       next = applyParkingAbatementConsistency(next);
     }
     if (key === "ti_allowance_psf") {
-      next.ti_source_of_truth = "psf";
+      const isBudgetLocked = next.ti_source_of_truth === "total";
+      if (!isBudgetLocked) {
+        const rsf = Math.max(0, Number(next.rsf) || 0);
+        next.ti_budget_total = rsf > 0 ? round0(Math.max(0, Number(next.ti_allowance_psf) || 0) * rsf) : 0;
+        next.ti_source_of_truth = "psf";
+      }
     }
     if (key === "ti_budget_total") {
-      next.ti_source_of_truth = "total";
+      if (Number(next.ti_budget_total ?? 0) > 0) {
+        next.ti_source_of_truth = "total";
+      } else {
+        const rsf = Math.max(0, Number(next.rsf) || 0);
+        next.ti_budget_total = rsf > 0 ? round0(Math.max(0, Number(next.ti_allowance_psf) || 0) * rsf) : 0;
+        next.ti_source_of_truth = "psf";
+      }
     }
-    if (key === "ti_source_of_truth" || key === "ti_allowance_psf" || key === "ti_budget_total" || key === "rsf") {
-      next = syncTiFields(next);
+    if (key === "rsf" && next.ti_source_of_truth !== "total") {
+      const rsf = Math.max(0, Number(next.rsf) || 0);
+      next.ti_budget_total = rsf > 0 ? round0(Math.max(0, Number(next.ti_allowance_psf) || 0) * rsf) : 0;
     }
     if (key === "building_name" || key === "suite" || key === "floor") {
       const label = buildPremisesName(next.building_name, next.suite, next.floor);
@@ -580,7 +591,6 @@ export function ScenarioForm({
 
   const inputClass = "input-premium mt-1 block w-full";
   const btnSecondary = "btn-premium btn-premium-secondary w-full sm:w-auto";
-  const tiSourceOfTruth = normalizeTiSourceOfTruth(scenario?.ti_source_of_truth, "psf");
   const tiBudgetTotal = scenario ? effectiveTiBudgetTotal(scenario) : 0;
   const tiAllowancePsf = scenario ? effectiveTiAllowancePsf(scenario) : 0;
   const canDeriveTi = scenario ? hasValidRsfForTi(scenario.rsf) : false;
@@ -833,70 +843,51 @@ export function ScenarioForm({
             </div>
           )}
         </div>
-        <label className="block">
-          <span className="text-sm text-slate-300">TI allowance ($/SF)</span>
-          <input
-            type="number"
-            min={0}
-            step={0.01}
-            value={scenario.ti_allowance_psf ?? tiAllowancePsf}
-            onChange={(e) => {
-              const value = Number(e.target.value);
-              update("ti_allowance_psf", Number.isFinite(value) ? Math.max(0, value) : 0);
-            }}
-            className={inputClass}
-          />
-          <p className="mt-1 text-xs text-slate-400">
-            {tiSourceOfTruth === "psf"
-              ? "Locked to $/SF (source of truth)."
-              : canDeriveTi
-                ? `Derived from total: ${tiAllowancePsf.toFixed(2)}`
-                : "Derived from total: —"}
+        <div className="block rounded-xl border border-slate-300/20 bg-slate-900/30 p-3">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mb-2">Tenant improvement allowance</p>
+          <label className="block">
+            <span className="text-sm text-slate-300">TI allowance ($/SF)</span>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={scenario.ti_allowance_psf ?? tiAllowancePsf}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                update("ti_allowance_psf", Number.isFinite(value) ? Math.max(0, value) : 0);
+              }}
+              className={inputClass}
+            />
+          </label>
+          <p className="mt-2 text-xs text-slate-400">
+            Used directly for TI allowance in comparisons and exports.
           </p>
-        </label>
-        <label className="block">
-          <span className="text-sm text-slate-300">TI budget (total $)</span>
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={scenario.ti_budget_total ?? tiBudgetTotal}
-            onChange={(e) => {
-              const value = Number(e.target.value);
-              update("ti_budget_total", Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
-            }}
-            className={inputClass}
-          />
-          <p className="mt-1 text-xs text-slate-400">
-            {tiSourceOfTruth === "total"
-              ? "Locked to total $ (source of truth)."
-              : canDeriveTi
-                ? `Derived from $/SF: ${Math.round(tiBudgetTotal).toLocaleString("en-US")}`
-                : "Derived from $/SF: —"}
-          </p>
-        </label>
-        <div className="block sm:col-span-2 xl:col-span-3">
-          <span className="text-sm text-slate-300">Source of truth</span>
-          <div className="mt-1 inline-flex border border-slate-300/30 bg-slate-950/60">
-            <button
-              type="button"
-              onClick={() => update("ti_source_of_truth", "psf")}
-              className={`px-3 py-2 text-xs uppercase tracking-[0.12em] ${tiSourceOfTruth === "psf" ? "bg-white text-black" : "text-slate-200"}`}
-            >
-              Lock $/SF
-            </button>
-            <button
-              type="button"
-              onClick={() => update("ti_source_of_truth", "total")}
-              className={`px-3 py-2 text-xs uppercase tracking-[0.12em] border-l border-slate-300/30 ${tiSourceOfTruth === "total" ? "bg-white text-black" : "text-slate-200"}`}
-            >
-              Lock total $
-            </button>
-          </div>
-          {!canDeriveTi && (
-            <p className="mt-2 text-xs text-amber-200">Enter RSF to calculate TI.</p>
-          )}
         </div>
+        <div className="block rounded-xl border border-slate-300/20 bg-slate-900/30 p-3">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mb-2">Tenant improvement budget</p>
+          <label className="block">
+            <span className="text-sm text-slate-300">TI budget (total $)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={scenario.ti_budget_total ?? tiBudgetTotal}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                update("ti_budget_total", Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
+              }}
+              className={inputClass}
+            />
+          </label>
+          <p className="mt-2 text-xs text-slate-400">
+            Defaults from allowance only when no explicit TI budget is entered.
+          </p>
+        </div>
+        {!canDeriveTi && (
+          <div className="block sm:col-span-2 xl:col-span-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            Enter RSF to calculate default TI budget from allowance.
+          </div>
+        )}
         <label className="block">
           <span className="text-sm text-slate-300">Opex mode</span>
           <select
