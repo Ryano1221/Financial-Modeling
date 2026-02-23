@@ -139,7 +139,12 @@ describe("exportModel institutional workbook", () => {
       const primaryView = ws.views?.[0] as (ExcelJS.WorksheetView & { style?: string }) | undefined;
       expect(primaryView?.style).toBe("pageBreakPreview");
       expect(ws.pageSetup.fitToWidth).toBe(1);
-      if (ws.name === "Summary Comparison" || ws.name === "Cover") {
+      if (
+        ws.name === "Summary Comparison"
+        || ws.name === "Cover"
+        || ws.name === "Monthly Gross Cash Flow Matrix"
+        || ws.name.startsWith("Appendix")
+      ) {
         expect(ws.pageSetup.fitToHeight).toBe(1);
       } else {
         expect(ws.pageSetup.fitToHeight).toBe(0);

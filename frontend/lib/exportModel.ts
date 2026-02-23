@@ -1480,7 +1480,13 @@ function createMonthlyGrossMatrixSheet(
   sheet.getColumn(2).width = 14;
   for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 3).width = 22;
   autoAdjustRowHeights(sheet, headerRow, endRow);
-  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
+  applyPrintSettings(sheet, {
+    landscape: false,
+    lastRow: endRow,
+    lastCol: cols,
+    repeatRow: headerRow,
+    fitToHeight: 1,
+  });
 }
 
 function createAppendixSheet(
@@ -1590,7 +1596,6 @@ function createAppendixSheet(
   }
 
   const endRow = totalsRow;
-  const appendixLandscape = widths.reduce((sum, w) => sum + w, 0) > 95;
   for (let r = headerRow; r <= endRow; r++) {
     for (let c = 1; c <= cols; c++) {
       const cell = sheet.getCell(r, c);
@@ -1599,7 +1604,13 @@ function createAppendixSheet(
   }
   widths.forEach((w, idx) => { sheet.getColumn(idx + 1).width = w; });
   autoAdjustRowHeights(sheet, startRow, endRow);
-  applyPrintSettings(sheet, { landscape: appendixLandscape, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
+  applyPrintSettings(sheet, {
+    landscape: false,
+    lastRow: endRow,
+    lastCol: cols,
+    repeatRow: headerRow,
+    fitToHeight: 1,
+  });
 }
 
 function rowBorderFill(sheet: ExcelJS.Worksheet, row: number, startCol: number, endCol: number): void {
