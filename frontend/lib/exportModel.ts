@@ -368,6 +368,33 @@ function autoAdjustRowHeights(sheet: ExcelJS.Worksheet, startRow: number, endRow
   }
 }
 
+function columnWidthToPixels(width?: number): number {
+  const safeWidth = Number.isFinite(width) ? Number(width) : 8.43;
+  return Math.max(20, Math.floor(safeWidth * 7 + 5));
+}
+
+function rowHeightToPixels(height?: number, fallback = 20): number {
+  const safeHeight = Number.isFinite(height) ? Number(height) : fallback;
+  return Math.max(16, Math.round((safeHeight * 96) / 72));
+}
+
+function sheetColumnRangePixels(sheet: ExcelJS.Worksheet, startCol: number, endCol: number): number {
+  let total = 0;
+  for (let c = startCol; c <= endCol; c++) {
+    total += columnWidthToPixels(sheet.getColumn(c).width);
+  }
+  return Math.max(20, total);
+}
+
+function sheetRowRangePixels(sheet: ExcelJS.Worksheet, startRow: number, endRow: number): number {
+  let total = 0;
+  for (let r = startRow; r <= endRow; r++) {
+    const row = sheet.getRow(r);
+    total += rowHeightToPixels(row.height);
+  }
+  return Math.max(20, total);
+}
+
 function toColumnLetter(index: number): string {
   let n = index;
   let letters = "";
@@ -530,12 +557,15 @@ function placeImageInBox(
   const offsetX = alignX === "right" ? freeX : alignX === "center" ? Math.floor(freeX / 2) : 0;
   const offsetY = alignY === "bottom" ? freeY : alignY === "middle" ? Math.floor(freeY / 2) : 0;
   const imageId = workbook.addImage({ base64: parsed.dataUrl, extension: parsed.extension });
+  const anchorColWidthPx = columnWidthToPixels(sheet.getColumn(box.col).width);
+  const anchorRowHeightPx = rowHeightToPixels(sheet.getRow(box.row).height);
   sheet.addImage(imageId, {
     tl: {
-      col: box.col - 1 + ((padding + offsetX) / 64),
-      row: box.row - 1 + ((padding + offsetY) / 20),
+      col: box.col - 1 + ((padding + offsetX) / anchorColWidthPx),
+      row: box.row - 1 + ((padding + offsetY) / anchorRowHeightPx),
     },
     ext: { width: Math.max(20, targetWidth), height: Math.max(20, targetHeight) },
+    editAs: "oneCell",
   });
   return true;
 }
@@ -593,13 +623,18 @@ function applyBrandHeader(
   );
   const centerStartCol = leftEndCol + 1;
   const centerEndCol = Math.max(centerStartCol, rightStartCol - 1);
+  const logoHeaderHeightPx = sheetRowRangePixels(sheet, 3, 4);
+  const brokerageBoxWidthPx = sheetColumnRangePixels(sheet, 1, leftEndCol);
+  const clientBoxWidthPx = sheetColumnRangePixels(sheet, rightStartCol, rightEndCol);
 
   const brokeragePlaced = placeImageInBox(workbook, sheet, brokerageLogo, {
     col: 1,
     row: 3,
-    widthPx: Math.max(120, leftEndCol * 64),
-    heightPx: LOGO_BOX_H_PX + 18,
+    widthPx: brokerageBoxWidthPx,
+    heightPx: logoHeaderHeightPx,
     paddingPx: PADDING_PX,
+    alignX: "left",
+    alignY: "middle",
   });
   if (!brokeragePlaced) {
     sheet.mergeCells(3, 1, 4, leftEndCol);
@@ -617,8 +652,8 @@ function applyBrandHeader(
     placeImageInBox(workbook, sheet, clientLogo, {
       col: rightStartCol,
       row: 3,
-      widthPx: Math.max(80, (rightEndCol - rightStartCol + 1) * 64),
-      heightPx: LOGO_BOX_H_PX + 18,
+      widthPx: clientBoxWidthPx,
+      heightPx: logoHeaderHeightPx,
       paddingPx: PADDING_PX,
       alignX: "right",
       alignY: "middle",
@@ -829,6 +864,16 @@ function createCoverSheet(
 
   const brokerageLogo = resolveBrokerageLogoParsed(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
+  const equalizedWindow = computeEqualizedWindow(scenarios);
+  const rankedScenarios = [...scenarios].sort((a, b) => a.npvCost - b.npvCost);
+  const bestScenario = rankedScenarios[0];
+  const bestEqualized =
+    bestScenario && equalizedWindow.start && equalizedWindow.end && equalizedWindow.end.getTime() >= equalizedWindow.start.getTime()
+      ? computeEqualizedMetrics(bestScenario, equalizedWindow.start, equalizedWindow.end)
+      : null;
+
+  const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  const usd2 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   sheet.mergeCells(6, 1, 10, 7);
   const brokerageBox = sheet.getCell(6, 1);
@@ -918,7 +963,73 @@ function createCoverSheet(
     metaRow += 2;
   }
 
-  const scenarioBandRow = 17;
+  const metricsBandRow = 16;
+  sheet.mergeCells(metricsBandRow, 1, metricsBandRow, COVER_WIDTH_COLS);
+  const metricsBand = sheet.getCell(metricsBandRow, 1);
+  metricsBand.value = "KEY FINANCIAL METRICS";
+  metricsBand.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  metricsBand.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
+  metricsBand.alignment = { horizontal: "left", vertical: "middle" };
+
+  const metricCards = [
+    {
+      label: "Equalized Total Obligation",
+      value: bestEqualized ? usd0.format(bestEqualized.totalCost) : "—",
+    },
+    {
+      label: "Average Price / SF",
+      value: bestScenario ? `${usd2.format(bestScenario.avgCostPsfYear)} / SF` : "—",
+    },
+    {
+      label: "Equalized Price / SF",
+      value: bestEqualized ? `${usd2.format(bestEqualized.avgCostPsfYear)} / SF` : "—",
+    },
+  ];
+  const cardTopRow = metricsBandRow + 1;
+  const cardBottomRow = metricsBandRow + 2;
+  const cardSpan = 4;
+  metricCards.forEach((metric, idx) => {
+    const cardStartCol = 1 + idx * cardSpan;
+    const cardEndCol = cardStartCol + cardSpan - 1;
+    sheet.mergeCells(cardTopRow, cardStartCol, cardTopRow, cardEndCol);
+    sheet.mergeCells(cardBottomRow, cardStartCol, cardBottomRow, cardEndCol);
+    const labelCell = sheet.getCell(cardTopRow, cardStartCol);
+    labelCell.value = metric.label.toUpperCase();
+    labelCell.font = {
+      name: EXCEL_THEME.font.family,
+      bold: true,
+      size: EXCEL_THEME.font.labelSize,
+      color: { argb: COLORS.secondaryText },
+    };
+    labelCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+
+    const valueCell = sheet.getCell(cardBottomRow, cardStartCol);
+    valueCell.value = metric.value;
+    valueCell.font = {
+      name: EXCEL_THEME.font.family,
+      bold: true,
+      size: EXCEL_THEME.font.bodySize,
+      color: { argb: COLORS.text },
+    };
+    valueCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    valueCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+
+    for (let r = cardTopRow; r <= cardBottomRow; r++) {
+      for (let c = cardStartCol; c <= cardEndCol; c++) {
+        const cell = sheet.getCell(r, c);
+        cell.border = {
+          ...(cell.border ?? {}),
+          top: r === cardTopRow ? { style: "thin", color: { argb: COLORS.border } } : undefined,
+          bottom: r === cardBottomRow ? { style: "thin", color: { argb: COLORS.border } } : undefined,
+          left: c === cardStartCol ? { style: "thin", color: { argb: COLORS.border } } : undefined,
+          right: c === cardEndCol ? { style: "thin", color: { argb: COLORS.border } } : undefined,
+        };
+      }
+    }
+  });
+
+  const scenarioBandRow = 20;
   sheet.mergeCells(scenarioBandRow, 1, scenarioBandRow, COVER_WIDTH_COLS);
   const scenarioBand = sheet.getCell(scenarioBandRow, 1);
   scenarioBand.value = "SCENARIO SNAPSHOT";
@@ -926,7 +1037,7 @@ function createCoverSheet(
   scenarioBand.font = { name: EXCEL_THEME.font.family, bold: true, size: EXCEL_THEME.font.sectionSize, color: { argb: COLORS.white } };
   scenarioBand.alignment = { horizontal: "left", vertical: "middle" };
 
-  const headerRow = 18;
+  const headerRow = 21;
   sheet.getCell(headerRow, 1).value = "Scenario";
   sheet.getCell(headerRow, 9).value = "NPV Cost";
   sheet.getCell(headerRow, 11).value = "Total Obligation";
@@ -940,10 +1051,10 @@ function createCoverSheet(
   }
   drawHorizontalSeparator(sheet, headerRow, 1, COVER_WIDTH_COLS);
 
-  const ranked = [...scenarios].sort((a, b) => a.npvCost - b.npvCost).slice(0, 8);
+  const ranked = rankedScenarios.slice(0, 8);
   const minRows = 6;
   const rowsToRender = Math.max(minRows, ranked.length);
-  let row = 19;
+  let row = headerRow + 1;
   for (let i = 0; i < rowsToRender; i++) {
     const scenario = ranked[i];
     const fill = i % 2 === 0 ? COLORS.white : COLORS.lightGray;
@@ -977,10 +1088,10 @@ function createCoverSheet(
     row += 1;
   }
 
-  const coverEndRow = row;
+  const coverEndRow = row - 1;
   drawHorizontalSeparator(sheet, 5, 1, COVER_WIDTH_COLS);
   for (let rowIdx = 6; rowIdx <= coverEndRow; rowIdx++) {
-    sheet.getRow(rowIdx).height = rowIdx >= 19 ? 24 : EXCEL_THEME.rowHeights.coverMeta;
+    sheet.getRow(rowIdx).height = rowIdx >= headerRow + 1 ? 24 : EXCEL_THEME.rowHeights.coverMeta;
   }
   autoAdjustRowHeights(sheet, 1, coverEndRow);
   applyPrintSettings(sheet, { landscape: true, lastRow: coverEndRow, lastCol: COVER_WIDTH_COLS });
@@ -1009,7 +1120,7 @@ function createSummarySheet(
     sheet.getColumn(scenarioStartCol + i).width = 24;
   }
 
-  const startRow = applyBrandHeader(
+  applyBrandHeader(
     workbook,
     sheet,
     meta,
@@ -1126,7 +1237,6 @@ function createSummarySheet(
     row += 1;
   }
   const endRow = row - 1;
-  sheet.views = [{ state: "frozen", xSplit: 2, ySplit: headerRow, showGridLines: false }];
   autoAdjustRowHeights(sheet, headerRow, endRow);
   applyPrintSettings(sheet, {
     landscape: true,
@@ -1266,8 +1376,8 @@ function createEqualizedSheet(
   });
 
   const endRow = row - 1;
-  sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
-  autoSizeColumns(sheet, 12, 38);
+  sheet.getColumn(1).width = 42;
+  for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 2).width = 24;
   autoAdjustRowHeights(sheet, startRow, endRow);
   applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
 }
@@ -1401,8 +1511,9 @@ function createMonthlyGrossMatrixSheet(
   }
 
   const endRow = totalRow;
-  sheet.views = [{ state: "frozen", xSplit: 2, ySplit: headerRow, showGridLines: false }];
-  autoSizeColumns(sheet, 10, 34);
+  sheet.getColumn(1).width = 10;
+  sheet.getColumn(2).width = 14;
+  for (let i = 0; i < scenarios.length; i++) sheet.getColumn(i + 3).width = 22;
   autoAdjustRowHeights(sheet, headerRow, endRow);
   applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
 }
@@ -1521,8 +1632,7 @@ function createAppendixSheet(
       cell.font = { ...(cell.font ?? {}), name: EXCEL_THEME.font.family };
     }
   }
-  sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
-  autoSizeColumns(sheet, 10, 28);
+  widths.forEach((w, idx) => { sheet.getColumn(idx + 1).width = w; });
   autoAdjustRowHeights(sheet, startRow, endRow);
   applyPrintSettings(sheet, { landscape: appendixLandscape, lastRow: endRow, lastCol: cols, repeatRow: headerRow });
 }
@@ -1540,15 +1650,13 @@ function createNotesSheet(
   meta: WorkbookBrandingMeta
 ): void {
   const sheet = workbook.addWorksheet(makeUniqueSheetName("Notes", "Notes", usedSheetNames));
-  const totalCols = 14;
+  const totalCols = 8;
   const scenarioCol = 1;
   const notesCol = 2;
 
   sheet.getColumn(scenarioCol).width = 36;
   sheet.getColumn(notesCol).width = 96;
-  for (let c = 3; c <= totalCols; c++) {
-    sheet.getColumn(c).width = 4;
-  }
+  for (let c = 3; c <= totalCols; c++) sheet.getColumn(c).width = 6;
 
   const startRow = applyBrandHeader(workbook, sheet, meta, totalCols, "NOTES", "Scenario notes and clause highlights");
   void startRow;
@@ -1601,7 +1709,6 @@ function createNotesSheet(
   }
 
   const endRow = row - 1;
-  sheet.views = [{ state: "frozen", xSplit: 1, ySplit: headerRow, showGridLines: false }];
   autoAdjustRowHeights(sheet, startRow, endRow);
   applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: totalCols, repeatRow: headerRow });
 }

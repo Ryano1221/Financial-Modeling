@@ -132,6 +132,13 @@ describe("exportModel institutional workbook", () => {
     expect((cover?.getCell("A1").value as string) ?? "").toContain("THE COMMERCIAL REAL ESTATE MODEL");
     const snapshotRow = findRowByFirstCell(cover, "SCENARIO SNAPSHOT");
     expect(snapshotRow).not.toBeNull();
+    const keyMetricsRow = findRowByFirstCell(cover, "KEY FINANCIAL METRICS");
+    expect(keyMetricsRow).not.toBeNull();
+    if (cover && keyMetricsRow != null) {
+      expect(cover.getCell(keyMetricsRow + 1, 1).value).toBe("EQUALIZED TOTAL OBLIGATION");
+      expect(cover.getCell(keyMetricsRow + 1, 5).value).toBe("AVERAGE PRICE / SF");
+      expect(cover.getCell(keyMetricsRow + 1, 9).value).toBe("EQUALIZED PRICE / SF");
+    }
 
     const summary = workbook.getWorksheet("Summary Comparison");
     const metricRow = findRowByFirstCell(summary, "Metric");
