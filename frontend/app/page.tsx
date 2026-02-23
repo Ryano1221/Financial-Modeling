@@ -1265,7 +1265,11 @@ export default function Home() {
               premises_name: res.metrics.premises_name,
               scenario_name: s.name,
             });
-            return { response: res, scenarioName };
+            return {
+              response: res,
+              scenarioName,
+              documentTypeDetected: (s.document_type_detected ?? "").trim() || "unknown",
+            };
           });
           buffer = await buildBrokerWorkbookFromCanonicalResponses(items, excelMeta);
         } else {

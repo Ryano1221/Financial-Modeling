@@ -753,10 +753,17 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
   });
 }
 
-function buildScenariosFromCanonicalResponses(items: { response: CanonicalComputeResponse; scenarioName: string }[]): WorkbookScenario[] {
+function buildScenariosFromCanonicalResponses(
+  items: { response: CanonicalComputeResponse; scenarioName: string; documentTypeDetected?: string }[]
+): WorkbookScenario[] {
   return items.map((item, idx) => {
     const c = item.response.normalized_canonical_lease;
     const m = item.response.metrics;
+    const extractionSummaryDocType = ((item.response as unknown as {
+      extraction_summary?: { document_type_detected?: string };
+    })?.extraction_summary?.document_type_detected ?? "").trim();
+    const responseDocType = (c.document_type_detected ?? "").trim();
+    const resolvedDocType = item.documentTypeDetected?.trim() || responseDocType || extractionSummaryDocType || "unknown";
     const monthlyRows: WorkbookMonthlyRow[] = item.response.monthly_rows.map((row) => ({
       monthIndex: row.month_index,
       date: row.date,
@@ -781,7 +788,7 @@ function buildScenariosFromCanonicalResponses(items: { response: CanonicalComput
     return {
       id: `canonical-${idx + 1}`,
       name: normalizeText(item.scenarioName, `Scenario ${idx + 1}`),
-      documentType: normalizeDocumentType(c.document_type_detected),
+      documentType: normalizeDocumentType(resolvedDocType),
       buildingName: normalizeText(m.building_name, c.building_name ?? m.premises_name),
       suiteFloor: normalizeText([m.suite || c.suite || "", m.floor || c.floor ? `Floor ${m.floor || c.floor}` : ""].filter(Boolean).join(" / ")),
       streetAddress: normalizeText(m.address, c.address ?? ""),
