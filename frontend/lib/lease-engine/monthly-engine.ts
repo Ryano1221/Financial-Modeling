@@ -338,9 +338,16 @@ function monthlyMisc(
   return arr;
 }
 
-/** Add TI allowance as negative (credit) at month 0 */
-function applyTiCredit(monthlyTotal: number[], tiAllowance: number, termMonths: number): void {
-  if (termMonths > 0 && tiAllowance > 0) monthlyTotal[0] -= tiAllowance;
+/** Apply TI budget expense and TI allowance credit at month 0 */
+function applyTiMonthZeroAdjustments(
+  monthlyTotal: number[],
+  tiBudgetTotal: number,
+  tiAllowanceTotal: number,
+  termMonths: number
+): void {
+  if (termMonths <= 0) return;
+  if (tiBudgetTotal > 0) monthlyTotal[0] += tiBudgetTotal;
+  if (tiAllowanceTotal > 0) monthlyTotal[0] -= tiAllowanceTotal;
 }
 
 function addMonthsToDate(dateStr: string, months: number): string {
@@ -455,7 +462,12 @@ export function runMonthlyEngine(
   );
 
   const total = baseRent.map((r, i) => r + opex[i] + parking[i] + ti[i] + misc[i]);
-  applyTiCredit(total, scenario.tiSchedule.allowanceFromLandlord, termMonths);
+  applyTiMonthZeroAdjustments(
+    total,
+    Math.max(0, Number(scenario.tiSchedule.budgetTotal) || 0),
+    Math.max(0, Number(scenario.tiSchedule.allowanceFromLandlord) || 0),
+    termMonths
+  );
 
   const monthlyRate = Math.pow(1 + discountRate, 1 / 12) - 1;
   let cumulative = 0;

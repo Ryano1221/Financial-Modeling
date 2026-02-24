@@ -27,7 +27,16 @@ def canonical_to_scenario(c: CanonicalLease) -> Scenario:
     ]
     if not rent_steps:
         rent_steps = [RentStep(start=0, end=max(0, c.term_months - 1), rate_psf_yr=0)]
-    opex_mode = OpexMode.BASE_YEAR if c.expense_structure_type == "base_year" else OpexMode.NNN
+    lease_type_str = str(c.lease_type.value if hasattr(c.lease_type, "value") else c.lease_type).strip().lower().replace(" ", "_")
+    expense_type_str = str(
+        c.expense_structure_type.value if hasattr(c.expense_structure_type, "value") else c.expense_structure_type
+    ).strip().lower()
+    if expense_type_str in {"base_year", "gross_with_stop"}:
+        opex_mode = OpexMode.BASE_YEAR
+    elif lease_type_str in {"full_service", "gross", "modified_gross"}:
+        opex_mode = OpexMode.FULL_SERVICE
+    else:
+        opex_mode = OpexMode.NNN
     return Scenario(
         name=c.scenario_name or c.premises_name or "Option",
         rsf=c.rsf,
@@ -36,6 +45,8 @@ def canonical_to_scenario(c: CanonicalLease) -> Scenario:
         rent_steps=rent_steps,
         free_rent_months=c.free_rent_months,
         ti_allowance_psf=c.ti_allowance_psf if c.rsf > 0 else 0,
+        ti_budget_total=max(0.0, float(getattr(c, "ti_budget_total", 0.0) or getattr(c, "ti_total", 0.0) or 0.0)),
+        ti_source_of_truth=str(getattr(c, "ti_source_of_truth", "psf") or "psf").strip().lower(),
         opex_mode=opex_mode,
         base_opex_psf_yr=c.opex_psf_year_1,
         base_year_opex_psf_yr=c.expense_stop_psf or c.opex_psf_year_1,
@@ -229,6 +240,9 @@ def _charge_opex_psf_for_month(
     month_index: int,
     commencement: date,
 ) -> float:
+    lease_type_str = str(lease.lease_type.value if hasattr(lease.lease_type, "value") else lease.lease_type).strip().lower()
+    if lease_type_str in {"full service", "full_service", "gross", "modified gross", "modified_gross"}:
+        return 0.0
     period_date = _date_from_commencement_month(commencement, month_index)
     annual_opex_psf = _annual_opex_psf_for_calendar_year(
         lease=lease,
@@ -316,7 +330,7 @@ def _parking_abatement_ranges(lease: CanonicalLease, term_months: int) -> List[t
 def _compute_phase_aware_monthly(
     lease: CanonicalLease,
     term_months: int,
-) -> tuple[List[float], List[float], List[float], List[float], float, List[float], float]:
+) -> tuple[List[float], List[float], List[float], List[float], float, float, float, List[float], float]:
     effective_rsf = _effective_rsf_schedule(lease, term_months)
     rent: List[float] = [0.0 for _ in range(term_months)]
     opex: List[float] = [0.0 for _ in range(term_months)]
@@ -364,15 +378,36 @@ def _compute_phase_aware_monthly(
 
     max_rsf = max(effective_rsf) if effective_rsf else 0.0
     allowance_rsf = max(max_rsf, float(lease.rsf or 0.0))
-    ti_at_0 = float(lease.ti_allowance_psf or 0.0) * allowance_rsf if term_months > 0 else 0.0
+    ti_allowance_at_0 = float(lease.ti_allowance_psf or 0.0) * allowance_rsf if term_months > 0 else 0.0
+    explicit_ti_budget = max(0.0, float(getattr(lease, "ti_budget_total", 0.0) or getattr(lease, "ti_total", 0.0) or 0.0))
+    ti_source = str(getattr(lease, "ti_source_of_truth", "psf") or "psf").strip().lower()
+    if explicit_ti_budget > 0:
+        ti_budget_at_0 = explicit_ti_budget
+    elif ti_source == "total":
+        # Explicitly locked to total with 0 means no TI budget expense.
+        ti_budget_at_0 = 0.0
+    else:
+        # Default behavior: budget offsets allowance unless explicitly overridden.
+        ti_budget_at_0 = ti_allowance_at_0
+    ti_net_at_0 = ti_budget_at_0 - ti_allowance_at_0
 
     cashflows: List[float] = []
     for m in range(term_months):
         total = rent[m] + opex[m] + parking[m]
         if m == 0:
-            total -= ti_at_0
+            total += ti_net_at_0
         cashflows.append(total)
-    return rent, opex, parking, effective_rsf, ti_at_0, cashflows, free_rent_value_total
+    return (
+        rent,
+        opex,
+        parking,
+        effective_rsf,
+        ti_allowance_at_0,
+        ti_budget_at_0,
+        ti_net_at_0,
+        cashflows,
+        free_rent_value_total,
+    )
 
 
 def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
@@ -389,7 +424,9 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         opex_series,
         parking_series,
         effective_rsf_series,
-        ti_at_0,
+        ti_allowance_at_0,
+        ti_budget_at_0,
+        ti_net_at_0,
         cashflows,
         free_rent_value_total,
     ) = _compute_phase_aware_monthly(normalized, term_months)
@@ -416,7 +453,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         cum += total_cost
         disc = total_cost / (1.0 + monthly_rate) ** m if monthly_rate > 0 else total_cost
         # Concessions: TI at month 0 (negative), free rent value could be shown as positive concession
-        concessions = -ti_at_0 if m == 0 else 0.0
+        concessions = -ti_allowance_at_0 if m == 0 else 0.0
         monthly_rows.append(
             MonthlyRow(
                 month_index=m,
@@ -476,7 +513,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         opex_avg_psf_year=round(opex_nominal / years / avg_rsf_term, 2) if avg_rsf_term > 0 and years > 0 else 0.0,
         parking_total=round(parking_nominal, 2),
         parking_avg_psf_year=round(parking_nominal / years / avg_rsf_term, 2) if avg_rsf_term > 0 and years > 0 else 0.0,
-        ti_value_total=round(ti_at_0, 2),
+        ti_value_total=round(ti_allowance_at_0, 2),
         free_rent_value_total=round(free_rent_value_total, 2),
         total_obligation_nominal=round(total_cost_nominal, 2),
         npv_cost=round(npv_cost, 2),

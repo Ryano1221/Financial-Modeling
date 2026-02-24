@@ -14,6 +14,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 class OpexMode(str, Enum):
     NNN = "nnn"
     BASE_YEAR = "base_year"
+    FULL_SERVICE = "full_service"
 
 
 class OneTimeCost(BaseModel):
@@ -69,6 +70,8 @@ class Scenario(BaseModel):
     rent_steps: List[RentStep]
     free_rent_months: int = Field(ge=0)
     ti_allowance_psf: float = Field(ge=0.0)
+    ti_budget_total: float = Field(ge=0.0, default=0.0)
+    ti_source_of_truth: Literal["psf", "total"] = "psf"
 
     opex_mode: OpexMode
     base_opex_psf_yr: float = Field(

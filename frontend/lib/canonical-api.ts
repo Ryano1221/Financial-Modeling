@@ -234,6 +234,14 @@ export function scenarioInputToBackendCanonical(
   const freeRentMonths = effectiveAbatementPeriods.length > 0
     ? effectiveAbatementPeriods.reduce((sum, p) => sum + Math.max(0, p.end_month - p.start_month + 1), 0)
     : Math.max(0, Math.floor(Number(s.free_rent_months ?? 0) || 0));
+  const backendLeaseType: LeaseTypeEnum =
+    s.opex_mode === "full_service"
+      ? "Full Service"
+      : s.opex_mode === "base_year"
+        ? "Modified Gross"
+        : "NNN";
+  const backendExpenseStructureType =
+    s.opex_mode === "base_year" ? "base_year" : "nnn";
   const tiAllowancePsf = effectiveTiAllowancePsf(s);
   const tiBudgetTotal = effectiveTiBudgetTotal(s);
   const tiSource = normalizeTiSourceOfTruth(s.ti_source_of_truth, "psf");
@@ -247,7 +255,7 @@ export function scenarioInputToBackendCanonical(
     suite,
     floor: s.floor ?? "",
     rsf: s.rsf,
-    lease_type: "NNN",
+    lease_type: backendLeaseType,
     commencement_date: s.commencement,
     expiration_date: s.expiration,
     term_months: termMonths,
@@ -269,7 +277,7 @@ export function scenarioInputToBackendCanonical(
     opex_psf_year_1: s.base_opex_psf_yr ?? 0,
     opex_growth_rate: s.opex_growth ?? 0,
     expense_stop_psf: s.base_year_opex_psf_yr ?? 0,
-    expense_structure_type: s.opex_mode === "base_year" ? "base_year" : "nnn" as const,
+    expense_structure_type: backendExpenseStructureType,
     parking_count: s.parking_spaces ?? 0,
     parking_rate_monthly: s.parking_cost_monthly_per_space ?? 0,
     parking_sales_tax_rate: s.parking_sales_tax_rate ?? 0.0825,
@@ -340,7 +348,14 @@ export function backendCanonicalToScenarioInput(
     effectiveAbatementPeriods.length > 0
       ? effectiveAbatementPeriods.reduce((sum, period) => sum + Math.max(0, period.end_month - period.start_month + 1), 0)
       : Math.max(0, fallbackMonths);
-  const opexMode = c.expense_structure_type === "base_year" ? "base_year" : "nnn";
+  const normalizedLeaseType = normalizeLeaseType(c.lease_type);
+  const expenseType = String(c.expense_structure_type ?? "").toLowerCase();
+  const opexMode =
+    expenseType === "base_year" || expenseType === "gross_with_stop"
+      ? "base_year"
+      : (normalizedLeaseType === "Full Service" || normalizedLeaseType === "Gross" || normalizedLeaseType === "Modified Gross")
+        ? "full_service"
+        : "nnn";
   const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
   const scenario: ScenarioInput = {
     name: displayName,
@@ -414,6 +429,10 @@ export function canonicalResponseToEngineResult(
   const sourceRsf = scenarioSource && Number.isFinite(Number(scenarioSource.rsf))
     ? Math.max(0, Number(scenarioSource.rsf))
     : 0;
+  const rsfForTi = sourceRsf > 0 ? sourceRsf : Math.max(0, Number(m.rsf) || 0);
+  const sourceTiSource = scenarioSource
+    ? normalizeTiSourceOfTruth(scenarioSource.ti_source_of_truth, "psf")
+    : "psf";
   const sourceTiBudgetTotal = scenarioSource ? effectiveTiBudgetTotal(scenarioSource) : null;
   const sourceTiAllowancePsf = scenarioSource ? effectiveTiAllowancePsf(scenarioSource) : null;
   const fallbackRsf = Math.max(0, Number(m.rsf) || 0);
@@ -427,6 +446,47 @@ export function canonicalResponseToEngineResult(
     return toNumber(normalized?.ti_allowance_psf, 0) ||
       (m.rsf && m.rsf > 0 ? toNumber(m.ti_value_total, 0) / m.rsf : 0);
   })();
+  const tiAllowanceTotal = rsfForTi > 0 ? tiAllowancePsf * rsfForTi : 0;
+  const tiBudgetTotal = (() => {
+    if (sourceTiBudgetTotal != null && sourceTiBudgetTotal > 0) return sourceTiBudgetTotal;
+    if (sourceTiBudgetTotal != null && sourceTiSource === "total") return 0;
+    const normalizedBudget = Math.max(
+      0,
+      toNumber((normalized as { ti_budget_total?: number } | undefined)?.ti_budget_total, 0)
+    );
+    if (normalizedBudget > 0) return normalizedBudget;
+    const normalizedTiSource = normalizeTiSourceOfTruth(
+      (normalized as { ti_source_of_truth?: unknown } | undefined)?.ti_source_of_truth,
+      "psf"
+    );
+    if (normalizedTiSource === "total") return 0;
+    return tiAllowanceTotal;
+  })();
+  const tiNetAtMonth0 = tiBudgetTotal - tiAllowanceTotal;
+  const monthlyRows = Array.isArray(res.monthly_rows) ? res.monthly_rows : [];
+  const monthZeroRow = monthlyRows.find((row) => Number(row.month_index) === 0);
+  const inferredTiBudgetInBackendRows = (() => {
+    if (!monthZeroRow) return 0;
+    const components =
+      toNumber(monthZeroRow.base_rent, 0) +
+      toNumber(monthZeroRow.opex, 0) +
+      toNumber(monthZeroRow.parking, 0) +
+      toNumber(monthZeroRow.ti_amort, 0) +
+      toNumber(monthZeroRow.concessions, 0);
+    return Math.max(0, toNumber(monthZeroRow.total_cost, 0) - components);
+  })();
+  const monthlyTotalFromRows = monthlyRows.reduce(
+    (sum, row) => sum + toNumber(row.total_cost, 0),
+    0
+  );
+  const totalObligationWithTiBudget = (() => {
+    const missingBudget = Math.max(0, tiBudgetTotal - inferredTiBudgetInBackendRows);
+    return monthlyTotalFromRows + missingBudget;
+  })();
+  const totalObligationEffective = Math.max(
+    toNumber(m.total_obligation_nominal, 0),
+    totalObligationWithTiBudget
+  );
   const parkingCount = Math.max(0, toNumber(normalized?.parking_count, 0));
   const parkingRateMonthly = Math.max(0, toNumber(normalized?.parking_rate_monthly, 0));
   const parkingSalesTaxRate = Math.max(0, toNumber(normalized?.parking_sales_tax_rate, 0.0825));
@@ -501,16 +561,16 @@ export function canonicalResponseToEngineResult(
     parkingCostAnnual: m.parking_total ?? 0,
     tiBudget: tiBudgetPsf,
     tiAllowance: tiAllowancePsf,
-    tiOutOfPocket: 0,
-    grossTiOutOfPocket: 0,
+    tiOutOfPocket: Math.max(0, tiNetAtMonth0),
+    grossTiOutOfPocket: tiBudgetTotal,
     avgGrossRentPerMonth: (m.base_rent_total ?? 0) / 12,
     avgGrossRentPerYear: m.base_rent_total ?? 0,
-    avgAllInCostPerMonth: (m.total_obligation_nominal ?? 0) / Math.max(1, termMonths),
-    avgAllInCostPerYear: (m.total_obligation_nominal ?? 0) / (termMonths / 12 || 1),
+    avgAllInCostPerMonth: totalObligationEffective / Math.max(1, termMonths),
+    avgAllInCostPerYear: totalObligationEffective / (termMonths / 12 || 1),
     avgCostPsfYr: m.avg_all_in_cost_psf_year ?? 0,
     npvAtDiscount: m.npv_cost ?? 0,
     discountRateUsed: m.discount_rate_annual ?? 0.08,
-    totalObligation: m.total_obligation_nominal ?? 0,
+    totalObligation: totalObligationEffective,
     equalizedAvgCostPsfYr: m.equalized_avg_cost_psf_year ?? 0,
     notes: m.notes ?? "",
   };

@@ -217,6 +217,8 @@ class CanonicalLease(BaseModel):
 
     # --- TI + CapEx ---
     ti_allowance_psf: float = Field(ge=0.0, default=0.0)
+    ti_budget_total: float = Field(ge=0.0, default=0.0)
+    ti_source_of_truth: Literal["psf", "total"] = "psf"
     ti_total: float = Field(ge=0.0, default=0.0)
     landlord_work_value: float = Field(ge=0.0, default=0.0)
     tenant_capex_total: float = Field(ge=0.0, default=0.0)
@@ -249,6 +251,11 @@ class CanonicalLease(BaseModel):
             self.premises_name = f"{bn} Suite {su}"
         elif bn and fl:
             self.premises_name = f"{bn} Floor {fl}"
+        # Keep legacy ti_total and newer ti_budget_total in sync.
+        if self.ti_budget_total <= 0 and self.ti_total > 0:
+            self.ti_budget_total = float(self.ti_total)
+        if self.ti_total <= 0 and self.ti_budget_total > 0:
+            self.ti_total = float(self.ti_budget_total)
         return self
 
     @field_validator("rent_schedule")

@@ -22,7 +22,12 @@ function monthDiff(start: string, end: string): number {
 export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const termMonths = monthDiff(s.commencement, s.expiration);
   const rsf = s.rsf;
-  const leaseType = s.opex_mode === "base_year" ? "base_year" : "nnn";
+  const leaseType =
+    s.opex_mode === "base_year"
+      ? "base_year"
+      : s.opex_mode === "full_service"
+        ? "full_service"
+        : "nnn";
   const buildingName = (s.building_name ?? "").trim();
   const suite = (s.suite ?? "").trim();
   const floor = (s.floor ?? "").trim();
@@ -38,6 +43,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const tiBudgetTotal = effectiveTiBudgetTotal(s);
   const tiAllowancePsf = effectiveTiAllowancePsf(s);
   const tiAllowanceTotal = rsf > 0 ? round0(tiAllowancePsf * rsf) : tiBudgetTotal;
+  const tiNetImpact = tiBudgetTotal - tiAllowanceTotal;
   const normalizedAbatements = (s.abatement_periods ?? [])
     .map((period) => {
       const start = Math.max(0, Math.floor(Number(period.start_month) || 0));
@@ -128,7 +134,8 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
     tiSchedule: {
       budgetTotal: tiBudgetTotal,
       allowanceFromLandlord: tiAllowanceTotal,
-      outOfPocket: 0,
+      outOfPocket: Math.max(0, tiNetImpact),
+      grossOutOfPocket: tiBudgetTotal,
       amortizeOop: false,
     },
     otherCashFlows: {
