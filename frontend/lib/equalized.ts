@@ -197,10 +197,7 @@ export function computeEqualizedComparison(
       globalDiscountRate
     );
 
-    const recurringMonthly = Number(canonical.otherCashFlows?.recurringMonthly ?? 0) || 0;
-
     let grossRentInWindow = 0;
-    let recurringCostInWindow = 0;
     let totalCostInWindow = 0;
     const discountedSeries: number[] = [];
 
@@ -221,15 +218,15 @@ export function computeEqualizedComparison(
 
       const fraction = overlapDays / periodDays;
       grossRentInWindow += grossRow.baseRent * fraction;
-      recurringCostInWindow += (row.baseRent + row.opex + row.parking + recurringMonthly) * fraction;
       const clippedTotal = row.total * fraction;
       totalCostInWindow += clippedTotal;
       discountedSeries.push(clippedTotal);
     }
 
     const rsf = Math.max(0, Number(scenario.rsf) || 0);
-    const annualizedDivisor = windowDays > 0 ? windowDays / 365 : 0;
     const monthDivisor = windowMonthCount > 0 ? windowMonthCount : 0;
+    const annualizedDivisor =
+      monthDivisor > 0 ? monthDivisor / 12 : windowDays > 0 ? windowDays / 365 : 0;
 
     const monthlyDiscount = Math.pow(1 + Math.max(0, fullEngine.discountRateUsed), 1 / 12) - 1;
     const npvCost = discountedSeries.reduce(
@@ -243,8 +240,8 @@ export function computeEqualizedComparison(
         rsf > 0 && annualizedDivisor > 0 ? grossRentInWindow / rsf / annualizedDivisor : 0,
       averageGrossRentMonth: monthDivisor > 0 ? grossRentInWindow / monthDivisor : 0,
       averageCostPsfYear:
-        rsf > 0 && annualizedDivisor > 0 ? recurringCostInWindow / rsf / annualizedDivisor : 0,
-      averageCostMonth: monthDivisor > 0 ? recurringCostInWindow / monthDivisor : 0,
+        rsf > 0 && annualizedDivisor > 0 ? totalCostInWindow / rsf / annualizedDivisor : 0,
+      averageCostMonth: monthDivisor > 0 ? totalCostInWindow / monthDivisor : 0,
       totalCost: totalCostInWindow,
       npvCost,
     };

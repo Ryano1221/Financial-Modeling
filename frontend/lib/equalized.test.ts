@@ -126,4 +126,39 @@ describe("computeEqualizedComparison", () => {
     expect(resultAvgGross).toBeCloseTo(expectedNoAbatementAvg, 2);
     expect(resultAvgGross).toBeGreaterThan(expectedAbatedAvg);
   });
+
+  it("keeps equalized avg-cost metrics consistent with equalized total cost", () => {
+    const scenario = makeScenario({
+      id: "consistency",
+      rsf: 5900,
+      commencement: "2026-06-01",
+      expiration: "2030-05-31",
+      rent_steps: [
+        { start: 1, end: 12, rate_psf_yr: 38 },
+        { start: 13, end: 24, rate_psf_yr: 39.14 },
+        { start: 25, end: 36, rate_psf_yr: 40.31 },
+        { start: 37, end: 48, rate_psf_yr: 41.52 },
+      ],
+      one_time_costs: [{ month: 6, amount: 25000, label: "Landlord-required work" }],
+      base_opex_psf_yr: 10,
+      opex_growth: 0.03,
+    });
+
+    const result = computeEqualizedComparison([scenario], 0.08, null);
+    expect(result.needsCustomWindow).toBe(false);
+    const metrics = result.metricsByScenario.consistency;
+
+    expect(metrics.averageCostMonth).toBeCloseTo(
+      metrics.totalCost / Math.max(1, result.windowMonthCount),
+      2
+    );
+    expect(metrics.averageCostPsfYear).toBeCloseTo(
+      (metrics.averageCostMonth * 12) / scenario.rsf,
+      2
+    );
+    expect(metrics.averageCostPsfYear).toBeCloseTo(
+      metrics.totalCost / (scenario.rsf * Math.max(1e-9, result.windowMonthCount / 12)),
+      2
+    );
+  });
 });
