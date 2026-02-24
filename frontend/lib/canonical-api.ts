@@ -610,6 +610,13 @@ export function canonicalResponseToEngineResult(
     normalizedAverageBaseRentPsfYrFromSteps ??
     sourceAverageBaseRentPsfYrFromEngine ??
     Math.max(0, toNumber(m.base_rent_avg_psf_year, 0));
+  const sourceOpexPsfYr = Math.max(0, toNumber(scenarioSource?.base_opex_psf_yr, 0));
+  const normalizedOpexPsfYr = Math.max(0, toNumber(normalized?.opex_psf_year_1, 0));
+  const backendAverageOpexPsfYr = Math.max(0, toNumber(m.opex_avg_psf_year, 0));
+  const effectiveOpexPsfYr =
+    sourceOpexPsfYr > 0
+      ? sourceOpexPsfYr
+      : (normalizedOpexPsfYr > 0 ? normalizedOpexPsfYr : backendAverageOpexPsfYr);
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),
@@ -630,7 +637,7 @@ export function canonicalResponseToEngineResult(
     abatementAmount: effectiveAbatementAmount,
     abatementType: formatAbatementTypeFromPeriods(effectiveAbatementPeriods),
     abatementAppliedWhen: formatAbatementAppliedFromPeriods(effectiveAbatementPeriods),
-    opexPsfYr: m.opex_avg_psf_year ?? 0,
+    opexPsfYr: effectiveOpexPsfYr,
     opexEscalationPercent: toNumber(normalized?.opex_growth_rate, 0),
     parkingCostPerSpotMonthlyPreTax: parkingRateMonthly,
     parkingCostPerSpotMonthly: parkingRateMonthly * (1 + parkingSalesTaxRate),
@@ -640,8 +647,8 @@ export function canonicalResponseToEngineResult(
     tiAllowance: tiAllowancePsf,
     tiOutOfPocket: Math.max(0, tiNetAtMonth0),
     grossTiOutOfPocket: tiBudgetTotal,
-    avgGrossRentPerMonth: (m.base_rent_total ?? 0) / Math.max(1, termMonths),
-    avgGrossRentPerYear: ((m.base_rent_total ?? 0) / Math.max(1, termMonths)) * 12,
+    avgGrossRentPerMonth: (m.base_rent_total ?? 0) / 12,
+    avgGrossRentPerYear: m.base_rent_total ?? 0,
     avgAllInCostPerMonth: totalObligationEffective / Math.max(1, termMonths),
     avgAllInCostPerYear: totalObligationEffective / (termMonths / 12 || 1),
     avgCostPsfYr: m.avg_all_in_cost_psf_year ?? 0,
