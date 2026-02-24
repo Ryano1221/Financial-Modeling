@@ -1381,17 +1381,17 @@ function createEqualizedSheet(
         : "—",
     },
     {
-      label: "Equalized avg cost/year",
-      format: "currency0",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostYear
-        : "—",
-    },
-    {
       label: "Equalized avg cost/month",
       format: "currency0",
       getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
         ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostMonth
+        : "—",
+    },
+    {
+      label: "Equalized avg cost/year",
+      format: "currency0",
+      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
+        ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostYear
         : "—",
     },
     {

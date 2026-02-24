@@ -19,8 +19,8 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
 
   const equalizedRows = [
     "Equalized avg cost/SF/year",
-    "Equalized avg cost/year",
     "Equalized avg cost/month",
+    "Equalized avg cost/year",
     "Equalized total cost",
     "Equalized NPV (t0 at start)",
   ] as const;
@@ -29,8 +29,8 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
     const eq = equalized?.metricsByScenario?.[scenarioId];
     if (!eq) return "—";
     if (rowIdx === 0) return formatCurrencyPerSF(eq.averageCostPsfYear);
-    if (rowIdx === 1) return formatCurrency(eq.averageCostYear);
-    if (rowIdx === 2) return formatCurrency(eq.averageCostMonth);
+    if (rowIdx === 1) return formatCurrency(eq.averageCostMonth);
+    if (rowIdx === 2) return formatCurrency(eq.averageCostYear);
     if (rowIdx === 3) return formatCurrency(eq.totalCost);
     return formatCurrency(eq.npvCost);
   };
