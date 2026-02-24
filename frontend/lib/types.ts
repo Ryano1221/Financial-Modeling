@@ -56,6 +56,7 @@ export interface ScenarioInput {
   abatement_periods?: AbatementPeriod[];
   parking_abatement_periods?: ParkingAbatementPeriod[];
   ti_allowance_psf: number;
+  ti_allowance_source_of_truth?: TiSourceOfTruth;
   ti_budget_total?: number;
   ti_source_of_truth?: TiSourceOfTruth;
   opex_mode: OpexMode;
@@ -88,6 +89,7 @@ export interface RenewalInput {
   rent_steps: RentStep[];
   free_rent_months: number;
   ti_allowance_psf: number;
+  ti_allowance_source_of_truth?: TiSourceOfTruth;
   ti_budget_total?: number;
   ti_source_of_truth?: TiSourceOfTruth;
   parking_abatement_periods?: ParkingAbatementPeriod[];
@@ -104,6 +106,7 @@ export interface RelocationInput {
   rent_steps: RentStep[];
   free_rent_months: number;
   ti_allowance_psf: number;
+  ti_allowance_source_of_truth?: TiSourceOfTruth;
   ti_budget_total?: number;
   ti_source_of_truth?: TiSourceOfTruth;
   parking_abatement_periods?: ParkingAbatementPeriod[];
@@ -330,6 +333,7 @@ export interface BackendCanonicalLease {
   parking_rate_monthly?: number;
   parking_sales_tax_rate?: number;
   ti_allowance_psf?: number;
+  ti_allowance_source_of_truth?: TiSourceOfTruth;
   ti_budget_total?: number;
   ti_source_of_truth?: TiSourceOfTruth;
   notes?: string;

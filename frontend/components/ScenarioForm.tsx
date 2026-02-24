@@ -37,6 +37,7 @@ const defaultScenarioInput: ScenarioInput = {
   abatement_periods: [{ start_month: 0, end_month: 2, abatement_type: "base" }],
   parking_abatement_periods: [],
   ti_allowance_psf: 50,
+  ti_allowance_source_of_truth: "psf",
   ti_budget_total: undefined,
   ti_source_of_truth: "psf",
   opex_mode: "nnn",
@@ -413,6 +414,7 @@ export function ScenarioForm({
       next = applyParkingAbatementConsistency(next);
     }
     if (key === "ti_allowance_psf") {
+      next.ti_allowance_source_of_truth = "psf";
       const hasExplicitBudget = Number(scenario.ti_budget_total ?? 0) > 0;
       if (!hasExplicitBudget) {
         const rsf = Math.max(0, Number(next.rsf) || 0);
@@ -432,6 +434,16 @@ export function ScenarioForm({
     if (key === "rsf") {
       const newRsf = Math.max(0, Number(next.rsf) || 0);
       const oldRsf = Math.max(0, Number(scenario.rsf) || 0);
+      if (scenario.ti_allowance_source_of_truth === "total" && oldRsf > 0) {
+        const lockedAllowanceTotal = round0(
+          (Math.max(0, Number(scenario.ti_allowance_psf) || 0) * oldRsf)
+        );
+        next.ti_allowance_psf = newRsf > 0 ? round2(lockedAllowanceTotal / newRsf) : 0;
+        next.ti_allowance_source_of_truth = "total";
+      } else {
+        next.ti_allowance_psf = round2(Math.max(0, Number(next.ti_allowance_psf) || 0));
+        next.ti_allowance_source_of_truth = "psf";
+      }
       const hasExplicitBudget = Number(scenario.ti_budget_total ?? 0) > 0;
       if (!hasExplicitBudget) {
         next.ti_budget_total = newRsf > 0 ? round0(Math.max(0, Number(next.ti_allowance_psf) || 0) * newRsf) : 0;
@@ -606,13 +618,35 @@ export function ScenarioForm({
   const tiBudgetTotal = scenario ? effectiveTiBudgetTotal(scenario) : 0;
   const tiAllowancePsf = scenario ? effectiveTiAllowancePsf(scenario) : 0;
   const canDeriveTi = scenario ? hasValidRsfForTi(scenario.rsf) : false;
-  const derivedAllowanceTotal = scenario && canDeriveTi
+  const tiAllowanceTotal = scenario && canDeriveTi
     ? round0((Math.max(0, Number(scenario.ti_allowance_psf) || 0) * Math.max(0, Number(scenario.rsf) || 0)))
     : 0;
   const tiBudgetPsf = scenario && canDeriveTi
     ? round2(tiBudgetTotal / Math.max(1, Number(scenario.rsf) || 1))
     : 0;
+  const tiAllowanceSource = (scenario?.ti_allowance_source_of_truth === "total" ? "total" : "psf");
   const tiBudgetSource = (scenario?.ti_source_of_truth === "total" ? "total" : "psf");
+
+  const setTiAllowanceSource = (source: "psf" | "total") => {
+    if (!scenario) return;
+    onUpdate({
+      ...scenario,
+      ti_allowance_source_of_truth: source,
+      ti_allowance_psf: round2(Math.max(0, Number(scenario.ti_allowance_psf ?? tiAllowancePsf) || 0)),
+    });
+  };
+
+  const updateTiAllowanceTotal = (value: number) => {
+    if (!scenario) return;
+    const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+    const rsf = Math.max(0, Number(scenario.rsf) || 0);
+    const allowancePsf = rsf > 0 ? round2(safeValue / rsf) : 0;
+    onUpdate({
+      ...scenario,
+      ti_allowance_psf: allowancePsf,
+      ti_allowance_source_of_truth: "total",
+    });
+  };
 
   const setTiBudgetSource = (source: "psf" | "total") => {
     if (!scenario) return;
@@ -899,8 +933,44 @@ export function ScenarioForm({
               className={inputClass}
             />
           </label>
+          <label className="block">
+            <span className="text-sm text-slate-300">TI allowance (total $)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={tiAllowanceTotal}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                updateTiAllowanceTotal(Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
+              }}
+              className={inputClass}
+              disabled={!canDeriveTi}
+            />
+          </label>
+          <div className="mt-3">
+            <span className="text-sm text-slate-300">Source of truth</span>
+            <div className="mt-1 inline-flex rounded-lg border border-slate-300/30 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setTiAllowanceSource("psf")}
+                className={`px-3 py-2 text-xs tracking-[0.2em] ${tiAllowanceSource === "psf" ? "bg-slate-100 text-slate-900" : "bg-transparent text-slate-200 hover:bg-slate-800/40"}`}
+              >
+                LOCK $/SF
+              </button>
+              <button
+                type="button"
+                onClick={() => setTiAllowanceSource("total")}
+                className={`px-3 py-2 text-xs tracking-[0.2em] border-l border-slate-300/30 ${tiAllowanceSource === "total" ? "bg-slate-100 text-slate-900" : "bg-transparent text-slate-200 hover:bg-slate-800/40"}`}
+              >
+                LOCK TOTAL $
+              </button>
+            </div>
+          </div>
           <p className="mt-2 text-xs text-slate-400">
-            Derived allowance total: {canDeriveTi ? `$${new Intl.NumberFormat("en-US").format(derivedAllowanceTotal)}` : "—"}
+            {canDeriveTi
+              ? `Locked to ${tiAllowanceSource === "total" ? "total $" : "$/SF"} (source of truth).`
+              : "Enter RSF to edit allowance by total $."}
           </p>
         </div>
         <div className="block rounded-xl border border-slate-300/20 bg-slate-900/30 p-3">

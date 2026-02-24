@@ -394,7 +394,11 @@ async function fetchComputeCanonical(
 
 /** Normalize scenario for API: ensure free_rent_months is int (backend accepts int or list; we always send int). */
 function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
-  const { id: _id, ...rest } = s;
+  const {
+    id: _id,
+    ti_allowance_source_of_truth: _tiAllowanceSource,
+    ...rest
+  } = s;
   const tiSource = normalizeTiSourceOfTruth(
     (rest as { ti_source_of_truth?: "psf" | "total" }).ti_source_of_truth,
     "psf"
@@ -576,6 +580,7 @@ export default function Home() {
           normalized.discount_rate_annual !== s.discount_rate_annual ||
           normalized.parking_sales_tax_rate !== s.parking_sales_tax_rate ||
           normalized.ti_allowance_psf !== s.ti_allowance_psf ||
+          normalized.ti_allowance_source_of_truth !== s.ti_allowance_source_of_truth ||
           normalized.ti_budget_total !== s.ti_budget_total ||
           normalized.ti_source_of_truth !== s.ti_source_of_truth
         ) {
@@ -1269,6 +1274,9 @@ export default function Home() {
               response: res,
               scenarioName,
               documentTypeDetected: (s.document_type_detected ?? "").trim() || "unknown",
+              sourceRsf: Math.max(0, Number(s.rsf) || 0),
+              sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
+              sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
             };
           });
           buffer = await buildBrokerWorkbookFromCanonicalResponses(items, excelMeta);
@@ -1308,7 +1316,7 @@ export default function Home() {
             premises_name: cached.metrics.premises_name,
             scenario_name: s.name,
           });
-          return canonicalResponseToEngineResult(cached, s.id, displayName);
+          return canonicalResponseToEngineResult(cached, s.id, displayName, s);
         }
         // Fallback to local engine while canonical compute is loading/recomputing.
         return runMonthlyEngine(scenarioToCanonical(s), globalDiscountRate);

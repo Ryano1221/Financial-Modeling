@@ -779,7 +779,14 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
 }
 
 function buildScenariosFromCanonicalResponses(
-  items: { response: CanonicalComputeResponse; scenarioName: string; documentTypeDetected?: string }[]
+  items: {
+    response: CanonicalComputeResponse;
+    scenarioName: string;
+    documentTypeDetected?: string;
+    sourceRsf?: number;
+    sourceTiBudgetTotal?: number;
+    sourceTiAllowancePsf?: number;
+  }[]
 ): WorkbookScenario[] {
   return items.map((item, idx) => {
     const c = item.response.normalized_canonical_lease;
@@ -789,12 +796,20 @@ function buildScenariosFromCanonicalResponses(
     })?.extraction_summary?.document_type_detected ?? "").trim();
     const responseDocType = (c.document_type_detected ?? "").trim();
     const resolvedDocType = item.documentTypeDetected?.trim() || responseDocType || extractionSummaryDocType || "unknown";
-    const tiAllowancePsf = typeof c.ti_allowance_psf === "number" && Number.isFinite(c.ti_allowance_psf)
-      ? c.ti_allowance_psf
-      : 0;
-    const tiAllowanceTotal = Math.max(0, tiAllowancePsf * Math.max(0, Number(m.rsf) || 0));
+    const resolvedRsf = Number.isFinite(item.sourceRsf) && Number(item.sourceRsf) > 0
+      ? Number(item.sourceRsf)
+      : Math.max(0, Number(m.rsf) || 0);
+    const tiAllowancePsf = Number.isFinite(item.sourceTiAllowancePsf)
+      ? Math.max(0, Number(item.sourceTiAllowancePsf))
+      : (
+          typeof c.ti_allowance_psf === "number" && Number.isFinite(c.ti_allowance_psf)
+            ? c.ti_allowance_psf
+            : 0
+        );
+    const tiAllowanceTotal = Math.max(0, tiAllowancePsf * Math.max(0, resolvedRsf));
     const tiBudgetTotal = Math.max(
       0,
+      Number.isFinite(item.sourceTiBudgetTotal) ? Number(item.sourceTiBudgetTotal) : 0,
       typeof c.ti_budget_total === "number" && Number.isFinite(c.ti_budget_total) ? c.ti_budget_total : 0,
       m.ti_value_total ?? 0
     );
@@ -829,7 +844,7 @@ function buildScenariosFromCanonicalResponses(
       buildingName: normalizeText(m.building_name, c.building_name ?? m.premises_name),
       suiteFloor: normalizeText([m.suite || c.suite || "", m.floor || c.floor ? `Floor ${m.floor || c.floor}` : ""].filter(Boolean).join(" / ")),
       streetAddress: normalizeText(m.address, c.address ?? ""),
-      rsf: m.rsf ?? 0,
+      rsf: resolvedRsf,
       leaseType: normalizeText(m.lease_type, c.lease_type ?? "").toUpperCase(),
       termMonths: m.term_months ?? 0,
       commencementDate: m.commencement_date ?? "",
@@ -843,7 +858,7 @@ function buildScenariosFromCanonicalResponses(
       parkingCostPerSpotAfterTax: parkingPreTax * (1 + parkingTax),
       parkingCostAnnual: m.parking_total ?? 0,
       tiBudget: tiBudgetTotal,
-      tiAllowance: tiAllowancePsf || (m.rsf > 0 ? tiAllowanceTotal / m.rsf : 0),
+      tiAllowance: tiAllowancePsf || (resolvedRsf > 0 ? tiAllowanceTotal / resolvedRsf : 0),
       tiOutOfPocket: 0,
       totalObligation: totalObligationForExport,
       npvCost: m.npv_cost ?? 0,
@@ -1905,7 +1920,14 @@ export async function buildBrokerWorkbook(
 }
 
 export async function buildBrokerWorkbookFromCanonicalResponses(
-  items: { response: CanonicalComputeResponse; scenarioName: string }[],
+  items: {
+    response: CanonicalComputeResponse;
+    scenarioName: string;
+    documentTypeDetected?: string;
+    sourceRsf?: number;
+    sourceTiBudgetTotal?: number;
+    sourceTiAllowancePsf?: number;
+  }[],
   meta?: WorkbookBrandingMeta
 ): Promise<ExcelJS.Buffer> {
   const workbookScenarios = buildScenariosFromCanonicalResponses(items);

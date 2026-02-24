@@ -3,6 +3,7 @@ import type { ScenarioInput, TiSourceOfTruth } from "@/lib/types";
 type TiLike = {
   rsf?: number | null;
   ti_allowance_psf?: number | null;
+  ti_allowance_source_of_truth?: TiSourceOfTruth | null;
   ti_budget_total?: number | null;
   ti_source_of_truth?: TiSourceOfTruth | null;
 };
@@ -53,34 +54,32 @@ export function effectiveTiBudgetTotal(s: TiLike): number {
 }
 
 export function effectiveTiAllowancePsf(s: TiLike): number {
-  const total = toNonNegativeOrNull(s.ti_budget_total);
   const psf = toNonNegativeOrNull(s.ti_allowance_psf);
-  const rsf = toFiniteNumber(s.rsf);
-  const hasRsf = rsf != null && rsf > 0;
 
   if (psf != null && psf > 0) return round2(psf);
-  if (total != null && total > 0 && hasRsf) return round2(total / (rsf as number));
   if (psf != null) return round2(psf);
   return 0;
 }
 
 export function syncTiFields<T extends TiLike>(scenario: T): T & {
   ti_allowance_psf: number;
+  ti_allowance_source_of_truth: TiSourceOfTruth;
   ti_budget_total: number;
   ti_source_of_truth: TiSourceOfTruth;
 } {
-  const source = normalizeTiSourceOfTruth(scenario.ti_source_of_truth, "psf");
+  const budgetSource = normalizeTiSourceOfTruth(scenario.ti_source_of_truth, "psf");
+  const allowanceSource = normalizeTiSourceOfTruth(
+    scenario.ti_allowance_source_of_truth,
+    "psf"
+  );
   const rsf = toFiniteNumber(scenario.rsf);
   const hasRsf = rsf != null && rsf > 0;
   let allowance = toNonNegativeOrNull(scenario.ti_allowance_psf);
   let total = toNonNegativeOrNull(scenario.ti_budget_total);
   const hasExplicitTotal = total != null && total > 0;
-  const hasExplicitAllowance = allowance != null && allowance > 0;
 
-  if (!hasExplicitTotal && hasExplicitAllowance && hasRsf) {
+  if (!hasExplicitTotal && hasRsf) {
     total = round0((allowance as number) * (rsf as number));
-  } else if (!hasExplicitAllowance && hasExplicitTotal && hasRsf) {
-    allowance = round2((total as number) / (rsf as number));
   }
 
   if (allowance == null) allowance = 0;
@@ -88,7 +87,8 @@ export function syncTiFields<T extends TiLike>(scenario: T): T & {
 
   return {
     ...scenario,
-    ti_source_of_truth: source,
+    ti_allowance_source_of_truth: allowanceSource,
+    ti_source_of_truth: budgetSource,
     ti_allowance_psf: round2(allowance ?? 0),
     ti_budget_total: round0(total ?? 0),
   };

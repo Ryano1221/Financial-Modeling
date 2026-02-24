@@ -328,6 +328,7 @@ export function backendCanonicalToScenarioInput(
     abatement_periods: effectiveAbatementPeriods.length > 0 ? effectiveAbatementPeriods : undefined,
     parking_abatement_periods: parkingAbatementPeriods.length > 0 ? parkingAbatementPeriods : undefined,
     ti_allowance_psf: c.ti_allowance_psf ?? 0,
+    ti_allowance_source_of_truth: "psf",
     ti_budget_total: typeof c.ti_budget_total === "number" ? c.ti_budget_total : undefined,
     ti_source_of_truth: normalizeTiSourceOfTruth(c.ti_source_of_truth, "psf"),
     opex_mode: opexMode,
@@ -346,7 +347,11 @@ export function backendCanonicalToScenarioInput(
 export function canonicalResponseToEngineResult(
   res: CanonicalComputeResponse,
   scenarioId: string,
-  scenarioName: string
+  scenarioName: string,
+  scenarioSource?: Pick<
+    ScenarioInput,
+    "rsf" | "ti_allowance_psf" | "ti_allowance_source_of_truth" | "ti_budget_total" | "ti_source_of_truth"
+  >
 ): EngineResult {
   const m = res.metrics;
   const normalized = res.normalized_canonical_lease;
@@ -372,6 +377,22 @@ export function canonicalResponseToEngineResult(
           : []
       );
   const termMonths = m.term_months ?? 0;
+  const sourceRsf = scenarioSource && Number.isFinite(Number(scenarioSource.rsf))
+    ? Math.max(0, Number(scenarioSource.rsf))
+    : 0;
+  const sourceTiBudgetTotal = scenarioSource ? effectiveTiBudgetTotal(scenarioSource) : null;
+  const sourceTiAllowancePsf = scenarioSource ? effectiveTiAllowancePsf(scenarioSource) : null;
+  const fallbackRsf = Math.max(0, Number(m.rsf) || 0);
+  const tiBudgetPsf = (() => {
+    if (sourceTiBudgetTotal != null && sourceRsf > 0) return sourceTiBudgetTotal / sourceRsf;
+    if (sourceTiBudgetTotal != null && fallbackRsf > 0) return sourceTiBudgetTotal / fallbackRsf;
+    return m.rsf && m.rsf > 0 ? toNumber(m.ti_value_total, 0) / m.rsf : 0;
+  })();
+  const tiAllowancePsf = (() => {
+    if (sourceTiAllowancePsf != null) return sourceTiAllowancePsf;
+    return toNumber(normalized?.ti_allowance_psf, 0) ||
+      (m.rsf && m.rsf > 0 ? toNumber(m.ti_value_total, 0) / m.rsf : 0);
+  })();
   const parkingCount = Math.max(0, toNumber(normalized?.parking_count, 0));
   const parkingRateMonthly = Math.max(0, toNumber(normalized?.parking_rate_monthly, 0));
   const parkingSalesTaxRate = Math.max(0, toNumber(normalized?.parking_sales_tax_rate, 0.0825));
@@ -407,10 +428,8 @@ export function canonicalResponseToEngineResult(
     parkingCostPerSpotMonthly: parkingRateMonthly * (1 + parkingSalesTaxRate),
     parkingSalesTaxPercent: parkingSalesTaxRate,
     parkingCostAnnual: m.parking_total ?? 0,
-    tiBudget: m.rsf && m.rsf > 0 ? toNumber(m.ti_value_total, 0) / m.rsf : 0,
-    tiAllowance:
-      toNumber(normalized?.ti_allowance_psf, 0) ||
-      (m.rsf && m.rsf > 0 ? toNumber(m.ti_value_total, 0) / m.rsf : 0),
+    tiBudget: tiBudgetPsf,
+    tiAllowance: tiAllowancePsf,
     tiOutOfPocket: 0,
     grossTiOutOfPocket: 0,
     avgGrossRentPerMonth: (m.base_rent_total ?? 0) / 12,
