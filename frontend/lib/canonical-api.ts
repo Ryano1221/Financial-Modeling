@@ -5,7 +5,8 @@
 
 import type { ScenarioInput, CanonicalComputeResponse, CanonicalMetrics } from "@/lib/types";
 import type { BackendCanonicalLease, BackendRentScheduleStep, BackendPhaseInStep } from "@/lib/types";
-import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
+import { runMonthlyEngine, type EngineResult, type OptionMetrics } from "@/lib/lease-engine/monthly-engine";
+import { scenarioToCanonical } from "@/lib/lease-engine/convert-from-api";
 import {
   effectiveTiAllowancePsf,
   effectiveTiBudgetTotal,
@@ -348,10 +349,7 @@ export function canonicalResponseToEngineResult(
   res: CanonicalComputeResponse,
   scenarioId: string,
   scenarioName: string,
-  scenarioSource?: Pick<
-    ScenarioInput,
-    "rsf" | "ti_allowance_psf" | "ti_allowance_source_of_truth" | "ti_budget_total" | "ti_source_of_truth"
-  >
+  scenarioSource?: ScenarioInput
 ): EngineResult {
   const m = res.metrics;
   const normalized = res.normalized_canonical_lease;
@@ -396,6 +394,51 @@ export function canonicalResponseToEngineResult(
   const parkingCount = Math.max(0, toNumber(normalized?.parking_count, 0));
   const parkingRateMonthly = Math.max(0, toNumber(normalized?.parking_rate_monthly, 0));
   const parkingSalesTaxRate = Math.max(0, toNumber(normalized?.parking_sales_tax_rate, 0.0825));
+  const normalizedEscalationPercent =
+    inferRentEscalationPercentFromSteps(
+      (normalized?.rent_schedule ?? []).map((step) => ({
+        start: step.start_month,
+        end: step.end_month,
+        rate_psf_yr: step.rent_psf_annual,
+      }))
+    ) * 100;
+  const sourceEscalationPercent =
+    scenarioSource?.rent_steps && scenarioSource.rent_steps.length > 0
+      ? inferRentEscalationPercentFromSteps(
+          scenarioSource.rent_steps.map((step) => ({
+            start: step.start,
+            end: step.end,
+            rate_psf_yr: step.rate_psf_yr,
+          }))
+        ) * 100
+      : 0;
+  const effectiveEscalationPercent =
+    normalizedEscalationPercent > 0
+      ? normalizedEscalationPercent
+      : (Number.isFinite(sourceEscalationPercent) ? sourceEscalationPercent : 0);
+  const backendAbatementAmount = Math.max(0, toNumber(m.free_rent_value_total, 0));
+  const fallbackAbatementAmount = (() => {
+    if (!scenarioSource) return 0;
+    try {
+      const scenarioCanonical = scenarioToCanonical({
+        id: scenarioId,
+        ...scenarioSource,
+      });
+      const computed = runMonthlyEngine(
+        scenarioCanonical,
+        Number.isFinite(Number(scenarioSource.discount_rate_annual))
+          ? Number(scenarioSource.discount_rate_annual)
+          : 0.08
+      );
+      return Math.max(0, toNumber(computed.metrics.abatementAmount, 0));
+    } catch {
+      return 0;
+    }
+  })();
+  const effectiveAbatementAmount =
+    backendAbatementAmount > 0 || effectiveAbatementPeriods.length === 0
+      ? backendAbatementAmount
+      : fallbackAbatementAmount;
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),
@@ -412,14 +455,8 @@ export function canonicalResponseToEngineResult(
     commencementDate: m.commencement_date ?? "",
     expirationDate: m.expiration_date ?? "",
     baseRentPsfYr: m.base_rent_avg_psf_year ?? 0,
-    escalationPercent: inferRentEscalationPercentFromSteps(
-      (normalized?.rent_schedule ?? []).map((step) => ({
-        start: step.start_month,
-        end: step.end_month,
-        rate_psf_yr: step.rent_psf_annual,
-      }))
-    ) * 100,
-    abatementAmount: toNumber(m.free_rent_value_total, 0),
+    escalationPercent: effectiveEscalationPercent,
+    abatementAmount: effectiveAbatementAmount,
     abatementType: formatAbatementTypeFromPeriods(effectiveAbatementPeriods),
     abatementAppliedWhen: formatAbatementAppliedFromPeriods(effectiveAbatementPeriods),
     opexPsfYr: m.opex_avg_psf_year ?? 0,
