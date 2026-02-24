@@ -56,6 +56,39 @@ function formatAbatementAppliedFromPeriods(
     .join(", ");
 }
 
+function normalizeSourceAbatementPeriods(
+  source?: ScenarioInput
+): Array<{ start_month: number; end_month: number; scope: "base" | "gross" }> {
+  if (!source) return [];
+  const explicit = (source.abatement_periods ?? [])
+    .map((period) => {
+      const start = Math.max(0, Math.floor(Number(period.start_month) || 0));
+      const end = Math.max(start, Math.floor(Number(period.end_month) || start));
+      return {
+        start_month: start,
+        end_month: end,
+        scope: period.abatement_type === "gross" ? "gross" as const : "base" as const,
+      };
+    })
+    .filter((period) => period.end_month >= period.start_month);
+  if (explicit.length > 0) return explicit;
+
+  const fallbackMonths = Math.max(0, Math.floor(Number(source.free_rent_months ?? 0) || 0));
+  if (fallbackMonths <= 0) return [];
+  const fallbackStart = Math.max(0, Math.floor(Number(source.free_rent_start_month ?? 0) || 0));
+  const fallbackEnd = Math.max(
+    fallbackStart,
+    Math.floor(Number(source.free_rent_end_month ?? (fallbackStart + fallbackMonths - 1)) || (fallbackStart + fallbackMonths - 1))
+  );
+  return [
+    {
+      start_month: fallbackStart,
+      end_month: fallbackEnd,
+      scope: source.free_rent_abatement_type === "gross" ? "gross" : "base",
+    },
+  ];
+}
+
 export const LEASE_TYPE_ENUM = [
   "NNN",
   "Gross",
@@ -363,7 +396,7 @@ export function canonicalResponseToEngineResult(
         .filter((period) => period.end_month >= period.start_month)
     : [];
   const fallbackMonths = Math.max(0, Math.floor(Number(normalized?.free_rent_months ?? 0) || 0));
-  const effectiveAbatementPeriods = abatementPeriods.length > 0
+  const backendAbatementPeriods = abatementPeriods.length > 0
     ? abatementPeriods
     : (
         fallbackMonths > 0
@@ -374,6 +407,9 @@ export function canonicalResponseToEngineResult(
             }]
           : []
       );
+  const sourceAbatementPeriods = normalizeSourceAbatementPeriods(scenarioSource);
+  const effectiveAbatementPeriods =
+    sourceAbatementPeriods.length > 0 ? sourceAbatementPeriods : backendAbatementPeriods;
   const termMonths = m.term_months ?? 0;
   const sourceRsf = scenarioSource && Number.isFinite(Number(scenarioSource.rsf))
     ? Math.max(0, Number(scenarioSource.rsf))
@@ -416,9 +452,8 @@ export function canonicalResponseToEngineResult(
     normalizedEscalationPercent > 0
       ? normalizedEscalationPercent
       : (Number.isFinite(sourceEscalationPercent) ? sourceEscalationPercent : 0);
-  const backendAbatementAmount = Math.max(0, toNumber(m.free_rent_value_total, 0));
-  const fallbackAbatementAmount = (() => {
-    if (!scenarioSource) return 0;
+  const sourceAbatementAmount = (() => {
+    if (!scenarioSource) return null;
     try {
       const scenarioCanonical = scenarioToCanonical({
         id: scenarioId,
@@ -432,13 +467,12 @@ export function canonicalResponseToEngineResult(
       );
       return Math.max(0, toNumber(computed.metrics.abatementAmount, 0));
     } catch {
-      return 0;
+      return null;
     }
   })();
+  const backendAbatementAmount = Math.max(0, toNumber(m.free_rent_value_total, 0));
   const effectiveAbatementAmount =
-    backendAbatementAmount > 0 || effectiveAbatementPeriods.length === 0
-      ? backendAbatementAmount
-      : fallbackAbatementAmount;
+    sourceAbatementAmount != null ? sourceAbatementAmount : backendAbatementAmount;
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),

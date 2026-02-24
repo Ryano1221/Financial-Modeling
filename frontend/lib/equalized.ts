@@ -191,6 +191,7 @@ export function computeEqualizedComparison(
         rentSchedule: {
           ...canonical.rentSchedule,
           abatement: undefined,
+          abatements: undefined,
         },
       },
       globalDiscountRate

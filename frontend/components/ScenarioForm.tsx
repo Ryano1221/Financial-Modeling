@@ -411,6 +411,15 @@ export function ScenarioForm({
   ) => {
     if (!scenario) return;
     let next = { ...scenario, [key]: value } as ScenarioWithId;
+    if (key === "free_rent_abatement_type") {
+      const normalizedType = value === "gross" ? "gross" : "base";
+      if ((next.abatement_periods ?? []).length > 0) {
+        next.abatement_periods = (next.abatement_periods ?? []).map((period) => ({
+          ...period,
+          abatement_type: normalizedType,
+        }));
+      }
+    }
     if (key === "commencement" || key === "expiration" || key === "free_rent_months" || key === "free_rent_start_month" || key === "free_rent_end_month" || key === "free_rent_abatement_type" || key === "abatement_periods") {
       next = applyAbatementConsistency(next);
     }

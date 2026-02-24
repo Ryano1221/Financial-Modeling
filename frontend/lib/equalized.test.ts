@@ -31,6 +31,8 @@ function makeScenario(overrides: Partial<ScenarioWithId>): ScenarioWithId {
     free_rent_start_month: overrides.free_rent_start_month,
     free_rent_end_month: overrides.free_rent_end_month,
     free_rent_abatement_type: overrides.free_rent_abatement_type,
+    abatement_periods: overrides.abatement_periods,
+    parking_abatement_periods: overrides.parking_abatement_periods,
     one_time_costs: overrides.one_time_costs,
     broker_fee: overrides.broker_fee,
     security_deposit_months: overrides.security_deposit_months,
@@ -83,5 +85,45 @@ describe("computeEqualizedComparison", () => {
     expect(custom.metricsByScenario.a.totalCost).toBeLessThan(fullA.metrics.totalObligation);
     expect(custom.metricsByScenario.a.npvCost).toBeGreaterThan(0);
   });
-});
 
+  it("excludes abatement from equalized gross-rent metrics", () => {
+    const scenario = makeScenario({
+      id: "gross-abatement",
+      rsf: 12000,
+      commencement: "2026-01-01",
+      expiration: "2026-12-31",
+      rent_steps: [{ start: 0, end: 11, rate_psf_yr: 24 }],
+      abatement_periods: [{ start_month: 0, end_month: 1, abatement_type: "gross" }],
+      free_rent_months: 2,
+      free_rent_abatement_type: "gross",
+      base_opex_psf_yr: 0,
+      opex_growth: 0,
+    });
+    const result = computeEqualizedComparison([scenario], 0.08, null);
+    expect(result.needsCustomWindow).toBe(false);
+    const canonical = scenarioToCanonical(scenario);
+    const abated = runMonthlyEngine(canonical, 0.08);
+    const noAbatement = runMonthlyEngine(
+      {
+        ...canonical,
+        rentSchedule: {
+          ...canonical.rentSchedule,
+          abatement: undefined,
+          abatements: undefined,
+        },
+      },
+      0.08
+    );
+    const resultAvgGross = result.metricsByScenario["gross-abatement"].averageGrossRentMonth;
+    const expectedNoAbatementAvg =
+      noAbatement.monthly.reduce((sum, row) => sum + row.baseRent, 0) /
+      Math.max(1, result.windowMonthCount);
+    const expectedAbatedAvg =
+      abated.monthly.reduce((sum, row) => sum + row.baseRent, 0) /
+      Math.max(1, result.windowMonthCount);
+
+    // Gross-rent metrics should use the no-abatement series.
+    expect(resultAvgGross).toBeCloseTo(expectedNoAbatementAvg, 2);
+    expect(resultAvgGross).toBeGreaterThan(expectedAbatedAvg);
+  });
+});
