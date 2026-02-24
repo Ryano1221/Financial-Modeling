@@ -88,7 +88,7 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   termMonths: "Lease term (months)",
   commencementDate: "Lease commencement date",
   expirationDate: "Lease expiration date",
-  baseRentPsfYr: "Base rent ($/RSF/yr)",
+  baseRentPsfYr: "Average base rent ($/SF/yr)",
   escalationPercent: "Rent escalation %",
   abatementAmount: "Abatement amount",
   abatementType: "Abatement type",

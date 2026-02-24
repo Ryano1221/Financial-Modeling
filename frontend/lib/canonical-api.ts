@@ -56,6 +56,35 @@ function formatAbatementAppliedFromPeriods(
     .join(", ");
 }
 
+type RentStepLike = {
+  start: number;
+  end: number;
+  rate_psf_yr: number;
+};
+
+function weightedAverageBaseRentPsfYr(
+  steps: RentStepLike[],
+  termMonths: number
+): number | null {
+  if (!Array.isArray(steps) || steps.length === 0) return null;
+  let weightedRate = 0;
+  let totalMonths = 0;
+  for (const step of steps) {
+    const start = Math.max(0, Math.floor(Number(step.start) || 0));
+    const unclampedEnd = Math.max(start, Math.floor(Number(step.end) || start));
+    const end =
+      termMonths > 0 ? Math.min(unclampedEnd, termMonths - 1) : unclampedEnd;
+    if (end < start) continue;
+    const months = end - start + 1;
+    const rate = Math.max(0, Number(step.rate_psf_yr) || 0);
+    if (months <= 0) continue;
+    weightedRate += rate * months;
+    totalMonths += months;
+  }
+  if (totalMonths <= 0) return null;
+  return weightedRate / totalMonths;
+}
+
 function normalizeSourceAbatementPeriods(
   source?: ScenarioInput
 ): Array<{ start_month: number; end_month: number; scope: "base" | "gross" }> {
@@ -512,27 +541,59 @@ export function canonicalResponseToEngineResult(
     normalizedEscalationPercent > 0
       ? normalizedEscalationPercent
       : (Number.isFinite(sourceEscalationPercent) ? sourceEscalationPercent : 0);
-  const sourceAbatementAmount = (() => {
+  const sourceEngineResult = (() => {
     if (!scenarioSource) return null;
     try {
       const scenarioCanonical = scenarioToCanonical({
         id: scenarioId,
         ...scenarioSource,
       });
-      const computed = runMonthlyEngine(
+      return runMonthlyEngine(
         scenarioCanonical,
         Number.isFinite(Number(scenarioSource.discount_rate_annual))
           ? Number(scenarioSource.discount_rate_annual)
           : 0.08
       );
-      return Math.max(0, toNumber(computed.metrics.abatementAmount, 0));
     } catch {
       return null;
     }
   })();
+  const sourceAbatementAmount = sourceEngineResult
+    ? Math.max(0, toNumber(sourceEngineResult.metrics.abatementAmount, 0))
+    : null;
+  const sourceAverageBaseRentPsfYrFromEngine = sourceEngineResult
+    ? Math.max(0, toNumber(sourceEngineResult.metrics.baseRentPsfYr, 0))
+    : null;
   const backendAbatementAmount = Math.max(0, toNumber(m.free_rent_value_total, 0));
   const effectiveAbatementAmount =
     sourceAbatementAmount != null ? sourceAbatementAmount : backendAbatementAmount;
+  const sourceAverageBaseRentPsfYrFromSteps =
+    scenarioSource?.rent_steps && scenarioSource.rent_steps.length > 0
+      ? weightedAverageBaseRentPsfYr(
+          scenarioSource.rent_steps.map((step) => ({
+            start: step.start,
+            end: step.end,
+            rate_psf_yr: step.rate_psf_yr,
+          })),
+          termMonths
+        )
+      : null;
+  const normalizedAverageBaseRentPsfYrFromSteps =
+    normalized?.rent_schedule && normalized.rent_schedule.length > 0
+      ? weightedAverageBaseRentPsfYr(
+          normalized.rent_schedule.map((step) => ({
+            start: step.start_month,
+            end: step.end_month,
+            rate_psf_yr: step.rent_psf_annual,
+          })),
+          termMonths
+        )
+      : null;
+  const effectiveBaseRentPsfYr =
+    sourceAverageBaseRentPsfYrFromSteps ??
+    normalizedAverageBaseRentPsfYrFromSteps ??
+    sourceAverageBaseRentPsfYrFromEngine ??
+    Math.max(0, toNumber(m.base_rent_avg_psf_year, 0));
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),
@@ -548,7 +609,7 @@ export function canonicalResponseToEngineResult(
     termMonths,
     commencementDate: m.commencement_date ?? "",
     expirationDate: m.expiration_date ?? "",
-    baseRentPsfYr: m.base_rent_avg_psf_year ?? 0,
+    baseRentPsfYr: effectiveBaseRentPsfYr,
     escalationPercent: effectiveEscalationPercent,
     abatementAmount: effectiveAbatementAmount,
     abatementType: formatAbatementTypeFromPeriods(effectiveAbatementPeriods),

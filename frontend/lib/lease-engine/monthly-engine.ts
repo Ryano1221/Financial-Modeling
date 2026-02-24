@@ -543,8 +543,12 @@ export function runMonthlyEngine(
   const avgCostYear = years > 0 ? totalObligation / years : 0;
   const avgCostPsfYr = avgRsfTerm > 0 ? avgCostYear / avgRsfTerm : 0;
   const equalizedAvgPsfYr = avgRsfTerm > 0 && years > 0 ? totalObligation / years / avgRsfTerm : 0;
+  const contractualBaseRentTotal = baseRentBeforeAbatement.reduce((a, b) => a + b, 0);
+  const avgBaseRentPsfYr =
+    avgRsfTerm > 0 && years > 0
+      ? contractualBaseRentTotal / years / avgRsfTerm
+      : (scenario.rentSchedule.steps[0]?.ratePsfYr ?? 0);
 
-  const firstStep = scenario.rentSchedule.steps[0];
   const buildingName = (scenario.partyAndPremises.premisesLabel ?? "").trim();
   const suiteName = (scenario.partyAndPremises.floorsOrSuite ?? "").trim();
   const totalParkingSlots = (scenario.parkingSchedule.slots ?? []).reduce((sum, slot) => sum + Math.max(0, slot.count || 0), 0);
@@ -566,7 +570,7 @@ export function runMonthlyEngine(
     termMonths,
     commencementDate: comm,
     expirationDate: scenario.datesAndTerm.expirationDate,
-    baseRentPsfYr: firstStep?.ratePsfYr ?? 0,
+    baseRentPsfYr: avgBaseRentPsfYr,
     escalationPercent: scenario.rentSchedule.annualEscalationPercent * 100,
     abatementAmount,
     abatementType: formatAbatementType(normalizedAbatements),
