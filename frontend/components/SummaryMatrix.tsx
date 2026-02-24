@@ -39,6 +39,18 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
       .map((line) => line.replace(/^\s*•\s*/, "").trim())
       .filter(Boolean);
 
+  const getMatrixCellValue = (
+    metricKey: keyof OptionMetrics,
+    scenarioId: string,
+    value: unknown
+  ): string => {
+    if (metricKey === "equalizedAvgCostPsfYr") {
+      const eq = equalized?.metricsByScenario?.[scenarioId];
+      if (eq) return formatCurrencyPerSF(eq.averageCostPsfYear);
+    }
+    return formatMetricValue(metricKey, value);
+  };
+
   const renderEqualizedSection = () => (
     <div className="px-5 py-4 bg-slate-900/45">
       <p className="heading-kicker mb-1">Equalized</p>
@@ -120,7 +132,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
             <dl className="space-y-2 text-xs">
               {METRIC_LABELS.map((key) => {
                 const value = (r.metrics as OptionMetrics)[key];
-                const formatted = formatMetricValue(key, value);
+                const formatted = getMatrixCellValue(key, r.scenarioId, value);
                 const notesCell = key === "notes";
                 const noteBullets = notesCell ? getNotes(formatted) : [];
                 return (
@@ -170,7 +182,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
                 </td>
                 {results.map((r) => {
                   const value = (r.metrics as OptionMetrics)[key];
-                  const formatted = formatMetricValue(key, value);
+                  const formatted = getMatrixCellValue(key, r.scenarioId, value);
                   const notesCell = key === "notes";
                   const noteBullets = notesCell ? getNotes(formatted) : [];
                   return (
