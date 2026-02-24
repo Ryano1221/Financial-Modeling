@@ -106,6 +106,98 @@ function cleanMaybeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function canonicalVariantOptionRank(c: BackendCanonicalLease): number {
+  const haystack = `${cleanMaybeString(c.scenario_name)} ${cleanMaybeString(c.premises_name)}`.toLowerCase();
+  if (/\boption\s*(?:a|1|one)\b/i.test(haystack)) return 0;
+  if (/\boption\s*(?:b|2|two)\b/i.test(haystack)) return 1;
+  return 9;
+}
+
+function canonicalVariantKey(c: BackendCanonicalLease): string {
+  const rentSig = (Array.isArray(c.rent_schedule) ? c.rent_schedule : [])
+    .map((step) => {
+      const start = Number(step.start_month ?? 0);
+      const end = Number(step.end_month ?? start);
+      const rate = Number(step.rent_psf_annual ?? 0);
+      return `${start}-${end}-${rate.toFixed(4)}`;
+    })
+    .join("|");
+  return [
+    cleanMaybeString(c.commencement_date),
+    cleanMaybeString(c.expiration_date),
+    String(Number(c.term_months ?? 0)),
+    String(Number(c.free_rent_months ?? 0)),
+    String(Number(c.rsf ?? 0)),
+    rentSig,
+  ].join("::");
+}
+
+function collectCanonicalVariants(
+  canonicalLease: BackendCanonicalLease,
+  optionVariants?: BackendCanonicalLease[] | null
+): BackendCanonicalLease[] {
+  const all = [
+    canonicalLease,
+    ...((Array.isArray(optionVariants) ? optionVariants : []).filter(
+      (variant): variant is BackendCanonicalLease => !!variant
+    )),
+  ];
+  const deduped = new Map<string, BackendCanonicalLease>();
+  for (const variant of all) {
+    const key = canonicalVariantKey(variant);
+    if (!key) continue;
+    if (!deduped.has(key)) {
+      deduped.set(key, variant);
+      continue;
+    }
+    const existing = deduped.get(key)!;
+    if (canonicalVariantOptionRank(variant) < canonicalVariantOptionRank(existing)) {
+      deduped.set(key, variant);
+    }
+  }
+  return Array.from(deduped.values()).sort((left, right) => {
+    const rankDiff = canonicalVariantOptionRank(left) - canonicalVariantOptionRank(right);
+    if (rankDiff !== 0) return rankDiff;
+    return canonicalVariantKey(left).localeCompare(canonicalVariantKey(right));
+  });
+}
+
+function hasInvalidCanonicalCoreValues(canonical: BackendCanonicalLease): boolean {
+  return (
+    !canonical ||
+    !Number.isFinite(Number(canonical.rsf)) ||
+    Number(canonical.rsf) <= 0 ||
+    !Number.isFinite(Number(canonical.term_months)) ||
+    Number(canonical.term_months) <= 0 ||
+    !Array.isArray(canonical.rent_schedule) ||
+    canonical.rent_schedule.length === 0
+  );
+}
+
+function canonicalDisplayNameForAdd(
+  canonical: BackendCanonicalLease,
+  index: number,
+  total: number
+): string {
+  const explicitName = cleanMaybeString(canonical.scenario_name);
+  if (explicitName) return explicitName;
+  if (total <= 1) return "";
+  const base = getPremisesDisplayName({
+    building_name: canonical.building_name,
+    suite: canonical.suite,
+    floor: canonical.floor,
+    premises_name: canonical.premises_name,
+    scenario_name: canonical.scenario_name,
+  });
+  if (/\boption\s*(?:a|b|1|2|one|two)\b/i.test(base)) return base;
+  const optionLabel = canonicalVariantOptionRank(canonical) === 0
+    ? "Option A"
+    : canonicalVariantOptionRank(canonical) === 1
+      ? "Option B"
+      : `Option ${index + 1}`;
+  return `${base} - ${optionLabel}`.trim();
+}
+
 function titleCaseWords(value: string): string {
   return value
     .split(" ")
@@ -756,8 +848,8 @@ export default function Home() {
   );
 
   const addScenarioFromCanonical = useCallback(
-    (canonical: BackendCanonicalLease, onAdded?: (s: ScenarioWithId) => void) => {
-      const scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical));
+    (canonical: BackendCanonicalLease, onAdded?: (s: ScenarioWithId) => void, preferredName?: string) => {
+      const scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical, preferredName));
       const scenarioWithId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, scenarioWithId]);
       setSelectedId(null);
@@ -793,38 +885,45 @@ export default function Home() {
         ...canonical,
         document_type_detected: documentTypeDetected || "unknown",
       };
+      const optionVariantsWithDocType = (Array.isArray(data.option_variants) ? data.option_variants : []).map((variant) => ({
+        ...variant,
+        document_type_detected: documentTypeDetected || "unknown",
+      }));
+      const canonicalVariants = collectCanonicalVariants(canonicalWithDocType, optionVariantsWithDocType);
       const criticalMissing = new Set(["rsf", "rent_schedule", "term_months", "commencement_date", "expiration_date"]);
       const hasCriticalMissing = (data.missing_fields ?? []).some((f) => criticalMissing.has(String(f)));
       const hasHardReviewWarning = warnings.some((w) =>
         HARD_REVIEW_WARNING_PATTERNS.some((p) => p.test(w))
       );
-      const hasInvalidCoreValues =
-        !canonicalWithDocType ||
-        !Number.isFinite(Number(canonicalWithDocType.rsf)) ||
-        Number(canonicalWithDocType.rsf) <= 0 ||
-        !Number.isFinite(Number(canonicalWithDocType.term_months)) ||
-        Number(canonicalWithDocType.term_months) <= 0 ||
-        !Array.isArray(canonicalWithDocType.rent_schedule) ||
-        canonicalWithDocType.rent_schedule.length === 0;
+      const hasInvalidCoreValues = canonicalVariants.some((variant) => hasInvalidCanonicalCoreValues(variant));
       const needsReview = hasCriticalMissing || hasHardReviewWarning || hasInvalidCoreValues;
 
       if (needsReview) {
         const queued: NormalizerResponse = {
           ...data,
           canonical_lease: canonicalWithDocType,
+          option_variants: canonicalVariants,
           warnings,
         };
         setPendingNormalizeQueue((prev) => [...prev, queued]);
         return;
       }
 
-      addScenarioFromCanonical(canonicalWithDocType, (newScenario) => {
-        console.log("[compute] about to run", {
-          scenarioId: newScenario.id,
-          lease_type: (canonicalWithDocType as { lease_type?: string })?.lease_type ?? "NNN",
-          document_type_detected: (canonicalWithDocType as { document_type_detected?: string })?.document_type_detected ?? "unknown",
-        });
-        runComputeForScenario(newScenario);
+      const totalVariants = canonicalVariants.length;
+      canonicalVariants.forEach((variant, index) => {
+        const preferredName = canonicalDisplayNameForAdd(variant, index, totalVariants);
+        addScenarioFromCanonical(
+          variant,
+          (newScenario) => {
+            console.log("[compute] about to run", {
+              scenarioId: newScenario.id,
+              lease_type: (variant as { lease_type?: string })?.lease_type ?? "NNN",
+              document_type_detected: (variant as { document_type_detected?: string })?.document_type_detected ?? "unknown",
+            });
+            runComputeForScenario(newScenario);
+          },
+          preferredName || undefined
+        );
       });
     },
     [addScenarioFromCanonical, runComputeForScenario]
@@ -839,19 +938,36 @@ export default function Home() {
             .toString()
             .trim() || "unknown",
       };
-      addScenarioFromCanonical(canonicalWithDocType, (newScenario) => {
-        console.log("[compute] about to run (confirm)", {
-          scenarioId: newScenario.id,
-          lease_type: (canonicalWithDocType as { lease_type?: string })?.lease_type ?? "NNN",
-          document_type_detected: (canonicalWithDocType as { document_type_detected?: string })?.document_type_detected ?? "unknown",
-        });
-        runComputeForScenario(newScenario);
+      const queued = pendingNormalizeQueue[0] ?? null;
+      const queuedVariants = (Array.isArray(queued?.option_variants) ? queued.option_variants : []).map((variant) => ({
+        ...variant,
+        document_type_detected:
+          ((variant as { document_type_detected?: string })?.document_type_detected || canonicalWithDocType.document_type_detected || "unknown")
+            .toString()
+            .trim() || "unknown",
+      }));
+      const canonicalVariants = collectCanonicalVariants(canonicalWithDocType, queuedVariants);
+      const totalVariants = canonicalVariants.length;
+      canonicalVariants.forEach((variant, index) => {
+        const preferredName = canonicalDisplayNameForAdd(variant, index, totalVariants);
+        addScenarioFromCanonical(
+          variant,
+          (newScenario) => {
+            console.log("[compute] about to run (confirm)", {
+              scenarioId: newScenario.id,
+              lease_type: (variant as { lease_type?: string })?.lease_type ?? "NNN",
+              document_type_detected: (variant as { document_type_detected?: string })?.document_type_detected ?? "unknown",
+            });
+            runComputeForScenario(newScenario);
+          },
+          preferredName || undefined
+        );
       });
       setLastExtractWarnings(null);
       setLastExtractionSummary(null);
       setPendingNormalizeQueue((prev) => prev.slice(1));
     },
-    [addScenarioFromCanonical, runComputeForScenario, lastExtractionSummary]
+    [addScenarioFromCanonical, runComputeForScenario, lastExtractionSummary, pendingNormalizeQueue]
   );
 
   const handleNormalizeCancel = useCallback(() => {

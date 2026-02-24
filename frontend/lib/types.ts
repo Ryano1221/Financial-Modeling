@@ -353,6 +353,7 @@ export interface ExtractionSummary {
 /** Response from POST /normalize. Enforce Review when confidence_score < 0.85 or missing_fields.length > 0. */
 export interface NormalizerResponse {
   canonical_lease: BackendCanonicalLease;
+  option_variants?: BackendCanonicalLease[];
   confidence_score: number;
   field_confidence: Record<string, number>;
   missing_fields: string[];

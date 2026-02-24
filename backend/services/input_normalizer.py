@@ -50,6 +50,7 @@ class NormalizerInput(BaseModel):
 class NormalizerResponse(BaseModel):
     """When confidence < 0.85, return this so frontend can show confirmation."""
     canonical_lease: CanonicalLease
+    option_variants: List[CanonicalLease] = Field(default_factory=list)
     confidence_score: float = Field(ge=0.0, le=1.0)
     missing_fields: List[str] = Field(default_factory=list)
     clarification_questions: List[str] = Field(default_factory=list)

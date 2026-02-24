@@ -104,6 +104,7 @@ class ReviewTask(BaseModel):
 class NormalizerResponse(BaseModel):
     """Response from POST /normalize when confidence < threshold or missing fields."""
     canonical_lease: CanonicalLease
+    option_variants: List[CanonicalLease] = Field(default_factory=list)
     confidence_score: float = Field(ge=0.0, le=1.0)
     field_confidence: Dict[str, float] = Field(default_factory=dict)
     missing_fields: List[str] = Field(default_factory=list)

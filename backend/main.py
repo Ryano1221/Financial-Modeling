@@ -2010,7 +2010,7 @@ def _word_token_to_int(token: str | None) -> Optional[int]:
 def _extract_option_blocks(section_text: str) -> list[tuple[str, str]]:
     if not section_text:
         return []
-    pattern = re.compile(r"(?is)\boption\s*(one|1|a|two|2|b)\s*:\s*")
+    pattern = re.compile(r"(?is)\boption\s*(one|1|a|two|2|b)\b\s*[:\-]?\s*")
     matches = list(pattern.finditer(section_text))
     if not matches:
         return []
@@ -2026,14 +2026,65 @@ def _extract_option_blocks(section_text: str) -> list[tuple[str, str]]:
     return blocks
 
 
+def _normalize_option_key(raw_label: str | None) -> str:
+    value = (raw_label or "").strip().lower()
+    if value in {"one", "1", "a"}:
+        return "a"
+    if value in {"two", "2", "b"}:
+        return "b"
+    return ""
+
+
+def _option_sort_key(option_key: str) -> int:
+    if option_key == "a":
+        return 0
+    if option_key == "b":
+        return 1
+    return 9
+
+
+def _option_display_label(option_key: str) -> str:
+    if option_key == "a":
+        return "Option A"
+    if option_key == "b":
+        return "Option B"
+    return "Option"
+
+
+def _build_option_rent_schedule(*, term_months: int, base_rate_psf_yr: float, escalation_pct: float) -> list[dict]:
+    option_schedule: list[dict] = []
+    term = max(0, int(term_months))
+    base_rate = max(0.0, float(base_rate_psf_yr))
+    if term <= 0 or base_rate < 2.0:
+        return option_schedule
+    escalation = max(0.0, float(escalation_pct)) / 100.0
+    for start_month in range(0, term, 12):
+        end_month = min(term - 1, start_month + 11)
+        lease_year = start_month // 12
+        annual_rate = float(round(base_rate * ((1.0 + escalation) ** lease_year), 2))
+        option_schedule.append(
+            {
+                "start_month": int(start_month),
+                "end_month": int(end_month),
+                "rent_psf_annual": annual_rate,
+            }
+        )
+    return option_schedule
+
+
 def _extract_option_counter_terms(text: str) -> dict:
     if not text:
         return {}
     flat = " ".join((text or "").split())
-    if "option one" not in flat.lower() or "option two" not in flat.lower():
+    if "option" not in flat.lower():
         return {}
 
-    term_matches = list(re.finditer(r"(?is)\bterm\s*:\s*(.+?)\bbase\s+rent\s*:", flat))
+    term_matches = list(
+        re.finditer(
+            r"(?is)\bterm\s*:\s*(.+?)\b(?:base\s+rent|improvements?|operating\s+expenses|parking)\s*:",
+            flat,
+        )
+    )
     term_section = term_matches[-1].group(1) if term_matches else flat
     base_matches = list(
         re.finditer(
@@ -2043,12 +2094,14 @@ def _extract_option_counter_terms(text: str) -> dict:
     )
     base_section = base_matches[-1].group(1) if base_matches else flat
     esc_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+increases?\b", base_section)
-    escalation_pct = float(esc_match.group(1)) if esc_match else 0.0
+    escalation_pct_default = float(esc_match.group(1)) if esc_match else 0.0
 
     option_data: dict[str, dict] = {}
     for raw_label, block in _extract_option_blocks(term_section):
-        key = "two" if raw_label in {"two", "2", "b"} else "one"
-        data = option_data.setdefault(key, {})
+        key = _normalize_option_key(raw_label)
+        if not key:
+            continue
+        data = option_data.setdefault(key, {"option_key": key, "option_label": _option_display_label(key)})
         month_candidates: list[int] = []
         for m in re.finditer(r"(?i)\b([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,3})\)?\s*months?\b", block):
             digit_val = _coerce_int_token(m.group(2), 0) or 0
@@ -2056,6 +2109,15 @@ def _extract_option_counter_terms(text: str) -> dict:
             value = max(digit_val, word_val or 0)
             if value > 0:
                 month_candidates.append(value)
+        if not month_candidates or max(month_candidates) <= 12:
+            for token in re.findall(r"\b(\d{1,3})\b", block):
+                maybe_months = _coerce_int_token(token, 0) or 0
+                if 1 <= maybe_months <= 240:
+                    month_candidates.append(maybe_months)
+            for token in re.findall(r"(?i)\b([a-z]+(?:-[a-z]+)?)\b", block):
+                maybe_months = _word_token_to_int(token) or 0
+                if 1 <= maybe_months <= 240:
+                    month_candidates.append(maybe_months)
         if month_candidates:
             data["term_months"] = max(month_candidates)
 
@@ -2084,8 +2146,10 @@ def _extract_option_counter_terms(text: str) -> dict:
             data["free_rent_months"] = total_free
 
     for raw_label, block in _extract_option_blocks(base_section):
-        key = "two" if raw_label in {"two", "2", "b"} else "one"
-        data = option_data.setdefault(key, {})
+        key = _normalize_option_key(raw_label)
+        if not key:
+            continue
+        data = option_data.setdefault(key, {"option_key": key, "option_label": _option_display_label(key)})
         rate_match = re.search(
             r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:nnn|gross|full\s*service|modified\s*gross|/|per)\b",
             block,
@@ -2094,11 +2158,40 @@ def _extract_option_counter_terms(text: str) -> dict:
             rate = _coerce_float_token(rate_match.group(1), 0.0) or 0.0
             if 2.0 <= rate <= 500.0:
                 data["base_rate_psf_yr"] = float(rate)
+        esc_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+increases?\b", block)
+        if esc_match:
+            data["escalation_pct"] = _coerce_float_token(esc_match.group(1), escalation_pct_default) or escalation_pct_default
 
     if not option_data:
         return {}
 
-    preferred_key = "two" if "two" in option_data else "one"
+    options: list[dict] = []
+    for key, raw in sorted(option_data.items(), key=lambda row: (_option_sort_key(row[0]), row[0])):
+        term_months = _coerce_int_token(raw.get("term_months"), 0) or 0
+        free_rent_months = _coerce_int_token(raw.get("free_rent_months"), 0) or 0
+        base_rate_psf_yr = _coerce_float_token(raw.get("base_rate_psf_yr"), 0.0) or 0.0
+        escalation_pct = _coerce_float_token(raw.get("escalation_pct"), escalation_pct_default) or escalation_pct_default
+        option_entry = {
+            "option_key": key,
+            "option_label": str(raw.get("option_label") or _option_display_label(key)),
+            "term_months": term_months,
+            "free_rent_months": free_rent_months,
+            "base_rate_psf_yr": base_rate_psf_yr,
+            "escalation_pct": escalation_pct,
+        }
+        rent_schedule = _build_option_rent_schedule(
+            term_months=term_months,
+            base_rate_psf_yr=base_rate_psf_yr,
+            escalation_pct=escalation_pct,
+        )
+        if rent_schedule:
+            option_entry["rent_schedule"] = rent_schedule
+        options.append(option_entry)
+
+    if not options:
+        return {}
+
+    preferred_key = "b" if "b" in option_data else options[0]["option_key"]
     preferred = option_data.get(preferred_key) or {}
     if not preferred:
         return {}
@@ -2107,8 +2200,162 @@ def _extract_option_counter_terms(text: str) -> dict:
         "term_months": _coerce_int_token(preferred.get("term_months"), 0) or 0,
         "free_rent_months": _coerce_int_token(preferred.get("free_rent_months"), 0) or 0,
         "base_rate_psf_yr": _coerce_float_token(preferred.get("base_rate_psf_yr"), 0.0) or 0.0,
-        "escalation_pct": escalation_pct,
+        "escalation_pct": _coerce_float_token(preferred.get("escalation_pct"), escalation_pct_default) or escalation_pct_default,
+        "options": options,
     }
+
+
+def _build_option_variant_scenario_name(base_name: str, option_label: str) -> str:
+    cleaned_base = " ".join((base_name or "").split()).strip()
+    cleaned_label = " ".join((option_label or "").split()).strip() or "Option"
+    if not cleaned_base:
+        return cleaned_label
+    if re.search(r"(?i)\boption\s*(?:one|1|a|two|2|b)\b", cleaned_base):
+        return re.sub(
+            r"(?i)\boption\s*(?:one|1|a|two|2|b)\b",
+            cleaned_label,
+            cleaned_base,
+            count=1,
+        )
+    if cleaned_base.lower().endswith(cleaned_label.lower()):
+        return cleaned_base
+    return f"{cleaned_base} - {cleaned_label}"
+
+
+def _build_canonical_option_variants(
+    *,
+    canonical: CanonicalLease,
+    extracted_hints: dict,
+    filename: str,
+) -> list[CanonicalLease]:
+    raw_variants = extracted_hints.get("option_variants")
+    if not isinstance(raw_variants, list) or len(raw_variants) < 2:
+        return []
+
+    base_name = (
+        str(canonical.scenario_name or "").strip()
+        or str(canonical.premises_name or "").strip()
+        or (
+            f"{str(canonical.building_name or '').strip()} Suite {str(canonical.suite or '').strip()}".strip()
+            if str(canonical.building_name or "").strip() and str(canonical.suite or "").strip()
+            else (
+                f"{str(canonical.building_name or '').strip()} Floor {str(canonical.floor or '').strip()}".strip()
+                if str(canonical.building_name or "").strip() and str(canonical.floor or "").strip()
+                else str(canonical.building_name or "").strip()
+            )
+        )
+        or _fallback_building_from_filename(filename)
+        or _clean_building_candidate(re.sub(r"[_\-]+", " ", Path(filename or "").stem))
+        or "Extracted lease"
+    )
+
+    normalized_raw_variants: list[dict] = []
+    seen_option_keys: set[str] = set()
+    for raw in raw_variants:
+        if not isinstance(raw, dict):
+            continue
+        option_key = _normalize_option_key(str(raw.get("option_key") or ""))
+        if not option_key or option_key in seen_option_keys:
+            continue
+        seen_option_keys.add(option_key)
+        normalized_raw_variants.append(raw)
+
+    if len(normalized_raw_variants) < 2:
+        return []
+
+    canonical_variants: list[CanonicalLease] = []
+    for raw in sorted(
+        normalized_raw_variants,
+        key=lambda v: _option_sort_key(_normalize_option_key(str(v.get("option_key") or ""))),
+    ):
+        option_key = _normalize_option_key(str(raw.get("option_key") or ""))
+        if not option_key:
+            continue
+        option_label = str(raw.get("option_label") or _option_display_label(option_key)).strip() or _option_display_label(option_key)
+        term_months = _coerce_int_token(raw.get("term_months"), 0) or 0
+        if term_months <= 0:
+            term_months = _coerce_int_token(canonical.term_months, 0) or 0
+        if term_months <= 0:
+            continue
+        free_rent_months = max(0, _coerce_int_token(raw.get("free_rent_months"), 0) or 0)
+        free_rent_scope = str(raw.get("free_rent_scope") or canonical.free_rent_scope or "base").strip().lower()
+        if free_rent_scope not in {"base", "gross"}:
+            free_rent_scope = "base"
+        expiration_date = canonical.expiration_date
+        try:
+            expiration_date = _expiration_from_term_months(canonical.commencement_date, int(term_months))
+        except Exception:
+            expiration_date = canonical.expiration_date
+
+        rent_schedule_raw = raw.get("rent_schedule")
+        rent_schedule: list[RentScheduleStep] = []
+        if isinstance(rent_schedule_raw, list):
+            for step in rent_schedule_raw:
+                if not isinstance(step, dict):
+                    continue
+                start_m = _coerce_int_token(step.get("start_month"), None)
+                end_m = _coerce_int_token(step.get("end_month"), start_m)
+                rate = _coerce_float_token(step.get("rent_psf_annual"), 0.0)
+                if start_m is None or end_m is None:
+                    continue
+                start_i = max(0, int(start_m))
+                end_i = min(max(start_i, int(end_m)), max(0, term_months - 1))
+                rent_schedule.append(
+                    RentScheduleStep(
+                        start_month=start_i,
+                        end_month=end_i,
+                        rent_psf_annual=max(0.0, float(rate)),
+                    )
+                )
+        if not rent_schedule:
+            base_rate_psf_yr = _coerce_float_token(raw.get("base_rate_psf_yr"), 0.0) or 0.0
+            escalation_pct = _coerce_float_token(raw.get("escalation_pct"), 0.0) or 0.0
+            generated = _build_option_rent_schedule(
+                term_months=int(term_months),
+                base_rate_psf_yr=base_rate_psf_yr,
+                escalation_pct=escalation_pct,
+            )
+            for step in generated:
+                rent_schedule.append(
+                    RentScheduleStep(
+                        start_month=int(step["start_month"]),
+                        end_month=int(step["end_month"]),
+                        rent_psf_annual=float(step["rent_psf_annual"]),
+                    )
+                )
+        if not rent_schedule:
+            rent_schedule = list(canonical.rent_schedule or [])
+        if rent_schedule:
+            rent_schedule = sorted(rent_schedule, key=lambda s: (int(s.start_month), int(s.end_month)))
+            target_end = max(0, int(term_months) - 1)
+            rent_schedule = [s for s in rent_schedule if int(s.start_month) <= target_end]
+            if rent_schedule:
+                last = rent_schedule[-1]
+                if int(last.end_month) != target_end:
+                    rent_schedule[-1] = last.model_copy(update={"end_month": target_end})
+
+        updates: dict = {
+            "scenario_name": _build_option_variant_scenario_name(base_name, option_label),
+            "term_months": int(term_months),
+            "expiration_date": expiration_date,
+            "free_rent_months": int(free_rent_months),
+            "free_rent_scope": free_rent_scope,
+            "free_rent_periods": (
+                [FreeRentPeriod(start_month=0, end_month=max(0, int(free_rent_months) - 1), scope=free_rent_scope)]
+                if free_rent_months > 0
+                else []
+            ),
+        }
+        if rent_schedule:
+            updates["rent_schedule"] = rent_schedule
+        variant = canonical.model_copy(update=updates)
+        try:
+            variant, _ = normalize_canonical_lease(variant)
+        except Exception:
+            pass
+        canonical_variants.append(variant)
+
+    return canonical_variants if len(canonical_variants) >= 2 else []
 
 
 def _looks_like_generated_report_document(text: str) -> bool:
@@ -2662,6 +2909,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "parking_abatement_periods": [],
         "phase_in_schedule": [],
         "rent_schedule": [],
+        "option_variants": [],
     }
     if not text:
         return hints
@@ -2898,10 +3146,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # Option-aware fallback for counter proposals that provide Option One/Two economics.
     option_hints = _extract_option_counter_terms(text)
+    raw_option_variants = option_hints.get("options") if isinstance(option_hints.get("options"), list) else []
+    has_multiple_option_variants = len(raw_option_variants) >= 2
     option_term = _coerce_int_token(option_hints.get("term_months"), 0) or 0
-    if option_term > 0 and not hints.get("term_months"):
+    if option_term > 0 and (not hints.get("term_months") or has_multiple_option_variants):
         hints["term_months"] = option_term
-        if hints.get("commencement_date") and not hints.get("expiration_date"):
+        if hints.get("commencement_date"):
             try:
                 hints["expiration_date"] = _expiration_from_term_months(
                     hints["commencement_date"],
@@ -3093,21 +3343,64 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     option_escalation_pct = _coerce_float_token(option_hints.get("escalation_pct"), 0.0) or 0.0
     option_term = _coerce_int_token(hints.get("term_months"), 0) or 0
     if option_base_rate >= 2.0 and option_term > 0:
-        escalation = max(0.0, option_escalation_pct) / 100.0
-        option_schedule: list[dict] = []
-        for start_month in range(0, option_term, 12):
-            end_month = min(option_term - 1, start_month + 11)
-            lease_year = start_month // 12
-            annual_rate = float(round(option_base_rate * ((1.0 + escalation) ** lease_year), 2))
-            option_schedule.append(
-                {
-                    "start_month": int(start_month),
-                    "end_month": int(end_month),
-                    "rent_psf_annual": annual_rate,
-                }
-            )
+        option_schedule = _build_option_rent_schedule(
+            term_months=int(option_term),
+            base_rate_psf_yr=float(option_base_rate),
+            escalation_pct=float(option_escalation_pct),
+        )
         if option_schedule:
             hints["rent_schedule"] = option_schedule
+
+    option_variants: list[dict] = []
+    for raw_variant in raw_option_variants:
+        if not isinstance(raw_variant, dict):
+            continue
+        option_key = _normalize_option_key(str(raw_variant.get("option_key") or ""))
+        if not option_key:
+            continue
+        variant_term = _coerce_int_token(raw_variant.get("term_months"), 0) or 0
+        if variant_term <= 0:
+            continue
+        variant_free_months = max(0, _coerce_int_token(raw_variant.get("free_rent_months"), 0) or 0)
+        variant_base_rate = _coerce_float_token(raw_variant.get("base_rate_psf_yr"), 0.0) or 0.0
+        variant_escalation_pct = _coerce_float_token(raw_variant.get("escalation_pct"), 0.0) or 0.0
+        variant_rent_schedule = raw_variant.get("rent_schedule") if isinstance(raw_variant.get("rent_schedule"), list) else []
+        if not variant_rent_schedule:
+            variant_rent_schedule = _build_option_rent_schedule(
+                term_months=int(variant_term),
+                base_rate_psf_yr=float(variant_base_rate),
+                escalation_pct=float(variant_escalation_pct),
+            )
+        variant_entry: dict = {
+            "option_key": option_key,
+            "option_label": str(raw_variant.get("option_label") or _option_display_label(option_key)).strip() or _option_display_label(option_key),
+            "term_months": int(variant_term),
+            "free_rent_months": int(variant_free_months),
+            "free_rent_scope": "base",
+            "base_rate_psf_yr": float(variant_base_rate),
+            "escalation_pct": float(variant_escalation_pct),
+            "rent_schedule": variant_rent_schedule,
+        }
+        if hints.get("commencement_date"):
+            try:
+                variant_entry["expiration_date"] = _expiration_from_term_months(
+                    hints["commencement_date"],
+                    int(variant_term),
+                )
+            except Exception:
+                pass
+        option_variants.append(variant_entry)
+    if len(option_variants) >= 2:
+        deduped_option_variants: dict[str, dict] = {}
+        for variant in option_variants:
+            key = _normalize_option_key(str(variant.get("option_key") or ""))
+            if not key:
+                continue
+            deduped_option_variants[key] = variant
+        hints["option_variants"] = [
+            deduped_option_variants[key]
+            for key in sorted(deduped_option_variants.keys(), key=_option_sort_key)
+        ]
 
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
@@ -3710,6 +4003,7 @@ def _normalize_impl(
     extraction_artifacts: dict = _empty_extraction_artifacts()
     extraction_text_for_summary = ""
     extraction_filename_for_summary = ""
+    option_variants: list[CanonicalLease] = []
 
     if source_upper in ("PDF", "WORD"):
         if not file or not file.filename:
@@ -4256,6 +4550,11 @@ def _normalize_impl(
             confidence_score = 0.3
             used_fallback = True
             warnings.append("Lease normalization failed. A review template was loaded so you can continue.")
+        option_variants = _build_canonical_option_variants(
+            canonical=canonical,
+            extracted_hints=extracted_hints,
+            filename=file.filename or "",
+        )
         conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
         if used_fallback:
             confidence_score = min(confidence_score, conf_from_missing)
@@ -4291,6 +4590,7 @@ def _normalize_impl(
         return (
             NormalizerResponse(
                 canonical_lease=canonical,
+                option_variants=option_variants,
                 confidence_score=min(1.0, confidence_score),
                 field_confidence=field_confidence,
                 missing_fields=missing,

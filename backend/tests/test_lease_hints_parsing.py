@@ -244,3 +244,85 @@ def test_extract_hints_prefers_option_two_counter_terms_for_option_blocks() -> N
     assert isinstance(hints["rent_schedule"], list)
     assert hints["rent_schedule"][0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 26.0}
     assert hints["rent_schedule"][-1]["end_month"] == 87
+    assert isinstance(hints["option_variants"], list)
+    assert len(hints["option_variants"]) == 2
+    assert hints["option_variants"][0]["option_label"] == "Option A"
+    assert hints["option_variants"][0]["term_months"] == 63
+    assert hints["option_variants"][0]["free_rent_months"] == 6
+    assert hints["option_variants"][0]["rent_schedule"][0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 27.0}
+    assert hints["option_variants"][1]["option_label"] == "Option B"
+    assert hints["option_variants"][1]["term_months"] == 88
+    assert hints["option_variants"][1]["free_rent_months"] == 8
+    assert hints["option_variants"][1]["rent_schedule"][0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 26.0}
+
+
+def test_extract_option_counter_terms_supports_option_a_and_b_labels() -> None:
+    text = (
+        "TERM: Option A: Sixty-three (63) months with three (3) months base free rent.\n"
+        "Option B: Eighty-eight (88) months with four (4) months base free rent.\n"
+        "BASE RENT: Option A: Months 01-12: $27.00 NNN with 3% annual increases.\n"
+        "Option B: Months 01-12: $26.00 NNN with 3% annual increases.\n"
+    )
+    option_hints = main._extract_option_counter_terms(text)
+    assert option_hints["selected_option"] == "b"
+    assert option_hints["term_months"] == 88
+    assert option_hints["base_rate_psf_yr"] == 26.0
+    assert option_hints["free_rent_months"] == 4
+    assert isinstance(option_hints["options"], list)
+    assert len(option_hints["options"]) == 2
+    assert option_hints["options"][0]["option_key"] == "a"
+    assert option_hints["options"][0]["base_rate_psf_yr"] == 27.0
+    assert option_hints["options"][1]["option_key"] == "b"
+    assert option_hints["options"][1]["base_rate_psf_yr"] == 26.0
+
+
+def test_build_canonical_option_variants_emits_two_scenarios() -> None:
+    canonical = main._dict_to_canonical(
+        {
+            "scenario_name": "Austin Oaks - Benbrook Renewal Counter - Option B",
+            "building_name": "Austin Oaks - Benbrook",
+            "suite": "200",
+            "rsf": 4626,
+            "commencement_date": "2026-12-01",
+            "expiration_date": "2034-03-31",
+            "term_months": 88,
+            "rent_schedule": [{"start_month": 0, "end_month": 87, "rent_psf_annual": 26.0}],
+            "free_rent_months": 8,
+            "free_rent_scope": "base",
+            "opex_psf_year_1": 14.3,
+            "expense_structure_type": "nnn",
+            "discount_rate_annual": 0.08,
+        }
+    )
+    canonical, _ = main.normalize_canonical_lease(canonical)
+    variants = main._build_canonical_option_variants(
+        canonical=canonical,
+        extracted_hints={
+            "option_variants": [
+                {
+                    "option_key": "a",
+                    "option_label": "Option A",
+                    "term_months": 63,
+                    "free_rent_months": 6,
+                    "free_rent_scope": "base",
+                    "rent_schedule": [{"start_month": 0, "end_month": 62, "rent_psf_annual": 27.0}],
+                },
+                {
+                    "option_key": "b",
+                    "option_label": "Option B",
+                    "term_months": 88,
+                    "free_rent_months": 8,
+                    "free_rent_scope": "base",
+                    "rent_schedule": [{"start_month": 0, "end_month": 87, "rent_psf_annual": 26.0}],
+                },
+            ]
+        },
+        filename="austin-oaks-counter.docx",
+    )
+    assert len(variants) == 2
+    assert variants[0].scenario_name.endswith("Option A")
+    assert variants[0].term_months == 63
+    assert str(variants[0].expiration_date) == "2032-02-29"
+    assert variants[1].scenario_name.endswith("Option B")
+    assert variants[1].term_months == 88
+    assert str(variants[1].expiration_date) == "2034-03-31"
