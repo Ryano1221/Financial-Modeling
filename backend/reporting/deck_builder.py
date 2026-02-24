@@ -12,6 +12,7 @@ import html
 import math
 import os
 import re
+from io import BytesIO
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -3107,9 +3108,27 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
 
 
 def build_report_deck_html(data: dict[str, Any], plan: DeckRenderPlan | None = None) -> str:
+    try:
+        theme, page_payloads, active_plan = _build_report_deck_payloads(data, plan=plan)
+    except ValueError:
+        return "<!doctype html><html><body><h1>No scenarios found</h1></body></html>"
+    return _build_report_deck_html_from_payloads(
+        theme=theme,
+        page_payloads=page_payloads,
+        font_scale=active_plan.font_scale,
+        start_page_no=1,
+        total_pages=len(page_payloads),
+    )
+
+
+def _build_report_deck_payloads(
+    data: dict[str, Any],
+    plan: DeckRenderPlan | None = None,
+) -> tuple[DeckTheme, list[DeckPage], DeckRenderPlan]:
     entries = _extract_entries(data)
     if not entries:
-        return "<!doctype html><html><body><h1>No scenarios found</h1></body></html>"
+        raise ValueError("No scenarios found")
+
     active_plan = plan or DeckRenderPlan()
     branding = data.get("branding") if isinstance(data.get("branding"), dict) else {}
     theme = resolve_theme(branding if isinstance(branding, dict) else {})
@@ -3142,10 +3161,19 @@ def build_report_deck_html(data: dict[str, Any], plan: DeckRenderPlan | None = N
             orientation=active_plan.orientation_for("disclaimer", "portrait"),
         )
     )
+    return theme, page_payloads, active_plan
 
-    total_pages = len(page_payloads)
+
+def _build_report_deck_html_from_payloads(
+    *,
+    theme: DeckTheme,
+    page_payloads: list[DeckPage],
+    font_scale: float,
+    start_page_no: int,
+    total_pages: int,
+) -> str:
     page_html = []
-    for i, payload in enumerate(page_payloads, start=1):
+    for i, payload in enumerate(page_payloads, start=start_page_no):
         page_html.append(
             _build_page_shell(
                 body_html=payload.body_html,
@@ -3166,13 +3194,48 @@ def build_report_deck_html(data: dict[str, Any], plan: DeckRenderPlan | None = N
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{_esc(theme.report_title)}</title>
-  <style>{_deck_css(theme.primary_color, font_scale=active_plan.font_scale)}</style>
+  <style>{_deck_css(theme.primary_color, font_scale=font_scale)}</style>
 </head>
 <body>
   {''.join(page_html)}
 </body>
 </html>
     """.strip()
+
+
+def _group_pages_by_orientation(page_payloads: list[DeckPage]) -> list[tuple[str, int, list[DeckPage]]]:
+    groups: list[tuple[str, int, list[DeckPage]]] = []
+    if not page_payloads:
+        return groups
+    current_orientation = "landscape" if _is_landscape(page_payloads[0].orientation) else "portrait"
+    start_index = 1
+    current_pages: list[DeckPage] = []
+    for idx, payload in enumerate(page_payloads, start=1):
+        orientation = "landscape" if _is_landscape(payload.orientation) else "portrait"
+        if orientation != current_orientation and current_pages:
+            groups.append((current_orientation, start_index, current_pages))
+            current_pages = []
+            current_orientation = orientation
+            start_index = idx
+        current_pages.append(payload)
+    if current_pages:
+        groups.append((current_orientation, start_index, current_pages))
+    return groups
+
+
+def _merge_pdf_bytes(chunks: list[bytes]) -> bytes:
+    if len(chunks) == 1:
+        return chunks[0]
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    for chunk in chunks:
+        reader = PdfReader(BytesIO(chunk))
+        for page in reader.pages:
+            writer.add_page(page)
+    out = BytesIO()
+    writer.write(out)
+    return out.getvalue()
 
 
 def _collect_overflow_issues(page: Any) -> list[dict[str, Any]]:
@@ -3296,11 +3359,31 @@ def render_report_deck_pdf(data: dict[str, Any]) -> bytes:
             page.set_content(html_str, wait_until="networkidle")
             page.emulate_media(media="print")
 
-        pdf_bytes = page.pdf(
-            format="A4",
-            print_background=True,
-            prefer_css_page_size=True,
-            margin={"top": "0in", "bottom": "0in", "left": "0in", "right": "0in"},
-        )
+        # Render orientation-specific chunks so mixed-orientation decks keep
+        # true landscape pages (e.g., cost visuals) instead of portrait fallback.
+        theme, payloads, final_plan = _build_report_deck_payloads(data, plan=plan)
+        total_pages = len(payloads)
+        grouped = _group_pages_by_orientation(payloads)
+        pdf_chunks: list[bytes] = []
+        for orientation, start_page_no, chunk_payloads in grouped:
+            chunk_html = _build_report_deck_html_from_payloads(
+                theme=theme,
+                page_payloads=chunk_payloads,
+                font_scale=final_plan.font_scale,
+                start_page_no=start_page_no,
+                total_pages=total_pages,
+            )
+            page.set_content(chunk_html, wait_until="networkidle")
+            page.emulate_media(media="print")
+            pdf_chunks.append(
+                page.pdf(
+                    format="A4",
+                    landscape=_is_landscape(orientation),
+                    print_background=True,
+                    prefer_css_page_size=False,
+                    margin={"top": "0in", "bottom": "0in", "left": "0in", "right": "0in"},
+                )
+            )
+        pdf_bytes = _merge_pdf_bytes(pdf_chunks)
         browser.close()
     return pdf_bytes
