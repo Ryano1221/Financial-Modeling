@@ -1069,15 +1069,31 @@ def _regex_prefill(text: str) -> dict:
     ti_allowance_psf = None
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for idx, line in enumerate(lines):
-        if not _RE_TIA_KEYWORD.search(line):
+        line_low = line.lower()
+        line_has_ti_keyword = bool(_RE_TIA_KEYWORD.search(line))
+        neighbor_window = " ".join(lines[max(0, idx - 1): idx + 2]).lower()
+        line_is_allowance_with_ti_context = (
+            "allowance" in line_low
+            and bool(re.search(r"(?i)\b(?:tenant improvements?|ti|leasehold improvements?)\b", neighbor_window))
+        )
+        if not line_has_ti_keyword and not line_is_allowance_with_ti_context:
             continue
-        window = " ".join(lines[idx: idx + 3])
+        window = " ".join(lines[max(0, idx - 1): idx + 3])
         low_window = window.lower()
         if "e.g" in low_window or "example" in low_window:
             continue
         if "outside of the tenant improvement allowance" in low_window or "test-fit" in low_window or "test fit" in low_window:
             continue
         for amount_match in _RE_PSF_AMOUNT.finditer(window):
+            local = window[max(0, amount_match.start() - 64): min(len(window), amount_match.end() + 64)]
+            local_low = local.lower()
+            if not re.search(r"(?i)\b(?:allowance|tenant improvements?|tia|ti)\b", local):
+                continue
+            if (
+                "allowance" not in local_low
+                and re.search(r"(?i)\b(?:base rent|rental rate|operating expenses?|opex|cam)\b", local)
+            ):
+                continue
             try:
                 value = float(amount_match.group(1).replace(",", ""))
             except ValueError:

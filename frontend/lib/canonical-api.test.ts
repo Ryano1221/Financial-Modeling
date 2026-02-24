@@ -152,6 +152,28 @@ describe("canonicalResponseToEngineResult", () => {
     expect(result.metrics.abatementAppliedWhen).toBe("M1-M2");
   });
 
+  it("derives average gross rent from full-term totals", () => {
+    const sourceScenario = makeScenario({
+      commencement: "2026-05-01",
+      expiration: "2030-08-31",
+    });
+    const response = makeCanonicalResponse();
+    response.metrics.term_months = 52;
+    response.metrics.base_rent_total = 572516;
+    response.normalized_canonical_lease.term_months = 52;
+    response.normalized_canonical_lease.commencement_date = "2026-05-01";
+    response.normalized_canonical_lease.expiration_date = "2030-08-31";
+
+    const result = canonicalResponseToEngineResult(
+      response,
+      sourceScenario.id,
+      sourceScenario.name,
+      sourceScenario
+    );
+    expect(result.metrics.avgGrossRentPerMonth).toBeCloseTo(11009.923, 3);
+    expect(result.metrics.avgGrossRentPerYear).toBeCloseTo(132119.077, 3);
+  });
+
 });
 
 describe("backendCanonicalToScenarioInput", () => {

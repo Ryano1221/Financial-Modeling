@@ -58,7 +58,9 @@ def test_extract_lease_hints_parses_loi_term_suite_and_opex_from_docx_style_text
         "Premises: Option 1 - 3,226 RSF located in Suite 2-380.\n"
         "Lease Commencement: estimated to be May 1, 2026.\n"
         "Lease Term: Landlord is proposing a 52 month term.\n"
+        "Base Rent: Landlord is proposing initial base rent of $42.00 /rsf, net of operating, with 3% annual increases.\n"
         "Operating Expenses: Estimated operating expenses for 2026 are $14.26. 2025 Operating expenses were $14.35.\n"
+        "Tenant Improvements: Tenant shall be provided an allowance of $1.50 RSF.\n"
     )
     hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
 
@@ -70,6 +72,7 @@ def test_extract_lease_hints_parses_loi_term_suite_and_opex_from_docx_style_text
     assert str(hints["expiration_date"]) == "2030-08-31"
     assert hints["opex_psf_year_1"] == 14.26
     assert hints["opex_source_year"] == 2026
+    assert hints["ti_allowance_psf"] == 1.5
 
 
 def test_regex_prefill_prefers_tia_per_sf_over_total_budget() -> None:
@@ -88,3 +91,12 @@ def test_regex_prefill_does_not_treat_test_fit_or_opex_as_ti_allowance() -> None
     )
     prefill = _regex_prefill(text)
     assert prefill.get("ti_allowance_psf") is None
+
+
+def test_regex_prefill_parses_ti_allowance_from_tenant_improvements_clause() -> None:
+    text = (
+        "Tenant Improvements: Premises is part of Landlord's spec suite program.\n"
+        "Tenant shall be provided an allowance of $1.50 RSF for power to furniture.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") == 1.5

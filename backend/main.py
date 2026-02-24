@@ -1614,6 +1614,24 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
                     continue
                 if pat_idx == 2 and value < 3.0:
                     continue
+                local = seg[max(0, m.start() - 72): min(len(seg), m.end() + 72)]
+                local_has_opex_kw = bool(
+                    re.search(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance|additional rent)\b", local)
+                )
+                local_has_base_rent_kw = bool(
+                    re.search(r"(?i)\b(?:initial\s+base\s+rent|base\s+rent|rental\s+rate|rent\s+schedule|rent\s+step)\b", local)
+                )
+                local_has_rent_schedule_cues = bool(
+                    re.search(
+                        r"(?i)\b(?:rent\s+schedule|annual\s+escalations?|with\s+\d+(?:\.\d+)?%\s+annual|months?\s*\d{1,3}\s*(?:-|to|through|thru|–|—)\s*\d{1,3})\b",
+                        local,
+                    )
+                )
+                # Prevent false positives like "$42.00/RSF, net of operating" from base-rent lines.
+                if local_has_base_rent_kw and not local_has_opex_kw:
+                    continue
+                if local_has_rent_schedule_cues and not local_has_opex_kw:
+                    continue
                 score = 1
                 if "operating expense" in low or "common area maintenance" in low or "opex" in low or re.search(r"(?i)\bcam\b", seg):
                     score += 4
@@ -1627,13 +1645,23 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
                     score += 1
                 if re.search(r"(?i)\b(?:base rent|rental rate|rent schedule|rent step)\b", seg):
                     score -= 3
+                if local_has_opex_kw:
+                    score += 3
+                if local_has_base_rent_kw:
+                    score -= 8
+                if re.search(r"(?i)\bnet\s+of\s+operating\b", local):
+                    score -= 6
                 if re.search(r"(?i)\b(?:parking)\b", seg):
                     score -= 2
                 if re.search(r"(?i)\b(?:ti|tenant improvements?|allowance|furniture|cabling|ff&e)\b", seg):
                     score -= 8
                 if pat_idx == 2:
                     score -= 1
-                year_match = re.search(r"(?i)\b(?:for|in|base year|as of)\s*(20\d{2})\b", seg)
+                year_match = re.search(r"(?i)\b(?:for|in|base year|as of)\s*(20\d{2})\b", local)
+                if not year_match:
+                    year_match = re.search(r"\b(20\d{2})\b", local)
+                if not year_match:
+                    year_match = re.search(r"(?i)\b(?:for|in|base year|as of)\s*(20\d{2})\b", seg)
                 if not year_match:
                     year_match = re.search(r"\b(20\d{2})\b", seg)
                 source_year: Optional[int] = int(year_match.group(1)) if year_match else None
@@ -2973,6 +3001,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "opex_psf_year_1": None,
         "opex_source_year": None,
         "opex_by_calendar_year": {},
+        "ti_allowance_psf": None,
+        "ti_budget_psf": None,
+        "ti_budget_total": None,
         "free_rent_scope": None,
         "free_rent_start_month": None,
         "free_rent_end_month": None,
@@ -3348,6 +3379,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         prefill_hints = extract_prefill_hints(text)
     except Exception:
         prefill_hints = {}
+    prefill_ti_allowance = _coerce_float_token(prefill_hints.get("ti_allowance_psf"), 0.0) or 0.0
+    if prefill_ti_allowance > 0:
+        hints["ti_allowance_psf"] = float(round(prefill_ti_allowance, 4))
+    prefill_ti_budget_total = _coerce_float_token(prefill_hints.get("ti_budget_total"), 0.0) or 0.0
+    if prefill_ti_budget_total > 0:
+        hints["ti_budget_total"] = float(round(prefill_ti_budget_total, 2))
     prefill_rent_steps = prefill_hints.get("rent_steps") if isinstance(prefill_hints.get("rent_steps"), list) else []
     prefill_base_rate = _coerce_float_token(prefill_hints.get("rate_psf_yr"), 0.0) or 0.0
     normalized_prefill_rent: list[dict] = []
@@ -4433,6 +4470,10 @@ def _normalize_impl(
                     f"OpEx estimated at 3% YoY from {opex_source_year} to {commencement_year}; "
                     "using 3% annual escalation thereafter."
                 )
+            hinted_ti_allowance = _coerce_float_token(extracted_hints.get("ti_allowance_psf"), 0.0) or 0.0
+            if hinted_ti_allowance > 0:
+                updates["ti_allowance_psf"] = hinted_ti_allowance
+                updates["ti_source_of_truth"] = "psf"
 
             hinted_parking_ratio = _coerce_float_token(extracted_hints.get("parking_ratio"), 0.0)
             if hinted_parking_ratio > 0:
