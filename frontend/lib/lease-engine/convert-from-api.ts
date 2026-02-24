@@ -11,11 +11,16 @@ import {
 } from "@/lib/ti";
 import { inferRentEscalationPercentFromSteps } from "@/lib/rent-escalation";
 
-function monthDiff(start: string, end: string): number {
+function monthDiff(start: string, endInclusive: string): number {
   const [y1, m1, d1] = start.split("-").map(Number);
-  const [y2, m2, d2] = end.split("-").map(Number);
-  let months = (y2 - y1) * 12 + (m2 - m1);
-  if (d2 < d1) months -= 1;
+  const [y2, m2, d2] = endInclusive.split("-").map(Number);
+  if (![y1, m1, d1, y2, m2, d2].every(Number.isFinite)) return 0;
+
+  // Lease expiration is stored as an inclusive date; convert to an exclusive
+  // boundary so end-of-month expirations keep their full final month.
+  const endExclusive = new Date(Date.UTC(y2, m2 - 1, d2 + 1));
+  let months = (endExclusive.getUTCFullYear() - y1) * 12 + (endExclusive.getUTCMonth() + 1 - m1);
+  if (endExclusive.getUTCDate() < d1) months -= 1;
   return Math.max(0, months);
 }
 
@@ -119,6 +124,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       leaseType,
       baseOpexPsfYr: s.base_opex_psf_yr,
       baseYearOpexPsfYr: s.base_year_opex_psf_yr,
+      opexByCalendarYear: s.opex_by_calendar_year,
       annualEscalationPercent: s.opex_growth,
     },
     parkingSchedule: {

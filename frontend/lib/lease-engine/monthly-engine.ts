@@ -240,13 +240,47 @@ function monthlyOpex(
   baseYearPsfYr: number | undefined,
   escalationPercent: number,
   leaseType: string,
-  effectiveRsf: number[]
+  effectiveRsf: number[],
+  commencementDate: string,
+  opexByCalendarYear?: Record<string, number>
 ): number[] {
+  const commencement = parseDate(commencementDate);
+  const explicitOpexByYear = (() => {
+    const raw = opexByCalendarYear ?? {};
+    const normalized: Record<number, number> = {};
+    for (const [yearRaw, valueRaw] of Object.entries(raw)) {
+      const year = Number(yearRaw);
+      const value = Number(valueRaw);
+      if (!Number.isFinite(year) || !Number.isFinite(value)) continue;
+      if (year < 1900 || year > 2200 || value < 0) continue;
+      normalized[Math.floor(year)] = value;
+    }
+    return normalized;
+  })();
+  const explicitYears = Object.keys(explicitOpexByYear)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  const annualOpexPsfForCalendarYear = (calendarYear: number): number => {
+    if (explicitYears.length > 0) {
+      if (calendarYear in explicitOpexByYear) return explicitOpexByYear[calendarYear];
+      const floorYears = explicitYears.filter((year) => year <= calendarYear);
+      const baselineYear =
+        floorYears.length > 0 ? floorYears[floorYears.length - 1] : explicitYears[0];
+      const baselineValue = explicitOpexByYear[baselineYear];
+      if (escalationPercent <= 0) return baselineValue;
+      const yearDelta = Math.max(0, calendarYear - baselineYear);
+      return baselineValue * Math.pow(1 + escalationPercent, yearDelta);
+    }
+    return baseOpexPsfYr;
+  };
+
   const opex: number[] = [];
   if (leaseType === "full_service") return new Array(termMonths).fill(0);
   for (let m = 0; m < termMonths; m++) {
-    const yearIndex = Math.floor(m / 12);
-    const annualPsf = baseOpexPsfYr * Math.pow(1 + escalationPercent, yearIndex);
+    const annualPsf = explicitYears.length > 0
+      ? annualOpexPsfForCalendarYear(commencement.year + Math.floor((commencement.month + m) / 12))
+      : baseOpexPsfYr * Math.pow(1 + escalationPercent, Math.floor(m / 12));
     let chargePsfYr = annualPsf;
     if (leaseType === "base_year" || leaseType === "expense_stop") {
       const baseYear = baseYearPsfYr ?? baseOpexPsfYr;
@@ -415,7 +449,9 @@ export function runMonthlyEngine(
     scenario.expenseSchedule.baseYearOpexPsfYr,
     scenario.expenseSchedule.annualEscalationPercent,
     scenario.expenseSchedule.leaseType,
-    effectiveRsf
+    effectiveRsf,
+    comm,
+    scenario.expenseSchedule.opexByCalendarYear
   );
   const opex = [...opexBeforeAbatement];
   const parking = monthlyParking(

@@ -211,3 +211,32 @@ def test_detect_generated_report_document() -> None:
         "Start month End month Rate\\n"
     )
     assert main._looks_like_generated_report_document(text) is True
+
+
+def test_extract_hints_prefers_option_two_counter_terms_for_option_blocks() -> None:
+    text = (
+        "PREMISES: Benbrook Suite 200 - Approximately 4,626 RSF\n"
+        "COMMENCEMENT:December 1, 2026\n"
+        "TERM:Option One:\n"
+        "Sixty-(63)three Months with three (3) months base free rent at the beginning of term\n"
+        "An additional three (3) months of base rent abatement to be applied during the term\n"
+        "Option Two:\n"
+        "Eighty-eight (8) Months four(4) months base free rent at the beginning of term\n"
+        "An additional four (4) months of base rent abatement to be applied during the term\n"
+        "BASE RENT:Option One: Months 01-12:$27.00 NNN with 3% annual increases\n"
+        "Option Two: Months 01-12:$26.00 NNN with 3% annual increases\n"
+        "PARKING:4.00 unreserved spaces per 1,000 RSF at no cost to Tenant for the entirety of the Term.\n"
+    )
+    hints = main._extract_lease_hints(text, "counter-option.docx", "test-rid")
+    assert str(hints["commencement_date"]) == "2026-12-01"
+    assert str(hints["expiration_date"]) == "2034-03-31"
+    assert hints["term_months"] == 88
+    assert hints["building_name"] == "Benbrook"
+    assert hints["free_rent_scope"] == "base"
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 7
+    assert hints["parking_ratio"] == 4.0
+    assert hints["rsf"] == 4626.0
+    assert isinstance(hints["rent_schedule"], list)
+    assert hints["rent_schedule"][0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 26.0}
+    assert hints["rent_schedule"][-1]["end_month"] == 87

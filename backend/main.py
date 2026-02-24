@@ -1953,6 +1953,164 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     return None
 
 
+_WORD_UNITS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+_WORD_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+
+
+def _word_token_to_int(token: str | None) -> Optional[int]:
+    if not token:
+        return None
+    cleaned = re.sub(r"[^a-z\- ]", "", token.lower()).strip()
+    if not cleaned:
+        return None
+    parts = [p for p in re.split(r"[-\s]+", cleaned) if p]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        if parts[0] in _WORD_UNITS:
+            return _WORD_UNITS[parts[0]]
+        if parts[0] in _WORD_TENS:
+            return _WORD_TENS[parts[0]]
+        return None
+    if len(parts) == 2 and parts[0] in _WORD_TENS and parts[1] in _WORD_UNITS:
+        return _WORD_TENS[parts[0]] + _WORD_UNITS[parts[1]]
+    return None
+
+
+def _extract_option_blocks(section_text: str) -> list[tuple[str, str]]:
+    if not section_text:
+        return []
+    pattern = re.compile(r"(?is)\boption\s*(one|1|a|two|2|b)\s*:\s*")
+    matches = list(pattern.finditer(section_text))
+    if not matches:
+        return []
+    blocks: list[tuple[str, str]] = []
+    for i, m in enumerate(matches):
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(section_text)
+        label = (m.group(1) or "").strip().lower()
+        block = section_text[start:end].strip()
+        if not block:
+            continue
+        blocks.append((label, block))
+    return blocks
+
+
+def _extract_option_counter_terms(text: str) -> dict:
+    if not text:
+        return {}
+    flat = " ".join((text or "").split())
+    if "option one" not in flat.lower() or "option two" not in flat.lower():
+        return {}
+
+    term_matches = list(re.finditer(r"(?is)\bterm\s*:\s*(.+?)\bbase\s+rent\s*:", flat))
+    term_section = term_matches[-1].group(1) if term_matches else flat
+    base_matches = list(
+        re.finditer(
+            r"(?is)\bbase\s+rent\s*:\s*(.+?)\b(?:improvements?|operating\s+expenses|parking)\s*:",
+            flat,
+        )
+    )
+    base_section = base_matches[-1].group(1) if base_matches else flat
+    esc_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+increases?\b", base_section)
+    escalation_pct = float(esc_match.group(1)) if esc_match else 0.0
+
+    option_data: dict[str, dict] = {}
+    for raw_label, block in _extract_option_blocks(term_section):
+        key = "two" if raw_label in {"two", "2", "b"} else "one"
+        data = option_data.setdefault(key, {})
+        month_candidates: list[int] = []
+        for m in re.finditer(r"(?i)\b([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,3})\)?\s*months?\b", block):
+            digit_val = _coerce_int_token(m.group(2), 0) or 0
+            word_val = _word_token_to_int(m.group(1))
+            value = max(digit_val, word_val or 0)
+            if value > 0:
+                month_candidates.append(value)
+        if month_candidates:
+            data["term_months"] = max(month_candidates)
+
+        initial_free_match = re.search(
+            r"(?i)\b(?:with\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+base\s+free\s+rent\b",
+            block,
+        )
+        additional_free_match = re.search(
+            r"(?i)\badditional\s+([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+of\s+base\s+rent\s+abatement\b",
+            block,
+        )
+        initial_free = 0
+        additional_free = 0
+        if initial_free_match:
+            initial_free = max(
+                _coerce_int_token(initial_free_match.group(2), 0) or 0,
+                _word_token_to_int(initial_free_match.group(1)) or 0,
+            )
+        if additional_free_match:
+            additional_free = max(
+                _coerce_int_token(additional_free_match.group(2), 0) or 0,
+                _word_token_to_int(additional_free_match.group(1)) or 0,
+            )
+        total_free = max(0, initial_free + additional_free)
+        if total_free > 0:
+            data["free_rent_months"] = total_free
+
+    for raw_label, block in _extract_option_blocks(base_section):
+        key = "two" if raw_label in {"two", "2", "b"} else "one"
+        data = option_data.setdefault(key, {})
+        rate_match = re.search(
+            r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:nnn|gross|full\s*service|modified\s*gross|/|per)\b",
+            block,
+        )
+        if rate_match:
+            rate = _coerce_float_token(rate_match.group(1), 0.0) or 0.0
+            if 2.0 <= rate <= 500.0:
+                data["base_rate_psf_yr"] = float(rate)
+
+    if not option_data:
+        return {}
+
+    preferred_key = "two" if "two" in option_data else "one"
+    preferred = option_data.get(preferred_key) or {}
+    if not preferred:
+        return {}
+    return {
+        "selected_option": preferred_key,
+        "term_months": _coerce_int_token(preferred.get("term_months"), 0) or 0,
+        "free_rent_months": _coerce_int_token(preferred.get("free_rent_months"), 0) or 0,
+        "base_rate_psf_yr": _coerce_float_token(preferred.get("base_rate_psf_yr"), 0.0) or 0.0,
+        "escalation_pct": escalation_pct,
+    }
+
+
 def _looks_like_generated_report_document(text: str) -> bool:
     low = (text or "").lower()
     if not low:
@@ -2003,6 +2161,8 @@ def _looks_like_generic_scenario_name(name: str) -> bool:
     if re.fullmatch(r"\d+\.\s*[a-z\s]+", low):
         return True
     if re.fullmatch(r"lease(?:\s+\d+)?", low):
+        return True
+    if re.fullmatch(r"(suite|ste\.?|unit|space)\s*[a-z0-9\-]+", low):
         return True
     return False
 
@@ -2620,12 +2780,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
     date_token_capture = r"(\w+\s+\d{1,2},?\s+\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})"
     comm_direct_pats = [
-        rf"(?i)\bcommenc(?:e|ing)?(?:\s+on)?(?:\s+the\s+later\s+to\s+occur\s+of)?\s+{date_token_capture}",
+        rf"(?i)\bcommenc(?:ement|e|ing)(?:\s+date)?(?:\s+on)?(?:\s+the\s+later\s+to\s+occur\s+of)?(?:\s*[:\-]\s*|\s+){date_token_capture}",
         rf"(?i)\b(?:lease\s+)?commencement\b[^.\n]{{0,120}}?\bestimated\s+to\s+be\s+{date_token_capture}",
         rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\bcommencement\s+date\b",
     ]
     exp_direct_pats = [
-        rf"(?i)\bexpir(?:e|ing|ation)\b(?:\s+on)?\s+{date_token_capture}",
+        rf"(?i)\bexpir(?:e|ing|ation)\b(?:\s+date)?(?:\s+on)?(?:\s*[:\-]\s*|\s+){date_token_capture}",
         rf"(?i)\bending\s+on\s+{date_token_capture}",
         rf"(?i)\b(?:sublease\s+term|term)\b[^.\n]{{0,220}}\bthrough\b[^.\n]{{0,90}}?{date_token_capture}",
         rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\b(?:expiration|termination)\s+date\b",
@@ -2736,6 +2896,20 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         except Exception:
             pass
 
+    # Option-aware fallback for counter proposals that provide Option One/Two economics.
+    option_hints = _extract_option_counter_terms(text)
+    option_term = _coerce_int_token(option_hints.get("term_months"), 0) or 0
+    if option_term > 0 and not hints.get("term_months"):
+        hints["term_months"] = option_term
+        if hints.get("commencement_date") and not hints.get("expiration_date"):
+            try:
+                hints["expiration_date"] = _expiration_from_term_months(
+                    hints["commencement_date"],
+                    int(option_term),
+                )
+            except Exception:
+                pass
+
     # ---- Free rent / abatement scope + month range ----
     lower_text = text.lower()
     if re.search(
@@ -2782,6 +2956,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["free_rent_end_month"] = max(0, int(free_count) - 1)
             if hints["free_rent_scope"] is None and ("gross" in lower_text):
                 hints["free_rent_scope"] = "gross"
+
+    option_free_months = _coerce_int_token(option_hints.get("free_rent_months"), 0) or 0
+    if option_free_months > 0:
+        hints["free_rent_scope"] = "base"
+        hints["free_rent_start_month"] = 0
+        hints["free_rent_end_month"] = max(0, option_free_months - 1)
 
     # ---- Parking abatement range ----
     parking_abatement_ranges: list[tuple[int, int]] = []
@@ -2909,6 +3089,26 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                     }
                 ]
 
+    option_base_rate = _coerce_float_token(option_hints.get("base_rate_psf_yr"), 0.0) or 0.0
+    option_escalation_pct = _coerce_float_token(option_hints.get("escalation_pct"), 0.0) or 0.0
+    option_term = _coerce_int_token(hints.get("term_months"), 0) or 0
+    if option_base_rate >= 2.0 and option_term > 0:
+        escalation = max(0.0, option_escalation_pct) / 100.0
+        option_schedule: list[dict] = []
+        for start_month in range(0, option_term, 12):
+            end_month = min(option_term - 1, start_month + 11)
+            lease_year = start_month // 12
+            annual_rate = float(round(option_base_rate * ((1.0 + escalation) ** lease_year), 2))
+            option_schedule.append(
+                {
+                    "start_month": int(start_month),
+                    "end_month": int(end_month),
+                    "rent_psf_annual": annual_rate,
+                }
+            )
+        if option_schedule:
+            hints["rent_schedule"] = option_schedule
+
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
         rid,
@@ -2928,6 +3128,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         suite_hint=hints.get("suite", ""),
         address_hint=hints.get("address", ""),
     )
+    if not hints["building_name"]:
+        premises_building_match = re.search(
+            r"(?i)\bpremises\s*:\s*([A-Za-z0-9][A-Za-z0-9 &\-\./]{1,80}?)\s+(?:suite|ste\.?|unit|space)\b",
+            text,
+        )
+        if premises_building_match:
+            hints["building_name"] = _clean_building_candidate(premises_building_match.group(1))
     if not hints["building_name"] and hints.get("address"):
         hints["building_name"] = str(hints["address"])
 
@@ -2944,7 +3151,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # Parking ratio and economics
     parking_ratio_patterns = [
-        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:spaces?|stalls?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:spaces?|stalls?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
         r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*1,?000\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*\/\s*1,?000\s*(?:rsf|sf)\b",
         r"(?i)\b(?:parking\s+ratio|ratio\s+of)\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:licenses?|spaces?|stalls?)\s*(?:per|\/|:)\s*1,?000\s*(?:rsf|sf)\b",

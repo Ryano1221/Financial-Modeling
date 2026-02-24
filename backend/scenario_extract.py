@@ -366,11 +366,11 @@ _RE_EXP_LABEL = re.compile(
 _RE_BUILDING = re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,80})")
 _RE_SUITE = re.compile(r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,30})")
 _RE_TI = re.compile(
-    r"(?i)\b(?:ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b[^\n$]{0,260}\$?\s*[\d,]+(?:\.\d+)?",
+    r"(?i)\b(?:ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b[^\n$]{0,260}\$?\s*[\d,]+(?:\.\d+)?",
     re.I,
 )
 _RE_TIA_KEYWORD = re.compile(
-    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b"
+    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
 )
 _RE_PSF_AMOUNT = re.compile(
     rf"(?i)\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
@@ -380,7 +380,7 @@ _RE_FREE_RENT = re.compile(
     re.I,
 )
 _RE_BASE_OPEX = re.compile(
-    r"(?i)\b(?:base\s+year\s+)?(?:opex|ope|operating\s+expenses?|cam|nnn)\b[^\n]{0,220}",
+    r"(?i)\b(?:base\s+year\s+)?(?:opex|ope\b|operating\s+expenses?|cam)\b[^\n]{0,220}",
     re.I,
 )
 _RE_BASE_RENT = re.compile(
@@ -1075,12 +1075,14 @@ def _regex_prefill(text: str) -> dict:
         low_window = window.lower()
         if "e.g" in low_window or "example" in low_window:
             continue
+        if "outside of the tenant improvement allowance" in low_window or "test-fit" in low_window or "test fit" in low_window:
+            continue
         for amount_match in _RE_PSF_AMOUNT.finditer(window):
             try:
                 value = float(amount_match.group(1).replace(",", ""))
             except ValueError:
                 continue
-            if 0 <= value <= 500:
+            if 0.5 <= value <= 500:
                 ti_allowance_psf = value
                 break
         if ti_allowance_psf is not None:
@@ -1092,7 +1094,7 @@ def _regex_prefill(text: str) -> dict:
             if nums:
                 try:
                     fallback_val = float(nums[0].replace(",", ""))
-                    if 0 <= fallback_val <= 500:
+                    if 0.5 <= fallback_val <= 500:
                         ti_allowance_psf = fallback_val
                 except ValueError:
                     pass

@@ -36,6 +36,36 @@ function makeScenario(overrides: Partial<ScenarioWithId> = {}): ScenarioWithId {
 }
 
 describe("scenario abatement periods", () => {
+  it("keeps full month count for end-of-month expirations", () => {
+    const eastbound = makeScenario({
+      commencement: "2026-05-01",
+      expiration: "2030-08-31",
+      rent_steps: [
+        { start: 0, end: 11, rate_psf_yr: 42 },
+        { start: 12, end: 23, rate_psf_yr: 43.26 },
+        { start: 24, end: 35, rate_psf_yr: 44.56 },
+        { start: 36, end: 47, rate_psf_yr: 45.90 },
+        { start: 48, end: 51, rate_psf_yr: 47.28 },
+      ],
+    });
+    const eastlake = makeScenario({
+      commencement: "2026-06-01",
+      expiration: "2030-05-31",
+      rent_steps: [
+        { start: 0, end: 11, rate_psf_yr: 38 },
+        { start: 12, end: 23, rate_psf_yr: 39.14 },
+        { start: 24, end: 35, rate_psf_yr: 40.31 },
+        { start: 36, end: 47, rate_psf_yr: 41.52 },
+      ],
+    });
+
+    const eastboundCanonical = scenarioToCanonical(eastbound);
+    const eastlakeCanonical = scenarioToCanonical(eastlake);
+
+    expect(eastboundCanonical.datesAndTerm.leaseTermMonths).toBe(52);
+    expect(eastlakeCanonical.datesAndTerm.leaseTermMonths).toBe(48);
+  });
+
   it("supports multiple non-contiguous base abatements", () => {
     const scenario = makeScenario({
       abatement_periods: [

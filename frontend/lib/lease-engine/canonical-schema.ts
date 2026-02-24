@@ -63,6 +63,8 @@ export interface ExpenseScheduleCanonical {
   baseOpexPsfYr: number;
   /** Base year (expense stop) per RSF - for base_year / expense_stop */
   baseYearOpexPsfYr?: number;
+  /** Optional explicit OpEx by calendar year; fallback to growth math when absent. */
+  opexByCalendarYear?: Record<string, number>;
   annualEscalationPercent: number;
   /** Optional category breakdown annual per RSF */
   byCategory?: Partial<Record<ExpenseCategory, number>>;

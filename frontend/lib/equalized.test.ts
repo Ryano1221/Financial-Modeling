@@ -19,6 +19,7 @@ function makeScenario(overrides: Partial<ScenarioWithId>): ScenarioWithId {
     opex_mode: overrides.opex_mode ?? "nnn",
     base_opex_psf_yr: overrides.base_opex_psf_yr ?? 10,
     base_year_opex_psf_yr: overrides.base_year_opex_psf_yr ?? 10,
+    opex_by_calendar_year: overrides.opex_by_calendar_year,
     opex_growth: overrides.opex_growth ?? 0.03,
     discount_rate_annual: overrides.discount_rate_annual ?? 0.08,
     parking_spaces: overrides.parking_spaces ?? 0,
@@ -189,4 +190,5 @@ describe("computeEqualizedComparison", () => {
     const withTiTotal = result.metricsByScenario["ti-with"].totalCost;
     expect(withTiTotal).toBeCloseTo(baseTotal - 15000, 2);
   });
+
 });

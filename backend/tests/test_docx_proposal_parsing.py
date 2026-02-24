@@ -79,3 +79,12 @@ def test_regex_prefill_prefers_tia_per_sf_over_total_budget() -> None:
     )
     prefill = _regex_prefill(text)
     assert prefill.get("ti_allowance_psf") == 35.0
+
+
+def test_regex_prefill_does_not_treat_test_fit_or_opex_as_ti_allowance() -> None:
+    text = (
+        "TEST FIT: Landlord shall provide a test-fit allowance of $.12 per square foot, outside of the Tenant Improvement Allowance.\n"
+        "Operating Expenses are estimated to be $14.30 per RSF.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") is None
