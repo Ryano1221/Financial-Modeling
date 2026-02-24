@@ -24,11 +24,16 @@ function toNumber(value: unknown, fallback: number = 0): number {
   return fallback;
 }
 
-function monthDiff(comm: string, exp: string): number {
+function monthDiff(comm: string, expInclusive: string): number {
   const [cy, cm, cd] = comm.split("-").map(Number);
-  const [ey, em, ed] = exp.split("-").map(Number);
-  let m = (ey - cy) * 12 + (em - cm);
-  if (ed < cd) m -= 1;
+  const [ey, em, ed] = expInclusive.split("-").map(Number);
+  if (![cy, cm, cd, ey, em, ed].every(Number.isFinite)) return 0;
+
+  // Expiration is inclusive in API scenarios; compute months using an
+  // exclusive end boundary so final-month terms are not truncated.
+  const endExclusive = new Date(Date.UTC(ey, em - 1, ed + 1));
+  let m = (endExclusive.getUTCFullYear() - cy) * 12 + (endExclusive.getUTCMonth() + 1 - cm);
+  if (endExclusive.getUTCDate() < cd) m -= 1;
   return Math.max(0, m);
 }
 
@@ -304,6 +309,7 @@ export function scenarioInputToBackendCanonical(
       rsf: step.rsf,
     })),
     opex_psf_year_1: s.base_opex_psf_yr ?? 0,
+    opex_by_calendar_year: s.opex_by_calendar_year,
     opex_growth_rate: s.opex_growth ?? 0,
     expense_stop_psf: s.base_year_opex_psf_yr ?? 0,
     expense_structure_type: backendExpenseStructureType,
@@ -385,7 +391,13 @@ export function backendCanonicalToScenarioInput(
       : (normalizedLeaseType === "Full Service" || normalizedLeaseType === "Gross" || normalizedLeaseType === "Modified Gross")
         ? "full_service"
         : "nnn";
-  const displayName = name ?? c.scenario_name ?? c.premises_name ?? "Option";
+  const displayName = (name ?? "").trim() || getPremisesDisplayName({
+    building_name: c.building_name,
+    suite: c.suite,
+    floor: c.floor,
+    premises_name: c.premises_name,
+    scenario_name: c.scenario_name,
+  });
   const scenario: ScenarioInput = {
     name: displayName,
     document_type_detected: (c.document_type_detected ?? "").toString().trim() || undefined,
@@ -411,6 +423,7 @@ export function backendCanonicalToScenarioInput(
     ti_source_of_truth: normalizeTiSourceOfTruth(c.ti_source_of_truth, "psf"),
     opex_mode: opexMode,
     base_opex_psf_yr: c.opex_psf_year_1 ?? 0,
+    opex_by_calendar_year: c.opex_by_calendar_year,
     base_year_opex_psf_yr: c.expense_stop_psf ?? c.opex_psf_year_1 ?? 0,
     opex_growth: c.opex_growth_rate ?? 0,
     discount_rate_annual: c.discount_rate_annual ?? 0.08,

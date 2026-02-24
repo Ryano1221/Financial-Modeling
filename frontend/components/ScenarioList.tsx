@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { formatRSF, formatDateISO } from "@/lib/format";
 import type { ScenarioWithId } from "@/lib/types";
+import { getPremisesDisplayName } from "@/lib/canonical-api";
 
 interface ScenarioListProps {
   scenarios: ScenarioWithId[];
@@ -35,6 +36,13 @@ export function ScenarioList({
     if (mode === "full_service") return "FSG";
     return "NNN";
   };
+  const getScenarioName = (scenario: ScenarioWithId): string =>
+    getPremisesDisplayName({
+      building_name: scenario.building_name,
+      suite: scenario.suite,
+      floor: scenario.floor,
+      scenario_name: scenario.name,
+    });
 
   const startRename = (s: ScenarioWithId) => {
     setEditingId(s.id);
@@ -71,7 +79,9 @@ export function ScenarioList({
         <p className="text-xs text-slate-400">Rename, drag to reorder, include in summary. Information is stored securely.</p>
       </div>
       <div className="md:hidden p-3 space-y-3">
-        {scenarios.map((s) => (
+        {scenarios.map((s) => {
+          const scenarioName = getScenarioName(s);
+          return (
           <div
             key={`mobile-${s.id}`}
             className={`border border-slate-300/20 bg-slate-950/60 p-3 space-y-3 ${
@@ -101,7 +111,7 @@ export function ScenarioList({
                       ? "bg-[#3b82f6]/20 border-[#3b82f6]/60 text-white"
                       : "text-slate-100 border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:border-slate-200/45"
                   }`}
-                  title={s.name}
+                  title={scenarioName}
                 >
                   <span
                     className={`cursor-grab text-xs leading-none ${selectedId === s.id ? "text-slate-200" : "text-slate-500"}`}
@@ -109,7 +119,7 @@ export function ScenarioList({
                   >
                     {onReorder ? "⋮⋮" : ""}
                   </span>
-                  <span className="flex-1 whitespace-normal break-words leading-snug">{s.name}</span>
+                  <span className="flex-1 whitespace-normal break-words leading-snug">{scenarioName}</span>
                 </button>
               )}
             </div>
@@ -186,7 +196,8 @@ export function ScenarioList({
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="hidden md:block overflow-x-auto">
@@ -204,7 +215,9 @@ export function ScenarioList({
             </tr>
           </thead>
           <tbody>
-            {scenarios.map((s) => (
+            {scenarios.map((s) => {
+              const scenarioName = getScenarioName(s);
+              return (
               <tr
                 key={s.id}
                 draggable={!!onReorder}
@@ -249,7 +262,7 @@ export function ScenarioList({
                           ? "bg-[#3b82f6]/20 border-[#3b82f6]/60 text-white"
                           : "text-slate-100 border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:border-slate-200/45"
                       }`}
-                      title={s.name}
+                      title={scenarioName}
                     >
                       <span
                         className={`cursor-grab text-xs leading-none ${selectedId === s.id ? "text-slate-200" : "text-slate-500"}`}
@@ -257,7 +270,7 @@ export function ScenarioList({
                       >
                         {onReorder ? "⋮⋮" : ""}
                       </span>
-                      <span className="flex-1 whitespace-normal break-words leading-snug">{s.name}</span>
+                      <span className="flex-1 whitespace-normal break-words leading-snug">{scenarioName}</span>
                     </button>
                   )}
                 </td>
@@ -318,7 +331,8 @@ export function ScenarioList({
                   </span>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

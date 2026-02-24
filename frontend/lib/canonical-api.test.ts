@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CanonicalComputeResponse, ScenarioWithId } from "@/lib/types";
-import { canonicalResponseToEngineResult } from "@/lib/canonical-api";
+import {
+  backendCanonicalToScenarioInput,
+  canonicalResponseToEngineResult,
+  scenarioInputToBackendCanonical,
+} from "@/lib/canonical-api";
 
 function makeScenario(overrides: Partial<ScenarioWithId> = {}): ScenarioWithId {
   return {
@@ -103,6 +107,33 @@ function makeCanonicalResponse(): CanonicalComputeResponse {
 }
 
 describe("canonicalResponseToEngineResult", () => {
+  it("computes full term months for end-of-month expirations", () => {
+    const eastlake = makeScenario({
+      commencement: "2026-06-01",
+      expiration: "2030-05-31",
+      rent_steps: [
+        { start: 0, end: 11, rate_psf_yr: 38 },
+        { start: 12, end: 23, rate_psf_yr: 39.14 },
+        { start: 24, end: 35, rate_psf_yr: 40.31 },
+        { start: 36, end: 47, rate_psf_yr: 41.52 },
+      ],
+    });
+    const eastbound = makeScenario({
+      commencement: "2026-05-01",
+      expiration: "2030-08-31",
+      rent_steps: [
+        { start: 0, end: 11, rate_psf_yr: 42 },
+        { start: 12, end: 23, rate_psf_yr: 43.26 },
+        { start: 24, end: 35, rate_psf_yr: 44.56 },
+        { start: 36, end: 47, rate_psf_yr: 45.9 },
+        { start: 48, end: 51, rate_psf_yr: 47.28 },
+      ],
+    });
+
+    expect(scenarioInputToBackendCanonical(eastlake).term_months).toBe(48);
+    expect(scenarioInputToBackendCanonical(eastbound).term_months).toBe(52);
+  });
+
   it("uses source scenario abatement scope and amount when provided", () => {
     const sourceScenario = makeScenario();
     const result = canonicalResponseToEngineResult(
@@ -122,3 +153,32 @@ describe("canonicalResponseToEngineResult", () => {
   });
 });
 
+describe("backendCanonicalToScenarioInput", () => {
+  it("prefers building + suite display name over suite-only scenario_name", () => {
+    const canonical = {
+      ...makeCanonicalResponse().normalized_canonical_lease,
+      building_name: "The Reserve Office Park",
+      suite: "200",
+      floor: "",
+      premises_name: "The Reserve Office Park Suite 200",
+      scenario_name: "Suite 200",
+    };
+
+    const scenario = backendCanonicalToScenarioInput(canonical);
+    expect(scenario.name).toBe("The Reserve Office Park Suite 200");
+  });
+
+  it("falls back to scenario_name when premises fields are missing", () => {
+    const canonical = {
+      ...makeCanonicalResponse().normalized_canonical_lease,
+      building_name: "",
+      suite: "",
+      floor: "",
+      premises_name: "",
+      scenario_name: "Suite 200",
+    };
+
+    const scenario = backendCanonicalToScenarioInput(canonical);
+    expect(scenario.name).toBe("Suite 200");
+  });
+});
