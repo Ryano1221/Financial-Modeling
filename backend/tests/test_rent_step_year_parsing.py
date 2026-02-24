@@ -201,3 +201,31 @@ def test_regex_prefill_inferrs_rate_psf_from_prepaid_monthly_rent() -> None:
     prefill = _regex_prefill(text)
     assert prefill.get("rsf") == 22022.0
     assert round(float(prefill.get("rate_psf_yr", 0.0)), 2) == 28.00
+
+
+def test_regex_prefill_parses_proposal_year_rows_with_monthly_and_parenthetical_psf() -> None:
+    text = """
+    Area: 4,308 Rentable SF
+    Proposed Term: One Hundred Twenty (120) Months
+    Basic Rental:    Year 1  $8,975.00 per mo.  ($25.00 per s.f.)
+                     Year 2  $9,334.00 per mo.  ($26.00 per s.f.)
+                     Year 3-4 $9,693.00 per mo. ($27.00 per s.f.)
+                     Year 5-6 $10,052.00 per mo. ($28.00 per s.f.)
+                     Year 7-8 $10,411.00 per mo.  ($29.00 per s.f.)
+                     Year 9-10 $10,770.00 per mo. ($30.00 per s.f.)
+    Estimated OPE:   $6,174.80 per mo.  ($17.20 per s.f.)
+    Parking: Up to Sixteen (16) unreserved parking spaces at a rate of $75.00 per space per month.
+    """
+    prefill = _regex_prefill(text)
+    assert prefill.get("rsf") == 4308.0
+    assert prefill.get("base_opex_psf_yr") == 17.2
+    assert prefill.get("parking_spaces") == 16
+    assert prefill.get("parking_cost_monthly_per_space") == 75.0
+    assert prefill.get("rent_steps") == [
+        {"start": 0, "end": 11, "rate_psf_yr": 25.0},
+        {"start": 12, "end": 23, "rate_psf_yr": 26.0},
+        {"start": 24, "end": 47, "rate_psf_yr": 27.0},
+        {"start": 48, "end": 71, "rate_psf_yr": 28.0},
+        {"start": 72, "end": 95, "rate_psf_yr": 29.0},
+        {"start": 96, "end": 119, "rate_psf_yr": 30.0},
+    ]

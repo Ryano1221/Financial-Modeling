@@ -1594,12 +1594,12 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
     if not lines:
         return None, None
     segments = _iter_text_segments(lines, max_lines=320)
-    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance)\b")
+    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|ope|cam|common area maintenance)\b")
     value_patterns = [
         re.compile(
-            r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|square\s*feet?|sq\.?\s*ft)\s*(?:/|per)?\s*(?:year|yr|annum|annual)?\b"
+            r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rentable\s+)?(?:rsf|r\.?s\.?f\.?|sf|s\.?f\.?|square\s*feet?|sq\.?\s*ft)\s*(?:/|per)?\s*(?:year|yr|annum|annual)?\b"
         ),
-        re.compile(r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:psf|p/?sf)\b"),
+        re.compile(r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:psf|p/?sf|r\.?s\.?f\.?|s\.?f\.?)\b"),
         re.compile(r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\b"),
     ]
     candidates: list[tuple[int, int, float, Optional[int]]] = []
@@ -1619,6 +1619,8 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
                     score += 4
                 if re.search(r"(?i)\bestimated\s+operating\s+expenses?\b|\boperating\s+expenses?\s+for\s+20\d{2}\b", seg):
                     score += 5
+                if re.search(r"(?i)\bestimated\s+ope\b|\bope\s*[:\-]", seg):
+                    score += 4
                 if "base year" in low:
                     score += 2
                 if re.search(r"(?i)\b(?:estimate|estimated|projected)\b", seg):
@@ -1663,7 +1665,7 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
     table_pat = re.compile(
         r"(?i)^\s*(20\d{2})\s*(?:\||:|-|–|—)?\s*\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\s*$"
     )
-    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance|additional rent)\b")
+    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|ope|cam|common area maintenance|additional rent)\b")
 
     for idx, line in enumerate(lines[:1200]):
         context = " ".join(
@@ -2509,8 +2511,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     # ---- RSF: collect candidates with context-aware score ----
     rsf_patterns = [
         r"(?i)\b(?:rentable\s+area|rentable\s+square\s+feet|rsf)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
-        r"(?i)\b(?:premises|leased\s+premises|sublease\s+premises)[^.:\n]{0,140}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rentable\s+square\s+feet|square\s*feet|rsf)\b",
-        r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|square\s*feet|sf)\b",
+        r"(?i)\b(?:premises|leased\s+premises|sublease\s+premises)[^.:\n]{0,140}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|rsf)\b",
+        r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|sf|s\.?f\.?)\b",
     ]
     rsf_candidates: list[dict] = []
     for pat in rsf_patterns:
@@ -2736,9 +2738,15 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # ---- Free rent / abatement scope + month range ----
     lower_text = text.lower()
-    if re.search(r"(?i)\b(?:gross\s+rent\s+abatement|gross\s+abatement|abate\s+base\s+rent\s+and\s+operating\s+expenses|base\s+rent\s+and\s+operating\s+expenses\s+abated)\b", text):
+    if re.search(
+        r"(?i)\b(?:gross\s+rent\s+abatement|gross\s+abatement|abate\s+base\s+rent\s+and\s+operating\s+expenses|base\s+rent\s+and\s+operating\s+expenses\s+abated)\b",
+        text,
+    ) or re.search(r"(?i)\bmonths?\b[^\n]{0,80}\bof\s+gross\s+rent\b[^\n]{0,80}\babated\b", text):
         hints["free_rent_scope"] = "gross"
-    elif re.search(r"(?i)\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement)\b", text):
+    elif re.search(r"(?i)\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement)\b", text) or re.search(
+        r"(?i)\bmonths?\b[^\n]{0,80}\bof\s+base\s+rent(?:\s+only)?\b[^\n]{0,80}\babated\b",
+        text,
+    ):
         hints["free_rent_scope"] = "base"
 
     free_range_match = re.search(
@@ -2758,15 +2766,17 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["free_rent_end_month"] = end_1 - 1
     else:
         free_count_match = re.search(
-            r"(?i)\b(\d{1,3})\s+months?\b[^\n]{0,60}\b(?:free\s+rent|rent\s+abatement|abatement)\b",
+            r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,90}\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b",
             text,
         )
         if not free_count_match:
             free_count_match = re.search(
-                r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,60}\b(\d{1,3})\s+months?\b",
+                r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b[^\n]{0,90}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b",
                 text,
             )
-        free_count = _coerce_int_token(free_count_match.group(1), 0) if free_count_match else 0
+        free_count = 0
+        if free_count_match:
+            free_count = _coerce_int_token(free_count_match.group(1), 0) or _coerce_int_token(free_count_match.group(2), 0) or 0
         if free_count and free_count > 0:
             hints["free_rent_start_month"] = 0
             hints["free_rent_end_month"] = max(0, int(free_count) - 1)
@@ -2929,12 +2939,16 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     m = lease_type_pat.search(text)
     if m:
         hints["lease_type"] = re.sub(r"\s+", " ", m.group(1).strip())
+    elif re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", text):
+        hints["lease_type"] = "NNN"
 
     # Parking ratio and economics
     parking_ratio_patterns = [
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:spaces?|stalls?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
         r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*1,?000\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*\/\s*1,?000\s*(?:rsf|sf)\b",
+        r"(?i)\b(?:parking\s+ratio|ratio\s+of)\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:licenses?|spaces?|stalls?)\s*(?:per|\/|:)\s*1,?000\s*(?:rsf|sf)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*:\s*1,?000\s*(?:rsf|sf)\b",
     ]
     for pat in parking_ratio_patterns:
         m = re.search(pat, text)
@@ -2949,6 +2963,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
         r"(?i)\b(\d{1,4})\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
         r"(?i)\bentitled\s+to\s+(\d{1,4})\s+(?:parking\s+)?spaces?\b",
+        r"(?i)\b(?:up to\s+)?[a-z][a-z\-]*\s*\((\d{1,4})\)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
     ]
     for pat in parking_count_patterns:
         m = re.search(pat, text)

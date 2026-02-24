@@ -121,6 +121,19 @@ def test_extract_hints_parses_parking_ratio_count_and_monthly_rate() -> None:
     assert hints["parking_ratio"] == 3.5
 
 
+def test_extract_hints_parses_rentable_sf_ope_and_written_parking_count() -> None:
+    text = (
+        "Area: 4,308 Rentable SF. "
+        "Estimated OPE: $6,174.80 per mo. ($17.20 per s.f.). "
+        "Parking: Up to Sixteen (16) unreserved parking spaces at a rate of $75.00 per space per month."
+    )
+    hints = main._extract_lease_hints(text, "renewal-proposal.pdf", "test-rid")
+    assert hints["rsf"] == 4308.0
+    assert hints["opex_psf_year_1"] == 17.2
+    assert hints["parking_count"] == 16
+    assert hints["parking_rate_monthly"] == 75.0
+
+
 def test_extract_hints_parses_opex_psf_and_source_year() -> None:
     text = (
         "Additional Rent. Operating Expenses for 2025 are estimated at $12.50 per RSF per year. "

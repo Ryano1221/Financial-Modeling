@@ -75,6 +75,9 @@ def _detect_opex_mode_from_text(raw_text: str) -> str | None:
     low = f" {(raw_text or '').lower()} "
     if any(k in low for k in _BASE_YEAR_OPEX_CUES):
         return "base_year"
+    # Word-boundary NNN detection catches punctuation variants like ("NNN"), N.N.N., etc.
+    if re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", raw_text or ""):
+        return "nnn"
     if any(k in low for k in _FULL_SERVICE_OPEX_CUES):
         return "full_service"
     if any(k in low for k in _NNN_OPEX_CUES) and "not nnn" not in low and "no nnn" not in low:
@@ -341,9 +344,10 @@ def _prepare_text_for_llm(text: str) -> tuple[str, list[str]]:
 
 
 # ---- Regex pre-extraction ----
+_SF_UNIT_PATTERN = r"(?:r\.?s\.?f\.?|s\.?f\.?|rsf|sf|psf|sq\.?\s*ft\.?|square\s*feet?)"
 _RE_RSF = re.compile(
-    r"\b(?:rsf|rentable\s+square\s+feet?|sq\.?\s*ft\.?)\b[ \t:]*[\d,]+\.?\d*|"
-    r"[\d,]+\.?\d*[ \t]*(?:rsf|sf|sq\.?\s*ft\.?|rentable\s+square\s+feet?)\b",
+    r"\b(?:r\.?s\.?f\.?|rsf|rentable\s+(?:square\s+feet?|s\.?f\.?|sf)|square\s*feet?|sq\.?\s*ft\.?)\b[ \t:]*[\d,]+\.?\d*|"
+    rf"[\d,]+\.?\d*[ \t]*(?:{_SF_UNIT_PATTERN}|rentable\s+(?:square\s+feet?|s\.?f\.?|sf))\b",
     re.I,
 )
 _RE_NUM = re.compile(r"[\d,]+\.?\d*")
@@ -362,21 +366,21 @@ _RE_EXP_LABEL = re.compile(
 _RE_BUILDING = re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,80})")
 _RE_SUITE = re.compile(r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,30})")
 _RE_TI = re.compile(
-    r"(?i)\b(?:ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b[^\n$]{0,100}\$?\s*[\d,]+(?:\.\d+)?",
+    r"(?i)\b(?:ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b[^\n$]{0,260}\$?\s*[\d,]+(?:\.\d+)?",
     re.I,
 )
 _RE_TIA_KEYWORD = re.compile(
-    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
+    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b"
 )
 _RE_PSF_AMOUNT = re.compile(
-    r"(?i)\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/|per)?\s*(?:rentable\s+)?(?:rsf|sf|psf|sq\.?\s*ft\.?)\b"
+    rf"(?i)\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
 )
 _RE_FREE_RENT = re.compile(
     r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b[^\n]{0,50}?\(?(\d{1,2})\)?\s*(?:months?)?",
     re.I,
 )
 _RE_BASE_OPEX = re.compile(
-    r"(?i)\b(?:base\s+year\s+)?(?:opex|operating\s+expenses?|cam|nnn)\b[^\n$]{0,140}\$\s*[\d,]+(?:\.\d+)?(?:\s*(?:/|per)\s*(?:rsf|sf|psf))?",
+    r"(?i)\b(?:base\s+year\s+)?(?:opex|ope|operating\s+expenses?|cam|nnn)\b[^\n]{0,220}",
     re.I,
 )
 _RE_BASE_RENT = re.compile(
@@ -384,11 +388,16 @@ _RE_BASE_RENT = re.compile(
     re.I,
 )
 _RE_BASE_RENT_FLEX = re.compile(
-    r"(?is)\b(?:initial\s+)?(?:base\s+rent|rental\s+rate|annual\s+rent)\b.{0,240}?\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)\b"
+    rf"(?is)\b(?:initial\s+)?(?:base\s+rent|rental\s+rate|annual\s+rent)\b.{{0,240}}?\$\s*([\d,]+(?:\.\d{{1,4}})?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
 )
 _RE_YEAR_RATE_INLINE = re.compile(
     r"(?i)\b(?:lease\s*)?years?\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?"
     r"\b[^\n$]{0,120}\$?\s*([\d,]+(?:\.\d{1,4})?)"
+)
+_RE_YEAR_RATE_INLINE_MONTHLY_PSF = re.compile(
+    rf"(?i)\b(?:lease\s*)?years?\s*(\d{{1,2}})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{{1,2}}))?"
+    rf"\b[^\n]{{0,100}}?\$\s*[\d,]+(?:\.\d{{1,4}})?\s*(?:per|/)\s*(?:mo(?:nth)?s?|mos?\.?)\b"
+    rf"[^\n]{{0,60}}?\(\s*\$?\s*([\d,]+(?:\.\d{{1,4}})?)\s*(?:/|per)\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\s*\)"
 )
 _RE_YEAR_TABLE_HEADER = re.compile(r"(?i)\b(?:lease\s*)?years?\b.*\b(?:rent|rate|psf|/sf|per\s+sf)\b")
 _RE_YEAR_TABLE_ROW = re.compile(
@@ -718,9 +727,28 @@ def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
 
     year_rows: list[tuple[int, int, float]] = []
     header_window = 0
+    adjusted_window = 0
     scan_limit = min(len(lines), 1000)
     for idx, line in enumerate(lines[:scan_limit]):
         low_line = line.lower()
+        if re.search(r"(?i)\badjusted\s+(?:rental|rent)\s+rate\b|\bgross\s+rent\b", line):
+            adjusted_window = max(adjusted_window, 14)
+        skip_adjusted_section = adjusted_window > 0 and bool(year_rows)
+        if adjusted_window > 0:
+            adjusted_window -= 1
+        if skip_adjusted_section:
+            continue
+        for m in _RE_YEAR_RATE_INLINE_MONTHLY_PSF.finditer(line):
+            y1 = _coerce_int_token(m.group(1), None)
+            y2 = _coerce_int_token(m.group(2), y1)
+            rate = _coerce_float_token(m.group(3), None)
+            if y1 is None or y2 is None or rate is None:
+                continue
+            if not (2 <= rate <= 500):
+                continue
+            if y2 < y1:
+                y1, y2 = y2, y1
+            year_rows.append((y1, y2, float(rate)))
         if _RE_YEAR_TABLE_HEADER.search(line) or _RE_RENT_TABLE_HINT.search(line):
             header_window = max(header_window, 50)
         if header_window > 0:
@@ -1080,12 +1108,26 @@ def _regex_prefill(text: str) -> dict:
     # Base opex $/sf
     m = _RE_BASE_OPEX.search(text)
     if m:
-        amount_match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", m.group(0))
-        if amount_match:
+        seg = m.group(0)
+        opex_candidates: list[float] = []
+        for amount_match in _RE_PSF_AMOUNT.finditer(seg):
             try:
-                prefill["base_opex_psf_yr"] = float(amount_match.group(1).replace(",", ""))
+                value = float(amount_match.group(1).replace(",", ""))
             except ValueError:
-                pass
+                continue
+            if 0 < value <= 150:
+                opex_candidates.append(value)
+        if not opex_candidates:
+            amount_match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", seg)
+            if amount_match:
+                try:
+                    value = float(amount_match.group(1).replace(",", ""))
+                except ValueError:
+                    value = 0.0
+                if 0 < value <= 150:
+                    opex_candidates.append(value)
+        if opex_candidates:
+            prefill["base_opex_psf_yr"] = float(sorted(opex_candidates)[0])
     # Base rent ($/sf/yr) — prefer explicit $/SF context and avoid non-rent numeric matches.
     base_rate_candidates: list[tuple[int, float]] = []
     for pat in (_RE_BASE_RENT_FLEX, _RE_BASE_RENT):
@@ -1108,6 +1150,8 @@ def _regex_prefill(text: str) -> dict:
                 score += 1
             if any(tok in seg for tok in ("operating", "opex", "cam", "parking", "allowance", "ti allowance")):
                 score -= 4
+            if "adjusted rental rate" in seg or "gross rent" in seg:
+                score -= 6
             # Tie-break toward realistic base rent over low OpEx-like values when context score is similar.
             if v >= 15:
                 score += 1
@@ -1137,12 +1181,14 @@ def _regex_prefill(text: str) -> dict:
             prefill["rent_steps"] = year_table_steps
             prefill["_rent_steps_basis"] = "month_index"
             prefill["_rent_steps_source"] = "year_table_regex"
+            prefill["rate_psf_yr"] = float(year_table_steps[0].get("rate_psf_yr", prefill.get("rate_psf_yr", 0.0)))
     elif term_months:
         month_phrase_steps = _extract_month_phrase_rent_steps(text, term_month_count=int(term_months))
         if month_phrase_steps:
             prefill["rent_steps"] = month_phrase_steps
             prefill["_rent_steps_basis"] = "month_index"
             prefill["_rent_steps_source"] = "month_phrase_regex"
+            prefill["rate_psf_yr"] = float(month_phrase_steps[0].get("rate_psf_yr", prefill.get("rate_psf_yr", 0.0)))
 
     # If only base rate + annual escalation language exists, synthesize yearly steps.
     if "rent_steps" not in prefill and "rate_psf_yr" in prefill:
@@ -1213,6 +1259,34 @@ def _regex_prefill(text: str) -> dict:
         prefill["name"] = building
     elif suite:
         prefill["name"] = f"Suite {suite}"
+
+    # Parking economics used by deterministic fallback when AI is unavailable.
+    parking_count_patterns = [
+        r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
+        r"(?i)\b(\d{1,4})\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
+        r"(?i)\b(?:up to\s+)?[a-z][a-z\-]*\s*\((\d{1,4})\)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
+    ]
+    for pat in parking_count_patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        count = _coerce_int_token(m.group(1), 0)
+        if count and 1 <= count <= 10000:
+            prefill["parking_spaces"] = int(count)
+            break
+
+    parking_rate_patterns = [
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\s*(?:per|\/)\s*month\b",
+        r"(?i)\bparking\b[^.\n]{0,120}\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
+    ]
+    for pat in parking_rate_patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        rate = _coerce_float_token(m.group(1), 0.0)
+        if rate and 1 <= rate <= 10000:
+            prefill["parking_cost_monthly_per_space"] = float(rate)
+            break
     return prefill
 
 
@@ -1404,8 +1478,8 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         "base_year_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 10.0) or 10.0),
         "opex_growth": 0.03,
         "discount_rate_annual": 0.08,
-        "parking_spaces": 0,
-        "parking_cost_monthly_per_space": 0.0,
+        "parking_spaces": int(prefill.get("parking_spaces", 0) or 0),
+        "parking_cost_monthly_per_space": float(prefill.get("parking_cost_monthly_per_space", 0.0) or 0.0),
         "parking_sales_tax_rate": 0.0825,
     }
 
@@ -1413,7 +1487,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         "rsf": 0.7 if "rsf" in prefill else 0.0,
         "commencement": 0.6 if "commencement" in prefill else 0.0,
         "expiration": 0.6 if "expiration" in prefill else 0.0,
-        "rent_steps": 0.5 if "rate_psf_yr" in prefill else 0.2,
+        "rent_steps": 0.7 if "rent_steps" in prefill else (0.5 if "rate_psf_yr" in prefill else 0.2),
         "ti_allowance_psf": 0.6 if "ti_allowance_psf" in prefill else 0.0,
         "free_rent_months": 0.6 if "free_rent_months" in prefill else 0.0,
     }
