@@ -2247,14 +2247,23 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
         if len(line_points) >= 2
         else ""
     )
-    legend_width = 520
-    legend_start_x = (w - legend_width) / 2
+    # Keep legend centered against the actual plot area (not full SVG width).
+    legend_center_x = left + (plot_w / 2)
+    left_label = "AVERAGE COST/YEAR"
+    right_label = "AVERAGE COST/SF/YEAR"
+    gap = 44.0
+    char_px = 6.6
+    left_block_w = 26.0 + 8.0 + (len(left_label) * char_px)
+    right_block_w = 26.0 + 8.0 + (len(right_label) * char_px)
+    legend_total_w = left_block_w + gap + right_block_w
+    legend_start_x = legend_center_x - (legend_total_w / 2.0)
+    right_block_start_x = legend_start_x + left_block_w + gap
     legend = (
         f'<rect x="{legend_start_x + 0:.2f}" y="16" width="26" height="10" fill="#111111" />'
-        f'<text x="{legend_start_x + 34:.2f}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/YEAR</text>'
-        f'<line x1="{legend_start_x + 272:.2f}" y1="21" x2="{legend_start_x + 298:.2f}" y2="21" stroke="#4b5563" stroke-width="4" />'
-        f'<circle cx="{legend_start_x + 285:.2f}" cy="21" r="4" fill="#4b5563" />'
-        f'<text x="{legend_start_x + 306:.2f}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">AVERAGE COST/SF/YEAR</text>'
+        f'<text x="{legend_start_x + 34:.2f}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">{left_label}</text>'
+        f'<line x1="{right_block_start_x + 0:.2f}" y1="21" x2="{right_block_start_x + 26:.2f}" y2="21" stroke="#4b5563" stroke-width="4" />'
+        f'<circle cx="{right_block_start_x + 13:.2f}" cy="21" r="4" fill="#4b5563" />'
+        f'<text x="{right_block_start_x + 34:.2f}" y="25" class="combo-x-label" text-anchor="start" style="font-weight:700;">{right_label}</text>'
     )
 
     return f"""
@@ -2296,7 +2305,8 @@ def _cost_visuals_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> 
     # Smaller chunks as safety increases to guarantee fit for very dense labels/data.
     chunk_size = max(2, 5 - max(0, plan.cost_visuals_safety))
     pages: list[DeckPage] = []
-    orientation = plan.orientation_for("cost_visuals", "landscape")
+    # Force landscape for cost visuals pages.
+    orientation = "landscape"
     for i in range(0, len(entries), chunk_size):
         subset = entries[i : i + chunk_size]
         pages.append(
