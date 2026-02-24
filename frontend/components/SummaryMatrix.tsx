@@ -13,9 +13,11 @@ interface SummaryMatrixProps {
 export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
   if (results.length === 0) return null;
 
+  const matrixMetricKeys = METRIC_LABELS.filter(
+    (key) => key !== "equalizedAvgCostPsfYr"
+  );
+
   const equalizedRows = [
-    "Equalized avg gross rent/SF/year",
-    "Equalized avg gross rent/month",
     "Equalized avg cost/SF/year",
     "Equalized avg cost/year",
     "Equalized avg cost/month",
@@ -26,12 +28,10 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
   const getEqualizedCellValue = (rowIdx: number, scenarioId: string) => {
     const eq = equalized?.metricsByScenario?.[scenarioId];
     if (!eq) return "—";
-    if (rowIdx === 0) return formatCurrencyPerSF(eq.averageGrossRentPsfYear);
-    if (rowIdx === 1) return formatCurrency(eq.averageGrossRentMonth);
-    if (rowIdx === 2) return formatCurrencyPerSF(eq.averageCostPsfYear);
-    if (rowIdx === 3) return formatCurrency(eq.averageCostYear);
-    if (rowIdx === 4) return formatCurrency(eq.averageCostMonth);
-    if (rowIdx === 5) return formatCurrency(eq.totalCost);
+    if (rowIdx === 0) return formatCurrencyPerSF(eq.averageCostPsfYear);
+    if (rowIdx === 1) return formatCurrency(eq.averageCostYear);
+    if (rowIdx === 2) return formatCurrency(eq.averageCostMonth);
+    if (rowIdx === 3) return formatCurrency(eq.totalCost);
     return formatCurrency(eq.npvCost);
   };
 
@@ -132,7 +132,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
           <div key={`matrix-mobile-${r.scenarioId}`} className="border border-slate-300/20 bg-slate-950/55 p-3">
             <h3 className="text-sm font-semibold text-slate-100 mb-2 whitespace-normal break-words">{r.scenarioName}</h3>
             <dl className="space-y-2 text-xs">
-              {METRIC_LABELS.map((key) => {
+              {matrixMetricKeys.map((key) => {
                 const value = (r.metrics as OptionMetrics)[key];
                 const formatted = getMatrixCellValue(key, r.scenarioId, value);
                 const notesCell = key === "notes";
@@ -177,7 +177,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
             </tr>
           </thead>
           <tbody>
-            {METRIC_LABELS.map((key) => (
+            {matrixMetricKeys.map((key) => (
               <tr key={key} className="border-b border-slate-300/10 hover:bg-slate-400/10">
                 <td className="py-2.5 px-4 font-medium text-slate-200">
                   {METRIC_DISPLAY_NAMES[key] ?? key}
