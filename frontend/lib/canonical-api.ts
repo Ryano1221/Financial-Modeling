@@ -187,6 +187,9 @@ export function getPremisesDisplayName(opts: {
   premises_name?: string | null;
   scenario_name?: string | null;
 }): string {
+  const scenarioName = (opts.scenario_name ?? "").trim();
+  // Preserve explicit option labels from parser-derived scenario names.
+  if (/\boption\s*(?:a|b|1|2|one|two)\b/i.test(scenarioName)) return scenarioName;
   const b = (opts.building_name ?? "").trim();
   const su = (opts.suite ?? "").trim();
   const fl = (opts.floor ?? "").trim();
@@ -197,7 +200,7 @@ export function getPremisesDisplayName(opts: {
   if (b) return b;
   const p = (opts.premises_name ?? "").trim();
   if (p) return p;
-  return (opts.scenario_name ?? "").trim() || "Option";
+  return scenarioName || "Option";
 }
 
 /** Display order: Building name, Suite/floor fallback, Street address (for any Address or Premises display). */

@@ -151,6 +151,7 @@ describe("canonicalResponseToEngineResult", () => {
     expect(result.metrics.abatementType).toContain("Gross rent");
     expect(result.metrics.abatementAppliedWhen).toBe("M1-M2");
   });
+
 });
 
 describe("backendCanonicalToScenarioInput", () => {
@@ -180,5 +181,19 @@ describe("backendCanonicalToScenarioInput", () => {
 
     const scenario = backendCanonicalToScenarioInput(canonical);
     expect(scenario.name).toBe("Suite 200");
+  });
+
+  it("preserves option-labeled scenario names", () => {
+    const canonical = {
+      ...makeCanonicalResponse().normalized_canonical_lease,
+      building_name: "Frost Tower",
+      suite: "1875",
+      floor: "",
+      premises_name: "Frost Tower Suite 1875",
+      scenario_name: "Frost Tower Suite 1875 - Option 2",
+    };
+
+    const scenario = backendCanonicalToScenarioInput(canonical);
+    expect(scenario.name).toBe("Frost Tower Suite 1875 - Option 2");
   });
 });

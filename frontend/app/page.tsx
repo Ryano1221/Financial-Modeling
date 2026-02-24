@@ -136,12 +136,14 @@ function collectCanonicalVariants(
   canonicalLease: BackendCanonicalLease,
   optionVariants?: BackendCanonicalLease[] | null
 ): BackendCanonicalLease[] {
-  const all = [
-    canonicalLease,
-    ...((Array.isArray(optionVariants) ? optionVariants : []).filter(
-      (variant): variant is BackendCanonicalLease => !!variant
-    )),
-  ];
+  const parsedOptionVariants = (Array.isArray(optionVariants) ? optionVariants : []).filter(
+    (variant): variant is BackendCanonicalLease => !!variant
+  );
+  // When backend provides explicit option variants, do not also add the base canonical lease
+  // to avoid phantom duplicate options in the UI.
+  const all = parsedOptionVariants.length >= 2
+    ? parsedOptionVariants
+    : [canonicalLease, ...parsedOptionVariants];
   const deduped = new Map<string, BackendCanonicalLease>();
   for (const variant of all) {
     const key = canonicalVariantKey(variant);
@@ -180,9 +182,10 @@ function canonicalDisplayNameForAdd(
   total: number
 ): string {
   const explicitName = cleanMaybeString(canonical.scenario_name);
-  if (explicitName) return explicitName;
+  const explicitHasOption = /\boption\s*(?:a|b|1|2|one|two)\b/i.test(explicitName);
+  if (explicitName && (total <= 1 || explicitHasOption)) return explicitName;
   if (total <= 1) return "";
-  const base = getPremisesDisplayName({
+  const base = explicitName || getPremisesDisplayName({
     building_name: canonical.building_name,
     suite: canonical.suite,
     floor: canonical.floor,
