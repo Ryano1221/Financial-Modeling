@@ -60,6 +60,10 @@ export function ScenarioForm({
 }: ScenarioFormProps) {
   const [commencementInput, setCommencementInput] = useState("");
   const [expirationInput, setExpirationInput] = useState("");
+  const [tiAllowancePsfInput, setTiAllowancePsfInput] = useState("0");
+  const [tiAllowanceTotalInput, setTiAllowanceTotalInput] = useState("0");
+  const [tiBudgetPsfInput, setTiBudgetPsfInput] = useState("0");
+  const [tiBudgetTotalInput, setTiBudgetTotalInput] = useState("0");
 
   const isoToDisplayDate = (value: string): string => {
     const match = String(value || "").trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
@@ -627,6 +631,89 @@ export function ScenarioForm({
   const tiAllowanceSource = (scenario?.ti_allowance_source_of_truth === "total" ? "total" : "psf");
   const tiBudgetSource = (scenario?.ti_source_of_truth === "total" ? "total" : "psf");
 
+  const numericInputString = (value: number): string => {
+    if (!Number.isFinite(value)) return "0";
+    if (Math.abs(value) < 0.000001) return "0";
+    return String(value);
+  };
+
+  useEffect(() => {
+    if (!scenario) {
+      setTiAllowancePsfInput("0");
+      setTiAllowanceTotalInput("0");
+      setTiBudgetPsfInput("0");
+      setTiBudgetTotalInput("0");
+      return;
+    }
+    setTiAllowancePsfInput(numericInputString(round2(Number(scenario.ti_allowance_psf ?? tiAllowancePsf) || 0)));
+    setTiAllowanceTotalInput(numericInputString(round0(tiAllowanceTotal)));
+    setTiBudgetPsfInput(numericInputString(round2(tiBudgetPsf)));
+    setTiBudgetTotalInput(numericInputString(round0(Number(scenario.ti_budget_total ?? tiBudgetTotal) || 0)));
+  }, [scenario, scenario?.id, scenario?.ti_allowance_psf, scenario?.ti_budget_total, tiAllowancePsf, tiAllowanceTotal, tiBudgetPsf, tiBudgetTotal]);
+
+  const parseNonNegativeInput = (raw: string): number | null => {
+    const text = String(raw || "").trim();
+    if (!text) return 0;
+    const parsed = Number(text.replace(/,/g, ""));
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, parsed);
+  };
+
+  const onInputEnterCommit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.currentTarget.blur();
+    }
+  };
+
+  const commitTiAllowancePsf = () => {
+    if (!scenario) return;
+    const parsed = parseNonNegativeInput(tiAllowancePsfInput);
+    if (parsed == null) {
+      setTiAllowancePsfInput(numericInputString(round2(Number(scenario.ti_allowance_psf ?? tiAllowancePsf) || 0)));
+      return;
+    }
+    update("ti_allowance_psf", round2(parsed));
+  };
+
+  const commitTiAllowanceTotal = () => {
+    if (!scenario) return;
+    if (!canDeriveTi) {
+      setTiAllowanceTotalInput(numericInputString(round0(tiAllowanceTotal)));
+      return;
+    }
+    const parsed = parseNonNegativeInput(tiAllowanceTotalInput);
+    if (parsed == null) {
+      setTiAllowanceTotalInput(numericInputString(round0(tiAllowanceTotal)));
+      return;
+    }
+    updateTiAllowanceTotal(round0(parsed));
+  };
+
+  const commitTiBudgetPsf = () => {
+    if (!scenario) return;
+    if (!canDeriveTi) {
+      setTiBudgetPsfInput(numericInputString(round2(tiBudgetPsf)));
+      return;
+    }
+    const parsed = parseNonNegativeInput(tiBudgetPsfInput);
+    if (parsed == null) {
+      setTiBudgetPsfInput(numericInputString(round2(tiBudgetPsf)));
+      return;
+    }
+    updateTiBudgetPsf(parsed);
+  };
+
+  const commitTiBudgetTotal = () => {
+    if (!scenario) return;
+    const parsed = parseNonNegativeInput(tiBudgetTotalInput);
+    if (parsed == null) {
+      setTiBudgetTotalInput(numericInputString(round0(Number(scenario.ti_budget_total ?? tiBudgetTotal) || 0)));
+      return;
+    }
+    update("ti_budget_total", round0(parsed));
+  };
+
   const setTiAllowanceSource = (source: "psf" | "total") => {
     if (!scenario) return;
     onUpdate({
@@ -922,28 +1009,24 @@ export function ScenarioForm({
           <label className="block">
             <span className="text-sm text-slate-300">TI allowance ($/SF)</span>
             <input
-              type="number"
-              min={0}
-              step={0.01}
-              value={scenario.ti_allowance_psf ?? tiAllowancePsf}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                update("ti_allowance_psf", Number.isFinite(value) ? Math.max(0, value) : 0);
-              }}
+              type="text"
+              inputMode="decimal"
+              value={tiAllowancePsfInput}
+              onChange={(e) => setTiAllowancePsfInput(e.target.value)}
+              onBlur={commitTiAllowancePsf}
+              onKeyDown={onInputEnterCommit}
               className={inputClass}
             />
           </label>
           <label className="block">
             <span className="text-sm text-slate-300">TI allowance (total $)</span>
             <input
-              type="number"
-              min={0}
-              step={1}
-              value={tiAllowanceTotal}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                updateTiAllowanceTotal(Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
-              }}
+              type="text"
+              inputMode="numeric"
+              value={tiAllowanceTotalInput}
+              onChange={(e) => setTiAllowanceTotalInput(e.target.value)}
+              onBlur={commitTiAllowanceTotal}
+              onKeyDown={onInputEnterCommit}
               className={inputClass}
               disabled={!canDeriveTi}
             />
@@ -978,14 +1061,12 @@ export function ScenarioForm({
           <label className="block">
             <span className="text-sm text-slate-300">TI budget ($/SF)</span>
             <input
-              type="number"
-              min={0}
-              step={0.01}
-              value={tiBudgetPsf}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                updateTiBudgetPsf(value);
-              }}
+              type="text"
+              inputMode="decimal"
+              value={tiBudgetPsfInput}
+              onChange={(e) => setTiBudgetPsfInput(e.target.value)}
+              onBlur={commitTiBudgetPsf}
+              onKeyDown={onInputEnterCommit}
               className={inputClass}
               disabled={!canDeriveTi}
             />
@@ -993,14 +1074,12 @@ export function ScenarioForm({
           <label className="block">
             <span className="text-sm text-slate-300">TI budget (total $)</span>
             <input
-              type="number"
-              min={0}
-              step={1}
-              value={scenario.ti_budget_total ?? tiBudgetTotal}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                update("ti_budget_total", Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
-              }}
+              type="text"
+              inputMode="numeric"
+              value={tiBudgetTotalInput}
+              onChange={(e) => setTiBudgetTotalInput(e.target.value)}
+              onBlur={commitTiBudgetTotal}
+              onKeyDown={onInputEnterCommit}
               className={inputClass}
             />
           </label>
