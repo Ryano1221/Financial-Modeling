@@ -1543,10 +1543,11 @@ def _monthly_gross_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) ->
     panel_size = _monthly_gross_panel_size(orientation, plan.font_scale)
     entry_panels = _chunk_list(entries, panel_size)
 
-    row_mm = 6.2 * plan.font_scale
+    # Use a conservative row estimate so rows never bleed into footer.
+    row_mm = 7.0 * plan.font_scale
     rows_per_page = _rows_per_page_from_printable(
         orientation,
-        header_mm=38.0,
+        header_mm=42.0,
         row_mm=row_mm,
         safety_rows=plan.monthly_safety + 1,
     )
@@ -1603,8 +1604,8 @@ def _scenario_monthly_appendix_pages(entry: dict[str, Any], plan: DeckRenderPlan
     appendix_orientation = plan.orientation_for("monthly_cashflow_appendix", appendix_orientation_default)
     rows_per_page = _rows_per_page_from_printable(
         appendix_orientation,
-        header_mm=30.0,
-        row_mm=6.0 * plan.font_scale,
+        header_mm=34.0,
+        row_mm=6.6 * plan.font_scale,
         safety_rows=plan.monthly_safety + 1,
     )
     chunks = _chunk_list(monthly_rows, rows_per_page)
@@ -3184,7 +3185,20 @@ def _collect_overflow_issues(page: Any) -> list[dict[str, Any]]:
             const inner = el.querySelector(".page-content-inner");
             const contentHeight = content ? content.clientHeight : 0;
             const innerHeight = inner ? inner.scrollHeight : 0;
+            const contentRect = content ? content.getBoundingClientRect() : null;
             let tableOverflow = false;
+            let verticalOverflowPx = Math.max(0, innerHeight - contentHeight);
+            // Catch visual bleed into footer/margins even when scrollHeight misses it.
+            if (contentRect && inner) {
+              const contentBottom = contentRect.bottom;
+              let maxBottom = contentBottom;
+              const blocks = Array.from(inner.querySelectorAll("table, .panel, .chart-block, .abstract-card, article, section"));
+              for (const b of blocks) {
+                const r = b.getBoundingClientRect();
+                if (r.bottom > maxBottom) maxBottom = r.bottom;
+              }
+              verticalOverflowPx = Math.max(verticalOverflowPx, maxBottom - contentBottom);
+            }
             const tables = Array.from(el.querySelectorAll("table"));
             for (const t of tables) {
               const parent = t.parentElement;
@@ -3198,7 +3212,7 @@ def _collect_overflow_issues(page: Any) -> list[dict[str, Any]]:
               index: idx,
               kind: el.getAttribute("data-kind") || "general",
               orientation: el.getAttribute("data-orientation") || "portrait",
-              overflowPx: Math.max(0, innerHeight - contentHeight),
+              overflowPx: Math.max(0, verticalOverflowPx),
               tableOverflow,
             };
           });
@@ -3236,16 +3250,23 @@ def _adjust_plan_for_overflow(plan: DeckRenderPlan, issues: list[dict[str, Any]]
             elif kind == "cost_visuals":
                 plan.cost_visuals_safety += 1
                 changed = True
+            elif kind in {"monthly_gross_matrix", "monthly_cashflow_appendix"}:
+                # Force more aggressive pagination on monthly pages as soon as overflow is detected.
+                plan.monthly_safety += 1
+                changed = True
+            elif kind == "comparison_matrix":
+                plan.matrix_safety += 1
+                changed = True
+            elif kind == "notes":
+                plan.notes_safety += 1
+                changed = True
+            elif kind == "scenario_summary":
+                plan.annual_safety += 1
+                changed = True
 
     if any(_safe_float(i.get("overflowPx"), 0.0) > 0.0 for i in overflow):
         if plan.font_scale > MIN_FONT_SCALE:
             plan.font_scale = max(MIN_FONT_SCALE, round(plan.font_scale - 0.01, 3))
-            changed = True
-        else:
-            plan.matrix_safety += 1
-            plan.notes_safety += 1
-            plan.monthly_safety += 1
-            plan.annual_safety += 1
             changed = True
     return changed
 
@@ -3260,7 +3281,8 @@ def render_report_deck_pdf(data: dict[str, Any]) -> bytes:
         browser = p.chromium.launch()
         page = browser.new_page()
 
-        max_attempts = 6
+        # Allow enough iterations for both font-scale and safety-based repagination.
+        max_attempts = 18
         for _ in range(max_attempts):
             page.set_content(html_str, wait_until="networkidle")
             page.emulate_media(media="print")
