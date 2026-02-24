@@ -250,6 +250,7 @@ export function ScenarioForm({
   };
   const opexAnnualAtMonth = (monthIndex: number): number => {
     if (!scenario) return 0;
+    if (scenario.opex_mode === "full_service") return 0;
     const year = calendarYearForMonthIndex(monthIndex);
     if (!year) return Math.max(0, Number(scenario.base_opex_psf_yr) || 0);
     const commYear = calendarYearForMonthIndex(0) ?? year;
@@ -1129,8 +1130,9 @@ export function ScenarioForm({
             onChange={(e) => update("opex_mode", e.target.value as OpexMode)}
             className={inputClass}
           >
+            <option value="full_service">FSG</option>
             <option value="nnn">NNN</option>
-            <option value="base_year">Base year</option>
+            <option value="base_year">Base Year</option>
           </select>
         </label>
         <label className="block">

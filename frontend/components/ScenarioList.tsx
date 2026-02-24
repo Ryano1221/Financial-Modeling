@@ -30,6 +30,11 @@ export function ScenarioList({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
+  const getOpexModeLabel = (mode: ScenarioWithId["opex_mode"]): string => {
+    if (mode === "base_year") return "Base Year";
+    if (mode === "full_service") return "FSG";
+    return "NNN";
+  };
 
   const startRename = (s: ScenarioWithId) => {
     setEditingId(s.id);
@@ -128,7 +133,7 @@ export function ScenarioList({
               </div>
               <div>
                 <p className="text-slate-400">Opex mode</p>
-                <p className="text-slate-200 capitalize">{s.opex_mode === "base_year" ? "Base year" : "NNN"}</p>
+                <p className="text-slate-200 capitalize">{getOpexModeLabel(s.opex_mode)}</p>
               </div>
               <div>
                 {onToggleIncludeInSummary && (
@@ -263,7 +268,7 @@ export function ScenarioList({
                 <td className="py-2.5 px-4 text-slate-300">{formatDateISO(s.commencement)}</td>
                 <td className="py-2.5 px-4 text-slate-300">{formatDateISO(s.expiration)}</td>
                 <td className="py-2.5 px-4 text-slate-300 capitalize">
-                  {s.opex_mode === "base_year" ? "Base year" : "NNN"}
+                  {getOpexModeLabel(s.opex_mode)}
                 </td>
                 <td className="py-2.5 px-4">
                   {onToggleIncludeInSummary && (
