@@ -58,6 +58,21 @@ class NormalizerResponse(BaseModel):
 CONFIDENCE_THRESHOLD = 0.85
 
 
+def _normalize_lease_type_text(raw_value: Any) -> LeaseType:
+    text = str(raw_value or "NNN").strip().lower().replace("-", " ").replace("_", " ")
+    if any(k in text for k in ("absolute nnn",)):
+        return LeaseType.ABSOLUTE_NNN
+    if any(k in text for k in ("modified gross", "base year", "expense stop", "gross with stop", "mod gross")):
+        return LeaseType.MODIFIED_GROSS
+    if any(k in text for k in ("full service gross", "full service", "fsg", "gross lease")):
+        return LeaseType.FULL_SERVICE
+    if text == "gross":
+        return LeaseType.GROSS
+    if "gross" in text and "base year" not in text and "expense stop" not in text and "modified gross" not in text:
+        return LeaseType.FULL_SERVICE
+    return LeaseType.NNN
+
+
 def _date_from_iso(s: str) -> date:
     """Parse YYYY-MM-DD to date."""
     if isinstance(s, date):
@@ -78,7 +93,15 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         )
         for s in scenario.rent_steps
     ]
-    expense_type = ExpenseStructureType.BASE_YEAR if scenario.opex_mode.value == "base_year" else ExpenseStructureType.NNN
+    if scenario.opex_mode.value == "base_year":
+        expense_type = ExpenseStructureType.BASE_YEAR
+        lease_type = LeaseType.MODIFIED_GROSS
+    elif scenario.opex_mode.value == "full_service":
+        expense_type = ExpenseStructureType.NNN
+        lease_type = LeaseType.FULL_SERVICE
+    else:
+        expense_type = ExpenseStructureType.NNN
+        lease_type = LeaseType.NNN
     return CanonicalLease(
         scenario_id=scenario_id or scenario.name,
         scenario_name=scenario_name or scenario.name,
@@ -88,7 +111,7 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         suite="",
         floor="",
         rsf=scenario.rsf,
-        lease_type=LeaseType.NNN if scenario.opex_mode.value == "nnn" else LeaseType.NNN,
+        lease_type=lease_type,
         commencement_date=scenario.commencement,
         expiration_date=scenario.expiration,
         term_months=term,
@@ -205,12 +228,18 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         elif isinstance(step, PhaseInStep):
             phase_in_schedule.append(step)
 
-    lease_type_str = (get("lease_type") or get("opex_mode") or "NNN").strip()
-    try:
-        lt = LeaseType(lease_type_str)
-    except ValueError:
-        lt = LeaseType.NNN
-    exp_type = (get("expense_structure_type") or "nnn").strip().lower()
+    lt = _normalize_lease_type_text(get("lease_type") or get("opex_mode") or "NNN")
+    exp_type = str(get("expense_structure_type") or "").strip().lower()
+    if not exp_type:
+        opex_mode = str(get("opex_mode") or "").strip().lower()
+        if opex_mode == "base_year":
+            exp_type = "base_year"
+        elif opex_mode in {"modified_gross", "gross_with_stop", "base year"}:
+            exp_type = "gross_with_stop"
+        elif opex_mode in {"full_service", "gross", "full service gross", "full service"}:
+            exp_type = "nnn"
+        else:
+            exp_type = "nnn"
     try:
         est = ExpenseStructureType(exp_type)
     except ValueError:

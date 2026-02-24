@@ -37,10 +37,51 @@ FOCUS_KEYWORDS = [
     "rent", "base rent", "rental rate", "term", "commencement", "expiration",
     "operating expenses", "CAM", "NNN", "base year", "TI", "tenant improvement",
     "allowance", "abatement", "free rent", "parking", "option", "renewal", "termination",
+    "full service", "full service gross", "gross lease", "modified gross", "expense stop",
     "premises", "suite", "building", "property", "address",
     "rentable square feet", "rentable area", "square feet", "rsf",
 ]
 SNIPPET_MIN_CHARS = 500  # if snippet pack smaller than this, use fallback truncation
+
+_NNN_OPEX_CUES = (
+    " nnn ",
+    "triple net",
+    "triple-net",
+    "n.n.n",
+    "absolute nnn",
+    "net lease",
+)
+_BASE_YEAR_OPEX_CUES = (
+    "base year",
+    "base-year",
+    "expense stop",
+    "gross with stop",
+    "modified gross",
+    "mod gross",
+)
+_FULL_SERVICE_OPEX_CUES = (
+    "full service gross",
+    "full-service gross",
+    "full service lease",
+    "full-service lease",
+    "full service",
+    "full-service",
+    "gross lease",
+    "fsg",
+)
+
+
+def _detect_opex_mode_from_text(raw_text: str) -> str | None:
+    low = f" {(raw_text or '').lower()} "
+    if any(k in low for k in _BASE_YEAR_OPEX_CUES):
+        return "base_year"
+    if any(k in low for k in _FULL_SERVICE_OPEX_CUES):
+        return "full_service"
+    if any(k in low for k in _NNN_OPEX_CUES) and "not nnn" not in low and "no nnn" not in low:
+        return "nnn"
+    if " gross " in low and "base year" not in low and "expense stop" not in low and "modified gross" not in low:
+        return "full_service"
+    return None
 
 
 def extract_text_from_pdf(file: BinaryIO) -> str:
@@ -1138,11 +1179,9 @@ def _regex_prefill(text: str) -> dict:
                 prefill["_rent_steps_basis"] = "month_index"
                 prefill["_rent_steps_source"] = "base_rate_plus_escalation_regex"
     # Opex mode
-    low = text.lower()
-    if "base year" in low or "expense stop" in low:
-        prefill["opex_mode"] = "base_year"
-    elif " nnn" in f" {low}" or "triple net" in low:
-        prefill["opex_mode"] = "nnn"
+    detected_opex_mode = _detect_opex_mode_from_text(text)
+    if detected_opex_mode:
+        prefill["opex_mode"] = detected_opex_mode
     # Scenario name from building/suite if possible
     building = None
     suite = None
@@ -1335,8 +1374,7 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     Deterministic fallback when LLM extraction is unavailable.
     Returns scenario dict compatible with Scenario model + confidence + warnings.
     """
-    low = text.lower()
-    opex_mode = "base_year" if "base year" in low else "nnn"
+    opex_mode = _detect_opex_mode_from_text(text) or "nnn"
     rsf = float(prefill.get("rsf", 10000.0) or 10000.0)
     rate = float(prefill.get("rate_psf_yr", 0.0) or 0.0)
     commencement = str(prefill.get("commencement") or "2026-01-01")
@@ -1494,9 +1532,14 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
     scenario.setdefault("free_rent_months", 0)
     scenario.setdefault("ti_allowance_psf", 0.0)
     opex = scenario.get("opex_mode")
-    if opex not in ("nnn", "base_year"):
-        scenario["opex_mode"] = "nnn"
-        warnings.append("Opex mode missing; default NNN applied.")
+    if opex not in ("nnn", "base_year", "full_service"):
+        inferred_opex = str((prefill or {}).get("opex_mode") or "").strip().lower()
+        if inferred_opex in {"nnn", "base_year", "full_service"}:
+            scenario["opex_mode"] = inferred_opex
+            warnings.append("Opex mode inferred from lease structure language in the document.")
+        else:
+            scenario["opex_mode"] = "nnn"
+            warnings.append("Opex mode missing; default NNN applied.")
     scenario.setdefault("base_opex_psf_yr", 10.0)
     scenario.setdefault("base_year_opex_psf_yr", 10.0)
     scenario.setdefault("opex_growth", 0.03)

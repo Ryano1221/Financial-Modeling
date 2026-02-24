@@ -1052,13 +1052,22 @@ _LOG = logging.getLogger("uvicorn.error")
 _LEASE_TYPE_MAP = {
     "nnn": "NNN",
     "gross": "Gross",
+    "gross lease": "Gross",
     "modified gross": "Modified Gross",
     "modified_gross": "Modified Gross",
+    "gross with stop": "Modified Gross",
+    "expense stop": "Modified Gross",
+    "base year": "Modified Gross",
     "absolute nnn": "Absolute NNN",
     "absolute_nnn": "Absolute NNN",
     "full service": "Full Service",
     "full_service": "Full Service",
+    "full service gross": "Full Service",
+    "full-service gross": "Full Service",
+    "full service lease": "Full Service",
+    "full-service lease": "Full Service",
     "fs": "Full Service",
+    "fsg": "Full Service",
 }
 
 
@@ -3287,6 +3296,20 @@ def _empty_extraction_artifacts() -> dict:
     }
 
 
+def _canonical_opex_mode_for_extraction(canonical: CanonicalLease) -> str:
+    lease_type = str(canonical.lease_type.value if hasattr(canonical.lease_type, "value") else canonical.lease_type).strip().lower()
+    expense_type = str(
+        canonical.expense_structure_type.value
+        if hasattr(canonical.expense_structure_type, "value")
+        else canonical.expense_structure_type
+    ).strip().lower()
+    if expense_type in {"base_year", "gross_with_stop"} or any(k in lease_type for k in ("modified gross", "base year", "expense stop")):
+        return "base_year"
+    if any(k in lease_type for k in ("full service", "gross")) and "modified" not in lease_type:
+        return "full_service"
+    return "nnn"
+
+
 def _canonical_only_extraction(canonical: CanonicalLease, *, doc_type: str = "unknown") -> dict:
     return {
         "document": {
@@ -3337,7 +3360,7 @@ def _canonical_only_extraction(canonical: CanonicalLease, *, doc_type: str = "un
             for p in getattr(canonical, "parking_abatement_periods", []) or []
         ],
         "opex": {
-            "mode": str(canonical.expense_structure_type.value if hasattr(canonical.expense_structure_type, "value") else canonical.expense_structure_type),
+            "mode": _canonical_opex_mode_for_extraction(canonical),
             "base_psf_year_1": float(canonical.opex_psf_year_1),
             "growth_rate": float(canonical.opex_growth_rate),
             "cues": [],
