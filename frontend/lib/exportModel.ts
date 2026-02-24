@@ -8,6 +8,13 @@ import { EXCEL_THEME } from "@/lib/excel-style-constants";
 import { CRE_DEFAULT_LOGO_DATA_URL } from "@/lib/default-brokerage-logo-data-url";
 
 export const TEMPLATE_VERSION = "3.0";
+const SHEET_NAMES = {
+  cover: "Cover",
+  summary: "Summary Comparison",
+  equalized: "Equalized Metrics",
+  monthlyGrossMatrix: "Monthly Gross Cash Flow Matrix",
+  notes: "Notes",
+} as const;
 
 export const SUMMARY_MATRIX_ROW_LABELS = [
   "Document type",
@@ -443,6 +450,10 @@ function toColumnLetter(index: number): string {
     n = Math.floor((n - 1) / 26);
   }
   return letters;
+}
+
+function toFormulaSheetName(name: string): string {
+  return `'${name.replace(/'/g, "''")}'`;
 }
 
 function applyPrintSettings(
@@ -923,7 +934,7 @@ function createCoverSheet(
   scenarios: WorkbookScenario[],
   meta: WorkbookBrandingMeta
 ): void {
-  const sheet = workbook.addWorksheet(makeUniqueSheetName("Cover", "Cover", usedSheetNames));
+  const sheet = workbook.addWorksheet(makeUniqueSheetName(SHEET_NAMES.cover, SHEET_NAMES.cover, usedSheetNames));
   sheet.columns = Array.from({ length: COVER_WIDTH_COLS }, () => ({ width: 15 }));
   sheet.views = [{ showGridLines: false }];
   sheet.properties.defaultRowHeight = 26;
@@ -952,17 +963,13 @@ function createCoverSheet(
 
   const brokerageLogo = resolveBrokerageLogoParsed(meta.brokerageLogoDataUrl);
   const clientLogo = parseImageDataUrl(meta.clientLogoDataUrl);
-  const equalizedWindow = computeEqualizedWindow(scenarios);
   const rankedScenarios = [...scenarios].sort((a, b) => a.npvCost - b.npvCost);
-  const equalizedByScenarioId = new Map<string, EqualizedMetrics>();
-  if (equalizedWindow.start && equalizedWindow.end && equalizedWindow.end.getTime() >= equalizedWindow.start.getTime()) {
-    rankedScenarios.forEach((scenario) => {
-      equalizedByScenarioId.set(scenario.id, computeEqualizedMetrics(scenario, equalizedWindow.start!, equalizedWindow.end!));
-    });
-  }
-
-  const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-  const usd2 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const summaryFormulaSheet = toFormulaSheetName(SHEET_NAMES.summary);
+  const equalizedFormulaSheet = toFormulaSheetName(SHEET_NAMES.equalized);
+  const scenarioColumnById = new Map<string, number>();
+  scenarios.forEach((scenario, idx) => {
+    scenarioColumnById.set(scenario.id, idx + 2);
+  });
 
   sheet.mergeCells(6, 1, 10, 7);
   const brokerageBox = sheet.getCell(6, 1);
@@ -1083,7 +1090,7 @@ function createCoverSheet(
   let row = headerRow + 1;
   for (let i = 0; i < rowsToRender; i++) {
     const scenario = ranked[i];
-    const equalized = scenario ? equalizedByScenarioId.get(scenario.id) ?? null : null;
+    const summaryCol = scenario ? scenarioColumnById.get(scenario.id) ?? null : null;
     const fill = i % 2 === 0 ? COLORS.white : COLORS.lightGray;
     sheet.mergeCells(row, 1, row, 4);
     sheet.mergeCells(row, 5, row, 6);
@@ -1097,33 +1104,58 @@ function createCoverSheet(
     nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
 
     const npvCell = sheet.getCell(row, 5);
-    npvCell.value = scenario ? Number(scenario.npvCost.toFixed(4)) : "";
+    npvCell.value = scenario && summaryCol
+      ? {
+        formula: `IFERROR(INDEX(${summaryFormulaSheet}!$A:$ZZ,MATCH("NPV cost",${summaryFormulaSheet}!$A:$A,0),${summaryCol}),0)`,
+        result: Number(scenario.npvCost.toFixed(6)),
+      }
+      : "";
     npvCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-    if (scenario) applyCellFormat(npvCell, "currency0");
+    if (scenario && summaryCol) applyCellFormat(npvCell, "currency0");
     else npvCell.alignment = { horizontal: "right", vertical: "middle" };
 
     const totalCell = sheet.getCell(row, 7);
-    totalCell.value = scenario ? Number(scenario.totalObligation.toFixed(4)) : "";
+    totalCell.value = scenario && summaryCol
+      ? {
+        formula: `IFERROR(INDEX(${summaryFormulaSheet}!$A:$ZZ,MATCH("Total obligation",${summaryFormulaSheet}!$A:$A,0),${summaryCol}),0)`,
+        result: Number(scenario.totalObligation.toFixed(6)),
+      }
+      : "";
     totalCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-    if (scenario) applyCellFormat(totalCell, "currency0");
+    if (scenario && summaryCol) applyCellFormat(totalCell, "currency0");
     else totalCell.alignment = { horizontal: "right", vertical: "middle" };
 
     const equalizedTotalCell = sheet.getCell(row, 9);
-    equalizedTotalCell.value = equalized ? Number(equalized.totalCost.toFixed(4)) : "—";
+    equalizedTotalCell.value = scenario && summaryCol
+      ? {
+        formula: `IFERROR(INDEX(${equalizedFormulaSheet}!$A:$ZZ,MATCH("Equalized total cost",${equalizedFormulaSheet}!$A:$A,0),${summaryCol}),"—")`,
+      }
+      : "—";
     equalizedTotalCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-    if (equalized) applyCellFormat(equalizedTotalCell, "currency0");
+    if (scenario && summaryCol) applyCellFormat(equalizedTotalCell, "currency0");
     else equalizedTotalCell.alignment = { horizontal: "right", vertical: "middle" };
 
     const avgPriceCell = sheet.getCell(row, 11);
-    avgPriceCell.value = scenario ? `${usd2.format(scenario.avgCostPsfYear)} / SF` : "—";
+    avgPriceCell.value = scenario && summaryCol
+      ? {
+        formula: `IFERROR(INDEX(${summaryFormulaSheet}!$A:$ZZ,MATCH("Avg cost/SF/year",${summaryFormulaSheet}!$A:$A,0),${summaryCol}),0)`,
+        result: Number(scenario.avgCostPsfYear.toFixed(6)),
+      }
+      : "—";
     avgPriceCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
-    avgPriceCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+    avgPriceCell.alignment = { horizontal: "right", vertical: "middle" };
+    avgPriceCell.numFmt = "$#,##0.00\" / SF\"";
     avgPriceCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
 
     const equalizedPriceCell = sheet.getCell(row, 12);
-    equalizedPriceCell.value = equalized ? `${usd2.format(equalized.avgCostPsfYear)} / SF` : "—";
+    equalizedPriceCell.value = scenario && summaryCol
+      ? {
+        formula: `IFERROR(INDEX(${equalizedFormulaSheet}!$A:$ZZ,MATCH("Equalized avg cost/SF/year",${equalizedFormulaSheet}!$A:$A,0),${summaryCol}),"—")`,
+      }
+      : "—";
     equalizedPriceCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
-    equalizedPriceCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+    equalizedPriceCell.alignment = { horizontal: "right", vertical: "middle" };
+    equalizedPriceCell.numFmt = "$#,##0.00\" / SF\"";
     equalizedPriceCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
 
     for (let c = 1; c <= COVER_WIDTH_COLS; c++) {
@@ -1149,7 +1181,7 @@ function createSummarySheet(
   scenarios: WorkbookScenario[],
   meta: WorkbookBrandingMeta
 ): void {
-  const sheet = workbook.addWorksheet(makeUniqueSheetName("Summary Comparison", "Summary Comparison", usedSheetNames));
+  const sheet = workbook.addWorksheet(makeUniqueSheetName(SHEET_NAMES.summary, SHEET_NAMES.summary, usedSheetNames));
   const metricCol = 1;
   const scenarioStartCol = 2;
   const scenarioColSpan = 1;
@@ -1193,9 +1225,17 @@ function createSummarySheet(
     cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   });
 
+  const monthlyFormulaSheet = toFormulaSheetName(SHEET_NAMES.monthlyGrossMatrix);
+  const equalizedFormulaSheet = toFormulaSheetName(SHEET_NAMES.equalized);
   type SummaryRow =
     | { type: "section"; label: string }
-    | { type: "metric"; label: string; format: CellFormat; getter: (s: WorkbookScenario) => string | number };
+    | {
+      type: "metric";
+      label: string;
+      format: CellFormat;
+      getter: (s: WorkbookScenario) => string | number;
+      formula?: () => string;
+    };
   const rows: SummaryRow[] = [
     { type: "section", label: "PREMISES" },
     { type: "metric", label: "Document type", format: "text", getter: (s) => s.documentType },
@@ -1215,18 +1255,48 @@ function createSummarySheet(
     { type: "section", label: "PARKING" },
     { type: "metric", label: "Parking cost ($/spot/month, pre-tax)", format: "currency0", getter: (s) => s.parkingCostPerSpotPreTax },
     { type: "metric", label: "Parking sales tax %", format: "percent", getter: (s) => s.parkingSalesTaxPct },
-    { type: "metric", label: "Parking cost ($/spot/month, after tax)", format: "currency0", getter: (s) => s.parkingCostPerSpotAfterTax },
+    {
+      type: "metric",
+      label: "Parking cost ($/spot/month, after tax)",
+      format: "currency0",
+      getter: (s) => s.parkingCostPerSpotAfterTax,
+      formula: () => "IFERROR(INDEX($A:$ZZ,MATCH(\"Parking cost ($/spot/month, pre-tax)\",$A:$A,0),COLUMN())*(1+INDEX($A:$ZZ,MATCH(\"Parking sales tax %\",$A:$A,0),COLUMN())),0)",
+    },
     { type: "metric", label: "Parking cost (annual)", format: "currency0", getter: (s) => s.parkingCostAnnual },
     { type: "section", label: "TI / CAPEX" },
     { type: "metric", label: "TI budget", format: "currency0", getter: (s) => s.tiBudget },
     { type: "metric", label: "TI allowance ($/SF)", format: "currency2", getter: (s) => s.tiAllowance },
     { type: "metric", label: "TI out of pocket", format: "currency0", getter: (s) => s.tiOutOfPocket },
     { type: "section", label: "SUMMARY METRICS" },
-    { type: "metric", label: "Total obligation", format: "currency0", getter: (s) => s.totalObligation },
+    {
+      type: "metric",
+      label: "Total obligation",
+      format: "currency0",
+      getter: (s) => s.totalObligation,
+      formula: () => `IFERROR(INDEX(${monthlyFormulaSheet}!$A:$ZZ,MATCH("Total Estimated Obligation",${monthlyFormulaSheet}!$B:$B,0),COLUMN()+1),0)`,
+    },
     { type: "metric", label: "NPV cost", format: "currency0", getter: (s) => s.npvCost },
-    { type: "metric", label: "Avg cost/year", format: "currency0", getter: (s) => s.avgCostYear },
-    { type: "metric", label: "Avg cost/SF/year", format: "currency2", getter: (s) => s.avgCostPsfYear },
-    { type: "metric", label: "Equalized avg cost/RSF/yr", format: "currency2", getter: (s) => s.equalizedAvgCostPsfYear },
+    {
+      type: "metric",
+      label: "Avg cost/year",
+      format: "currency0",
+      getter: (s) => s.avgCostYear,
+      formula: () => "IFERROR(INDEX($A:$ZZ,MATCH(\"Total obligation\",$A:$A,0),COLUMN())/(INDEX($A:$ZZ,MATCH(\"Term (months)\",$A:$A,0),COLUMN())/12),0)",
+    },
+    {
+      type: "metric",
+      label: "Avg cost/SF/year",
+      format: "currency2",
+      getter: (s) => s.avgCostPsfYear,
+      formula: () => "IFERROR(INDEX($A:$ZZ,MATCH(\"Avg cost/year\",$A:$A,0),COLUMN())/INDEX($A:$ZZ,MATCH(\"RSF\",$A:$A,0),COLUMN()),0)",
+    },
+    {
+      type: "metric",
+      label: "Equalized avg cost/RSF/yr",
+      format: "currency2",
+      getter: (s) => s.equalizedAvgCostPsfYear,
+      formula: () => `IFERROR(INDEX(${equalizedFormulaSheet}!$A:$ZZ,MATCH("Equalized avg cost/SF/year",${equalizedFormulaSheet}!$A:$A,0),COLUMN()),0)`,
+    },
   ];
 
   let row = headerRow + 1;
@@ -1258,7 +1328,13 @@ function createSummarySheet(
     scenarios.forEach((scenario, idx) => {
       const value = def.getter(scenario);
       const cell = sheet.getCell(row, scenarioStartCol + idx);
-      cell.value = typeof value === "number" ? Number(value.toFixed(6)) : value;
+      const formula = def.formula?.();
+      if (formula) {
+        const result = typeof value === "number" ? Number(value.toFixed(6)) : undefined;
+        cell.value = result == null ? { formula } : { formula, result };
+      } else {
+        cell.value = typeof value === "number" ? Number(value.toFixed(6)) : value;
+      }
       cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
       applyCellFormat(cell, def.format);
       // Keep Summary Comparison consistently aligned across all columns/rows.
@@ -1309,7 +1385,7 @@ function createEqualizedSheet(
   scenarios: WorkbookScenario[],
   meta: WorkbookBrandingMeta
 ): void {
-  const sheet = workbook.addWorksheet(makeUniqueSheetName("Equalized Metrics", "Equalized Metrics", usedSheetNames));
+  const sheet = workbook.addWorksheet(makeUniqueSheetName(SHEET_NAMES.equalized, SHEET_NAMES.equalized, usedSheetNames));
   const cols = scenarios.length + 1;
   const scenarioStartCol = 2;
   const scenarioColSpan = 1;
@@ -1329,11 +1405,37 @@ function createEqualizedSheet(
     { clientLogoStartCol: lastScenarioLeftCol, clientLogoEndCol: lastScenarioRightCol }
   );
   const window = computeEqualizedWindow(scenarios);
+  const hasOverlap = !!(window.start && window.end && window.end.getTime() >= window.start.getTime());
+  const overlapStart = hasOverlap && window.start ? window.start : null;
+  const overlapEnd = hasOverlap && window.end ? window.end : null;
+  const monthlyFormulaSheet = toFormulaSheetName(SHEET_NAMES.monthlyGrossMatrix);
+  const precomputedByScenarioId = new Map<string, EqualizedMetrics>();
+  if (overlapStart && overlapEnd) {
+    scenarios.forEach((scenario) => {
+      precomputedByScenarioId.set(scenario.id, computeEqualizedMetrics(scenario, overlapStart, overlapEnd));
+    });
+  }
+  const starts = scenarios.map((s) => parseIsoDate(s.commencementDate)).filter((d): d is Date => d !== null);
+  const earliest = starts.length > 0 ? new Date(Math.min(...starts.map((d) => d.getTime()))) : null;
+  const firstMonthlyDataRow = HEADER_HEIGHT_ROWS + 8; // Header + month0/TIB/TIA/TIN/PC rows.
+  let equalizedFirstMonthlyRow = 0;
+  let equalizedLastMonthlyRow = 0;
+  let equalizedMonthCount = 0;
+  let annualFactor = 0;
+  if (overlapStart && overlapEnd && earliest) {
+    const startOffset = monthDiffInclusive(earliest, overlapStart) - 1;
+    const endOffset = monthDiffInclusive(earliest, overlapEnd) - 1;
+    equalizedFirstMonthlyRow = firstMonthlyDataRow + Math.max(0, startOffset);
+    equalizedLastMonthlyRow = firstMonthlyDataRow + Math.max(0, endOffset);
+    equalizedMonthCount = Math.max(1, equalizedLastMonthlyRow - equalizedFirstMonthlyRow + 1);
+    const days = Math.max(1, Math.floor((overlapEnd.getTime() - overlapStart.getTime()) / (24 * 60 * 60 * 1000)) + 1);
+    annualFactor = days / 365;
+  }
 
   sheet.mergeCells(startRow, 1, startRow, cols);
   const periodCell = sheet.getCell(startRow, 1);
-  periodCell.value = (window.start && window.end && window.end.getTime() >= window.start.getTime())
-    ? `Equalized Period: ${formatDateMmDdYyyy(toIsoDate(window.start))} - ${formatDateMmDdYyyy(toIsoDate(window.end))}`
+  periodCell.value = overlapStart && overlapEnd
+    ? `Equalized Period: ${formatDateMmDdYyyy(toIsoDate(overlapStart))} - ${formatDateMmDdYyyy(toIsoDate(overlapEnd))}`
     : "No overlapping lease term for equalized comparison.";
   periodCell.font = { name: "Aptos", bold: true, size: 11, color: { argb: COLORS.text } };
   periodCell.alignment = { horizontal: "left", vertical: "middle" };
@@ -1355,46 +1457,83 @@ function createEqualizedSheet(
   });
 
   const metricsRows: Array<{
+    key: "avgCostPsfYear" | "avgCostMonth" | "avgCostYear" | "totalCost" | "npv";
     label: string;
     format: CellFormat;
-    getter: (scenario: WorkbookScenario) => number | string;
+    getter: (metrics: EqualizedMetrics) => number;
+    formula: (scenario: WorkbookScenario, scenarioCol: number, rowByKey: Map<string, number>) => string | null;
   }> = [
     {
+      key: "avgCostPsfYear",
       label: "Equalized avg cost/SF/year",
       format: "currency2",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostPsfYear
-        : "—",
+      getter: (metrics) => metrics.avgCostPsfYear,
+      formula: (scenario, scenarioCol, rowByKey) => {
+        if (!hasOverlap || equalizedMonthCount <= 0 || annualFactor <= 0) return null;
+        const totalRow = rowByKey.get("totalCost");
+        if (!totalRow) return null;
+        const eqCol = toColumnLetter(scenarioCol);
+        const annualFactorLiteral = Number(annualFactor.toFixed(12));
+        return `IFERROR(${eqCol}${totalRow}/(${Math.max(1, scenario.rsf || 0)}*${annualFactorLiteral}),0)`;
+      },
     },
     {
+      key: "avgCostMonth",
       label: "Equalized avg cost/month",
       format: "currency0",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostMonth
-        : "—",
+      getter: (metrics) => metrics.avgCostMonth,
+      formula: (_scenario, scenarioCol, rowByKey) => {
+        if (!hasOverlap || equalizedMonthCount <= 0) return null;
+        const totalRow = rowByKey.get("totalCost");
+        if (!totalRow) return null;
+        const eqCol = toColumnLetter(scenarioCol);
+        return `IFERROR(${eqCol}${totalRow}/${equalizedMonthCount},0)`;
+      },
     },
     {
+      key: "avgCostYear",
       label: "Equalized avg cost/year",
       format: "currency0",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostYear
-        : "—",
+      getter: (metrics) => metrics.avgCostYear,
+      formula: (_scenario, scenarioCol, rowByKey) => {
+        if (!hasOverlap || equalizedMonthCount <= 0) return null;
+        const totalRow = rowByKey.get("totalCost");
+        if (!totalRow) return null;
+        const eqCol = toColumnLetter(scenarioCol);
+        return `IFERROR(${eqCol}${totalRow}/(${equalizedMonthCount}/12),0)`;
+      },
     },
     {
+      key: "totalCost",
       label: "Equalized total cost",
       format: "currency0",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).totalCost
-        : "—",
+      getter: (metrics) => metrics.totalCost,
+      formula: (_scenario, scenarioCol) => {
+        if (!hasOverlap || equalizedMonthCount <= 0 || equalizedFirstMonthlyRow <= 0 || equalizedLastMonthlyRow <= 0) return null;
+        const monthlyCol = toColumnLetter(scenarioCol + 1);
+        const range = `${monthlyFormulaSheet}!${monthlyCol}${equalizedFirstMonthlyRow}:${monthlyCol}${equalizedLastMonthlyRow}`;
+        return `IFERROR(SUM(${range}),0)`;
+      },
     },
     {
+      key: "npv",
       label: "Equalized NPV (t0=start)",
       format: "currency0",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).npv
-        : "—",
+      getter: (metrics) => metrics.npv,
+      formula: (scenario, scenarioCol) => {
+        if (!hasOverlap || equalizedMonthCount <= 0 || equalizedFirstMonthlyRow <= 0 || equalizedLastMonthlyRow <= 0) return null;
+        const monthlyCol = toColumnLetter(scenarioCol + 1);
+        const range = `${monthlyFormulaSheet}!${monthlyCol}${equalizedFirstMonthlyRow}:${monthlyCol}${equalizedLastMonthlyRow}`;
+        const startRef = `${monthlyFormulaSheet}!${monthlyCol}${equalizedFirstMonthlyRow}`;
+        const monthlyRate = Number((Math.pow(1 + (scenario.discountRate || 0), 1 / 12) - 1).toFixed(12));
+        return `IFERROR(SUMPRODUCT(${range},1/POWER(1+${monthlyRate},ROW(${range})-ROW(${startRef}))),0)`;
+      },
     },
   ];
+  const metricRowByKey = new Map<string, number>();
+  metricsRows.forEach((metric, idx) => {
+    metricRowByKey.set(metric.key, headerRow + 1 + idx);
+  });
 
   let row = headerRow + 1;
   metricsRows.forEach((metric, idx) => {
@@ -1406,10 +1545,15 @@ function createEqualizedSheet(
     label.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
     scenarios.forEach((scenario, cIdx) => {
       const cell = sheet.getCell(row, cIdx + 2);
-      const value = metric.getter(scenario);
-      cell.value = typeof value === "number" ? Number(value.toFixed(6)) : value;
+      const precomputed = precomputedByScenarioId.get(scenario.id);
+      const formula = metric.formula(scenario, cIdx + 2, metricRowByKey);
+      if (precomputed && formula) {
+        cell.value = { formula, result: Number(metric.getter(precomputed).toFixed(6)) };
+      } else {
+        cell.value = "—";
+      }
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-      if (typeof value === "number") applyCellFormat(cell, metric.format);
+      if (precomputed && formula) applyCellFormat(cell, metric.format);
       else cell.alignment = { horizontal: "left", vertical: "middle" };
     });
     for (let c = 1; c <= cols; c++) {
@@ -1436,7 +1580,7 @@ function createMonthlyGrossMatrixSheet(
   meta: WorkbookBrandingMeta
 ): void {
   const sheet = workbook.addWorksheet(
-    makeUniqueSheetName("Monthly Gross Cash Flow Matrix", "Monthly Gross Cash Flow Matrix", usedSheetNames)
+    makeUniqueSheetName(SHEET_NAMES.monthlyGrossMatrix, SHEET_NAMES.monthlyGrossMatrix, usedSheetNames)
   );
   const cols = scenarios.length + 2;
   const scenarioStartCol = 3;
@@ -1543,7 +1687,11 @@ function createMonthlyGrossMatrixSheet(
     const cell = sheet.getCell(tiNetRow, idx + 3);
     const budgetTotal = Math.max(0, scenario.tiBudget || 0);
     const allowanceTotal = Math.max(0, (scenario.tiAllowance || 0) * Math.max(0, scenario.rsf || 0));
-    cell.value = Number((budgetTotal - allowanceTotal).toFixed(4));
+    const colLetter = toColumnLetter(idx + 3);
+    cell.value = {
+      formula: `${colLetter}${tiBudgetRow}+${colLetter}${tiAllowanceRow}`,
+      result: Number((budgetTotal - allowanceTotal).toFixed(6)),
+    };
     applyCellFormat(cell, "currency0");
     cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
@@ -1559,10 +1707,20 @@ function createMonthlyGrossMatrixSheet(
   const parkingInfoRow = row;
   sheet.getCell(parkingInfoRow, 1).value = "PC";
   sheet.getCell(parkingInfoRow, 2).value = "Parking costs (term total)";
+  const firstMonthlyDataRow = parkingInfoRow + 1;
+  const lastMonthlyDataRow = firstMonthlyDataRow + months - 1;
   scenarios.forEach((scenario, idx) => {
     const parkingTotal = scenario.monthlyRows.reduce((sum, monthlyRow) => sum + (monthlyRow.parking || 0), 0);
     const cell = sheet.getCell(parkingInfoRow, idx + 3);
-    cell.value = Number(parkingTotal.toFixed(4));
+    const colLetter = toColumnLetter(idx + 3);
+    if (firstMonthlyDataRow <= lastMonthlyDataRow) {
+      cell.value = {
+        formula: `SUM(${colLetter}${firstMonthlyDataRow}:${colLetter}${lastMonthlyDataRow})`,
+        result: Number(parkingTotal.toFixed(6)),
+      };
+    } else {
+      cell.value = 0;
+    }
     applyCellFormat(cell, "currency0");
     cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
@@ -1698,19 +1856,30 @@ function createAppendixSheet(
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
     cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
+  const monthlyDiscountRate = Number((Math.pow(1 + (scenario.discountRate || 0), 1 / 12) - 1).toFixed(12));
 
   let row = headerRow + 1;
-  sheet.getCell(row, 1).value = 0;
-  sheet.getCell(row, 2).value = "PRE LEASE COMMENCEMENT";
-  sheet.getCell(row, 3).value = 0;
-  sheet.getCell(row, 4).value = 0;
-  sheet.getCell(row, 5).value = 0;
-  sheet.getCell(row, 6).value = Number(scenario.monthZeroGross.toFixed(4));
-  sheet.getCell(row, 7).value = Number(scenario.monthZeroGross.toFixed(4));
-  sheet.getCell(row, 8).value = Number(scenario.monthZeroGross.toFixed(4));
-  sheet.getCell(row, 9).value = Number(scenario.monthZeroGross.toFixed(4));
+  const monthZeroRow = row;
+  sheet.getCell(monthZeroRow, 1).value = 0;
+  sheet.getCell(monthZeroRow, 2).value = "PRE LEASE COMMENCEMENT";
+  sheet.getCell(monthZeroRow, 3).value = 0;
+  sheet.getCell(monthZeroRow, 4).value = 0;
+  sheet.getCell(monthZeroRow, 5).value = 0;
+  sheet.getCell(monthZeroRow, 6).value = Number(scenario.monthZeroGross.toFixed(4));
+  sheet.getCell(monthZeroRow, 7).value = {
+    formula: `SUM(C${monthZeroRow}:F${monthZeroRow})`,
+    result: Number(scenario.monthZeroGross.toFixed(6)),
+  };
+  sheet.getCell(monthZeroRow, 8).value = {
+    formula: `G${monthZeroRow}`,
+    result: Number(scenario.monthZeroGross.toFixed(6)),
+  };
+  sheet.getCell(monthZeroRow, 9).value = {
+    formula: `IFERROR(G${monthZeroRow}/POWER(1+${monthlyDiscountRate},A${monthZeroRow}),0)`,
+    result: Number(scenario.monthZeroGross.toFixed(6)),
+  };
   for (let c = 1; c <= cols; c++) {
-    if (c >= 3) applyCellFormat(sheet.getCell(row, c), "currency0");
+    if (c >= 3) applyCellFormat(sheet.getCell(monthZeroRow, c), "currency0");
     else applyCellFormat(sheet.getCell(row, c), c === 1 ? "integer" : "date");
   }
   row += 1;
@@ -1723,7 +1892,10 @@ function createAppendixSheet(
   sheet.getCell(tiBudgetInfoRow, 5).value = 0;
   sheet.getCell(tiBudgetInfoRow, 6).value = Number(Math.max(0, scenario.tiBudget || 0).toFixed(4));
   sheet.getCell(tiBudgetInfoRow, 7).value = 0;
-  sheet.getCell(tiBudgetInfoRow, 8).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 8).value = {
+    formula: `H${monthZeroRow}+G${tiBudgetInfoRow}`,
+    result: Number(scenario.monthZeroGross.toFixed(6)),
+  };
   sheet.getCell(tiBudgetInfoRow, 9).value = 0;
   for (let c = 1; c <= cols; c++) {
     const cell = sheet.getCell(tiBudgetInfoRow, c);
@@ -1751,9 +1923,18 @@ function createAppendixSheet(
     sheet.getCell(row, 4).value = Number(m.opex.toFixed(4));
     sheet.getCell(row, 5).value = Number(m.parking.toFixed(4));
     sheet.getCell(row, 6).value = Number(m.otherCosts.toFixed(4));
-    sheet.getCell(row, 7).value = Number(m.grossCashFlow.toFixed(4));
-    sheet.getCell(row, 8).value = Number(m.cumulativeCost.toFixed(4));
-    sheet.getCell(row, 9).value = Number(m.discountedValue.toFixed(4));
+    sheet.getCell(row, 7).value = {
+      formula: `SUM(C${row}:F${row})`,
+      result: Number(m.grossCashFlow.toFixed(6)),
+    };
+    sheet.getCell(row, 8).value = {
+      formula: `H${row - 1}+G${row}`,
+      result: Number(m.cumulativeCost.toFixed(6)),
+    };
+    sheet.getCell(row, 9).value = {
+      formula: `IFERROR(G${row}/POWER(1+${monthlyDiscountRate},A${row}),0)`,
+      result: Number(m.discountedValue.toFixed(6)),
+    };
     for (let c = 1; c <= cols; c++) {
       const cell = sheet.getCell(row, c);
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
@@ -1820,7 +2001,7 @@ function createNotesSheet(
   scenarios: WorkbookScenario[],
   meta: WorkbookBrandingMeta
 ): void {
-  const sheet = workbook.addWorksheet(makeUniqueSheetName("Notes", "Notes", usedSheetNames));
+  const sheet = workbook.addWorksheet(makeUniqueSheetName(SHEET_NAMES.notes, SHEET_NAMES.notes, usedSheetNames));
   const totalCols = 8;
   const scenarioCol = 1;
   const notesCol = 2;

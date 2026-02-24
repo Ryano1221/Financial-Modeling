@@ -164,6 +164,13 @@ describe("exportModel institutional workbook", () => {
     expect(eqTotalHeader).not.toBeNull();
     expect(avgPsfHeader).not.toBeNull();
     expect(eqPsfHeader).not.toBeNull();
+    if (cover && snapshotRow != null) {
+      const firstDataRow = snapshotRow + 2;
+      const npvFormula = cover.getCell(firstDataRow, 5).value as ExcelJS.CellFormulaValue;
+      const eqTotalFormula = cover.getCell(firstDataRow, 9).value as ExcelJS.CellFormulaValue;
+      expect(npvFormula).toHaveProperty("formula");
+      expect(eqTotalFormula).toHaveProperty("formula");
+    }
 
     const summary = workbook.getWorksheet("Summary Comparison");
     const metricRow = findRowByFirstCell(summary, "Metric");
@@ -179,6 +186,21 @@ describe("exportModel institutional workbook", () => {
       expect(notesMetricRow).toBeNull();
       const notesHintRow = findRowByFirstCell(summary, "Notes are listed in full on the Notes sheet.");
       expect(notesHintRow).not.toBeNull();
+      const derivedFormulaRows = [
+        "Parking cost ($/spot/month, after tax)",
+        "Total obligation",
+        "Avg cost/year",
+        "Avg cost/SF/year",
+        "Equalized avg cost/RSF/yr",
+      ];
+      derivedFormulaRows.forEach((label) => {
+        const formulaRow = findRowByFirstCell(summary, label);
+        expect(formulaRow).not.toBeNull();
+        if (formulaRow != null) {
+          const value = summary.getCell(formulaRow, 2).value as ExcelJS.CellFormulaValue;
+          expect(value).toHaveProperty("formula");
+        }
+      });
       if (notesHintRow != null) expect(summary.pageSetup.printArea).toBe(`A1:E${notesHintRow}`);
       expect(summary.pageSetup.horizontalCentered).toBe(true);
 
@@ -194,6 +216,21 @@ describe("exportModel institutional workbook", () => {
 
     const equalized = workbook.getWorksheet("Equalized Metrics");
     if (equalized) {
+      const equalizedFormulaRows = [
+        "Equalized avg cost/SF/year",
+        "Equalized avg cost/month",
+        "Equalized avg cost/year",
+        "Equalized total cost",
+        "Equalized NPV (t0=start)",
+      ];
+      equalizedFormulaRows.forEach((label) => {
+        const formulaRow = findRowByFirstCell(equalized, label);
+        expect(formulaRow).not.toBeNull();
+        if (formulaRow != null) {
+          const value = equalized.getCell(formulaRow, 2).value as ExcelJS.CellFormulaValue;
+          expect(value).toHaveProperty("formula");
+        }
+      });
       const maxImageTlCol = equalized.getImages().reduce((max, img) => {
         const range = img.range as unknown as { tl?: { col?: number } };
         return Math.max(max, range?.tl?.col ?? 0);
@@ -218,6 +255,18 @@ describe("exportModel institutional workbook", () => {
         const formulaCell = monthly.getCell(totalRow, 3).value as ExcelJS.CellFormulaValue;
         expect(formulaCell).toHaveProperty("formula");
         expect(formulaCell.formula).toMatch(/^SUM\(.+\)$/);
+      }
+      const tiNetRow = findRowByCellValue(monthly, 1, "TIN");
+      expect(tiNetRow).not.toBeNull();
+      if (tiNetRow != null) {
+        const tiNetFormula = monthly.getCell(tiNetRow, 3).value as ExcelJS.CellFormulaValue;
+        expect(tiNetFormula).toHaveProperty("formula");
+      }
+      const parkingInfoRow = findRowByCellValue(monthly, 1, "PC");
+      expect(parkingInfoRow).not.toBeNull();
+      if (parkingInfoRow != null) {
+        const parkingFormula = monthly.getCell(parkingInfoRow, 3).value as ExcelJS.CellFormulaValue;
+        expect(parkingFormula).toHaveProperty("formula");
       }
       const maxImageTlCol = monthly.getImages().reduce((max, img) => {
         const range = img.range as unknown as { tl?: { col?: number } };
@@ -247,6 +296,13 @@ describe("exportModel institutional workbook", () => {
       if (tiBudgetRow != null) {
         expect(appendix.getCell(tiBudgetRow, 2).value).toBe("TI budget (Year 0 / PLC)");
       }
+      const firstMonthlyRow = (tiBudgetRow ?? 0) + 1;
+      const grossFormula = appendix.getCell(firstMonthlyRow, 7).value as ExcelJS.CellFormulaValue;
+      const cumulativeFormula = appendix.getCell(firstMonthlyRow, 8).value as ExcelJS.CellFormulaValue;
+      const pvFormula = appendix.getCell(firstMonthlyRow, 9).value as ExcelJS.CellFormulaValue;
+      expect(grossFormula).toHaveProperty("formula");
+      expect(cumulativeFormula).toHaveProperty("formula");
+      expect(pvFormula).toHaveProperty("formula");
       const grossTotal = appendix.getCell(appendixTotalsRow, 7).value as ExcelJS.CellFormulaValue;
       expect(grossTotal).toHaveProperty("formula");
       expect(grossTotal.formula).toMatch(/^SUM\([A-Z]+\d+:[A-Z]+\d+\)$/);

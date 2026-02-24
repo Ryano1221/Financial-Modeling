@@ -33,7 +33,7 @@ import type {
   ExtractionSummary,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
-import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses, buildWorkbookLegacy } from "@/lib/exportModel";
+import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
 import { SummaryMatrix } from "@/components/SummaryMatrix";
 import { formatDateISO } from "@/lib/format";
 import { computeEqualizedComparison, type EqualizedWindowInput } from "@/lib/equalized";
@@ -1285,16 +1285,48 @@ export default function Home() {
           buffer = await buildBrokerWorkbook(canonical, globalDiscountRate, excelMeta);
         }
       } catch (primaryErr) {
-        console.error("[exportExcelDeck] broker workbook failed; falling back to legacy workbook", primaryErr);
-        buffer = await buildWorkbookLegacy(canonical, globalDiscountRate);
-        usedFallback = true;
+        console.error("[exportExcelDeck] broker workbook failed with full branding; retrying formula workbook without logos", primaryErr);
+        try {
+          const formulaSafeMeta = {
+            ...excelMeta,
+            brokerageLogoDataUrl: null,
+            clientLogoDataUrl: null,
+          };
+          if (isProduction && scenarios.every((s) => canonicalComputeCache[s.id])) {
+            const items = scenarios.map((s) => {
+              const res = canonicalComputeCache[s.id]!;
+              const scenarioName = getPremisesDisplayName({
+                building_name: res.metrics.building_name,
+                suite: res.metrics.suite,
+                floor: res.metrics.floor,
+                premises_name: res.metrics.premises_name,
+                scenario_name: s.name,
+              });
+              return {
+                response: res,
+                scenarioName,
+                documentTypeDetected: (s.document_type_detected ?? "").trim() || "unknown",
+                sourceRsf: Math.max(0, Number(s.rsf) || 0),
+                sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
+                sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
+              };
+            });
+            buffer = await buildBrokerWorkbookFromCanonicalResponses(items, formulaSafeMeta);
+          } else {
+            buffer = await buildBrokerWorkbook(canonical, globalDiscountRate, formulaSafeMeta);
+          }
+          usedFallback = true;
+        } catch (secondaryErr) {
+          console.error("[exportExcelDeck] formula workbook retry failed; skipping legacy fallback to preserve formula-based export", secondaryErr);
+          throw secondaryErr;
+        }
       }
       downloadBlob(
         new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
         "lease-comparison.xlsx"
       );
       if (usedFallback) {
-        setExportExcelError("Downloaded Excel using fallback format because the primary format failed.");
+        setExportExcelError("Downloaded Excel using formula fallback (logos removed) because the primary branded export failed.");
       }
     } catch (err) {
       console.error("[exportExcelDeck] fatal export error", err);
