@@ -2072,6 +2072,66 @@ def _build_option_rent_schedule(*, term_months: int, base_rate_psf_yr: float, es
     return option_schedule
 
 
+def _extract_term_month_candidates_from_option_block(block: str) -> list[int]:
+    candidates: list[int] = []
+    if not block:
+        return candidates
+
+    # Prefer explicit month terms (e.g., "87 Month Term", "sixty (60) months").
+    for m in re.finditer(r"(?i)\b([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,3})\)?\s*months?\b", block):
+        digit_val = _coerce_int_token(m.group(2), 0) or 0
+        word_val = _word_token_to_int(m.group(1))
+        value = max(digit_val, word_val or 0)
+        if 1 <= value <= 240:
+            candidates.append(value)
+
+    # Handle year-based terms (e.g., "5.00 years", "5-yr term").
+    for m in re.finditer(r"(?i)\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?|yr)\b", block):
+        try:
+            years = float(m.group(1))
+        except (TypeError, ValueError):
+            continue
+        months = int(round(years * 12.0))
+        if 1 <= months <= 240:
+            candidates.append(months)
+
+    if not candidates or max(candidates) <= 12:
+        for token in re.findall(r"\b(\d{1,3})\b", block):
+            maybe_months = _coerce_int_token(token, 0) or 0
+            if 1 <= maybe_months <= 240:
+                candidates.append(maybe_months)
+        for token in re.findall(r"(?i)\b([a-z]+(?:-[a-z]+)?)\b", block):
+            maybe_months = _word_token_to_int(token) or 0
+            if 1 <= maybe_months <= 240:
+                candidates.append(maybe_months)
+
+    return candidates
+
+
+def _extract_free_rent_months_from_option_block(block: str) -> int | None:
+    if not block:
+        return None
+    low = block.lower()
+    if re.search(r"\bno\s+(?:free\s+rent|base\s+rental?\s+abatement|rent\s+abatement)\b", low):
+        return 0
+
+    month_candidates: list[int] = []
+    patterns = [
+        r"(?i)\b(?:with\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+(?:of\s+)?(?:base\s+)?(?:rent(?:al)?\s+)?(?:free\s+rent|abatement)\b",
+        r"(?i)\b(?:free\s+rent|rent(?:al)?\s+abatement|abatement)\b[^\n]{0,80}\b([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\b",
+    ]
+    for pattern in patterns:
+        for m in re.finditer(pattern, block):
+            digit_val = _coerce_int_token(m.group(2), 0) or 0
+            word_val = _word_token_to_int(m.group(1))
+            value = max(digit_val, word_val or 0)
+            if 0 <= value <= 24:
+                month_candidates.append(value)
+    if month_candidates:
+        return max(month_candidates)
+    return None
+
+
 def _extract_option_counter_terms(text: str) -> dict:
     if not text:
         return {}
@@ -2081,19 +2141,34 @@ def _extract_option_counter_terms(text: str) -> dict:
 
     term_matches = list(
         re.finditer(
-            r"(?is)\bterm\s*:\s*(.+?)\b(?:base\s+rent|improvements?|operating\s+expenses|parking)\s*:",
+            r"(?is)\bterm\s*:\s*(.+?)\b(?:base\s+rent(?:al)?(?:\s+rate)?|improvements?|operating\s+expenses|parking)\s*:",
             flat,
         )
     )
     term_section = term_matches[-1].group(1) if term_matches else flat
     base_matches = list(
         re.finditer(
-            r"(?is)\bbase\s+rent\s*:\s*(.+?)\b(?:improvements?|operating\s+expenses|parking)\s*:",
+            r"(?is)\bbase\s+rent(?:al)?(?:\s+rate)?\s*:\s*(.+?)\b(?:base\s+rent(?:al)?\s+abatement|improvements?|operating\s+expenses|parking|landlord\s+work)\s*:",
             flat,
         )
     )
     base_section = base_matches[-1].group(1) if base_matches else flat
-    esc_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+increases?\b", base_section)
+    abatement_matches = list(
+        re.finditer(
+            r"(?is)\bbase\s+rent(?:al)?\s+abatement\s*:\s*(.+?)\b(?:improvements?|operating\s+expenses|parking|landlord\s+work|renewal\s+option)\s*:",
+            flat,
+        )
+    )
+    abatement_section = abatement_matches[-1].group(1) if abatement_matches else ""
+    esc_match = re.search(
+        r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+base\s+rent)?\s+(?:increase|increases|escalation|escalations)\b",
+        base_section,
+    )
+    if not esc_match:
+        esc_match = re.search(
+            r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+base\s+rent)?\s+(?:increase|increases|escalation|escalations)\b",
+            flat,
+        )
     escalation_pct_default = float(esc_match.group(1)) if esc_match else 0.0
 
     option_data: dict[str, dict] = {}
@@ -2102,24 +2177,10 @@ def _extract_option_counter_terms(text: str) -> dict:
         if not key:
             continue
         data = option_data.setdefault(key, {"option_key": key, "option_label": _option_display_label(key)})
-        month_candidates: list[int] = []
-        for m in re.finditer(r"(?i)\b([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,3})\)?\s*months?\b", block):
-            digit_val = _coerce_int_token(m.group(2), 0) or 0
-            word_val = _word_token_to_int(m.group(1))
-            value = max(digit_val, word_val or 0)
-            if value > 0:
-                month_candidates.append(value)
-        if not month_candidates or max(month_candidates) <= 12:
-            for token in re.findall(r"\b(\d{1,3})\b", block):
-                maybe_months = _coerce_int_token(token, 0) or 0
-                if 1 <= maybe_months <= 240:
-                    month_candidates.append(maybe_months)
-            for token in re.findall(r"(?i)\b([a-z]+(?:-[a-z]+)?)\b", block):
-                maybe_months = _word_token_to_int(token) or 0
-                if 1 <= maybe_months <= 240:
-                    month_candidates.append(maybe_months)
+        month_candidates = _extract_term_month_candidates_from_option_block(block)
         if month_candidates:
-            data["term_months"] = max(month_candidates)
+            strong_term_candidates = [m for m in month_candidates if m >= 24]
+            data["term_months"] = max(strong_term_candidates or month_candidates)
 
         initial_free_match = re.search(
             r"(?i)\b(?:with\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+base\s+free\s+rent\b",
@@ -2144,6 +2205,15 @@ def _extract_option_counter_terms(text: str) -> dict:
         total_free = max(0, initial_free + additional_free)
         if total_free > 0:
             data["free_rent_months"] = total_free
+
+    for raw_label, block in _extract_option_blocks(abatement_section):
+        key = _normalize_option_key(raw_label)
+        if not key:
+            continue
+        data = option_data.setdefault(key, {"option_key": key, "option_label": _option_display_label(key)})
+        free_months = _extract_free_rent_months_from_option_block(block)
+        if free_months is not None:
+            data["free_rent_months"] = max(0, int(free_months))
 
     for raw_label, block in _extract_option_blocks(base_section):
         key = _normalize_option_key(raw_label)
@@ -3030,6 +3100,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     comm_direct_pats = [
         rf"(?i)\bcommenc(?:ement|e|ing)(?:\s+date)?(?:\s+on)?(?:\s+the\s+later\s+to\s+occur\s+of)?(?:\s*[:\-]\s*|\s+){date_token_capture}",
         rf"(?i)\b(?:lease\s+)?commencement\b[^.\n]{{0,120}}?\bestimated\s+to\s+be\s+{date_token_capture}",
+        rf"(?i)\bfrom\s+{date_token_capture}\s+through\s+the\s+commencement\s+date\b",
         rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\bcommencement\s+date\b",
     ]
     exp_direct_pats = [
@@ -3212,6 +3283,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         hints["free_rent_scope"] = "base"
         hints["free_rent_start_month"] = 0
         hints["free_rent_end_month"] = max(0, option_free_months - 1)
+    elif has_multiple_option_variants:
+        # In multi-option proposals, generic abatement language may belong to a different option.
+        # Use the selected option's explicit abatement (including zero free rent) as source of truth.
+        hints["free_rent_scope"] = "base"
+        hints["free_rent_start_month"] = None
+        hints["free_rent_end_month"] = None
 
     # ---- Parking abatement range ----
     parking_abatement_ranges: list[tuple[int, int]] = []
@@ -3421,6 +3498,16 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         suite_hint=hints.get("suite", ""),
         address_hint=hints.get("address", ""),
     )
+    building_info_match = re.search(
+        r"(?i)\bbuilding\s+information\s*:\s*([A-Za-z0-9][A-Za-z0-9 &\-\./]{1,100}?)\s+is\b",
+        text,
+    )
+    if building_info_match:
+        building_info_name = _clean_building_candidate(building_info_match.group(1), suite_hint=hints.get("suite", ""))
+        if building_info_name and (
+            not hints["building_name"] or _looks_like_address(str(hints["building_name"] or ""))
+        ):
+            hints["building_name"] = building_info_name
     if not hints["building_name"]:
         premises_building_match = re.search(
             r"(?i)\bpremises\s*:\s*([A-Za-z0-9][A-Za-z0-9 &\-\./]{1,80}?)\s+(?:suite|ste\.?|unit|space)\b",
@@ -3445,6 +3532,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     # Parking ratio and economics
     parking_ratio_patterns = [
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:spaces?|stalls?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
         r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*1,?000\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*\/\s*1,?000\s*(?:rsf|sf)\b",
         r"(?i)\b(?:parking\s+ratio|ratio\s+of)\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:licenses?|spaces?|stalls?)\s*(?:per|\/|:)\s*1,?000\s*(?:rsf|sf)\b",
@@ -3476,6 +3564,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     parking_rate_patterns = [
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\s*(?:per|\/)\s*month\b",
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:permit)\s*(?:per|\/)\s*month\b",
         r"(?i)\bparking\b[^.\n]{0,80}\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
     ]
     for pat in parking_rate_patterns:

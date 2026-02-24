@@ -326,3 +326,44 @@ def test_build_canonical_option_variants_emits_two_scenarios() -> None:
     assert variants[1].scenario_name.endswith("Option B")
     assert variants[1].term_months == 88
     assert str(variants[1].expiration_date) == "2034-03-31"
+
+
+def test_extract_hints_parses_option_1_2_counter_with_base_rental_rate_and_abatement() -> None:
+    text = (
+        "BUILDING INFORMATION: Frost Tower is a 33-story office tower.\n"
+        "PREMISES: The Premises shall be approximately 3,833 RSF to be known as suite 1875.\n"
+        "Landlord can provide Temporary space if the Premises is not constructed by September 1, 2026. "
+        "Tenant shall occupy the Temporary Premises from September 1, 2026 through the Commencement Date.\n"
+        "TERM: The Term of the lease shall be Option 1: eighty-seven (87) months or Option 2: sixty (60) months from the Commencement Date.\n"
+        "BASE RENTAL RATE: Beginning on the Commencement Date the base rental rate paid on the Premises shall be:\n"
+        "Option 1: 87 Month Term | $47.00 NNN\n"
+        "Option 2: 60 Month Term | $50.00 NNN\n"
+        "Commencing on month 13 there shall be 3.0% annual Base Rent escalations.\n"
+        "BASE RENTAL ABATEMENT: Option 1: Tenant shall have three (3) months of base rental abatement. "
+        "Option 2: 5-yr term no free rent.\n"
+        "Operating Expenses: The 2026 operating expenses are estimated to be $26.88/RSF/Yr.\n"
+        "PARKING: ratio of 2.7 permits per 1,000 RSF and parking rate is $288/permit/month.\n"
+    )
+    hints = main._extract_lease_hints(text, "frost-counter.docx", "test-rid")
+    assert hints["building_name"] == "Frost Tower"
+    assert hints["suite"] == "1875"
+    assert hints["rsf"] == 3833.0
+    assert str(hints["commencement_date"]) == "2026-09-01"
+    assert hints["term_months"] == 60
+    assert str(hints["expiration_date"]) == "2031-08-31"
+    assert hints["free_rent_start_month"] is None
+    assert hints["free_rent_end_month"] is None
+    assert hints["parking_ratio"] == 2.7
+    assert hints["parking_rate_monthly"] == 288.0
+    assert hints["opex_psf_year_1"] == 26.88
+    assert isinstance(hints["rent_schedule"], list)
+    assert hints["rent_schedule"][0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 50.0}
+    assert len(hints["option_variants"]) == 2
+    assert hints["option_variants"][0]["term_months"] == 87
+    assert hints["option_variants"][0]["free_rent_months"] == 3
+    assert hints["option_variants"][0]["base_rate_psf_yr"] == 47.0
+    assert hints["option_variants"][0]["escalation_pct"] == 3.0
+    assert hints["option_variants"][1]["term_months"] == 60
+    assert hints["option_variants"][1]["free_rent_months"] == 0
+    assert hints["option_variants"][1]["base_rate_psf_yr"] == 50.0
+    assert hints["option_variants"][1]["escalation_pct"] == 3.0
