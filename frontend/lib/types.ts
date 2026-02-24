@@ -1,6 +1,6 @@
 /** Matches backend Scenario / CashflowResult */
 
-export type OpexMode = "nnn" | "base_year";
+export type OpexMode = "nnn" | "base_year" | "full_service";
 export type TiSourceOfTruth = "psf" | "total";
 
 export interface RentStep {
