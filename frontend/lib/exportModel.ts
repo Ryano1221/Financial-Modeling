@@ -230,16 +230,21 @@ function monthKey(value?: string | null): string {
 }
 
 function normalizeMonthlyRowsForTiExport(
-  rows: WorkbookMonthlyRow[],
-  tiAllowanceTotal: number
+  rows: WorkbookMonthlyRow[]
 ): WorkbookMonthlyRow[] {
   if (!rows.length) return rows;
   const normalized = rows.map((row) => ({ ...row }));
-  const allowance = Math.max(0, Number(tiAllowanceTotal) || 0);
-  if (allowance > 0) {
-    const monthZeroIdx = normalized.findIndex((row) => row.monthIndex === 0);
-    const targetIdx = monthZeroIdx >= 0 ? monthZeroIdx : 0;
-    normalized[targetIdx].grossCashFlow += allowance;
+  const monthZeroIdx = normalized.findIndex((row) => row.monthIndex === 0);
+  if (monthZeroIdx >= 0) {
+    const row = normalized[monthZeroIdx];
+    // Keep monthly rows as recurring occupancy-only flows.
+    // TI budget/allowance impacts are rendered in dedicated TIB/TIA/TIN rows.
+    const recurringOther = Math.max(0, Number(row.otherCosts) || 0);
+    row.grossCashFlow =
+      (Number(row.baseRent) || 0) +
+      (Number(row.opex) || 0) +
+      (Number(row.parking) || 0) +
+      recurringOther;
   }
   let cumulative = 0;
   for (const row of normalized) {
@@ -734,10 +739,13 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
       cumulativeCost: m.cumulativeCost,
       discountedValue: m.discountedValue,
     }));
-    const monthlyRows = normalizeMonthlyRowsForTiExport(monthlyRowsRaw, tiAllowanceTotal);
+    const monthlyRows = normalizeMonthlyRowsForTiExport(monthlyRowsRaw);
     const monthlyGrossSum = monthlyRows.reduce((sum, row) => sum + row.grossCashFlow, 0);
-    const monthZeroResidual = Math.max(0, result.metrics.totalObligation - monthlyGrossSum);
     const tiNetImpact = tiBudgetTotal - tiAllowanceTotal;
+    const monthZeroResidual = Math.max(
+      0,
+      result.metrics.totalObligation - monthlyGrossSum - tiNetImpact
+    );
     const totalObligationForExport = monthlyGrossSum + monthZeroResidual + tiNetImpact;
     const parkingPreTax = result.metrics.parkingCostPerSpotMonthlyPreTax
       ?? safeDiv(result.metrics.parkingCostPerSpotMonthly, 1 + (result.metrics.parkingSalesTaxPercent || 0));
@@ -825,10 +833,13 @@ function buildScenariosFromCanonicalResponses(
       cumulativeCost: row.cumulative_cost,
       discountedValue: row.discounted_value,
     }));
-    const monthlyRows = normalizeMonthlyRowsForTiExport(monthlyRowsRaw, tiAllowanceTotal);
+    const monthlyRows = normalizeMonthlyRowsForTiExport(monthlyRowsRaw);
     const monthlyGrossSum = monthlyRows.reduce((sum, row) => sum + row.grossCashFlow, 0);
-    const monthZeroResidual = Math.max(0, (m.total_obligation_nominal ?? 0) - monthlyGrossSum);
     const tiNetImpact = tiBudgetTotal - tiAllowanceTotal;
+    const monthZeroResidual = Math.max(
+      0,
+      (m.total_obligation_nominal ?? 0) - monthlyGrossSum - tiNetImpact
+    );
     const totalObligationForExport = monthlyGrossSum + monthZeroResidual + tiNetImpact;
     const parkingPreTax = c.parking_rate_monthly ?? 0;
     const parkingTax = c.parking_sales_tax_rate ?? 0.0825;
