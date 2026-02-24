@@ -1709,6 +1709,34 @@ function createAppendixSheet(
   }
   row += 1;
 
+  const tiBudgetInfoRow = row;
+  sheet.getCell(tiBudgetInfoRow, 1).value = "TIB";
+  sheet.getCell(tiBudgetInfoRow, 2).value = "TI budget (Year 0 / PLC)";
+  sheet.getCell(tiBudgetInfoRow, 3).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 4).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 5).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 6).value = Number(Math.max(0, scenario.tiBudget || 0).toFixed(4));
+  sheet.getCell(tiBudgetInfoRow, 7).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 8).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 9).value = 0;
+  for (let c = 1; c <= cols; c++) {
+    const cell = sheet.getCell(tiBudgetInfoRow, c);
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+    cell.border = { ...(cell.border ?? {}), bottom: { style: "thin", color: { argb: COLORS.border } } };
+    if (c === 1) {
+      cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      applyCellFormat(cell, "text");
+    } else if (c === 2) {
+      cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+      cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+      applyCellFormat(cell, "text");
+    } else {
+      applyCellFormat(cell, "currency0");
+    }
+  }
+  row += 1;
+
   scenario.monthlyRows.forEach((m, idx) => {
     const fill = idx % 2 === 0 ? COLORS.white : COLORS.lightGray;
     sheet.getCell(row, 1).value = m.monthIndex + 1;

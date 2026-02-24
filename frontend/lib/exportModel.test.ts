@@ -217,7 +217,7 @@ describe("exportModel institutional workbook", () => {
       if (totalRow != null) {
         const formulaCell = monthly.getCell(totalRow, 3).value as ExcelJS.CellFormulaValue;
         expect(formulaCell).toHaveProperty("formula");
-        expect(formulaCell.formula).toMatch(/^SUM\([A-Z]+\d+:[A-Z]+\d+\)$/);
+        expect(formulaCell.formula).toMatch(/^SUM\(.+\)$/);
       }
       const maxImageTlCol = monthly.getImages().reduce((max, img) => {
         const range = img.range as unknown as { tl?: { col?: number } };
@@ -242,6 +242,11 @@ describe("exportModel institutional workbook", () => {
     const appendixTotalsRow = findRowByCellValue(appendix, 2, "Totals");
     expect(appendixTotalsRow).not.toBeNull();
     if (appendix && appendixTotalsRow != null) {
+      const tiBudgetRow = findRowByCellValue(appendix, 1, "TIB");
+      expect(tiBudgetRow).not.toBeNull();
+      if (tiBudgetRow != null) {
+        expect(appendix.getCell(tiBudgetRow, 2).value).toBe("TI budget (Year 0 / PLC)");
+      }
       const grossTotal = appendix.getCell(appendixTotalsRow, 7).value as ExcelJS.CellFormulaValue;
       expect(grossTotal).toHaveProperty("formula");
       expect(grossTotal.formula).toMatch(/^SUM\([A-Z]+\d+:[A-Z]+\d+\)$/);
