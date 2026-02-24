@@ -213,6 +213,10 @@ def test_detect_generated_report_document() -> None:
     assert main._looks_like_generated_report_document(text) is True
 
 
+def test_generic_scenario_name_detection_flags_suite_only_names() -> None:
+    assert main._looks_like_generic_scenario_name("Suite 200") is True
+
+
 def test_extract_hints_prefers_option_two_counter_terms_for_option_blocks() -> None:
     text = (
         "PREMISES: Benbrook Suite 200 - Approximately 4,626 RSF\n"

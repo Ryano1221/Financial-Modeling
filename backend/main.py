@@ -3955,11 +3955,18 @@ def _normalize_impl(
                     suite_hint=suite_val,
                 )
             if not building_val:
+                scenario_name_fallback = str(canonical.scenario_name or "").strip()
+                if scenario_name_fallback and not _looks_like_generic_scenario_name(scenario_name_fallback):
+                    scenario_name_fallback = re.sub(
+                        r"(?i)\s+(?:suite|ste\.?|unit|space|floor)\s+[A-Za-z0-9\-]+.*$",
+                        "",
+                        scenario_name_fallback,
+                    ).strip(" ,.-")
+                    building_val = _clean_building_candidate(scenario_name_fallback, suite_hint=suite_val)
+            if not building_val:
                 building_val = _fallback_building_from_filename(file.filename or "")
             if not building_val:
                 building_val = _clean_building_candidate(re.sub(r"[_\-]+", " ", Path(file.filename or "").stem))
-            if not building_val:
-                building_val = "Extracted premises"
             if building_val:
                 updates["building_name"] = building_val
                 # If this is actually an address and address is blank, keep both populated.
