@@ -1874,8 +1874,29 @@ function createAppendixSheet(
     cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
   const monthlyDiscountRate = Number((Math.pow(1 + (scenario.discountRate || 0), 1 / 12) - 1).toFixed(12));
+  const tiBudgetTotal = Math.max(0, scenario.tiBudget || 0);
+  const tiAllowanceTotal = Math.max(0, (scenario.tiAllowance || 0) * Math.max(0, scenario.rsf || 0));
+  const appendixMonthlyRows = scenario.monthlyRows.map((monthlyRow) => ({ ...monthlyRow }));
+  let remainingTiBudget = tiBudgetTotal;
+  let remainingTiAllowance = tiAllowanceTotal;
+  appendixMonthlyRows.forEach((monthlyRow) => {
+    let adjustedOtherCosts = Number(monthlyRow.otherCosts) || 0;
+    if (remainingTiBudget > 0 && adjustedOtherCosts > 0) {
+      const shift = Math.min(remainingTiBudget, adjustedOtherCosts);
+      adjustedOtherCosts -= shift;
+      remainingTiBudget -= shift;
+    }
+    if (remainingTiAllowance > 0 && adjustedOtherCosts < 0) {
+      const shift = Math.min(remainingTiAllowance, -adjustedOtherCosts);
+      adjustedOtherCosts += shift;
+      remainingTiAllowance -= shift;
+    }
+    monthlyRow.otherCosts = Number(adjustedOtherCosts.toFixed(6));
+    monthlyRow.grossCashFlow = Number((monthlyRow.baseRent + monthlyRow.opex + monthlyRow.parking + monthlyRow.otherCosts).toFixed(6));
+  });
 
   let row = headerRow + 1;
+  let runningCumulative = Number((scenario.monthZeroGross || 0).toFixed(6));
   const monthZeroRow = row;
   sheet.getCell(monthZeroRow, 1).value = 0;
   sheet.getCell(monthZeroRow, 2).value = "PRE LEASE COMMENCEMENT";
@@ -1889,7 +1910,7 @@ function createAppendixSheet(
   };
   sheet.getCell(monthZeroRow, 8).value = {
     formula: `G${monthZeroRow}`,
-    result: Number(scenario.monthZeroGross.toFixed(6)),
+    result: runningCumulative,
   };
   sheet.getCell(monthZeroRow, 9).value = {
     formula: `IFERROR(G${monthZeroRow}/POWER(1+${monthlyDiscountRate},A${monthZeroRow}),0)`,
@@ -1907,13 +1928,20 @@ function createAppendixSheet(
   sheet.getCell(tiBudgetInfoRow, 3).value = 0;
   sheet.getCell(tiBudgetInfoRow, 4).value = 0;
   sheet.getCell(tiBudgetInfoRow, 5).value = 0;
-  sheet.getCell(tiBudgetInfoRow, 6).value = Number(Math.max(0, scenario.tiBudget || 0).toFixed(4));
-  sheet.getCell(tiBudgetInfoRow, 7).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 6).value = Number(tiBudgetTotal.toFixed(4));
+  sheet.getCell(tiBudgetInfoRow, 7).value = {
+    formula: `SUM(C${tiBudgetInfoRow}:F${tiBudgetInfoRow})`,
+    result: Number(tiBudgetTotal.toFixed(6)),
+  };
+  runningCumulative = Number((runningCumulative + tiBudgetTotal).toFixed(6));
   sheet.getCell(tiBudgetInfoRow, 8).value = {
     formula: `H${monthZeroRow}+G${tiBudgetInfoRow}`,
-    result: Number(scenario.monthZeroGross.toFixed(6)),
+    result: runningCumulative,
   };
-  sheet.getCell(tiBudgetInfoRow, 9).value = 0;
+  sheet.getCell(tiBudgetInfoRow, 9).value = {
+    formula: `G${tiBudgetInfoRow}`,
+    result: Number(tiBudgetTotal.toFixed(6)),
+  };
   for (let c = 1; c <= cols; c++) {
     const cell = sheet.getCell(tiBudgetInfoRow, c);
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
@@ -1932,8 +1960,52 @@ function createAppendixSheet(
   }
   row += 1;
 
-  scenario.monthlyRows.forEach((m, idx) => {
+  const tiAllowanceInfoRow = row;
+  sheet.getCell(tiAllowanceInfoRow, 1).value = "TIA";
+  sheet.getCell(tiAllowanceInfoRow, 2).value = "TI allowance credit (Year 0 / PLC)";
+  sheet.getCell(tiAllowanceInfoRow, 3).value = 0;
+  sheet.getCell(tiAllowanceInfoRow, 4).value = 0;
+  sheet.getCell(tiAllowanceInfoRow, 5).value = 0;
+  sheet.getCell(tiAllowanceInfoRow, 6).value = Number((-tiAllowanceTotal).toFixed(4));
+  sheet.getCell(tiAllowanceInfoRow, 7).value = {
+    formula: `SUM(C${tiAllowanceInfoRow}:F${tiAllowanceInfoRow})`,
+    result: Number((-tiAllowanceTotal).toFixed(6)),
+  };
+  runningCumulative = Number((runningCumulative - tiAllowanceTotal).toFixed(6));
+  sheet.getCell(tiAllowanceInfoRow, 8).value = {
+    formula: `H${tiBudgetInfoRow}+G${tiAllowanceInfoRow}`,
+    result: runningCumulative,
+  };
+  sheet.getCell(tiAllowanceInfoRow, 9).value = {
+    formula: `G${tiAllowanceInfoRow}`,
+    result: Number((-tiAllowanceTotal).toFixed(6)),
+  };
+  for (let c = 1; c <= cols; c++) {
+    const cell = sheet.getCell(tiAllowanceInfoRow, c);
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+    cell.border = { ...(cell.border ?? {}), bottom: { style: "thin", color: { argb: COLORS.border } } };
+    if (c === 1) {
+      cell.font = { name: EXCEL_THEME.font.family, bold: true, color: { argb: COLORS.secondaryText } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      applyCellFormat(cell, "text");
+    } else if (c === 2) {
+      cell.font = { name: EXCEL_THEME.font.family, italic: true, color: { argb: COLORS.secondaryText } };
+      cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+      applyCellFormat(cell, "text");
+    } else {
+      applyCellFormat(cell, "currency0");
+      if (c >= 6) {
+        cell.font = { ...(cell.font ?? {}), color: { argb: COLORS.secondaryText }, italic: true, name: EXCEL_THEME.font.family };
+      }
+    }
+  }
+  row += 1;
+
+  appendixMonthlyRows.forEach((m, idx) => {
     const fill = idx % 2 === 0 ? COLORS.white : COLORS.lightGray;
+    const monthNumber = m.monthIndex + 1;
+    const discountedValue = Number((m.grossCashFlow / Math.pow(1 + monthlyDiscountRate, monthNumber)).toFixed(6));
+    runningCumulative = Number((runningCumulative + m.grossCashFlow).toFixed(6));
     sheet.getCell(row, 1).value = m.monthIndex + 1;
     sheet.getCell(row, 2).value = formatDateMmDdYyyy(m.date);
     sheet.getCell(row, 3).value = Number(m.baseRent.toFixed(4));
@@ -1946,11 +2018,11 @@ function createAppendixSheet(
     };
     sheet.getCell(row, 8).value = {
       formula: `H${row - 1}+G${row}`,
-      result: Number(m.cumulativeCost.toFixed(6)),
+      result: runningCumulative,
     };
     sheet.getCell(row, 9).value = {
       formula: `IFERROR(G${row}/POWER(1+${monthlyDiscountRate},A${row}),0)`,
-      result: Number(m.discountedValue.toFixed(6)),
+      result: discountedValue,
     };
     for (let c = 1; c <= cols; c++) {
       const cell = sheet.getCell(row, c);
