@@ -55,7 +55,7 @@ def test_build_report_deck_html_includes_required_sections():
     html = build_report_deck_html(payload)
     assert "INVESTOR FINANCIAL ANALYSIS".lower() in html.lower()
     assert "Lease Economics Comparison Deck" in html
-    assert "Executive summary" in html
+    assert "Executive summary" not in html
     assert "Comparison Matrix" in html
     assert "Scenario Cost Comparison" in html
     assert "Lease Abstract Highlights" in html

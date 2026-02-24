@@ -3113,7 +3113,6 @@ def build_report_deck_html(data: dict[str, Any], plan: DeckRenderPlan | None = N
             orientation=active_plan.orientation_for("cover", "landscape"),
         )
     )
-    page_payloads.extend(_executive_summary_pages(entries, active_plan))
     page_payloads.extend(_matrix_pages(entries, active_plan))
     page_payloads.extend(_monthly_gross_pages(entries, active_plan))
     page_payloads.extend(_notes_pages(entries, active_plan))
