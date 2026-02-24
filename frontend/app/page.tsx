@@ -1121,6 +1121,7 @@ export default function Home() {
             equalized_avg_gross_rent_psf_year: equalized?.averageGrossRentPsfYear ?? undefined,
             equalized_avg_gross_rent_month: equalized?.averageGrossRentMonth ?? undefined,
             equalized_avg_cost_psf_year: equalized?.averageCostPsfYear ?? undefined,
+            equalized_avg_cost_year: equalized?.averageCostYear ?? undefined,
             equalized_avg_cost_month: equalized?.averageCostMonth ?? undefined,
             equalized_total_cost: equalized?.totalCost ?? undefined,
             equalized_npv_cost: equalized?.npvCost ?? undefined,

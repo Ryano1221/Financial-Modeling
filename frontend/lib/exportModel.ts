@@ -97,6 +97,7 @@ interface EqualizedMetrics {
   avgGrossRentPsfYear: number;
   avgGrossRentMonth: number;
   avgCostPsfYear: number;
+  avgCostYear: number;
   avgCostMonth: number;
   totalCost: number;
   npv: number;
@@ -898,6 +899,7 @@ function computeEqualizedMetrics(scenario: WorkbookScenario, start: Date, end: D
     avgGrossRentPsfYear: safeDiv(gross, Math.max(1, scenario.rsf) * annualFactor),
     avgGrossRentMonth: safeDiv(gross, monthCount),
     avgCostPsfYear: safeDiv(recurring, Math.max(1, scenario.rsf) * annualFactor),
+    avgCostYear: safeDiv(recurring, monthCount / 12),
     avgCostMonth: safeDiv(recurring, monthCount),
     totalCost: recurring,
     npv,
@@ -1365,6 +1367,13 @@ function createEqualizedSheet(
       format: "currency2",
       getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
         ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostPsfYear
+        : "—",
+    },
+    {
+      label: "Equalized avg cost/year",
+      format: "currency0",
+      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
+        ? computeEqualizedMetrics(scenario, window.start, window.end).avgCostYear
         : "—",
     },
     {

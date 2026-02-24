@@ -11,6 +11,7 @@ export interface EqualizedScenarioMetrics {
   averageGrossRentPsfYear: number;
   averageGrossRentMonth: number;
   averageCostPsfYear: number;
+  averageCostYear: number;
   averageCostMonth: number;
   totalCost: number;
   npvCost: number;
@@ -241,6 +242,7 @@ export function computeEqualizedComparison(
       averageGrossRentMonth: monthDivisor > 0 ? grossRentInWindow / monthDivisor : 0,
       averageCostPsfYear:
         rsf > 0 && annualizedDivisor > 0 ? totalCostInWindow / rsf / annualizedDivisor : 0,
+      averageCostYear: annualizedDivisor > 0 ? totalCostInWindow / annualizedDivisor : 0,
       averageCostMonth: monthDivisor > 0 ? totalCostInWindow / monthDivisor : 0,
       totalCost: totalCostInWindow,
       npvCost,

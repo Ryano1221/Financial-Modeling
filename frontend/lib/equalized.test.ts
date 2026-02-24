@@ -13,6 +13,9 @@ function makeScenario(overrides: Partial<ScenarioWithId>): ScenarioWithId {
     rent_steps: overrides.rent_steps ?? [{ start: 0, end: 11, rate_psf_yr: 24 }],
     free_rent_months: overrides.free_rent_months ?? 0,
     ti_allowance_psf: overrides.ti_allowance_psf ?? 0,
+    ti_budget_total: overrides.ti_budget_total ?? 0,
+    ti_allowance_source_of_truth: overrides.ti_allowance_source_of_truth ?? "psf",
+    ti_source_of_truth: overrides.ti_source_of_truth ?? "total",
     opex_mode: overrides.opex_mode ?? "nnn",
     base_opex_psf_yr: overrides.base_opex_psf_yr ?? 10,
     base_year_opex_psf_yr: overrides.base_year_opex_psf_yr ?? 10,
@@ -152,6 +155,7 @@ describe("computeEqualizedComparison", () => {
       metrics.totalCost / Math.max(1, result.windowMonthCount),
       2
     );
+    expect(metrics.averageCostYear).toBeCloseTo(metrics.averageCostMonth * 12, 2);
     expect(metrics.averageCostPsfYear).toBeCloseTo(
       (metrics.averageCostMonth * 12) / scenario.rsf,
       2
@@ -160,5 +164,29 @@ describe("computeEqualizedComparison", () => {
       metrics.totalCost / (scenario.rsf * Math.max(1e-9, result.windowMonthCount / 12)),
       2
     );
+  });
+
+  it("includes TI budget and TI allowance effects in equalized totals", () => {
+    const base = makeScenario({
+      id: "ti-base",
+      rsf: 10000,
+      commencement: "2026-01-01",
+      expiration: "2026-12-31",
+      ti_allowance_psf: 0,
+      ti_budget_total: 0,
+    });
+    const withTi = makeScenario({
+      id: "ti-with",
+      rsf: 10000,
+      commencement: "2026-01-01",
+      expiration: "2026-12-31",
+      ti_allowance_psf: 2, // $20,000 allowance
+      ti_budget_total: 5_000, // net -$15,000 credit at month 0
+    });
+
+    const result = computeEqualizedComparison([base, withTi], 0.08, null);
+    const baseTotal = result.metricsByScenario["ti-base"].totalCost;
+    const withTiTotal = result.metricsByScenario["ti-with"].totalCost;
+    expect(withTiTotal).toBeCloseTo(baseTotal - 15000, 2);
   });
 });

@@ -17,6 +17,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
     "Equalized avg gross rent/SF/year",
     "Equalized avg gross rent/month",
     "Equalized avg cost/SF/year",
+    "Equalized avg cost/year",
     "Equalized avg cost/month",
     "Equalized total cost",
     "Equalized NPV (t0 at start)",
@@ -28,8 +29,9 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
     if (rowIdx === 0) return formatCurrencyPerSF(eq.averageGrossRentPsfYear);
     if (rowIdx === 1) return formatCurrency(eq.averageGrossRentMonth);
     if (rowIdx === 2) return formatCurrencyPerSF(eq.averageCostPsfYear);
-    if (rowIdx === 3) return formatCurrency(eq.averageCostMonth);
-    if (rowIdx === 4) return formatCurrency(eq.totalCost);
+    if (rowIdx === 3) return formatCurrency(eq.averageCostYear);
+    if (rowIdx === 4) return formatCurrency(eq.averageCostMonth);
+    if (rowIdx === 5) return formatCurrency(eq.totalCost);
     return formatCurrency(eq.npvCost);
   };
 

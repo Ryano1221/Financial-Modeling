@@ -351,6 +351,7 @@ class CashflowResult(BaseModel):
     equalized_avg_gross_rent_psf_year: Optional[float] = None
     equalized_avg_gross_rent_month: Optional[float] = None
     equalized_avg_cost_psf_year: Optional[float] = None
+    equalized_avg_cost_year: Optional[float] = None
     equalized_avg_cost_month: Optional[float] = None
     equalized_total_cost: Optional[float] = None
     equalized_npv_cost: Optional[float] = None

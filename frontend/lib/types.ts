@@ -157,6 +157,7 @@ export interface CashflowResult {
   equalized_avg_gross_rent_psf_year?: number;
   equalized_avg_gross_rent_month?: number;
   equalized_avg_cost_psf_year?: number;
+  equalized_avg_cost_year?: number;
   equalized_avg_cost_month?: number;
   equalized_total_cost?: number;
   equalized_npv_cost?: number;
