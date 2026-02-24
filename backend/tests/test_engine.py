@@ -79,6 +79,32 @@ def test_compute_cashflows_base_year_has_lower_opex_initially():
     assert result.total_cost_nominal < result.rent_nominal + result.opex_nominal
 
 
+def test_compute_cashflows_npv_uses_end_of_month_discounting_with_upfront_t0():
+    scenario = Scenario(
+        name="NPV timing",
+        rsf=1,
+        commencement=date(2026, 1, 1),
+        expiration=date(2026, 1, 31),  # 1 month
+        rent_steps=[RentStep(start=0, end=0, rate_psf_yr=120.0)],  # $10 monthly
+        free_rent_months=0,
+        ti_allowance_psf=0.0,
+        ti_budget_total=0.0,
+        opex_mode=OpexMode.NNN,
+        base_opex_psf_yr=0.0,
+        base_year_opex_psf_yr=0.0,
+        opex_growth=0.0,
+        discount_rate_annual=0.12,
+        parking_spaces=0,
+        parking_cost_monthly_per_space=0.0,
+        broker_fee=50.0,  # upfront month-0 cost (undiscounted)
+    )
+    _, result = compute_cashflows(scenario)
+
+    monthly_rate = (1.0 + 0.12) ** (1.0 / 12.0) - 1.0
+    expected_npv = 50.0 + (10.0 / (1.0 + monthly_rate))
+    assert abs(result.npv_cost - expected_npv) < 1e-6
+
+
 def test_fastapi_compute_endpoint():
     client = TestClient(app)
     scenario = _basic_scenario(OpexMode.NNN)

@@ -192,3 +192,32 @@ def test_compute_canonical_parking_abatement_applies_to_parking_only() -> None:
         assert row.parking == 0
         assert row.base_rent > 0
         assert row.opex > 0
+
+
+def test_compute_canonical_npv_uses_end_of_month_discounting_with_upfront_t0() -> None:
+    lease = CanonicalLease(
+        scenario_id="npv-timing-1",
+        scenario_name="NPV timing canonical",
+        premises_name="Test Suite 1",
+        building_name="Test Building",
+        suite="1",
+        rsf=1,
+        commencement_date=date(2026, 1, 1),
+        expiration_date=date(2026, 1, 31),
+        term_months=1,
+        free_rent_months=0,
+        rent_schedule=[RentScheduleStep(start_month=0, end_month=0, rent_psf_annual=120.0)],  # $10 monthly
+        opex_psf_year_1=0.0,
+        opex_growth_rate=0.0,
+        expense_structure_type="nnn",
+        ti_allowance_psf=50.0,
+        ti_budget_total=0.0,
+        ti_source_of_truth="total",
+        discount_rate_annual=0.12,
+    )
+    out = compute_canonical(lease)
+
+    monthly_rate = (1.0 + 0.12) ** (1.0 / 12.0) - 1.0
+    expected_npv = -50.0 + (10.0 / (1.0 + monthly_rate))
+    assert abs(out.metrics.npv_cost - expected_npv) < 1e-2
+    assert abs(out.monthly_rows[0].discounted_value - expected_npv) < 1e-2

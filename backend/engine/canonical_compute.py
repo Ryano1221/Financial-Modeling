@@ -435,8 +435,15 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     parking_nominal = float(sum(parking_series))
     total_cost_nominal = float(sum(cashflows))
     monthly_rate = _monthly_discount_rate(normalized.discount_rate_annual)
+    upfront_at_0 = float(ti_net_at_0)
+    recurring_cashflows = list(cashflows)
+    if recurring_cashflows:
+        recurring_cashflows[0] -= upfront_at_0
     if monthly_rate > 0:
-        npv_cost = float(sum(cf / ((1.0 + monthly_rate) ** i) for i, cf in enumerate(cashflows)))
+        npv_cost = float(
+            upfront_at_0
+            + sum(cf / ((1.0 + monthly_rate) ** (i + 1)) for i, cf in enumerate(recurring_cashflows))
+        )
     else:
         npv_cost = total_cost_nominal
 
@@ -447,11 +454,20 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
 
     # Build monthly_rows
     monthly_rows: List[MonthlyRow] = []
+    discounted_series: List[float] = []
     cum = 0.0
     for m in range(term_months):
         total_cost = cashflows[m]
         cum += total_cost
-        disc = total_cost / (1.0 + monthly_rate) ** m if monthly_rate > 0 else total_cost
+        if monthly_rate > 0:
+            if m == 0:
+                recurring_month0 = total_cost - upfront_at_0
+                disc = upfront_at_0 + (recurring_month0 / (1.0 + monthly_rate))
+            else:
+                disc = total_cost / (1.0 + monthly_rate) ** (m + 1)
+        else:
+            disc = total_cost
+        discounted_series.append(disc)
         # Concessions: TI at month 0 (negative), free rent value could be shown as positive concession
         concessions = -ti_allowance_at_0 if m == 0 else 0.0
         monthly_rows.append(
@@ -479,7 +495,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         year_total = sum(cashflows[m] for m in range(start_m, end_m))
         year_cum += year_total
         for m in range(start_m, end_m):
-            year_disc_cum += cashflows[m] / (1.0 + monthly_rate) ** m if monthly_rate > 0 else cashflows[m]
+            year_disc_cum += discounted_series[m]
         months_in_year = end_m - start_m
         year_rsf = effective_rsf_series[start_m:end_m]
         avg_year_rsf = (sum(year_rsf) / len(year_rsf)) if year_rsf else rsf
@@ -524,7 +540,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     )
 
     assumptions = [
-        f"Discount rate {normalized.discount_rate_annual:.2%} applied monthly.",
+        f"Discount rate {normalized.discount_rate_annual:.2%} applied with month-end discounting; upfront month-0 cashflows remain undiscounted.",
         "Base rent and opex as provided; no amortization of TI in monthly view.",
     ]
     if normalized.free_rent_periods:

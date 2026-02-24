@@ -32,6 +32,14 @@ function makeScenario(overrides: Partial<ScenarioWithId> = {}): ScenarioWithId {
     parking_spaces: overrides.parking_spaces ?? 10,
     parking_cost_monthly_per_space: overrides.parking_cost_monthly_per_space ?? 100,
     parking_sales_tax_rate: overrides.parking_sales_tax_rate ?? 0.0825,
+    one_time_costs: overrides.one_time_costs,
+    broker_fee: overrides.broker_fee,
+    security_deposit_months: overrides.security_deposit_months,
+    holdover_months: overrides.holdover_months,
+    holdover_rent_multiplier: overrides.holdover_rent_multiplier,
+    sublease_income_monthly: overrides.sublease_income_monthly,
+    sublease_start_month: overrides.sublease_start_month,
+    sublease_duration_months: overrides.sublease_duration_months,
   };
 }
 
@@ -113,5 +121,31 @@ describe("scenario abatement periods", () => {
     expect(result.monthly[4].parking).toBe(0);
     expect(result.monthly[5].parking).toBe(0);
     expect(result.monthly[6].parking).toBeGreaterThan(0);
+  });
+
+  it("discounts recurring month-1 cashflow and keeps upfront month-0 costs at t0", () => {
+    const scenario = makeScenario({
+      rsf: 1,
+      commencement: "2026-01-01",
+      expiration: "2026-01-31",
+      rent_steps: [{ start: 0, end: 0, rate_psf_yr: 120 }],
+      opex_mode: "nnn",
+      base_opex_psf_yr: 0,
+      opex_growth: 0,
+      ti_allowance_psf: 0,
+      ti_budget_total: 0,
+      broker_fee: 50,
+      discount_rate_annual: 0.12,
+      parking_spaces: 0,
+      parking_cost_monthly_per_space: 0,
+      free_rent_months: 0,
+    });
+    const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.12);
+    const monthlyRate = Math.pow(1 + 0.12, 1 / 12) - 1;
+    const expected = 50 + (10 / (1 + monthlyRate));
+
+    expect(result.termMonths).toBe(1);
+    expect(result.metrics.npvAtDiscount).toBeCloseTo(expected, 8);
+    expect(result.monthly[0].discountedValue).toBeCloseTo(expected, 8);
   });
 });

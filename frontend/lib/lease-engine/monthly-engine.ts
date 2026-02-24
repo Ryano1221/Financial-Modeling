@@ -498,20 +498,41 @@ export function runMonthlyEngine(
   );
 
   const total = baseRent.map((r, i) => r + opex[i] + parking[i] + ti[i] + misc[i]);
+  const tiBudgetTotal = Math.max(0, Number(scenario.tiSchedule.budgetTotal) || 0);
+  const tiAllowanceTotal = Math.max(0, Number(scenario.tiSchedule.allowanceFromLandlord) || 0);
+  const tiNetAt0 = tiBudgetTotal - tiAllowanceTotal;
   applyTiMonthZeroAdjustments(
     total,
-    Math.max(0, Number(scenario.tiSchedule.budgetTotal) || 0),
-    Math.max(0, Number(scenario.tiSchedule.allowanceFromLandlord) || 0),
+    tiBudgetTotal,
+    tiAllowanceTotal,
     termMonths
   );
 
   const monthlyRate = Math.pow(1 + discountRate, 1 / 12) - 1;
+  const oneTimeMonth0 = (scenario.otherCashFlows.oneTimeCosts ?? []).reduce(
+    (sum, cost) => sum + ((cost.month ?? 0) === 0 ? (Number(cost.amount) || 0) : 0),
+    0
+  );
+  const upfrontAt0 =
+    (Number(scenario.otherCashFlows.brokerFee) || 0) +
+    ((Number(scenario.otherCashFlows.securityDepositMonths) || 0) > 0
+      ? firstMonthRent * (Number(scenario.otherCashFlows.securityDepositMonths) || 0)
+      : 0) +
+    oneTimeMonth0 +
+    tiNetAt0;
+  const recurringMonth0 = (total[0] ?? 0) - upfrontAt0;
   let cumulative = 0;
 
   const monthly: MonthlyRow[] = [];
   for (let m = 0; m < termMonths; m++) {
     cumulative += total[m];
-    const pv = total[m] / Math.pow(1 + monthlyRate, m);
+    const pv = monthlyRate > 0
+      ? (
+        m === 0
+          ? upfrontAt0 + (recurringMonth0 / (1 + monthlyRate))
+          : total[m] / Math.pow(1 + monthlyRate, m + 1)
+      )
+      : total[m];
     const periodStart = addMonthsToDate(comm, m);
     const periodEnd = addMonthsToDate(comm, m + 1);
     const monthRsf = effectiveRsf[m] ?? rsf;
@@ -573,7 +594,12 @@ export function runMonthlyEngine(
     0
   );
   const abatementAmount = Math.max(0, baseAbatementValue + opexAbatementValue);
-  const npv = total.reduce((acc, cf, t) => acc + cf / Math.pow(1 + monthlyRate, t), 0);
+  const npv = monthlyRate > 0
+    ? total.reduce((acc, cf, t) => {
+      if (t === 0) return acc + upfrontAt0 + (recurringMonth0 / (1 + monthlyRate));
+      return acc + (cf / Math.pow(1 + monthlyRate, t + 1));
+    }, 0)
+    : total.reduce((acc, cf) => acc + cf, 0);
   const years = termMonths / 12;
   const avgRsfTerm = effectiveRsf.length > 0 ? effectiveRsf.reduce((a, b) => a + b, 0) / effectiveRsf.length : rsf;
   const avgCostYear = years > 0 ? totalObligation / years : 0;

@@ -201,10 +201,24 @@ def compute_cashflows_detailed(
 
     monthly_rate = _monthly_discount_rate(scenario.discount_rate_annual)
 
-    def npv(amounts: List[float]) -> float:
+    def npv_end_of_month(amounts: List[float], upfront_at_0: float = 0.0) -> float:
+        """
+        NPV convention:
+        - upfront_at_0 is an immediate t=0 cashflow (undiscounted)
+        - amounts[i] is month (i+1) cashflow, discounted by (1+r)^(i+1)
+        """
+        if not amounts:
+            return upfront_at_0
         if monthly_rate <= 0:
-            return sum(amounts)
-        return sum(cf / pow(1.0 + monthly_rate, t) for t, cf in enumerate(amounts))
+            return upfront_at_0 + sum(amounts)
+        return upfront_at_0 + sum(cf / pow(1.0 + monthly_rate, t + 1) for t, cf in enumerate(amounts))
+
+    one_time_at_0 = one_time_schedule[0] if total_months > 0 else 0.0
+    termination_at_0 = termination_at_m[0] if total_months > 0 else 0.0
+    upfront_at_0 = broker_fee_nominal + deposit_at_0 + one_time_at_0 + termination_at_0 - ti_at_0
+    recurring_cashflows = list(cashflows)
+    if recurring_cashflows:
+        recurring_cashflows[0] -= upfront_at_0
 
     # Per-component NPV: need monthly series for each (rent, opex, parking, one_time)
     rent_npv_list = [rent_schedule[m] for m in range(total_months)]
@@ -212,13 +226,13 @@ def compute_cashflows_detailed(
     parking_npv_list = [parking_schedule[m] for m in range(total_months)]
     one_time_npv_list = [one_time_schedule[m] for m in range(total_months)]
 
-    npv_rent = npv(rent_npv_list)
-    npv_opex = npv(opex_npv_list)
-    npv_parking = npv(parking_npv_list)
-    npv_one_time = npv(one_time_npv_list)
+    npv_rent = npv_end_of_month(rent_npv_list)
+    npv_opex = npv_end_of_month(opex_npv_list)
+    npv_parking = npv_end_of_month(parking_npv_list)
+    npv_one_time = npv_end_of_month(one_time_npv_list)
 
-    # NPV of full cashflow (includes TI, broker, deposit out/in, sublease, termination)
-    npv_total = npv(cashflows)
+    # NPV of full cashflow with upfront month-0 costs/credits left undiscounted.
+    npv_total = npv_end_of_month(recurring_cashflows, upfront_at_0=upfront_at_0)
     npv_cost = npv_total  # backward compat
 
     years = term_months / 12.0 if term_months > 0 else 0.0
