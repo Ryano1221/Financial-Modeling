@@ -16,6 +16,8 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
   const matrixMetricKeys = METRIC_LABELS.filter(
     (key) => key !== "equalizedAvgCostPsfYr"
   );
+  const numericZeroTolerance = 1e-9;
+  const emptyStringMarkers = new Set(["", "-", "—", "none", "n/a", "na"]);
 
   const equalizedRows = [
     "Equalized avg cost/SF/year",
@@ -52,6 +54,38 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
     }
     return formatMetricValue(metricKey, value);
   };
+
+  const isMeaningfulMetricValue = (
+    metricKey: keyof OptionMetrics,
+    scenarioId: string,
+    value: unknown
+  ): boolean => {
+    if (typeof value === "number") {
+      return Math.abs(value) > numericZeroTolerance;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (emptyStringMarkers.has(normalized)) return false;
+      const numeric = Number(normalized.replace(/,/g, ""));
+      if (Number.isFinite(numeric) && Math.abs(numeric) <= numericZeroTolerance) return false;
+      return normalized.length > 0;
+    }
+
+    if (value == null) return false;
+
+    const formatted = getMatrixCellValue(metricKey, scenarioId, value).trim().toLowerCase();
+    if (emptyStringMarkers.has(formatted)) return false;
+    const numeric = Number(formatted.replace(/,/g, ""));
+    if (Number.isFinite(numeric) && Math.abs(numeric) <= numericZeroTolerance) return false;
+    return formatted.length > 0;
+  };
+
+  const visibleMatrixMetricKeys = matrixMetricKeys.filter((metricKey) =>
+    results.some((r) =>
+      isMeaningfulMetricValue(metricKey, r.scenarioId, (r.metrics as OptionMetrics)[metricKey])
+    )
+  );
 
   const renderEqualizedSection = () => (
     <div className="px-5 py-4 bg-slate-900/45">
@@ -132,7 +166,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
           <div key={`matrix-mobile-${r.scenarioId}`} className="border border-slate-300/20 bg-slate-950/55 p-3">
             <h3 className="text-sm font-semibold text-slate-100 mb-2 whitespace-normal break-words">{r.scenarioName}</h3>
             <dl className="space-y-2 text-xs">
-              {matrixMetricKeys.map((key) => {
+              {visibleMatrixMetricKeys.map((key) => {
                 const value = (r.metrics as OptionMetrics)[key];
                 const formatted = getMatrixCellValue(key, r.scenarioId, value);
                 const notesCell = key === "notes";
@@ -177,7 +211,7 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
             </tr>
           </thead>
           <tbody>
-            {matrixMetricKeys.map((key) => (
+            {visibleMatrixMetricKeys.map((key) => (
               <tr key={key} className="border-b border-slate-300/10 hover:bg-slate-400/10">
                 <td className="py-2.5 px-4 font-medium text-slate-200">
                   {METRIC_DISPLAY_NAMES[key] ?? key}
