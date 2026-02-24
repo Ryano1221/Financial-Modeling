@@ -1360,20 +1360,6 @@ function createEqualizedSheet(
     getter: (scenario: WorkbookScenario) => number | string;
   }> = [
     {
-      label: "Equalized avg gross rent/SF/year",
-      format: "currency2",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).avgGrossRentPsfYear
-        : "—",
-    },
-    {
-      label: "Equalized avg gross rent/month",
-      format: "currency0",
-      getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())
-        ? computeEqualizedMetrics(scenario, window.start, window.end).avgGrossRentMonth
-        : "—",
-    },
-    {
       label: "Equalized avg cost/SF/year",
       format: "currency2",
       getter: (scenario) => (window.start && window.end && window.end.getTime() >= window.start.getTime())

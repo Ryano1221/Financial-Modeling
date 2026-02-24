@@ -1670,8 +1670,6 @@ def ScenarioDetailSections(entry: dict[str, Any], plan: DeckRenderPlan) -> list[
             </tr>
           </thead>
           <tbody>
-            <tr><td>Equalized avg gross rent/SF/year</td><td>{_esc(_fmt_psf(result.get("equalized_avg_gross_rent_psf_year")))}</td></tr>
-            <tr><td>Equalized avg monthly cost</td><td>{_esc(_fmt_currency(result.get("equalized_avg_cost_month")))}</td></tr>
             <tr><td>Equalized avg yearly cost</td><td>{_esc(_fmt_currency(result.get("equalized_avg_cost_year")))}</td></tr>
             <tr><td>Equalized avg cost/SF/year</td><td>{_esc(_fmt_psf(result.get("equalized_avg_cost_psf_year")))}</td></tr>
             <tr><td>Equalized total cost</td><td>{_esc(_fmt_currency(result.get("equalized_total_cost")))}</td></tr>
@@ -1908,20 +1906,6 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
                     f"{_fmt_date(e['result'].get('equalized_start'))} – {_fmt_date(e['result'].get('equalized_end'))}"
                     for e in entries
                 ],
-                "text",
-            )
-        )
-        rows.append(
-            (
-                "Equalized avg gross rent/SF/year",
-                [_fmt_psf(e["result"].get("equalized_avg_gross_rent_psf_year")) for e in entries],
-                "text",
-            )
-        )
-        rows.append(
-            (
-                "Equalized avg gross rent/month",
-                [_fmt_currency(e["result"].get("equalized_avg_gross_rent_month")) for e in entries],
                 "text",
             )
         )
