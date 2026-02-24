@@ -62,6 +62,7 @@ export interface ScenarioInput {
   opex_mode: OpexMode;
   base_opex_psf_yr: number;
   base_year_opex_psf_yr: number;
+  opex_by_calendar_year?: Record<string, number>;
   opex_growth: number;
   discount_rate_annual: number;
   parking_spaces?: number;
