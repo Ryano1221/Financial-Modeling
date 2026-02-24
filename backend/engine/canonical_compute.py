@@ -316,7 +316,7 @@ def _parking_abatement_ranges(lease: CanonicalLease, term_months: int) -> List[t
 def _compute_phase_aware_monthly(
     lease: CanonicalLease,
     term_months: int,
-) -> tuple[List[float], List[float], List[float], List[float], float, List[float]]:
+) -> tuple[List[float], List[float], List[float], List[float], float, List[float], float]:
     effective_rsf = _effective_rsf_schedule(lease, term_months)
     rent: List[float] = [0.0 for _ in range(term_months)]
     opex: List[float] = [0.0 for _ in range(term_months)]
@@ -337,6 +337,10 @@ def _compute_phase_aware_monthly(
         parking_tax_mult = 1.0 + max(0.0, float(lease.parking_sales_tax_rate or 0.0))
         parking[m] = parking_count * float(lease.parking_rate_monthly or 0.0) * parking_tax_mult * parking_mult
 
+    # Capture pre-abatement values so free rent concession value can be reported accurately.
+    rent_before_abatement = list(rent)
+    opex_before_abatement = list(opex)
+
     free_ranges = _free_rent_ranges(lease, term_months)
     for start, end, scope in free_ranges:
         for m in range(start, end + 1):
@@ -348,6 +352,16 @@ def _compute_phase_aware_monthly(
         for m in range(start, end + 1):
             parking[m] = 0.0
 
+    base_abatement_value = sum(
+        max(0.0, before - after)
+        for before, after in zip(rent_before_abatement, rent)
+    )
+    opex_abatement_value = sum(
+        max(0.0, before - after)
+        for before, after in zip(opex_before_abatement, opex)
+    )
+    free_rent_value_total = base_abatement_value + opex_abatement_value
+
     max_rsf = max(effective_rsf) if effective_rsf else 0.0
     allowance_rsf = max(max_rsf, float(lease.rsf or 0.0))
     ti_at_0 = float(lease.ti_allowance_psf or 0.0) * allowance_rsf if term_months > 0 else 0.0
@@ -358,7 +372,7 @@ def _compute_phase_aware_monthly(
         if m == 0:
             total -= ti_at_0
         cashflows.append(total)
-    return rent, opex, parking, effective_rsf, ti_at_0, cashflows
+    return rent, opex, parking, effective_rsf, ti_at_0, cashflows, free_rent_value_total
 
 
 def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
@@ -377,6 +391,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         effective_rsf_series,
         ti_at_0,
         cashflows,
+        free_rent_value_total,
     ) = _compute_phase_aware_monthly(normalized, term_months)
     rent_nominal = float(sum(rent_series))
     opex_nominal = float(sum(opex_series))
@@ -462,7 +477,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         parking_total=round(parking_nominal, 2),
         parking_avg_psf_year=round(parking_nominal / years / avg_rsf_term, 2) if avg_rsf_term > 0 and years > 0 else 0.0,
         ti_value_total=round(ti_at_0, 2),
-        free_rent_value_total=0.0,  # could compute from rent schedule * free months
+        free_rent_value_total=round(free_rent_value_total, 2),
         total_obligation_nominal=round(total_cost_nominal, 2),
         npv_cost=round(npv_cost, 2),
         equalized_avg_cost_psf_year=round((npv_cost / years) / avg_rsf_term, 2) if avg_rsf_term > 0 and years > 0 else 0.0,

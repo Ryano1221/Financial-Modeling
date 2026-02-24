@@ -39,6 +39,21 @@ function annualizedRate(firstRate: number, nextRate: number, monthDelta: number)
   return Math.pow(nextRate / firstRate, 1 / years) - 1;
 }
 
+function stepChangeRate(firstRate: number, nextRate: number): number {
+  if (firstRate <= 0 || nextRate <= 0) return 0;
+  return nextRate / firstRate - 1;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return sorted[mid];
+}
+
 /**
  * Return annual rent escalation as a decimal (e.g. 0.03 = 3.00%).
  * Robust for both explicit annual % escalations and fixed-dollar step schedules.
@@ -46,21 +61,31 @@ function annualizedRate(firstRate: number, nextRate: number, monthDelta: number)
 export function inferRentEscalationPercentFromSteps(steps: RentStepLike[] | undefined): number {
   const normalized = normalizeSteps(steps);
   if (normalized.length < 2) return 0;
-  const first = normalized[0];
-  if (!first || first.rate <= 0) return 0;
+  const transitions: Array<{ monthDelta: number; stepPct: number; annualPct: number }> = [];
 
-  // Prefer first changed step around 1-year boundary to avoid noisy monthly anomalies.
-  const yearlyCandidate = normalized.find(
-    (s) => s.start > first.start && s.rate !== first.rate && (s.start - first.start) >= 11
-  );
-  if (yearlyCandidate) {
-    const pct = annualizedRate(first.rate, yearlyCandidate.rate, yearlyCandidate.start - first.start);
-    return Number.isFinite(pct) ? pct : 0;
+  for (let i = 0; i < normalized.length - 1; i += 1) {
+    const current = normalized[i];
+    const next = normalized[i + 1];
+    if (!current || !next) continue;
+    if (next.start <= current.start) continue;
+    if (next.rate === current.rate) continue;
+    const monthDelta = next.start - current.start;
+    const stepPct = stepChangeRate(current.rate, next.rate);
+    const annualPct = annualizedRate(current.rate, next.rate, monthDelta);
+    if (!Number.isFinite(stepPct) || !Number.isFinite(annualPct)) continue;
+    transitions.push({ monthDelta, stepPct, annualPct });
   }
 
-  const firstChanged = normalized.find((s) => s.start > first.start && s.rate !== first.rate);
-  if (!firstChanged) return 0;
-  const pct = annualizedRate(first.rate, firstChanged.rate, firstChanged.start - first.start);
-  return Number.isFinite(pct) ? pct : 0;
-}
+  if (transitions.length === 0) return 0;
 
+  // If schedule transitions are roughly yearly, annualized is the most faithful output.
+  const nearAnnual = transitions.filter((transition) => transition.monthDelta >= 6 && transition.monthDelta <= 18);
+  const nearAnnualValue = median(nearAnnual.map((transition) => transition.annualPct));
+  if (Number.isFinite(nearAnnualValue) && nearAnnual.length > 0) {
+    return nearAnnualValue;
+  }
+
+  // For sparse multi-year steps (common in proposals), show the explicit step-to-step escalation.
+  const stepValue = median(transitions.map((transition) => transition.stepPct));
+  return Number.isFinite(stepValue) ? stepValue : 0;
+}
