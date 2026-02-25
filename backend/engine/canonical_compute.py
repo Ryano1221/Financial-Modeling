@@ -446,13 +446,21 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     recurring_cashflows = list(cashflows)
     if recurring_cashflows:
         recurring_cashflows[0] -= upfront_at_0
+    # Underwriting NPV convention excludes parking cashflow from the discounted stream.
+    npv_subject_cashflows = [
+        float(cashflows[m] - parking_series[m]) if m < len(parking_series) else float(cashflows[m])
+        for m in range(term_months)
+    ]
+    npv_subject_recurring = list(npv_subject_cashflows)
+    if npv_subject_recurring:
+        npv_subject_recurring[0] -= upfront_at_0
     if monthly_rate > 0:
         npv_cost = float(
             upfront_at_0
-            + sum(cf / ((1.0 + monthly_rate) ** (i + 1)) for i, cf in enumerate(recurring_cashflows))
+            + sum(cf / ((1.0 + monthly_rate) ** (i + 1)) for i, cf in enumerate(npv_subject_recurring))
         )
     else:
-        npv_cost = total_cost_nominal
+        npv_cost = float(sum(npv_subject_cashflows))
 
     commencement = normalized.commencement_date
     rsf = float(normalized.rsf or 0.0)
@@ -465,15 +473,16 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     cum = 0.0
     for m in range(term_months):
         total_cost = cashflows[m]
+        npv_subject_total = npv_subject_cashflows[m] if m < len(npv_subject_cashflows) else total_cost
         cum += total_cost
         if monthly_rate > 0:
             if m == 0:
-                recurring_month0 = total_cost - upfront_at_0
+                recurring_month0 = npv_subject_total - upfront_at_0
                 disc = upfront_at_0 + (recurring_month0 / (1.0 + monthly_rate))
             else:
-                disc = total_cost / (1.0 + monthly_rate) ** (m + 1)
+                disc = npv_subject_total / (1.0 + monthly_rate) ** (m + 1)
         else:
-            disc = total_cost
+            disc = npv_subject_total
         discounted_series.append(disc)
         # Concessions: TI at month 0 (negative), free rent value could be shown as positive concession
         concessions = -ti_allowance_at_0 if m == 0 else 0.0
@@ -547,7 +556,10 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     )
 
     assumptions = [
-        f"Discount rate {normalized.discount_rate_annual:.2%} applied with month-end discounting; upfront month-0 cashflows remain undiscounted.",
+        (
+            f"Discount rate {normalized.discount_rate_annual:.2%} applied with month-end discounting; "
+            "upfront month-0 cashflows remain undiscounted. NPV excludes parking cashflow."
+        ),
         "Base rent and opex as provided; no amortization of TI in monthly view.",
     ]
     if normalized.free_rent_periods:

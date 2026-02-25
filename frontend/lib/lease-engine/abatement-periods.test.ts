@@ -148,4 +148,31 @@ describe("scenario abatement periods", () => {
     expect(result.metrics.npvAtDiscount).toBeCloseTo(expected, 8);
     expect(result.monthly[0].discountedValue).toBeCloseTo(expected, 8);
   });
+
+  it("excludes parking cashflow from NPV while keeping it in total obligation", () => {
+    const scenario = makeScenario({
+      rsf: 1,
+      commencement: "2026-01-01",
+      expiration: "2026-01-31",
+      rent_steps: [{ start: 0, end: 0, rate_psf_yr: 120 }],
+      opex_mode: "nnn",
+      base_opex_psf_yr: 0,
+      opex_growth: 0,
+      ti_allowance_psf: 0,
+      ti_budget_total: 0,
+      broker_fee: 0,
+      discount_rate_annual: 0.12,
+      parking_spaces: 1,
+      parking_cost_monthly_per_space: 100,
+      parking_sales_tax_rate: 0,
+      free_rent_months: 0,
+    });
+    const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.12);
+    const monthlyRate = Math.pow(1 + 0.12, 1 / 12) - 1;
+    const expectedNpv = 10 / (1 + monthlyRate);
+
+    expect(result.metrics.totalObligation).toBeCloseTo(110, 8);
+    expect(result.metrics.npvAtDiscount).toBeCloseTo(expectedNpv, 8);
+    expect(result.monthly[0].discountedValue).toBeCloseTo(expectedNpv, 8);
+  });
 });

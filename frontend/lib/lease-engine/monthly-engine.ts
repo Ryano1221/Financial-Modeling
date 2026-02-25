@@ -509,6 +509,8 @@ export function runMonthlyEngine(
     termMonths
   );
 
+  // Underwriting NPV convention excludes parking from discounted cashflows.
+  const npvSubjectTotal = total.map((value, idx) => value - (parking[idx] ?? 0));
   const monthlyRate = Math.pow(1 + discountRate, 1 / 12) - 1;
   const oneTimeMonth0 = (scenario.otherCashFlows.oneTimeCosts ?? []).reduce(
     (sum, cost) => sum + ((cost.month ?? 0) === 0 ? (Number(cost.amount) || 0) : 0),
@@ -521,7 +523,7 @@ export function runMonthlyEngine(
       : 0) +
     oneTimeMonth0 +
     tiNetAt0;
-  const recurringMonth0 = (total[0] ?? 0) - upfrontAt0;
+  const recurringMonth0 = (npvSubjectTotal[0] ?? 0) - upfrontAt0;
   let cumulative = 0;
 
   const monthly: MonthlyRow[] = [];
@@ -531,9 +533,9 @@ export function runMonthlyEngine(
       ? (
         m === 0
           ? upfrontAt0 + (recurringMonth0 / (1 + monthlyRate))
-          : total[m] / Math.pow(1 + monthlyRate, m + 1)
+          : npvSubjectTotal[m] / Math.pow(1 + monthlyRate, m + 1)
       )
-      : total[m];
+      : npvSubjectTotal[m];
     const periodStart = addMonthsToDate(comm, m);
     const periodEnd = addMonthsToDate(comm, m + 1);
     const monthRsf = effectiveRsf[m] ?? rsf;
@@ -596,11 +598,11 @@ export function runMonthlyEngine(
   );
   const abatementAmount = Math.max(0, baseAbatementValue + opexAbatementValue);
   const npv = monthlyRate > 0
-    ? total.reduce((acc, cf, t) => {
+    ? npvSubjectTotal.reduce((acc, cf, t) => {
       if (t === 0) return acc + upfrontAt0 + (recurringMonth0 / (1 + monthlyRate));
       return acc + (cf / Math.pow(1 + monthlyRate, t + 1));
     }, 0)
-    : total.reduce((acc, cf) => acc + cf, 0);
+    : npvSubjectTotal.reduce((acc, cf) => acc + cf, 0);
   const years = termMonths / 12;
   const avgRsfTerm = effectiveRsf.length > 0 ? effectiveRsf.reduce((a, b) => a + b, 0) / effectiveRsf.length : rsf;
   const avgCostYear = years > 0 ? totalObligation / years : 0;
