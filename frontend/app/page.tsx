@@ -58,6 +58,7 @@ import {
   applyLeaseModelChoice,
   hasCommencementBeforeToday,
 } from "@/lib/remaining-obligation";
+import { harmonizeExtractedScenarios } from "@/lib/scenario-harmonization";
 import {
   type UserBrandingResponse,
   fetchUserBranding,
@@ -845,12 +846,42 @@ export default function Home() {
       if (hasCommencementBeforeToday(scenarioInput.commencement)) {
         scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, "remaining_obligation"));
       }
-      const scenarioWithId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
-      setScenarios((prev) => [...prev, scenarioWithId]);
+      let scenarioWithId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
+      let cacheInvalidationIds: string[] = [scenarioWithId.id];
+      setScenarios((prev) => {
+        const merged = [...prev, scenarioWithId];
+        const harmonized = harmonizeExtractedScenarios(merged).map((s) => normalizeScenarioEconomics(s));
+        const previousById = new Map(merged.map((s) => [s.id, s]));
+        cacheInvalidationIds = harmonized
+          .filter((s) => {
+            const before = previousById.get(s.id);
+            if (!before) return false;
+            return (
+              String(before.suite || "") !== String(s.suite || "")
+              || Number(before.base_opex_psf_yr || 0) !== Number(s.base_opex_psf_yr || 0)
+              || Number(before.base_year_opex_psf_yr || 0) !== Number(s.base_year_opex_psf_yr || 0)
+            );
+          })
+          .map((s) => s.id);
+        if (!cacheInvalidationIds.includes(scenarioWithId.id)) {
+          cacheInvalidationIds.push(scenarioWithId.id);
+        }
+        scenarioWithId = harmonized.find((s) => s.id === scenarioWithId.id) ?? scenarioWithId;
+        return harmonized;
+      });
       setSelectedId(null);
       setResults((prev) => {
         const next = { ...prev };
-        delete next[scenarioWithId.id];
+        for (const id of cacheInvalidationIds) {
+          delete next[id];
+        }
+        return next;
+      });
+      setCanonicalComputeCache((prev) => {
+        const next = { ...prev };
+        for (const id of cacheInvalidationIds) {
+          delete next[id];
+        }
         return next;
       });
       setExtractError(null);
