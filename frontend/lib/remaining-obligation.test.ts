@@ -3,6 +3,7 @@ import type { ScenarioInput } from "@/lib/types";
 import {
   applyLeaseModelChoice,
   firstDayOfNextMonthLocal,
+  promptForCommencedLeaseModelChoice,
 } from "@/lib/remaining-obligation";
 
 function makeScenario(overrides: Partial<ScenarioInput> = {}): ScenarioInput {
@@ -42,6 +43,11 @@ function makeScenario(overrides: Partial<ScenarioInput> = {}): ScenarioInput {
 }
 
 describe("remaining-obligation date boundaries", () => {
+  it("maps confirm OK to remaining and Cancel to full term", () => {
+    expect(promptForCommencedLeaseModelChoice(() => true)).toBe("remaining_obligation");
+    expect(promptForCommencedLeaseModelChoice(() => false)).toBe("full_original_term");
+  });
+
   it("computes next-month start correctly at month end", () => {
     expect(firstDayOfNextMonthLocal(new Date(2026, 1, 28))).toBe("2026-03-01");
   });

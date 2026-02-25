@@ -380,14 +380,12 @@ export function applyLeaseModelChoice<T extends ScenarioInput | ScenarioWithId>(
 }
 
 export function promptForCommencedLeaseModelChoice(
-  promptFn: (message?: string, defaultValue?: string) => string | null
+  confirmFn: (message?: string) => boolean
 ): CommencedLeaseModelChoice {
-  const response = promptFn(
-    "This lease has already commenced. Would you like to model:\n   A) Full original term obligation\n   B) Remaining obligation only (from the beginning of next full month forward)?",
-    "B"
+  const chooseRemaining = confirmFn(
+    "This lease has already commenced.\n\n"
+    + "Press OK: Remaining obligation only (from the beginning of next full month forward).\n"
+    + "Press Cancel: Full original term obligation."
   );
-  const normalized = String(response || "").trim().toUpperCase();
-  if (normalized === "A" || normalized.startsWith("A)")) return "full_original_term";
-  if (normalized === "B" || normalized.startsWith("B)")) return "remaining_obligation";
-  return "remaining_obligation";
+  return chooseRemaining ? "remaining_obligation" : "full_original_term";
 }

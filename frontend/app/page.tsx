@@ -853,7 +853,7 @@ export default function Home() {
         const choice: CommencedLeaseModelChoice =
           forcedModelChoice
           ?? (typeof window !== "undefined"
-            ? promptForCommencedLeaseModelChoice(window.prompt.bind(window))
+            ? promptForCommencedLeaseModelChoice(window.confirm.bind(window))
             : "full_original_term");
         scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, choice));
       }
@@ -925,7 +925,7 @@ export default function Home() {
       const commencedChoice: CommencedLeaseModelChoice | null =
         canonicalVariants.some((variant) => hasCommencementBeforeToday(String(variant.commencement_date || "")))
           ? (typeof window !== "undefined"
-            ? promptForCommencedLeaseModelChoice(window.prompt.bind(window))
+            ? promptForCommencedLeaseModelChoice(window.confirm.bind(window))
             : "full_original_term")
           : null;
       canonicalVariants.forEach((variant, index) => {
@@ -970,7 +970,7 @@ export default function Home() {
       const commencedChoice: CommencedLeaseModelChoice | null =
         canonicalVariants.some((variant) => hasCommencementBeforeToday(String(variant.commencement_date || "")))
           ? (typeof window !== "undefined"
-            ? promptForCommencedLeaseModelChoice(window.prompt.bind(window))
+            ? promptForCommencedLeaseModelChoice(window.confirm.bind(window))
             : "full_original_term")
           : null;
       canonicalVariants.forEach((variant, index) => {
