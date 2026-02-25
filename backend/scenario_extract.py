@@ -560,11 +560,11 @@ _RE_BASE_OPEX = re.compile(
     re.I,
 )
 _RE_BASE_RENT = re.compile(
-    r"\b(?:base\s+rent|rental\s+rate|annual\s+rent)\b[^\n$]{0,40}\$?\s*([\d,]+\.?\d*)",
+    r"\b(?:base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b[^\n$]{0,40}\$?\s*([\d,]+\.?\d*)",
     re.I,
 )
 _RE_BASE_RENT_FLEX = re.compile(
-    rf"(?is)\b(?:initial\s+)?(?:base\s+rent|rental\s+rate|annual\s+rent)\b.{{0,240}}?\$\s*([\d,]+(?:\.\d{{1,4}})?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
+    rf"(?is)\b(?:initial\s+)?(?:base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b.{{0,240}}?\$\s*([\d,]+(?:\.\d{{1,4}})?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
 )
 _RE_YEAR_RATE_INLINE = re.compile(
     r"(?i)\b(?:lease\s*)?years?\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?"
@@ -1336,6 +1336,8 @@ def _regex_prefill(text: str) -> dict:
             score = 0
             if any(tok in seg for tok in ("/rsf", "/sf", "/psf", "per rsf", "per sf", "psf")):
                 score += 5
+            if "basic rent" in seg:
+                score += 5
             if "initial base rent" in seg:
                 score += 4
             if "base rent" in seg:
@@ -1343,7 +1345,9 @@ def _regex_prefill(text: str) -> dict:
             if any(tok in seg for tok in ("annual increase", "annual escalation")):
                 score += 1
             if any(tok in seg for tok in ("operating", "opex", "cam", "parking", "allowance", "ti allowance")):
-                score -= 4
+                score -= 8
+            if any(tok in seg for tok in ("abatement", "abated", "free rent")) and "basic rent" not in seg:
+                score -= 6
             if "adjusted rental rate" in seg or "gross rent" in seg:
                 score -= 6
             # Tie-break toward realistic base rent over low OpEx-like values when context score is similar.

@@ -75,6 +75,27 @@ def test_extract_lease_hints_parses_loi_term_suite_and_opex_from_docx_style_text
     assert hints["ti_allowance_psf"] == 1.5
 
 
+def test_regex_prefill_prefers_basic_rent_over_opex_line_in_proposal() -> None:
+    text = (
+        "Building: Vista Ridge\n"
+        "Contraction Premises: A demised portion of Suite 450, approximately 5,944 rentable square feet.\n"
+        "Term: Sixty-three (63) Months\n"
+        "Commencement Date: December 1, 2026\n"
+        "Basic Rent: $27.00 per rentable square foot with 3% annual increases beginning in month 13\n"
+        "Rental Abatement: The initial three (3) months' base rent shall be abated\n"
+        "Operating Expenses: 2026 Operating Expenses are estimated to be $14.50/sf.\n"
+    )
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("rate_psf_yr") == 27.0
+    assert prefill.get("base_opex_psf_yr") == 14.5
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 27.0}
+    assert steps[-1]["end"] == 62
+
+
 def test_regex_prefill_prefers_tia_per_sf_over_total_budget() -> None:
     text = (
         "Tenant Improvement Allowance (TIA): $35.00 per RSF.\n"
