@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioWithId } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 
@@ -44,6 +44,10 @@ function makeScenario(overrides: Partial<ScenarioWithId> = {}): ScenarioWithId {
 }
 
 describe("scenario abatement periods", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("keeps full month count for end-of-month expirations", () => {
     const eastbound = makeScenario({
       commencement: "2026-05-01",
@@ -124,6 +128,8 @@ describe("scenario abatement periods", () => {
   });
 
   it("discounts recurring month-1 cashflow and keeps upfront month-0 costs at t0", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
     const scenario = makeScenario({
       rsf: 1,
       commencement: "2026-01-01",
@@ -150,6 +156,8 @@ describe("scenario abatement periods", () => {
   });
 
   it("excludes parking cashflow from NPV while keeping it in total obligation", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
     const scenario = makeScenario({
       rsf: 1,
       commencement: "2026-01-01",
@@ -172,6 +180,33 @@ describe("scenario abatement periods", () => {
     const expectedNpv = 10 / (1 + monthlyRate);
 
     expect(result.metrics.totalObligation).toBeCloseTo(110, 8);
+    expect(result.metrics.npvAtDiscount).toBeCloseTo(expectedNpv, 8);
+    expect(result.monthly[0].discountedValue).toBeCloseTo(expectedNpv, 8);
+  });
+
+  it("applies pre-commencement discount months to NPV when lease starts in the future", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+    const scenario = makeScenario({
+      rsf: 1,
+      commencement: "2026-09-01",
+      expiration: "2026-09-30",
+      rent_steps: [{ start: 0, end: 0, rate_psf_yr: 120 }],
+      opex_mode: "nnn",
+      base_opex_psf_yr: 0,
+      opex_growth: 0,
+      ti_allowance_psf: 0,
+      ti_budget_total: 0,
+      broker_fee: 0,
+      discount_rate_annual: 0.12,
+      parking_spaces: 0,
+      parking_cost_monthly_per_space: 0,
+      free_rent_months: 0,
+    });
+    const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.12);
+    const monthlyRate = Math.pow(1 + 0.12, 1 / 12) - 1;
+    const expectedNpv = 10 / Math.pow(1 + monthlyRate, 8); // 7 pre-start months + month 1
+
     expect(result.metrics.npvAtDiscount).toBeCloseTo(expectedNpv, 8);
     expect(result.monthly[0].discountedValue).toBeCloseTo(expectedNpv, 8);
   });

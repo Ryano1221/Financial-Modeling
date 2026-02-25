@@ -417,6 +417,16 @@ def _compute_phase_aware_monthly(
     )
 
 
+def _pre_commencement_discount_months(commencement: date) -> int:
+    """
+    Number of whole month buckets between analysis date (today) and lease commencement month.
+    Used to discount NPV back to analysis date when commencement is in the future.
+    """
+    today = date.today()
+    delta = (commencement.year - today.year) * 12 + (commencement.month - today.month)
+    return max(0, int(delta))
+
+
 def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     """
     Run canonical compute: normalize, map to Scenario, run engine, build response.
@@ -442,6 +452,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     parking_nominal = float(sum(parking_series))
     total_cost_nominal = float(sum(cashflows))
     monthly_rate = _monthly_discount_rate(normalized.discount_rate_annual)
+    pre_start_months = _pre_commencement_discount_months(normalized.commencement_date)
     upfront_at_0 = float(ti_net_at_0)
     recurring_cashflows = list(cashflows)
     if recurring_cashflows:
@@ -457,7 +468,10 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
     if monthly_rate > 0:
         npv_cost = float(
             upfront_at_0
-            + sum(cf / ((1.0 + monthly_rate) ** (i + 1)) for i, cf in enumerate(npv_subject_recurring))
+            + sum(
+                cf / ((1.0 + monthly_rate) ** (i + 1 + pre_start_months))
+                for i, cf in enumerate(npv_subject_recurring)
+            )
         )
     else:
         npv_cost = float(sum(npv_subject_cashflows))
@@ -478,9 +492,11 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         if monthly_rate > 0:
             if m == 0:
                 recurring_month0 = npv_subject_total - upfront_at_0
-                disc = upfront_at_0 + (recurring_month0 / (1.0 + monthly_rate))
+                disc = upfront_at_0 + (
+                    recurring_month0 / ((1.0 + monthly_rate) ** (1 + pre_start_months))
+                )
             else:
-                disc = npv_subject_total / (1.0 + monthly_rate) ** (m + 1)
+                disc = npv_subject_total / ((1.0 + monthly_rate) ** (m + 1 + pre_start_months))
         else:
             disc = npv_subject_total
         discounted_series.append(disc)
@@ -562,6 +578,10 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         ),
         "Base rent and opex as provided; no amortization of TI in monthly view.",
     ]
+    if pre_start_months > 0:
+        assumptions.append(
+            f"NPV is discounted back {pre_start_months} month(s) from commencement to analysis date."
+        )
     if normalized.free_rent_periods:
         period_labels = [
             f"{int(p.start_month) + 1}-{int(p.end_month) + 1} ({str(getattr(p, 'scope', normalized.free_rent_scope) or normalized.free_rent_scope).strip().lower()})"

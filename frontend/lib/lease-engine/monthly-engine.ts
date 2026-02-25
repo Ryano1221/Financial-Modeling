@@ -109,6 +109,13 @@ function getDiscountRate(s: LeaseScenarioCanonical, globalDiscountRate?: number)
   return globalDiscountRate ?? DEFAULT_DISCOUNT_RATE;
 }
 
+function preCommencementDiscountMonths(commencementDate: string): number {
+  const start = parseDate(commencementDate);
+  const now = new Date();
+  const delta = (start.year - now.getFullYear()) * 12 + (start.month - now.getMonth());
+  return Math.max(0, Math.floor(delta));
+}
+
 type NormalizedAbatementRange = {
   start: number;
   end: number;
@@ -413,6 +420,7 @@ export function runMonthlyEngine(
   const termMonths = scenario.datesAndTerm.leaseTermMonths;
   const comm = scenario.datesAndTerm.commencementDate;
   const discountRate = getDiscountRate(scenario, globalDiscountRate);
+  const preStartMonths = preCommencementDiscountMonths(comm);
   const effectiveRsf = effectiveRsfSchedule(
     rsf,
     termMonths,
@@ -532,8 +540,8 @@ export function runMonthlyEngine(
     const pv = monthlyRate > 0
       ? (
         m === 0
-          ? upfrontAt0 + (recurringMonth0 / (1 + monthlyRate))
-          : npvSubjectTotal[m] / Math.pow(1 + monthlyRate, m + 1)
+          ? upfrontAt0 + (recurringMonth0 / Math.pow(1 + monthlyRate, 1 + preStartMonths))
+          : npvSubjectTotal[m] / Math.pow(1 + monthlyRate, m + 1 + preStartMonths)
       )
       : npvSubjectTotal[m];
     const periodStart = addMonthsToDate(comm, m);
@@ -599,8 +607,8 @@ export function runMonthlyEngine(
   const abatementAmount = Math.max(0, baseAbatementValue + opexAbatementValue);
   const npv = monthlyRate > 0
     ? npvSubjectTotal.reduce((acc, cf, t) => {
-      if (t === 0) return acc + upfrontAt0 + (recurringMonth0 / (1 + monthlyRate));
-      return acc + (cf / Math.pow(1 + monthlyRate, t + 1));
+      if (t === 0) return acc + upfrontAt0 + (recurringMonth0 / Math.pow(1 + monthlyRate, 1 + preStartMonths));
+      return acc + (cf / Math.pow(1 + monthlyRate, t + 1 + preStartMonths));
     }, 0)
     : npvSubjectTotal.reduce((acc, cf) => acc + cf, 0);
   const years = termMonths / 12;
