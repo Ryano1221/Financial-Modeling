@@ -5860,65 +5860,6 @@ def _normalize_impl(
                         updates["term_months"] = int(normalized_phase[-1]["end_month"]) + 1
                     warnings.append("Phase-in occupancy schedule detected and applied to monthly calculations.")
 
-            current_commencement = updates.get("commencement_date", canonical.commencement_date)
-            current_expiration = updates.get("expiration_date", canonical.expiration_date)
-            lower_extracted_text = (text or "").lower()
-            should_roll_to_remaining = (
-                doc_type_hint == "amendment"
-                or "existing obligation" in lower_extracted_text
-                or "remaining obligation" in lower_extracted_text
-            )
-            remaining_window = (
-                _remaining_obligation_rollforward(current_commencement, current_expiration)
-                if should_roll_to_remaining
-                else None
-            )
-            if remaining_window:
-                remaining_commencement, remaining_term_months, elapsed_months = remaining_window
-                updates["commencement_date"] = remaining_commencement
-                updates["term_months"] = remaining_term_months
-                existing_rent = updates.get("rent_schedule", canonical.rent_schedule) or []
-                shifted_rent = _shift_rent_schedule_for_elapsed_months(
-                    list(existing_rent),
-                    elapsed_months=elapsed_months,
-                    remaining_term_months=remaining_term_months,
-                )
-                if shifted_rent:
-                    updates["rent_schedule"] = [RentScheduleStep(**row) for row in shifted_rent]
-                existing_free_periods = updates.get("free_rent_periods", canonical.free_rent_periods) or []
-                shifted_free_periods = _shift_abatement_periods_for_elapsed_months(
-                    list(existing_free_periods),
-                    elapsed_months=elapsed_months,
-                    remaining_term_months=remaining_term_months,
-                    include_scope=True,
-                    fallback_scope=str(updates.get("free_rent_scope", canonical.free_rent_scope) or "base"),
-                )
-                if shifted_free_periods:
-                    updates["free_rent_periods"] = [FreeRentPeriod(**row) for row in shifted_free_periods]
-                    updates["free_rent_months"] = sum(
-                        max(0, int(row["end_month"]) - int(row["start_month"]) + 1)
-                        for row in shifted_free_periods
-                    )
-                else:
-                    updates["free_rent_periods"] = []
-                    updates["free_rent_months"] = 0
-                existing_parking_periods = updates.get("parking_abatement_periods", canonical.parking_abatement_periods) or []
-                shifted_parking_periods = _shift_abatement_periods_for_elapsed_months(
-                    list(existing_parking_periods),
-                    elapsed_months=elapsed_months,
-                    remaining_term_months=remaining_term_months,
-                    include_scope=False,
-                )
-                if shifted_parking_periods:
-                    updates["parking_abatement_periods"] = [
-                        ParkingAbatementPeriod(**row) for row in shifted_parking_periods
-                    ]
-                else:
-                    updates["parking_abatement_periods"] = []
-                warnings.append(
-                    "Lease has already commenced; modeled remaining obligation from the current analysis period."
-                )
-
             effective_term = _coerce_int_token(
                 updates.get("term_months"),
                 _coerce_int_token(canonical.term_months, 0),

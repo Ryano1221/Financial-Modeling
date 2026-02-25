@@ -70,6 +70,7 @@ interface WorkbookMonthlyRow {
 interface WorkbookScenario {
   id: string;
   name: string;
+  isRemainingObligation?: boolean;
   documentType: string;
   buildingName: string;
   suiteFloor: string;
@@ -839,6 +840,7 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
     return {
       id: scenario.id,
       name: normalizeText(result.scenarioName, scenario.name),
+      isRemainingObligation: Boolean(scenario.isRemainingObligation),
       documentType: normalizeDocumentType(scenario.documentTypeDetected),
       buildingName: normalizeText(result.metrics.buildingName, scenario.partyAndPremises.premisesLabel ?? scenario.partyAndPremises.premisesName),
       suiteFloor: normalizeText(result.metrics.suiteName, scenario.partyAndPremises.floorsOrSuite ?? ""),
@@ -883,6 +885,7 @@ function buildScenariosFromCanonicalResponses(
     sourceRsf?: number;
     sourceTiBudgetTotal?: number;
     sourceTiAllowancePsf?: number;
+    sourceIsRemainingObligation?: boolean;
   }[]
 ): WorkbookScenario[] {
   return items.map((item, idx) => {
@@ -943,6 +946,7 @@ function buildScenariosFromCanonicalResponses(
     return {
       id: `canonical-${idx + 1}`,
       name: normalizeText(item.scenarioName, `Scenario ${idx + 1}`),
+      isRemainingObligation: Boolean(item.sourceIsRemainingObligation),
       documentType: normalizeDocumentType(resolvedDocType),
       buildingName: normalizeText(m.building_name, c.building_name ?? m.premises_name),
       suiteFloor: normalizeText([m.suite || c.suite || "", m.floor || c.floor ? `Floor ${m.floor || c.floor}` : ""].filter(Boolean).join(" / ")),
@@ -977,8 +981,9 @@ function buildScenariosFromCanonicalResponses(
 }
 
 function computeEqualizedWindow(scenarios: WorkbookScenario[]): { start: Date | null; end: Date | null } {
-  const starts = scenarios.map((s) => parseIsoDate(s.commencementDate)).filter((d): d is Date => d !== null);
-  const ends = scenarios.map((s) => parseIsoDate(s.expirationDate)).filter((d): d is Date => d !== null);
+  const eligibleScenarios = scenarios.filter((scenario) => !scenario.isRemainingObligation);
+  const starts = eligibleScenarios.map((s) => parseIsoDate(s.commencementDate)).filter((d): d is Date => d !== null);
+  const ends = eligibleScenarios.map((s) => parseIsoDate(s.expirationDate)).filter((d): d is Date => d !== null);
   if (starts.length === 0 || ends.length === 0) return { start: null, end: null };
   const start = new Date(Math.max(...starts.map((d) => d.getTime())));
   const end = new Date(Math.min(...ends.map((d) => d.getTime())));
@@ -1490,14 +1495,15 @@ function createEqualizedSheet(
   const hasOverlap = !!(window.start && window.end && window.end.getTime() >= window.start.getTime());
   const overlapStart = hasOverlap && window.start ? window.start : null;
   const overlapEnd = hasOverlap && window.end ? window.end : null;
+  const eligibleScenarios = scenarios.filter((scenario) => !scenario.isRemainingObligation);
   const monthlyFormulaSheet = toFormulaSheetName(SHEET_NAMES.monthlyGrossMatrix);
   const precomputedByScenarioId = new Map<string, EqualizedMetrics>();
   if (overlapStart && overlapEnd) {
-    scenarios.forEach((scenario) => {
+    eligibleScenarios.forEach((scenario) => {
       precomputedByScenarioId.set(scenario.id, computeEqualizedMetrics(scenario, overlapStart, overlapEnd));
     });
   }
-  const starts = scenarios.map((s) => parseIsoDate(s.commencementDate)).filter((d): d is Date => d !== null);
+  const starts = eligibleScenarios.map((s) => parseIsoDate(s.commencementDate)).filter((d): d is Date => d !== null);
   const earliest = starts.length > 0 ? new Date(Math.min(...starts.map((d) => d.getTime()))) : null;
   const firstMonthlyDataRow = HEADER_HEIGHT_ROWS + 8; // Header + month0/TIB/TIA/TIN/PC rows.
   let equalizedFirstMonthlyRow = 0;
@@ -2313,6 +2319,7 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     sourceRsf?: number;
     sourceTiBudgetTotal?: number;
     sourceTiAllowancePsf?: number;
+    sourceIsRemainingObligation?: boolean;
   }[],
   meta?: WorkbookBrandingMeta
 ): Promise<ExcelJS.Buffer> {

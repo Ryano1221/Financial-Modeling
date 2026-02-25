@@ -308,4 +308,80 @@ describe("exportModel institutional workbook", () => {
       expect(grossTotal.formula).toMatch(/^SUM\([A-Z]+\d+:[A-Z]+\d+\)$/);
     }
   });
+
+  it("reflects remaining-obligation scenario rename in exports", async () => {
+    const fullScenario: LeaseScenarioCanonical = {
+      id: "full-1",
+      name: "Benbrook Suite 200",
+      discountRateAnnual: 0.08,
+      partyAndPremises: {
+        premisesName: "Benbrook Suite 200",
+        premisesLabel: "Benbrook",
+        floorsOrSuite: "Suite 200",
+        rentableSqFt: 4626,
+        leaseType: "nnn",
+      },
+      datesAndTerm: {
+        leaseTermMonths: 63,
+        commencementDate: "2026-12-01",
+        expirationDate: "2032-02-29",
+      },
+      rentSchedule: {
+        steps: [{ startMonth: 0, endMonth: 62, ratePsfYr: 27 }],
+        annualEscalationPercent: 0.03,
+      },
+      expenseSchedule: {
+        leaseType: "nnn",
+        baseOpexPsfYr: 14.3,
+        annualEscalationPercent: 0.03,
+      },
+      parkingSchedule: { slots: [], annualEscalationPercent: 0, salesTaxPercent: 0.0825 },
+      tiSchedule: {
+        budgetTotal: 0,
+        allowanceFromLandlord: 0,
+        outOfPocket: 0,
+        amortizeOop: false,
+      },
+      otherCashFlows: { oneTimeCosts: [], brokerFee: 0, securityDepositMonths: 0 },
+      notes: "",
+    };
+    const remainingScenario: LeaseScenarioCanonical = {
+      ...fullScenario,
+      id: "rem-1",
+      name: "Benbrook Remaining Obligation",
+      isRemainingObligation: true,
+      datesAndTerm: {
+        leaseTermMonths: 36,
+        commencementDate: "2027-03-01",
+        expirationDate: "2030-02-28",
+      },
+      rentSchedule: {
+        steps: [{ startMonth: 0, endMonth: 35, ratePsfYr: 28.62 }],
+        annualEscalationPercent: 0.03,
+      },
+    };
+
+    const buffer = await buildBrokerWorkbook([fullScenario, remainingScenario], 0.08, {
+      brokerageName: "Anchor Capital",
+      clientName: "Client A",
+      reportDate: "2026-02-25",
+      preparedBy: "Analyst",
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as ArrayBuffer);
+
+    const summary = workbook.getWorksheet("Summary Comparison");
+    const metricRow = findRowByFirstCell(summary, "Metric");
+    expect(metricRow).not.toBeNull();
+    if (summary && metricRow != null) {
+      expect(summary.getCell(metricRow, 3).value).toBe("Benbrook Remaining Obligation");
+    }
+    const equalized = workbook.getWorksheet("Equalized Metrics");
+    const eqRow = findRowByFirstCell(equalized, "Equalized avg cost/SF/year");
+    expect(eqRow).not.toBeNull();
+    if (equalized && eqRow != null) {
+      expect(equalized.getCell(eqRow, 3).value).toBe("—");
+    }
+  });
 });

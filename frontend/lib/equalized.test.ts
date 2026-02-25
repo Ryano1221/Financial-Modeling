@@ -45,6 +45,9 @@ function makeScenario(overrides: Partial<ScenarioWithId>): ScenarioWithId {
     sublease_income_monthly: overrides.sublease_income_monthly,
     sublease_start_month: overrides.sublease_start_month,
     sublease_duration_months: overrides.sublease_duration_months,
+    is_remaining_obligation: overrides.is_remaining_obligation,
+    remaining_obligation_start_date: overrides.remaining_obligation_start_date,
+    original_extracted_lease: overrides.original_extracted_lease,
   };
 }
 
@@ -68,6 +71,26 @@ describe("computeEqualizedComparison", () => {
 
     expect(result.needsCustomWindow).toBe(true);
     expect(result.message.toLowerCase()).toContain("no overlapping lease term");
+  });
+
+  it("excludes remaining-obligation scenarios from overlap and equalized metrics", () => {
+    const full = makeScenario({
+      id: "full",
+      commencement: "2026-01-01",
+      expiration: "2026-12-31",
+    });
+    const remaining = makeScenario({
+      id: "remaining",
+      commencement: "2026-03-01",
+      expiration: "2026-12-31",
+      is_remaining_obligation: true,
+    });
+    const result = computeEqualizedComparison([full, remaining], 0.08, null);
+    expect(result.needsCustomWindow).toBe(false);
+    expect(result.windowStart).toBe("2026-01-01");
+    expect(result.windowEnd).toBe("2026-12-31");
+    expect(result.metricsByScenario.full).toBeDefined();
+    expect(result.metricsByScenario.remaining).toBeUndefined();
   });
 
   it("computes from custom window and differs from full-term totals", () => {
@@ -143,7 +166,7 @@ describe("computeEqualizedComparison", () => {
         { start: 25, end: 36, rate_psf_yr: 40.31 },
         { start: 37, end: 48, rate_psf_yr: 41.52 },
       ],
-      one_time_costs: [{ month: 6, amount: 25000, label: "Landlord-required work" }],
+      one_time_costs: [{ month: 6, amount: 25000, name: "Landlord-required work" }],
       base_opex_psf_yr: 10,
       opex_growth: 0.03,
     });

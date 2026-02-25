@@ -142,15 +142,17 @@ export function computeEqualizedComparison(
   };
 
   if (scenarios.length === 0) return empty;
+  const eligibleScenarios = scenarios.filter((scenario) => !scenario.is_remaining_obligation);
+  if (eligibleScenarios.length === 0) return empty;
 
-  const parsedCommencements = scenarios
+  const parsedCommencements = eligibleScenarios
     .map((s) => parseDateValue(s.commencement))
     .filter((d): d is Date => d !== null);
-  const parsedExpirations = scenarios
+  const parsedExpirations = eligibleScenarios
     .map((s) => parseDateValue(s.expiration))
     .filter((d): d is Date => d !== null);
 
-  if (parsedCommencements.length !== scenarios.length || parsedExpirations.length !== scenarios.length) {
+  if (parsedCommencements.length !== eligibleScenarios.length || parsedExpirations.length !== eligibleScenarios.length) {
     return {
       ...empty,
       needsCustomWindow: true,
@@ -183,7 +185,7 @@ export function computeEqualizedComparison(
 
   const metricsByScenario: Record<string, EqualizedScenarioMetrics> = {};
 
-  for (const scenario of scenarios) {
+  for (const scenario of eligibleScenarios) {
     const canonical = scenarioToCanonical(scenario);
     const fullEngine = runMonthlyEngine(canonical, globalDiscountRate);
     const grossEngine = runMonthlyEngine(

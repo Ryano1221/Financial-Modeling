@@ -91,6 +91,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   return {
     id: s.id,
     name: s.name,
+    isRemainingObligation: Boolean(s.is_remaining_obligation),
     documentTypeDetected: (s.document_type_detected ?? "").trim() || undefined,
     discountRateAnnual: s.discount_rate_annual,
     partyAndPremises: {

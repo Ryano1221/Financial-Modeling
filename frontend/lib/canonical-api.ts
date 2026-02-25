@@ -190,6 +190,8 @@ export function getPremisesDisplayName(opts: {
   const scenarioName = (opts.scenario_name ?? "").trim();
   // Preserve explicit option labels from parser-derived scenario names.
   if (/\boption\s*(?:a|b|1|2|one|two)\b/i.test(scenarioName)) return scenarioName;
+  // Preserve explicit remaining-obligation labels to avoid dropping mode context.
+  if (/\bremaining\s+obligation\b/i.test(scenarioName)) return scenarioName;
   const b = (opts.building_name ?? "").trim();
   const su = (opts.suite ?? "").trim();
   const fl = (opts.floor ?? "").trim();
@@ -323,6 +325,7 @@ export function scenarioInputToBackendCanonical(
     ti_budget_total: tiBudgetTotal,
     ti_source_of_truth: tiSource,
     notes: s.notes ?? "",
+    is_remaining_obligation: Boolean(s.is_remaining_obligation),
   };
 }
 
@@ -433,6 +436,7 @@ export function backendCanonicalToScenarioInput(
     parking_spaces: c.parking_count ?? 0,
     parking_cost_monthly_per_space: c.parking_rate_monthly ?? 0,
     parking_sales_tax_rate: c.parking_sales_tax_rate ?? 0.0825,
+    is_remaining_obligation: Boolean((c as { is_remaining_obligation?: unknown }).is_remaining_obligation),
   };
   return syncTiFields(scenario);
 }

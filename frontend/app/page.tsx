@@ -57,6 +57,12 @@ import type { CanonicalComputeResponse } from "@/lib/types";
 import type { SupabaseAuthSession } from "@/lib/supabase";
 import { getSession } from "@/lib/supabase";
 import {
+  applyLeaseModelChoice,
+  hasCommencementBeforeToday,
+  promptForCommencedLeaseModelChoice,
+  type CommencedLeaseModelChoice,
+} from "@/lib/remaining-obligation";
+import {
   type UserBrandingResponse,
   fetchUserBranding,
 } from "@/lib/user-settings";
@@ -474,6 +480,9 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
   const {
     id: _id,
     ti_allowance_source_of_truth: _tiAllowanceSource,
+    is_remaining_obligation: _isRemainingObligation,
+    remaining_obligation_start_date: _remainingObligationStartDate,
+    original_extracted_lease: _originalExtractedLease,
     ...rest
   } = s;
   const tiSource = normalizeTiSourceOfTruth(
@@ -833,8 +842,21 @@ export default function Home() {
   );
 
   const addScenarioFromCanonical = useCallback(
-    (canonical: BackendCanonicalLease, onAdded?: (s: ScenarioWithId) => void, preferredName?: string) => {
-      const scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical, preferredName));
+    (
+      canonical: BackendCanonicalLease,
+      onAdded?: (s: ScenarioWithId) => void,
+      preferredName?: string,
+      forcedModelChoice?: CommencedLeaseModelChoice | null
+    ) => {
+      let scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical, preferredName));
+      if (hasCommencementBeforeToday(scenarioInput.commencement)) {
+        const choice: CommencedLeaseModelChoice =
+          forcedModelChoice
+          ?? (typeof window !== "undefined"
+            ? promptForCommencedLeaseModelChoice(window.prompt.bind(window))
+            : "full_original_term");
+        scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, choice));
+      }
       const scenarioWithId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, scenarioWithId]);
       setSelectedId(null);
@@ -900,6 +922,12 @@ export default function Home() {
       }
 
       const totalVariants = canonicalVariants.length;
+      const commencedChoice: CommencedLeaseModelChoice | null =
+        canonicalVariants.some((variant) => hasCommencementBeforeToday(String(variant.commencement_date || "")))
+          ? (typeof window !== "undefined"
+            ? promptForCommencedLeaseModelChoice(window.prompt.bind(window))
+            : "full_original_term")
+          : null;
       canonicalVariants.forEach((variant, index) => {
         const preferredName = canonicalDisplayNameForAdd(variant, index, totalVariants);
         addScenarioFromCanonical(
@@ -912,7 +940,8 @@ export default function Home() {
             });
             runComputeForScenario(newScenario);
           },
-          preferredName || undefined
+          preferredName || undefined,
+          commencedChoice
         );
       });
     },
@@ -938,6 +967,12 @@ export default function Home() {
       }));
       const canonicalVariants = collectCanonicalVariants(canonicalWithDocType, queuedVariants);
       const totalVariants = canonicalVariants.length;
+      const commencedChoice: CommencedLeaseModelChoice | null =
+        canonicalVariants.some((variant) => hasCommencementBeforeToday(String(variant.commencement_date || "")))
+          ? (typeof window !== "undefined"
+            ? promptForCommencedLeaseModelChoice(window.prompt.bind(window))
+            : "full_original_term")
+          : null;
       canonicalVariants.forEach((variant, index) => {
         const preferredName = canonicalDisplayNameForAdd(variant, index, totalVariants);
         addScenarioFromCanonical(
@@ -950,7 +985,8 @@ export default function Home() {
             });
             runComputeForScenario(newScenario);
           },
-          preferredName || undefined
+          preferredName || undefined,
+          commencedChoice
         );
       });
       setLastExtractWarnings(null);
@@ -1384,6 +1420,7 @@ export default function Home() {
               sourceRsf: Math.max(0, Number(s.rsf) || 0),
               sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
               sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
+              sourceIsRemainingObligation: Boolean(s.is_remaining_obligation),
             };
           });
           buffer = await buildBrokerWorkbookFromCanonicalResponses(items, excelMeta);
@@ -1415,6 +1452,7 @@ export default function Home() {
                 sourceRsf: Math.max(0, Number(s.rsf) || 0),
                 sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
                 sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
+                sourceIsRemainingObligation: Boolean(s.is_remaining_obligation),
               };
             });
             buffer = await buildBrokerWorkbookFromCanonicalResponses(items, formulaSafeMeta);

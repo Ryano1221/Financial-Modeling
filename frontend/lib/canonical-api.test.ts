@@ -232,4 +232,18 @@ describe("backendCanonicalToScenarioInput", () => {
     const scenario = backendCanonicalToScenarioInput(canonical);
     expect(scenario.name).toBe("Frost Tower Suite 1875 - Option 2");
   });
+
+  it("preserves remaining-obligation scenario names", () => {
+    const canonical = {
+      ...makeCanonicalResponse().normalized_canonical_lease,
+      building_name: "Benbrook",
+      suite: "200",
+      floor: "",
+      premises_name: "Benbrook Suite 200",
+      scenario_name: "Benbrook Remaining Obligation",
+    };
+
+    const scenario = backendCanonicalToScenarioInput(canonical);
+    expect(scenario.name).toBe("Benbrook Remaining Obligation");
+  });
 });

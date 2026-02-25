@@ -35,6 +35,27 @@ export interface OneTimeCost {
   month: number;
 }
 
+export interface OriginalExtractedLeaseSnapshot {
+  name: string;
+  commencement: string;
+  expiration: string;
+  rent_steps: RentStep[];
+  phase_in_steps?: PhaseInStep[];
+  free_rent_months: number;
+  free_rent_start_month?: number;
+  free_rent_end_month?: number;
+  free_rent_abatement_type?: FreeRentAbatementType;
+  abatement_periods?: AbatementPeriod[];
+  parking_abatement_periods?: ParkingAbatementPeriod[];
+  one_time_costs?: OneTimeCost[];
+  broker_fee?: number;
+  security_deposit_months?: number;
+  ti_allowance_psf: number;
+  ti_allowance_source_of_truth?: TiSourceOfTruth;
+  ti_budget_total?: number;
+  ti_source_of_truth?: TiSourceOfTruth;
+}
+
 /** Backend Scenario schema (no id). */
 export interface ScenarioInput {
   name: string;
@@ -76,6 +97,9 @@ export interface ScenarioInput {
   sublease_income_monthly?: number;
   sublease_start_month?: number;
   sublease_duration_months?: number;
+  is_remaining_obligation?: boolean;
+  remaining_obligation_start_date?: string;
+  original_extracted_lease?: OriginalExtractedLeaseSnapshot;
 }
 
 /** Alias for API payload (same as ScenarioInput). */
@@ -340,6 +364,7 @@ export interface BackendCanonicalLease {
   ti_source_of_truth?: TiSourceOfTruth;
   notes?: string;
   document_type_detected?: string;
+  is_remaining_obligation?: boolean;
   [key: string]: unknown;
 }
 
