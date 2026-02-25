@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import date
+from io import BytesIO
+
+from fastapi import UploadFile
+
 import main
+from models import ExtractionResponse, OpexMode, RentStep, Scenario
 
 
 def test_supplemental_quality_checks_flags_rent_schedule_coverage_gap() -> None:
@@ -99,3 +105,60 @@ def test_derive_field_confidence_replaces_zero_placeholders_and_covers_free_rent
     assert confidence["free_rent_months"] >= 0.84
     assert confidence["parking_count"] >= 0.82
     assert confidence["ti_allowance_psf"] >= 0.7
+
+
+def test_normalize_impl_amendment_retains_inferred_rsf_and_opex_when_not_explicit(monkeypatch) -> None:
+    amendment_text = (
+        "FIRST AMENDMENT TO LEASE\n"
+        "WHEREAS, Landlord and Tenant desire to amend the Lease to extend the term thereof.\n"
+        "The Original Term of the Lease is hereby extended for the period commencing on September 1, 2019 "
+        "and ending on November 30, 2026.\n"
+    )
+
+    monkeypatch.setattr(main, "extract_text_from_pdf", lambda _buf: amendment_text)
+    monkeypatch.setattr(main, "text_quality_requires_ocr", lambda _text: False)
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Extracted lease",
+                rsf=10000.0,
+                commencement=date(2019, 9, 1),
+                expiration=date(2026, 11, 30),
+                rent_steps=[RentStep(start=0, end=86, rate_psf_yr=18.5)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=10.0,
+                base_year_opex_psf_yr=10.0,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"rsf": 0.25, "base_opex_psf_yr": 0.25},
+            warnings=[],
+            source="pdf_text",
+            text_length=len(amendment_text),
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="first-amendment.pdf", file=BytesIO(b"pdf-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "PDF", None, None, upload)
+
+    canonical = result.canonical_lease
+    assert canonical.rsf > 0
+    assert canonical.opex_psf_year_1 > 0
+    assert any("retained inferred RSF value" in str(w) for w in result.warnings)
+    assert any("retained inferred OpEx value" in str(w) for w in result.warnings)

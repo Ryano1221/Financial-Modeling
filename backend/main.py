@@ -2261,6 +2261,155 @@ def _fallback_building_from_filename(filename: str) -> str:
     return _clean_building_candidate(stem)
 
 
+def _extract_property_name_from_party_entities(text: str, suite_hint: str = "") -> str:
+    if not text:
+        return ""
+    patterns = [
+        re.compile(
+            r"(?is)\bwhereas,\s*([A-Za-z0-9&' .,\-]{4,100}?)\s*\(\s*[\"“”']?\s*original\s+landlord\b"
+        ),
+        re.compile(
+            r"(?is)\bwhereas,\s*([A-Za-z0-9&' .,\-]{4,100}?)\s*\(\s*[\"“”']?\s*landlord\b"
+        ),
+    ]
+    for pat in patterns:
+        for match in re.finditer(pat, text):
+            raw = " ".join((match.group(1) or "").split()).strip(" ,.;:-")
+            if not raw:
+                continue
+            # Strip common legal entity suffixes so property names remain.
+            raw = re.sub(
+                r"(?i),?\s*(?:a|an)\s+(?:delaware|texas|california|new\s+york)\s+"
+                r"(?:limited\s+partnership|limited\s+liability\s+company|corporation)\b.*$",
+                "",
+                raw,
+            ).strip(" ,.;:-")
+            raw = re.sub(
+                r"(?i),?\s*(?:l\.?\s*p\.?|l\.?\s*l\.?\s*c\.?|l\.?\s*l\.?\s*p\.?|inc\.?|corp\.?|co\.?|ltd\.?)\b.*$",
+                "",
+                raw,
+            ).strip(" ,.;:-")
+            # Drop short sponsor prefix patterns like "B&G Vista Ridge" -> "Vista Ridge".
+            sponsor_prefix = re.match(r"(?i)^[A-Z](?:\s*&\s*[A-Z])+\.?\s+(.+)$", raw)
+            if sponsor_prefix:
+                raw = sponsor_prefix.group(1).strip(" ,.;:-")
+            candidate = _clean_building_candidate(raw, suite_hint=suite_hint)
+            if not candidate or _looks_like_address(candidate):
+                continue
+            if re.search(r"(?i)\b(?:landlord|tenant|amendment|agreement|lease)\b", candidate):
+                continue
+            return candidate
+    return ""
+
+
+def _extract_dated_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], Optional[float]]:
+    """
+    Parse amendment-style rent tables with date ranges and rent columns, e.g.
+    "Sep 1, 2019 - Nov 30, 2020 $18.50 $186,498.50 $15,541.54".
+    Returns (rent_schedule, inferred_rsf_from_annual_div_psf).
+    """
+    if not text:
+        return [], None
+    month_token = (
+        r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    )
+    date_token = (
+        rf"(?:{month_token}\s+\d{{1,2}},?\s+\d{{4}}|"
+        r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
+        r"\d{4}[-/]\d{1,2}[-/]\d{1,2})"
+    )
+    row_pattern = re.compile(
+        rf"(?is)\b({date_token})\s*(?:-|–|—|to|through|thru)\s*({date_token})\b"
+        r"[^\n$]{0,120}\$\s*([\d,]+(?:\.\d{1,4})?)"
+        r"[^\n$]{0,80}\$\s*([\d,]+(?:\.\d{1,4})?)"
+        r"[^\n$]{0,80}\$\s*([\d,]+(?:\.\d{1,4})?)"
+    )
+    rows: list[dict] = []
+    for match in re.finditer(row_pattern, text):
+        start_date = _parse_lease_date(match.group(1))
+        end_date = _parse_lease_date(match.group(2))
+        rate_psf = _parse_number_token(match.group(3))
+        annual_total = _parse_number_token(match.group(4))
+        monthly_total = _parse_number_token(match.group(5))
+        if not start_date or not end_date or end_date < start_date:
+            continue
+        if rate_psf is None or annual_total is None or monthly_total is None:
+            continue
+        if not (1.0 <= float(rate_psf) <= 250.0):
+            continue
+        if float(annual_total) < 1_000 or float(monthly_total) < 100:
+            continue
+        # Basic sanity: annual should be roughly 12x monthly.
+        annual_ratio = float(annual_total) / max(float(monthly_total), 1.0)
+        if not (8.0 <= annual_ratio <= 16.0):
+            continue
+        context = text[max(0, match.start() - 180): min(len(text), match.end() + 180)].lower()
+        if "base rent" not in context and "annual fixed rent" not in context and "per rentable" not in context:
+            continue
+        if any(tok in context for tok in ("operating expense", "opex", "cam", "reconciliation")):
+            continue
+        rows.append(
+            {
+                "start_date": start_date,
+                "end_date": end_date,
+                "rate_psf_annual": float(rate_psf),
+                "annual_total": float(annual_total),
+            }
+        )
+    if len(rows) < 2:
+        return [], None
+    rows.sort(key=lambda row: (row["start_date"], row["end_date"]))
+    commencement = rows[0]["start_date"]
+    def month_index(base: date, value: date) -> int:
+        months = (value.year - base.year) * 12 + (value.month - base.month)
+        if value.day < base.day:
+            months -= 1
+        return max(0, months)
+
+    schedule: list[dict] = []
+    rsf_candidates: list[float] = []
+    for row in rows:
+        start_month = month_index(commencement, row["start_date"])
+        end_month = month_index(commencement, row["end_date"])
+        if start_month < 0 or end_month < start_month:
+            continue
+        schedule.append(
+            {
+                "start_month": int(start_month),
+                "end_month": int(end_month),
+                "rent_psf_annual": float(round(row["rate_psf_annual"], 4)),
+            }
+        )
+        rate = float(row["rate_psf_annual"])
+        if rate > 0:
+            inferred_rsf = float(row["annual_total"]) / rate
+            if 300 <= inferred_rsf <= 2_000_000:
+                rsf_candidates.append(inferred_rsf)
+    if not schedule:
+        return [], None
+    # Dedupe by start/end/rate.
+    deduped: list[dict] = []
+    seen: set[tuple[int, int, float]] = set()
+    for row in schedule:
+        key = (int(row["start_month"]), int(row["end_month"]), float(row["rent_psf_annual"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    deduped.sort(key=lambda row: (int(row["start_month"]), int(row["end_month"])))
+    inferred_rsf_value: Optional[float] = None
+    if rsf_candidates:
+        ordered = sorted(rsf_candidates)
+        mid = len(ordered) // 2
+        median = ordered[mid] if len(ordered) % 2 == 1 else (ordered[mid - 1] + ordered[mid]) / 2.0
+        if median > 0:
+            max_dev = max(abs(v - median) / median for v in ordered)
+            if max_dev <= 0.2:
+                inferred_rsf_value = float(round(median, 2))
+    return deduped, inferred_rsf_value
+
+
 def _extract_first_date_token(text: str) -> Optional[date]:
     if not text:
         return None
@@ -3807,6 +3956,19 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             except Exception:
                 pass
 
+    table_rent_schedule, table_rsf = _extract_dated_rent_table_schedule_and_rsf(text)
+    if table_rent_schedule:
+        current_hint_schedule = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
+        if not current_hint_schedule or len(table_rent_schedule) > len(current_hint_schedule):
+            hints["rent_schedule"] = table_rent_schedule
+        if not hints.get("term_months"):
+            hints["term_months"] = int(table_rent_schedule[-1]["end_month"]) + 1
+        if table_rsf and (
+            hints.get("rsf") is None or int(hints.get("_rsf_score", -999) or -999) < 7
+        ):
+            hints["rsf"] = float(table_rsf)
+            hints["_rsf_score"] = max(int(hints.get("_rsf_score", -999) or -999), 8)
+
     # ---- Free rent / abatement scope + month range ----
     lower_text = text.lower()
     if re.search(
@@ -4114,6 +4276,11 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         re_to_name = _clean_building_candidate(re_to_match.group(1), suite_hint=hints.get("suite", ""))
         if re_to_name:
             hints["building_name"] = re_to_name
+    party_entity_name = _extract_property_name_from_party_entities(text, suite_hint=hints.get("suite", ""))
+    if party_entity_name and (
+        not hints["building_name"] or _looks_like_address(str(hints["building_name"] or ""))
+    ):
+        hints["building_name"] = party_entity_name
     if not hints["building_name"] and hints.get("address"):
         hints["building_name"] = str(hints["address"])
 
@@ -5516,8 +5683,9 @@ def _normalize_impl(
                     and doc_type_hint in {"amendment", "lease"}
                     and not rsf_has_explicit_evidence
                 ):
-                    updates["rsf"] = 0.0
-                    warnings.append("RSF was not explicitly stated in this document; cleared inferred placeholder RSF for review.")
+                    warnings.append(
+                        "RSF was not explicitly stated in this document; retained inferred RSF value."
+                    )
             if extracted_hints.get("commencement_date"):
                 updates["commencement_date"] = extracted_hints["commencement_date"]
             if extracted_hints.get("expiration_date"):
@@ -5668,9 +5836,9 @@ def _normalize_impl(
                     re.search(r"(?i)\b(?:operating\s+expenses?|opex|cam|common\s+area\s+maintenance)\b", text)
                 )
                 if existing_opex > 0 and not opex_has_explicit_evidence:
-                    updates["opex_psf_year_1"] = 0.0
-                    updates["expense_stop_psf"] = 0.0
-                    warnings.append("OpEx was not explicitly stated in this document; cleared inferred placeholder OpEx for review.")
+                    warnings.append(
+                        "OpEx was not explicitly stated in this document; retained inferred OpEx value."
+                    )
             opex_source_year = _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
             commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
             commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0

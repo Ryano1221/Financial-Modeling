@@ -130,6 +130,26 @@ def test_extract_hints_amendment_prefers_extended_term_not_whereas_schedule() ->
     assert hints["term_months"] == 87
 
 
+def test_extract_hints_amendment_dated_rent_table_derives_schedule_and_rsf() -> None:
+    text = (
+        "WHEREAS, B&G Vista Ridge, L.P. (\"Original Landlord\") and Tenant entered into the Lease.\n"
+        "The Original Term of the Lease is hereby extended for the period commencing on September 1, 2019 "
+        "and ending on November 30, 2026.\n"
+        "For the period commencing on September 1, 2019 and ending on November 30, 2026, Tenant shall pay "
+        "Annual Fixed Rent in accordance with the following schedule:\n"
+        "Period Base Rent (per rentable square foot per annum) Base Rent (per annum) Monthly Installment\n"
+        "September 1, 2019 – November 30, 2020 $18.50 $186,498.50 $15,541.54\n"
+        "December 1, 2020 – November 30, 2021 $19.00 $191,539.00 $15,961.58\n"
+    )
+    hints = main._extract_lease_hints(text, "first-amendment.pdf", "test-rid")
+    assert hints["building_name"] == "Vista Ridge"
+    assert isinstance(hints["rent_schedule"], list) and len(hints["rent_schedule"]) >= 2
+    assert hints["rent_schedule"][0] == {"start_month": 0, "end_month": 14, "rent_psf_annual": 18.5}
+    assert hints["rent_schedule"][1] == {"start_month": 15, "end_month": 26, "rent_psf_annual": 19.0}
+    assert abs(float(hints["rsf"]) - 10081.0) < 0.01
+    assert int(hints["_rsf_score"]) >= 8
+
+
 def test_extract_hints_prefers_subject_premises_rsf_over_rofr_space() -> None:
     text = (
         "Description of Premises: The Premises is known as Suite 300 located at "
