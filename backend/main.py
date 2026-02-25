@@ -3937,6 +3937,131 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     return hints
 
 
+def _split_note_fragments(raw: str) -> list[str]:
+    text = str(raw or "").replace("\r", "\n")
+    if not text.strip():
+        return []
+    parts = re.split(r"\s*\|\s*|\n+|[•\u2022]", text)
+    out: list[str] = []
+    for part in parts:
+        cleaned = re.sub(r"\s+", " ", part).strip(" \t,;|")
+        if cleaned:
+            out.append(cleaned)
+    return out
+
+
+def _condense_note_text(text: str, max_chars: int = 320, max_sentences: int = 2) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip(" \t,;|")
+    if not cleaned:
+        return ""
+    if max_chars <= 0:
+        return ""
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    sentences = [
+        re.sub(r"\s+", " ", frag).strip(" \t,;|")
+        for frag in re.split(r"(?<=[\.\!\?;:])\s+", cleaned)
+        if frag and frag.strip()
+    ]
+    if sentences:
+        selected: list[str] = []
+        total = 0
+        for sentence in sentences:
+            extra = len(sentence) + (1 if selected else 0)
+            if total + extra > max_chars:
+                break
+            selected.append(sentence)
+            total += extra
+            if len(selected) >= max_sentences:
+                break
+        joined = " ".join(selected).strip()
+        if joined and len(joined) >= min(80, max_chars):
+            return joined
+
+    word_budget = max(12, max_chars - 3)
+    words = cleaned.split()
+    compact_words: list[str] = []
+    total_len = 0
+    for word in words:
+        extra = len(word) + (1 if compact_words else 0)
+        if total_len + extra > word_budget:
+            break
+        compact_words.append(word)
+        total_len += extra
+    if not compact_words:
+        return cleaned[:word_budget].rstrip(" ,;:.") + "..."
+    return " ".join(compact_words).rstrip(" ,;:.") + "..."
+
+
+def _condense_note_line(line: str, max_chars: int = 320) -> str:
+    cleaned = re.sub(r"^\s*(?:[-*]|\u2022|•)\s*", "", str(line or "")).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    labeled = re.match(r"^([A-Za-z][A-Za-z0-9/\- ]{1,45}):\s*(.+)$", cleaned)
+    if labeled:
+        label = labeled.group(1).strip()
+        body = labeled.group(2).strip()
+        body_budget = max(60, max_chars - len(label) - 2)
+        compact_body = _condense_note_text(body, max_chars=body_budget)
+        combined = f"{label}: {compact_body}".strip()
+        if len(combined) <= max_chars:
+            return combined
+    return _condense_note_text(cleaned, max_chars=max_chars)
+
+
+def _pack_notes_for_storage(
+    note_lines: list[str],
+    *,
+    extra_note_lines: list[str] | None = None,
+    existing_notes: str = "",
+    max_total_chars: int = 1600,
+    max_line_chars: int = 320,
+    max_items: int = 12,
+) -> str:
+    merged: list[str] = []
+    merged.extend(_split_note_fragments(existing_notes))
+    merged.extend(note_lines or [])
+    merged.extend(extra_note_lines or [])
+
+    packed: list[str] = []
+    seen: set[str] = set()
+    total = 0
+    for raw in merged:
+        line = _condense_note_line(raw, max_chars=max_line_chars)
+        if not line:
+            continue
+        dedupe_key = re.sub(r"\s+", " ", line).strip().lower()
+        if dedupe_key in seen:
+            continue
+
+        sep_len = 3 if packed else 0
+        projected = total + sep_len + len(line)
+        if projected > max_total_chars:
+            remaining = max_total_chars - total - sep_len
+            if remaining < 40:
+                break
+            line = _condense_note_line(line, max_chars=remaining)
+            if not line or len(line) > remaining:
+                break
+            dedupe_key = re.sub(r"\s+", " ", line).strip().lower()
+            if dedupe_key in seen:
+                continue
+            projected = total + sep_len + len(line)
+            if projected > max_total_chars:
+                break
+
+        packed.append(line)
+        seen.add(dedupe_key)
+        total = projected
+        if len(packed) >= max_items:
+            break
+    return " | ".join(packed)
+
+
 def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
     """
     Build concise lease-clause notes from raw lease text.
@@ -4052,8 +4177,11 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
                 break
         if not match_chunk:
             continue
-        snippet = match_chunk[:220].rstrip(" ,;.")
-        note = f"{label}: {snippet}"
+        snippet = _condense_note_line(match_chunk, max_chars=320)
+        if re.match(rf"(?i)^{re.escape(label)}\s*:", snippet):
+            note = snippet
+        else:
+            note = f"{label}: {snippet}"
         if note in seen:
             continue
         seen.add(note)
@@ -5329,19 +5457,24 @@ def _normalize_impl(
             if segmented_rent and not _rent_schedule_rows_equal(segmented_rent, list(effective_rent)):
                 updates["rent_schedule"] = [RentScheduleStep(**step) for step in segmented_rent]
             if note_highlights:
-                updates["notes"] = " | ".join(note_highlights)[:1600]
+                updates["notes"] = _pack_notes_for_storage(
+                    note_highlights,
+                    max_total_chars=1600,
+                    max_line_chars=320,
+                )
             elif text.strip() and not (canonical.notes or "").strip():
                 updates["notes"] = (
                     "No ROFR/ROFO/renewal/OpEx-exclusion clauses were confidently detected. "
                     "Review lease clauses manually."
                 )
             if extra_note_lines:
-                existing_notes = str(updates.get("notes") or canonical.notes or "").strip()
-                for line in extra_note_lines:
-                    if not line or line in existing_notes:
-                        continue
-                    existing_notes = f"{existing_notes} | {line}".strip(" |") if existing_notes else line
-                updates["notes"] = existing_notes[:1600]
+                updates["notes"] = _pack_notes_for_storage(
+                    [],
+                    extra_note_lines=extra_note_lines,
+                    existing_notes=str(updates.get("notes") or canonical.notes or "").strip(),
+                    max_total_chars=1600,
+                    max_line_chars=320,
+                )
             current_discount = _coerce_float_token(
                 updates.get("discount_rate_annual"),
                 _coerce_float_token(canonical.discount_rate_annual, 0.0),

@@ -202,6 +202,43 @@ def test_note_highlights_include_parking_ratio() -> None:
     assert any("Parking ratio:" in n for n in notes)
 
 
+def _word_tokens(value: str) -> set[str]:
+    cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in value)
+    return {token for token in cleaned.split() if token}
+
+
+def test_condense_note_text_preserves_whole_word_boundaries() -> None:
+    text = (
+        "Assignment/Sublease RIGHT: The existing lease shall be amended so that Tenant shall have the continuing "
+        "right to assign the lease or sublet all or any portion of the premises at any time during the primary "
+        "term or any extensions thereof, with landlord consent not unreasonably withheld."
+    )
+    condensed = main._condense_note_text(text, max_chars=120)
+    assert len(condensed) <= 120
+    source_tokens = _word_tokens(text)
+    assert all(token in source_tokens for token in _word_tokens(condensed))
+
+
+def test_pack_notes_for_storage_avoids_mid_token_cutoff_when_bounded() -> None:
+    lines = [
+        "Renewal option: Tenant has one five-year renewal right at fair market value with notice timing.",
+        "Assignment/Sublease: Tenant may assign or sublet all or any part of the premises with landlord consent "
+        "not unreasonably withheld UNBROKENMARKER.",
+        "OpEx exclusions: capital repairs, roof replacement, and structural repairs are excluded.",
+    ]
+    packed = main._pack_notes_for_storage(
+        lines,
+        max_total_chars=170,
+        max_line_chars=100,
+        max_items=3,
+    )
+    assert len(packed) <= 170
+    assert not packed.endswith(" ")
+    assert not packed.endswith("|")
+    source_tokens = _word_tokens(" ".join(lines))
+    assert all(token in source_tokens for token in _word_tokens(packed))
+
+
 def test_detect_generated_report_document() -> None:
     text = (
         "Lease Economics Comparison\\n"
