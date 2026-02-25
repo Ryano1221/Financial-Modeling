@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiUrl, getBaseUrl } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
 
@@ -77,8 +77,10 @@ function classifyFailureReason(raw: unknown): string | null {
 
 export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError }: ExtractUploadProps) {
   const [dragOver, setDragOver] = useState(false);
+  const [globalDragActive, setGlobalDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
+  const globalDragDepthRef = useRef(0);
 
   const sendFile = useCallback(
     async (file: File) => {
@@ -251,6 +253,7 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       setDragOver(false);
       void processFiles(e.dataTransfer.files);
     },
@@ -259,11 +262,13 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragOver(true);
   }, []);
 
   const onDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragOver(false);
   }, []);
 
@@ -275,8 +280,70 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
     [processFiles]
   );
 
+  const isFileDragEvent = useCallback((event: DragEvent): boolean => {
+    const dt = event.dataTransfer;
+    if (!dt) return false;
+    const types = Array.from(dt.types ?? []);
+    return types.includes("Files");
+  }, []);
+
+  useEffect(() => {
+    const onWindowDragEnter = (event: DragEvent) => {
+      if (event.defaultPrevented || loading || !isFileDragEvent(event)) return;
+      event.preventDefault();
+      globalDragDepthRef.current += 1;
+      setGlobalDragActive(true);
+    };
+
+    const onWindowDragOver = (event: DragEvent) => {
+      if (event.defaultPrevented || loading || !isFileDragEvent(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      setGlobalDragActive(true);
+    };
+
+    const onWindowDragLeave = (event: DragEvent) => {
+      if (!isFileDragEvent(event)) return;
+      globalDragDepthRef.current = Math.max(0, globalDragDepthRef.current - 1);
+      if (globalDragDepthRef.current === 0) {
+        setGlobalDragActive(false);
+      }
+    };
+
+    const onWindowDrop = (event: DragEvent) => {
+      if (!isFileDragEvent(event)) return;
+      if (event.defaultPrevented) {
+        globalDragDepthRef.current = 0;
+        setGlobalDragActive(false);
+        return;
+      }
+      event.preventDefault();
+      globalDragDepthRef.current = 0;
+      setGlobalDragActive(false);
+      void processFiles(event.dataTransfer?.files);
+    };
+
+    window.addEventListener("dragenter", onWindowDragEnter);
+    window.addEventListener("dragover", onWindowDragOver);
+    window.addEventListener("dragleave", onWindowDragLeave);
+    window.addEventListener("drop", onWindowDrop);
+    return () => {
+      window.removeEventListener("dragenter", onWindowDragEnter);
+      window.removeEventListener("dragover", onWindowDragOver);
+      window.removeEventListener("dragleave", onWindowDragLeave);
+      window.removeEventListener("drop", onWindowDrop);
+    };
+  }, [isFileDragEvent, loading, processFiles]);
+
   return (
     <div className="space-y-3">
+      {globalDragActive && (
+        <div className="pointer-events-none fixed inset-0 z-[70] border-2 border-dashed border-blue-300/70 bg-blue-500/10 backdrop-blur-[1px]">
+          <div className="absolute inset-x-4 top-16 rounded-xl border border-blue-200/70 bg-slate-900/90 px-4 py-3 text-center text-sm font-semibold tracking-tight text-blue-100 shadow-[0_20px_60px_rgba(2,6,23,0.45)]">
+            Drop lease files anywhere to extract
+          </div>
+        </div>
+      )}
       <div
         onDrop={onDrop}
         onDragOver={onDragOver}
