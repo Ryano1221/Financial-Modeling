@@ -86,6 +86,7 @@ interface WorkbookScenario {
   parkingCostPerSpotPreTax: number;
   parkingSalesTaxPct: number;
   parkingCostPerSpotAfterTax: number;
+  parkingCostMonthly: number;
   parkingCostAnnual: number;
   tiBudget: number;
   tiAllowance: number;
@@ -854,6 +855,7 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
       parkingCostPerSpotPreTax: parkingPreTax || 0,
       parkingSalesTaxPct: result.metrics.parkingSalesTaxPercent ?? 0.0825,
       parkingCostPerSpotAfterTax: result.metrics.parkingCostPerSpotMonthly ?? 0,
+      parkingCostMonthly: result.metrics.parkingCostMonthly ?? safeDiv(result.metrics.parkingCostAnnual ?? 0, Math.max(1, result.metrics.termMonths)),
       parkingCostAnnual: result.metrics.parkingCostAnnual ?? 0,
       tiBudget: tiBudgetTotal,
       tiAllowance:
@@ -954,6 +956,7 @@ function buildScenariosFromCanonicalResponses(
       parkingCostPerSpotPreTax: parkingPreTax,
       parkingSalesTaxPct: parkingTax,
       parkingCostPerSpotAfterTax: parkingPreTax * (1 + parkingTax),
+      parkingCostMonthly: safeDiv(m.parking_total ?? 0, 12),
       parkingCostAnnual: m.parking_total ?? 0,
       tiBudget: tiBudgetTotal,
       tiAllowance: tiAllowancePsf || (resolvedRsf > 0 ? tiAllowanceTotal / resolvedRsf : 0),
@@ -1337,6 +1340,7 @@ function createSummarySheet(
       getter: (s) => s.parkingCostPerSpotAfterTax,
       formula: () => "IFERROR(INDEX($A:$ZZ,MATCH(\"Parking cost ($/spot/month, pre-tax)\",$A:$A,0),COLUMN())*(1+INDEX($A:$ZZ,MATCH(\"Parking sales tax %\",$A:$A,0),COLUMN())),0)",
     },
+    { type: "metric", label: "Parking cost (monthly)", format: "currency0", getter: (s) => s.parkingCostMonthly },
     { type: "metric", label: "Parking cost (annual)", format: "currency0", getter: (s) => s.parkingCostAnnual },
     { type: "section", label: "TI / CAPEX" },
     { type: "metric", label: "TI budget", format: "currency0", getter: (s) => s.tiBudget },

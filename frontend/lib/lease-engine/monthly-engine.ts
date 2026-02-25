@@ -75,6 +75,7 @@ export interface OptionMetrics {
   parkingCostPerSpotMonthlyPreTax: number;
   parkingCostPerSpotMonthly: number;
   parkingSalesTaxPercent: number;
+  parkingCostMonthly: number;
   parkingCostAnnual: number;
   tiBudget: number;
   tiAllowance: number;
@@ -623,6 +624,7 @@ export function runMonthlyEngine(
         ) / totalParkingSlots)
       : 0;
   const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + parkingTaxPct);
+  const parkingCostMonthly = parking.reduce((a, b) => a + b, 0) / Math.max(1, termMonths);
   const metrics: OptionMetrics = {
     buildingName,
     suiteName,
@@ -642,6 +644,7 @@ export function runMonthlyEngine(
     parkingCostPerSpotMonthlyPreTax,
     parkingCostPerSpotMonthly,
     parkingSalesTaxPercent: parkingTaxPct,
+    parkingCostMonthly,
     parkingCostAnnual: parking.reduce((a, b) => a + b, 0),
     tiBudget: rsf > 0 ? scenario.tiSchedule.budgetTotal / rsf : 0,
     tiAllowance: rsf > 0 ? scenario.tiSchedule.allowanceFromLandlord / rsf : 0,
