@@ -1941,6 +1941,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     # Remove weak lead-ins.
     v = re.sub(r"(?i)^(?:at|located at|known as|the building located at|building located at)\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)^lease\s+", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)^[A-Za-z0-9&' .-]{1,60}\s+for\s+office(?:\s+space)?\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\bhttps?://\S+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+located\s+at\s+\d[\dA-Za-z .,'-]{3,120}$", "", v).strip(" ,.;:-")
     # "Summit at Lantana 7171 Southwest Parkway" -> "Summit at Lantana".
@@ -4214,6 +4215,363 @@ def _build_extraction_summary(
     }
 
 
+def _append_review_task(
+    tasks: list[dict],
+    *,
+    field_path: str,
+    severity: str,
+    issue_code: str,
+    message: str,
+    recommended_value: object = None,
+) -> None:
+    sev = (severity or "").strip().lower()
+    if sev not in {"info", "warn", "blocker"}:
+        sev = "warn"
+    for existing in tasks:
+        if not isinstance(existing, dict):
+            continue
+        if (
+            str(existing.get("field_path") or "").strip().lower() == field_path.strip().lower()
+            and str(existing.get("issue_code") or "").strip().lower() == issue_code.strip().lower()
+        ):
+            return
+    tasks.append(
+        {
+            "field_path": field_path,
+            "severity": sev,
+            "issue_code": issue_code,
+            "message": message,
+            "candidates": [],
+            "recommended_value": recommended_value,
+            "evidence": [],
+        }
+    )
+
+
+def _merge_review_tasks(primary: list[dict], supplemental: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for source in (primary or [], supplemental or []):
+        for task in source:
+            if not isinstance(task, dict):
+                continue
+            field_path = str(task.get("field_path") or "").strip().lower()
+            issue_code = str(task.get("issue_code") or "").strip().lower()
+            key = (field_path, issue_code)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(task)
+    return merged
+
+
+def _building_name_is_suspicious(value: str) -> bool:
+    v = " ".join((value or "").split()).strip().lower()
+    if not v:
+        return False
+    if len(v) > 90:
+        return True
+    noisy_tokens = (
+        "it is understood and agreed",
+        "additional information",
+        "entry off",
+        "all other signage",
+        "tenant shall",
+        "landlord shall",
+        "premises:",
+        "lease term",
+        "commencement date",
+        "https://",
+        "http://",
+    )
+    return any(token in v for token in noisy_tokens)
+
+
+def _rent_schedule_coverage_issues(lease: CanonicalLease) -> tuple[bool, str]:
+    term = _coerce_int_token(getattr(lease, "term_months", 0), 0) or 0
+    schedule = list(getattr(lease, "rent_schedule", []) or [])
+    if term <= 0 or not schedule:
+        return False, ""
+    rows: list[tuple[int, int]] = []
+    for step in schedule:
+        start = _coerce_int_token(getattr(step, "start_month", None), None)
+        end = _coerce_int_token(getattr(step, "end_month", start), start)
+        if start is None or end is None:
+            continue
+        s = max(0, int(start))
+        e = max(s, int(end))
+        rows.append((s, e))
+    if not rows:
+        return True, "Rent schedule has no valid month windows."
+    rows.sort(key=lambda row: (row[0], row[1]))
+    expected_start = 0
+    for s, e in rows:
+        if s > expected_start:
+            return True, f"Rent schedule gap found before month {s + 1}."
+        if s < expected_start:
+            s = expected_start
+        expected_start = max(expected_start, e + 1)
+    required_end = max(0, term - 1)
+    if expected_start - 1 < required_end:
+        return True, f"Rent schedule ends at month {expected_start} but term requires month {required_end + 1}."
+    return False, ""
+
+
+def _supplemental_quality_checks(
+    *,
+    canonical: CanonicalLease,
+    text: str,
+    extracted_hints: dict,
+) -> dict:
+    tasks: list[dict] = []
+    warnings: list[str] = []
+    missing: list[str] = []
+    questions: list[str] = []
+    penalty = 0.0
+    lower_text = (text or "").lower()
+
+    comm = canonical.commencement_date
+    exp = canonical.expiration_date
+    term = _coerce_int_token(canonical.term_months, 0) or 0
+    rsf = _coerce_float_token(canonical.rsf, 0.0) or 0.0
+    building = str(canonical.building_name or "").strip()
+    suite = str(canonical.suite or "").strip()
+    floor = str(canonical.floor or "").strip()
+    opex = _coerce_float_token(canonical.opex_psf_year_1, 0.0) or 0.0
+    ti_allowance = _coerce_float_token(canonical.ti_allowance_psf, 0.0) or 0.0
+    parking_ratio = _coerce_float_token(canonical.parking_ratio, 0.0) or 0.0
+    parking_count = _coerce_int_token(canonical.parking_count, 0) or 0
+    parking_rate = _coerce_float_token(canonical.parking_rate_monthly, 0.0) or 0.0
+
+    if comm and exp and exp <= comm:
+        _append_review_task(
+            tasks,
+            field_path="term",
+            severity="blocker",
+            issue_code="TERM_DATE_ORDER",
+            message="Expiration date is on/before commencement date. Confirm lease dates.",
+        )
+        penalty += 0.25
+        warnings.append("Lease dates are inconsistent (expiration is on/before commencement).")
+
+    if comm and exp and term > 0:
+        term_from_dates = _month_diff(comm, exp)
+        if term_from_dates > 0 and abs(term_from_dates - term) >= 3:
+            _append_review_task(
+                tasks,
+                field_path="term_months",
+                severity="warn",
+                issue_code="TERM_DATES_MISMATCH",
+                message=(
+                    f"Term months ({term}) differs from commencement/expiration implied months "
+                    f"({term_from_dates}). Review term and expiration."
+                ),
+            )
+            penalty += 0.08
+            warnings.append("Lease term and date-derived term do not align. Review term/expiration.")
+
+    if rsf <= 0:
+        missing.append("rsf")
+        questions.append("Please confirm rentable square footage (RSF).")
+    elif rsf < 300 or rsf > 2_000_000:
+        _append_review_task(
+            tasks,
+            field_path="rsf",
+            severity="warn",
+            issue_code="RSF_OUTLIER",
+            message=f"RSF value ({rsf:,.0f}) is an outlier. Confirm premises area.",
+        )
+        penalty += 0.06
+
+    if not building and not str(canonical.address or "").strip():
+        missing.append("building_name")
+        questions.append("Please confirm building/property name.")
+        if any(token in lower_text for token in ("project:", "building:", "premises:", "re:")):
+            _append_review_task(
+                tasks,
+                field_path="building_name",
+                severity="warn",
+                issue_code="BUILDING_MISSING",
+                message="Building name was not confidently extracted from document headers/premises section.",
+            )
+            penalty += 0.06
+    elif building and _building_name_is_suspicious(building):
+        _append_review_task(
+            tasks,
+            field_path="building_name",
+            severity="warn",
+            issue_code="BUILDING_NOISY",
+            message="Building name looks noisy/overlong and may include non-name clause text.",
+            recommended_value=_clean_building_candidate(building, suite_hint=suite),
+        )
+        penalty += 0.07
+
+    if not suite and not floor and any(token in lower_text for token in ("suite", "floor", "premises")):
+        _append_review_task(
+            tasks,
+            field_path="suite",
+            severity="warn",
+            issue_code="LOCATION_MISSING",
+            message="Suite/floor location was not confidently extracted from premises language.",
+        )
+        penalty += 0.05
+
+    rent_issue, rent_msg = _rent_schedule_coverage_issues(canonical)
+    if rent_issue:
+        _append_review_task(
+            tasks,
+            field_path="rent_schedule",
+            severity="blocker" if term > 0 else "warn",
+            issue_code="RENT_SCHEDULE_COVERAGE",
+            message=rent_msg or "Rent schedule does not cover the lease term.",
+        )
+        penalty += 0.18 if term > 0 else 0.08
+        warnings.append("Rent schedule coverage needs manual review.")
+
+    if opex > 0 and ti_allowance > 0 and abs(opex - ti_allowance) < 0.01:
+        _append_review_task(
+            tasks,
+            field_path="opex_psf_year_1",
+            severity="blocker",
+            issue_code="OPEX_EQUALS_TIA",
+            message=(
+                "Operating expenses match TI allowance exactly, which often indicates a field mix-up."
+            ),
+        )
+        penalty += 0.2
+        warnings.append("OpEx may be contaminated by TI allowance values. Review OpEx.")
+
+    text_has_opex = any(token in lower_text for token in ("operating expense", "opex", "cam"))
+    if text_has_opex and opex <= 0:
+        _append_review_task(
+            tasks,
+            field_path="opex_psf_year_1",
+            severity="warn",
+            issue_code="OPEX_MISSING",
+            message="Document references OpEx/CAM but no year-1 OpEx value was confidently extracted.",
+        )
+        penalty += 0.07
+
+    text_has_parking = "parking" in lower_text or "transportation:" in lower_text
+    if text_has_parking and parking_ratio <= 0 and parking_count <= 0 and parking_rate <= 0:
+        _append_review_task(
+            tasks,
+            field_path="parking",
+            severity="warn",
+            issue_code="PARKING_MISSING",
+            message="Document references parking terms but ratio/count/rate were not confidently extracted.",
+        )
+        penalty += 0.07
+    if parking_ratio > 15:
+        _append_review_task(
+            tasks,
+            field_path="parking_ratio",
+            severity="warn",
+            issue_code="PARKING_RATIO_OUTLIER",
+            message=f"Parking ratio ({parking_ratio:.2f}/1,000) looks unusually high. Confirm ratio.",
+        )
+        penalty += 0.05
+    if parking_rate > 0 and parking_rate > 1500:
+        _append_review_task(
+            tasks,
+            field_path="parking_rate_monthly",
+            severity="warn",
+            issue_code="PARKING_RATE_OUTLIER",
+            message=f"Parking rate (${parking_rate:,.2f}/month) looks unusually high. Confirm value.",
+        )
+        penalty += 0.05
+
+    # If extracted hints disagree strongly with final canonical values, mark for review.
+    hinted_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
+    if hinted_rsf > 0 and rsf > 0 and abs(hinted_rsf - rsf) / max(hinted_rsf, rsf) > 0.3:
+        _append_review_task(
+            tasks,
+            field_path="rsf",
+            severity="warn",
+            issue_code="RSF_HINT_CONFLICT",
+            message=f"RSF candidates conflict ({hinted_rsf:,.0f} vs {rsf:,.0f}). Confirm RSF.",
+        )
+        penalty += 0.06
+
+    penalty = max(0.0, min(0.75, penalty))
+    return {
+        "review_tasks": tasks,
+        "warnings": warnings,
+        "missing": list(dict.fromkeys(missing)),
+        "questions": list(dict.fromkeys(questions)),
+        "penalty": penalty,
+    }
+
+
+def _derive_field_confidence(
+    *,
+    existing: dict,
+    canonical: CanonicalLease,
+    extracted_hints: dict,
+) -> dict:
+    out: dict[str, float] = {}
+    for k, v in (existing or {}).items():
+        try:
+            out[str(k)] = max(0.0, min(1.0, float(v)))
+        except (TypeError, ValueError):
+            continue
+
+    def set_if_missing(key: str, value: float) -> None:
+        if key not in out:
+            out[key] = max(0.0, min(1.0, value))
+
+    rsf = _coerce_float_token(canonical.rsf, 0.0) or 0.0
+    hinted_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
+    if rsf <= 0:
+        set_if_missing("rsf", 0.2)
+    elif hinted_rsf > 0 and abs(rsf - hinted_rsf) / max(rsf, hinted_rsf) < 0.1:
+        set_if_missing("rsf", 0.95)
+    else:
+        set_if_missing("rsf", 0.75)
+
+    for key in ("commencement_date", "expiration_date"):
+        cv = getattr(canonical, key, None)
+        hv = extracted_hints.get(key)
+        if cv and hv and str(cv) == str(hv):
+            set_if_missing(key, 0.92)
+        elif cv:
+            set_if_missing(key, 0.75)
+        else:
+            set_if_missing(key, 0.2)
+
+    term = _coerce_int_token(canonical.term_months, 0) or 0
+    hinted_term = _coerce_int_token(extracted_hints.get("term_months"), 0) or 0
+    if term <= 0:
+        set_if_missing("term_months", 0.2)
+    elif hinted_term > 0 and abs(term - hinted_term) <= 2:
+        set_if_missing("term_months", 0.9)
+    else:
+        set_if_missing("term_months", 0.72)
+
+    building = str(canonical.building_name or "").strip()
+    if not building:
+        set_if_missing("building_name", 0.2)
+    elif _building_name_is_suspicious(building):
+        set_if_missing("building_name", 0.35)
+    else:
+        set_if_missing("building_name", 0.88)
+
+    suite = str(canonical.suite or "").strip()
+    floor = str(canonical.floor or "").strip()
+    set_if_missing("suite", 0.85 if suite else 0.35)
+    set_if_missing("floor", 0.85 if floor else 0.35)
+
+    opex = _coerce_float_token(canonical.opex_psf_year_1, 0.0) or 0.0
+    set_if_missing("opex_psf_year_1", 0.84 if opex > 0 else 0.35)
+    parking_ratio = _coerce_float_token(canonical.parking_ratio, 0.0) or 0.0
+    parking_rate = _coerce_float_token(canonical.parking_rate_monthly, 0.0) or 0.0
+    set_if_missing("parking_ratio", 0.82 if parking_ratio > 0 else 0.35)
+    set_if_missing("parking_rate_monthly", 0.82 if parking_rate > 0 else 0.35)
+    rent_steps = list(getattr(canonical, "rent_schedule", []) or [])
+    set_if_missing("rent_schedule", 0.88 if rent_steps else 0.2)
+    return out
+
+
 def _safe_extraction_warning(err: Exception | str) -> str:
     """
     Map low-level extraction errors to safe, actionable messages for UI warnings.
@@ -5016,6 +5374,28 @@ def _normalize_impl(
                 ]
         else:
             confidence_score = max(confidence_score, conf_from_missing)
+        supplemental_checks = _supplemental_quality_checks(
+            canonical=canonical,
+            text=extraction_text_for_summary,
+            extracted_hints=extracted_hints,
+        )
+        supplemental_missing = list(supplemental_checks.get("missing") or [])
+        supplemental_questions = list(supplemental_checks.get("questions") or [])
+        for f in supplemental_missing:
+            if f and f not in missing:
+                missing.append(f)
+        for q in supplemental_questions:
+            if q and q not in questions:
+                questions.append(q)
+        for w in list(supplemental_checks.get("warnings") or []):
+            if w and w not in warnings:
+                warnings.append(w)
+        confidence_score = max(0.0, min(1.0, float(confidence_score) - float(supplemental_checks.get("penalty") or 0.0)))
+        field_confidence = _derive_field_confidence(
+            existing=field_confidence,
+            canonical=canonical,
+            extracted_hints=extracted_hints,
+        )
         extraction_summary = _build_extraction_summary(
             text=extraction_text_for_summary,
             filename=extraction_filename_for_summary,
@@ -5033,12 +5413,31 @@ def _normalize_impl(
             content_type="application/pdf" if fn.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             canonical=canonical,
         )
+        merged_review_tasks = _merge_review_tasks(
+            list(extraction_artifacts.get("review_tasks") or []),
+            list(supplemental_checks.get("review_tasks") or []),
+        )
+        extraction_artifacts["review_tasks"] = merged_review_tasks
         blockers = [
-            t for t in (extraction_artifacts.get("review_tasks") or [])
+            t for t in merged_review_tasks
             if str((t or {}).get("severity") or "").lower() == "blocker"
         ]
+        warns = [
+            t for t in merged_review_tasks
+            if str((t or {}).get("severity") or "").lower() == "warn"
+        ]
+        if blockers:
+            extraction_artifacts["export_allowed"] = False
         if blockers:
             warnings.append(f"Extraction produced {len(blockers)} blocker(s); manual review is required.")
+        extraction_confidence_payload = dict(extraction_artifacts.get("extraction_confidence") or {})
+        base_overall = _coerce_float_token(extraction_confidence_payload.get("overall"), confidence_score) or confidence_score
+        overall = max(0.0, min(1.0, min(float(base_overall), float(confidence_score))))
+        status = "red" if blockers else ("yellow" if warns or overall < 0.85 else "green")
+        extraction_confidence_payload["overall"] = round(overall, 4)
+        extraction_confidence_payload["status"] = status
+        extraction_confidence_payload["export_allowed"] = bool(extraction_artifacts.get("export_allowed", True))
+        extraction_artifacts["extraction_confidence"] = extraction_confidence_payload
         return (
             NormalizerResponse(
                 canonical_lease=canonical,
@@ -5078,6 +5477,22 @@ def _normalize_impl(
         warnings.extend(norm_warnings)
         conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
         confidence_score = max(confidence_score, conf_from_missing)
+        pasted_checks = _supplemental_quality_checks(
+            canonical=canonical,
+            text=raw,
+            extracted_hints={},
+        )
+        for f in list(pasted_checks.get("missing") or []):
+            if f and f not in missing:
+                missing.append(f)
+        for q in list(pasted_checks.get("questions") or []):
+            if q and q not in questions:
+                questions.append(q)
+        for w in list(pasted_checks.get("warnings") or []):
+            if w and w not in warnings:
+                warnings.append(w)
+        confidence_score = max(0.0, min(1.0, confidence_score - float(pasted_checks.get("penalty") or 0.0)))
+        field_confidence = _derive_field_confidence(existing=field_confidence, canonical=canonical, extracted_hints={})
         extraction_summary = _build_extraction_summary(
             text=extraction_text_for_summary,
             filename=extraction_filename_for_summary,
@@ -5092,9 +5507,21 @@ def _normalize_impl(
         extraction_artifacts = {
             "canonical_extraction": _canonical_only_extraction(canonical, doc_type=doc_type),
             "provenance": {},
-            "review_tasks": [],
-            "export_allowed": True,
-            "extraction_confidence": {"overall": min(1.0, confidence_score), "status": "yellow", "export_allowed": True},
+            "review_tasks": list(pasted_checks.get("review_tasks") or []),
+            "export_allowed": not any(
+                str((t or {}).get("severity") or "").lower() == "blocker"
+                for t in list(pasted_checks.get("review_tasks") or [])
+            ),
+            "extraction_confidence": {
+                "overall": min(1.0, confidence_score),
+                "status": "red"
+                if any(str((t or {}).get("severity") or "").lower() == "blocker" for t in list(pasted_checks.get("review_tasks") or []))
+                else "yellow",
+                "export_allowed": not any(
+                    str((t or {}).get("severity") or "").lower() == "blocker"
+                    for t in list(pasted_checks.get("review_tasks") or [])
+                ),
+            },
         }
         return (
             NormalizerResponse(
@@ -5128,6 +5555,22 @@ def _normalize_impl(
     canonical, norm_warnings = normalize_canonical_lease(canonical)
     warnings.extend(norm_warnings)
     confidence_score, missing, questions = _compute_confidence_and_missing(canonical)
+    manual_checks = _supplemental_quality_checks(
+        canonical=canonical,
+        text=raw_payload,
+        extracted_hints={},
+    )
+    for f in list(manual_checks.get("missing") or []):
+        if f and f not in missing:
+            missing.append(f)
+    for q in list(manual_checks.get("questions") or []):
+        if q and q not in questions:
+            questions.append(q)
+    for w in list(manual_checks.get("warnings") or []):
+        if w and w not in warnings:
+            warnings.append(w)
+    confidence_score = max(0.0, min(1.0, confidence_score - float(manual_checks.get("penalty") or 0.0)))
+    field_confidence = _derive_field_confidence(existing=field_confidence, canonical=canonical, extracted_hints={})
     extraction_summary = _build_extraction_summary(
         text=extraction_text_for_summary,
         filename=extraction_filename_for_summary,
@@ -5142,9 +5585,21 @@ def _normalize_impl(
     extraction_artifacts = {
         "canonical_extraction": _canonical_only_extraction(canonical, doc_type=doc_type),
         "provenance": {},
-        "review_tasks": [],
-        "export_allowed": True,
-        "extraction_confidence": {"overall": min(1.0, confidence_score), "status": "yellow", "export_allowed": True},
+        "review_tasks": list(manual_checks.get("review_tasks") or []),
+        "export_allowed": not any(
+            str((t or {}).get("severity") or "").lower() == "blocker"
+            for t in list(manual_checks.get("review_tasks") or [])
+        ),
+        "extraction_confidence": {
+            "overall": min(1.0, confidence_score),
+            "status": "red"
+            if any(str((t or {}).get("severity") or "").lower() == "blocker" for t in list(manual_checks.get("review_tasks") or []))
+            else "yellow",
+            "export_allowed": not any(
+                str((t or {}).get("severity") or "").lower() == "blocker"
+                for t in list(manual_checks.get("review_tasks") or [])
+            ),
+        },
     }
     return (
         NormalizerResponse(

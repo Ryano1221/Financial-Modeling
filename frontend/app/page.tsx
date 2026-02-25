@@ -898,10 +898,24 @@ export default function Home() {
       const hasHardReviewWarning = warnings.some((w) =>
         HARD_REVIEW_WARNING_PATTERNS.some((p) => p.test(w))
       );
+      const confidenceScore = Number(data.confidence_score ?? 0);
+      const lowConfidence = !Number.isFinite(confidenceScore) || confidenceScore < 0.85;
+      const reviewTasks = Array.isArray(data.review_tasks) ? data.review_tasks : [];
+      const hasBlockerReviewTask = reviewTasks.some((task) => String(task?.severity ?? "").toLowerCase() === "blocker");
+      const hasWarnReviewTask = reviewTasks.some((task) => String(task?.severity ?? "").toLowerCase() === "warn");
       const hasInvalidCoreValues = canonicalVariants.some((variant) => hasInvalidCanonicalCoreValues(variant));
-      const needsReview = hasCriticalMissing || hasHardReviewWarning || hasInvalidCoreValues;
+      const needsReview =
+        hasCriticalMissing ||
+        hasHardReviewWarning ||
+        hasInvalidCoreValues ||
+        lowConfidence ||
+        hasBlockerReviewTask ||
+        hasWarnReviewTask;
 
       if (needsReview) {
+        if (lowConfidence) {
+          warnings.push(`Extraction confidence is ${Math.round(Math.max(0, confidenceScore) * 100)}%; please review before adding.`);
+        }
         const queued: NormalizerResponse = {
           ...data,
           canonical_lease: canonicalWithDocType,

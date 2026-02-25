@@ -350,6 +350,15 @@ export interface ExtractionSummary {
   sections_searched: string[];
 }
 
+export interface ExtractionReviewTask {
+  field_path: string;
+  severity: "info" | "warn" | "blocker" | string;
+  issue_code: string;
+  message: string;
+  candidates?: Array<Record<string, unknown>>;
+  recommended_value?: unknown;
+}
+
 /** Response from POST /normalize. Enforce Review when confidence_score < 0.85 or missing_fields.length > 0. */
 export interface NormalizerResponse {
   canonical_lease: BackendCanonicalLease;
@@ -360,6 +369,9 @@ export interface NormalizerResponse {
   clarification_questions: string[];
   warnings: string[];
   extraction_summary?: ExtractionSummary;
+  review_tasks?: ExtractionReviewTask[];
+  export_allowed?: boolean;
+  extraction_confidence?: Record<string, unknown>;
 }
 
 /** One month from POST /compute-canonical monthly_rows. */

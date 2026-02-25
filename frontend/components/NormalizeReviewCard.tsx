@@ -59,6 +59,15 @@ export function NormalizeReviewCard({ data, onConfirm, onCancel }: NormalizeRevi
           ))}
         </ul>
       )}
+      {Array.isArray(data.review_tasks) && data.review_tasks.length > 0 && (
+        <ul className="text-xs text-amber-50/90 list-disc list-inside space-y-0.5">
+          {data.review_tasks.slice(0, 6).map((task, i) => (
+            <li key={`${task.field_path}-${task.issue_code}-${i}`}>
+              {String(task.message || `${task.field_path} requires review`).trim()}
+            </li>
+          ))}
+        </ul>
+      )}
       {data.clarification_questions.length > 0 && (
         <p className="text-xs text-slate-300">{data.clarification_questions[0]}</p>
       )}

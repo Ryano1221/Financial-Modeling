@@ -491,3 +491,8 @@ def test_extract_hints_300w6th_prefers_unreserved_rate_and_term_months() -> None
     assert hints["term_months"] == 132
     assert hints["parking_ratio"] == 3.0
     assert hints["parking_rate_monthly"] == 150.0
+
+
+def test_clean_building_candidate_strips_tenant_prefix_from_office_phrase() -> None:
+    cleaned = main._clean_building_candidate("Maev for office Eastlake at Tillery")
+    assert cleaned == "Eastlake at Tillery"
