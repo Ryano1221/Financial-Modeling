@@ -1,16 +1,27 @@
 "use client";
 
+import { useState } from "react";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 import { METRIC_LABELS, METRIC_DISPLAY_NAMES, formatMetricValue } from "@/lib/lease-engine/excel-export";
 import type { EqualizedComparisonResult } from "@/lib/equalized";
 import { formatCurrency, formatCurrencyPerSF, formatDateISO } from "@/lib/format";
+import type { ScenarioWithId } from "@/lib/types";
+import { effectiveTiBudgetTotal, round2 } from "@/lib/ti";
 
 interface SummaryMatrixProps {
   results: EngineResult[];
   equalized?: EqualizedComparisonResult;
+  scenariosById?: Record<string, ScenarioWithId>;
+  onUpdateTiBudgetPsf?: (scenarioId: string, value: number) => void;
 }
 
-export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
+export function SummaryMatrix({
+  results,
+  equalized,
+  scenariosById,
+  onUpdateTiBudgetPsf,
+}: SummaryMatrixProps) {
+  const [tiBudgetDrafts, setTiBudgetDrafts] = useState<Record<string, string>>({});
   if (results.length === 0) return null;
 
   const matrixMetricKeys = METRIC_LABELS.filter(
@@ -35,6 +46,27 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
     if (rowIdx === 2) return formatCurrency(eq.averageCostYear);
     if (rowIdx === 3) return formatCurrency(eq.totalCost);
     return formatCurrency(eq.npvCost);
+  };
+
+  const getTiBudgetPsfFromScenario = (scenarioId: string): number => {
+    const scenario = scenariosById?.[scenarioId];
+    if (!scenario) return 0;
+    const rsf = Math.max(0, Number(scenario.rsf) || 0);
+    if (rsf <= 0) return 0;
+    return round2(effectiveTiBudgetTotal(scenario) / rsf);
+  };
+
+  const commitTiBudgetEdit = (scenarioId: string) => {
+    const draft = (tiBudgetDrafts[scenarioId] ?? "").trim();
+    setTiBudgetDrafts((prev) => {
+      const next = { ...prev };
+      delete next[scenarioId];
+      return next;
+    });
+    if (!onUpdateTiBudgetPsf || draft.length === 0) return;
+    const parsed = Number(draft.replace(/,/g, ""));
+    if (!Number.isFinite(parsed)) return;
+    onUpdateTiBudgetPsf(scenarioId, Math.max(0, parsed));
   };
 
   const getNotes = (formatted: string) =>
@@ -152,6 +184,45 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
     </div>
   );
 
+  const renderTiBudgetCell = (scenarioId: string) => {
+    const scenario = scenariosById?.[scenarioId];
+    const rsf = Math.max(0, Number(scenario?.rsf) || 0);
+    const currentPsf = getTiBudgetPsfFromScenario(scenarioId);
+    const draft = tiBudgetDrafts[scenarioId];
+    const value = draft ?? String(currentPsf);
+    const disabled = !scenario || rsf <= 0 || !onUpdateTiBudgetPsf;
+    return (
+      <input
+        type="number"
+        min={0}
+        step={0.01}
+        value={value}
+        disabled={disabled}
+        inputMode="decimal"
+        onChange={(e) =>
+          setTiBudgetDrafts((prev) => ({
+            ...prev,
+            [scenarioId]: e.target.value,
+          }))
+        }
+        onBlur={() => commitTiBudgetEdit(scenarioId)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            setTiBudgetDrafts((prev) => {
+              const next = { ...prev };
+              delete next[scenarioId];
+              return next;
+            });
+          }
+        }}
+        className="input-premium inline-block w-28 min-h-0 py-1 px-2 text-right text-xs sm:text-sm"
+        aria-label="TI budget per square foot"
+      />
+    );
+  };
+
   return (
     <div className="table-shell">
       <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
@@ -187,6 +258,8 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
                         ) : (
                           <span className="whitespace-normal break-words">{formatted}</span>
                         )
+                      ) : key === "tiBudget" ? (
+                        renderTiBudgetCell(r.scenarioId)
                       ) : (
                         formatted
                       )}
@@ -238,6 +311,8 @@ export function SummaryMatrix({ results, equalized }: SummaryMatrixProps) {
                         ) : (
                           <span className="whitespace-normal break-words">{formatted}</span>
                         )
+                      ) : key === "tiBudget" ? (
+                        renderTiBudgetCell(r.scenarioId)
                       ) : (
                         formatted
                       )}

@@ -49,6 +49,7 @@ import {
   effectiveTiBudgetTotal,
   hasValidRsfForTi,
   normalizeTiSourceOfTruth,
+  round0,
   syncTiFields,
 } from "@/lib/ti";
 import type { CanonicalComputeResponse } from "@/lib/types";
@@ -1038,6 +1039,27 @@ export default function Home() {
     });
   }, []);
 
+  const updateScenarioTiBudgetPsf = useCallback(
+    (scenarioId: string, tiBudgetPsf: number) => {
+      const current = scenarios.find((s) => s.id === scenarioId);
+      if (!current) return;
+      const rsf = Math.max(0, Number(current.rsf) || 0);
+      if (rsf <= 0) return;
+      const nextPsf = Math.max(0, Number(tiBudgetPsf) || 0);
+      const nextBudgetTotal = round0(nextPsf * rsf);
+      const updatedScenario = normalizeScenarioEconomics({
+        ...current,
+        ti_budget_total: nextBudgetTotal,
+        ti_source_of_truth: "psf",
+      });
+      updateScenario(updatedScenario);
+      if (isProduction) {
+        void runComputeForScenario(updatedScenario);
+      }
+    },
+    [isProduction, runComputeForScenario, scenarios, updateScenario]
+  );
+
   const renameScenario = useCallback((id: string, newName: string) => {
     setScenarios((prev) =>
       prev.map((s) => (s.id === id ? { ...s, name: newName.trim() || s.name } : s))
@@ -1165,6 +1187,14 @@ export default function Home() {
   const includedScenarios = useMemo(
     () => scenarios.filter((s) => includedInSummary[s.id] !== false),
     [scenarios, includedInSummary]
+  );
+  const scenariosById = useMemo<Record<string, ScenarioWithId>>(
+    () =>
+      scenarios.reduce<Record<string, ScenarioWithId>>((acc, scenario) => {
+        acc[scenario.id] = scenario;
+        return acc;
+      }, {}),
+    [scenarios]
   );
 
   const equalizedUi = useMemo(
@@ -1925,7 +1955,12 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-                <SummaryMatrix results={engineResults} equalized={equalizedUi} />
+                <SummaryMatrix
+                  results={engineResults}
+                  equalized={equalizedUi}
+                  scenariosById={scenariosById}
+                  onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
+                />
                 <Charts data={chartData} />
               </>
             )}
