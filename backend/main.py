@@ -1459,16 +1459,25 @@ def _normalize_floor_candidate(raw: str) -> str:
         return ""
     v = re.sub(r"(?i)^(?:floor|fl\.?|level)\s*[:#-]?\s*", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)(?:st|nd|rd|th)$", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)\bto\b", "-", v)
+    v = re.sub(r"\s*-\s*", "-", v)
+    range_match = re.match(r"(?i)^(\d{1,3}-\d{1,3})\b", v)
+    if range_match:
+        return range_match.group(1)
     token_match = re.match(r"(?i)^([A-Za-z0-9][A-Za-z0-9\-]{0,8})", v)
     if not token_match:
         return ""
     token = token_match.group(1)
     if token.lower() in {"of", "the"}:
         return ""
+    if re.fullmatch(r"(?i)[A-Za-z]{4,}", token):
+        return ""
     if re.fullmatch(r"(?i)\d+", token):
         return token.lstrip("0") or token
     if re.fullmatch(r"(?i)[A-Za-z]{1,3}", token):
         return token.upper()
+    if re.fullmatch(r"(?i)[A-Za-z]+", token):
+        return ""
     return token
 
 
@@ -1529,27 +1538,32 @@ def _extract_suite_from_text(text: str) -> str:
     segments = _iter_text_segments(lines, max_lines=260)
     candidates: list[tuple[int, int, str]] = []
     for idx, ln in enumerate(segments):
-        low = ln.lower()
         for pat in suite_patterns:
             for m in re.finditer(pat, ln):
                 candidate_raw = m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1)
                 candidate = _normalize_suite_candidate(candidate_raw)
                 if not candidate:
                     continue
+                local = ln[max(0, m.start() - 90): min(len(ln), m.end() + 90)]
+                low = local.lower()
                 score = 1
                 if any(k in low for k in ("premises", "located", "designated", "revised premises", "description of premises")):
                     score += 3
                 if _is_notice_or_party_context(low):
                     score -= 3
-                if re.search(rf"(?i)\bsuite\s*[:#-]?\s*{re.escape(candidate)}\b", ln):
+                if re.search(rf"(?i)\bsuite\s*[:#-]?\s*{re.escape(candidate)}\b", local):
                     score += 1
-                if re.search(r"(?i)\b\d{1,6}\s+[A-Za-z0-9].*\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?)\b", ln):
+                if re.search(r"(?i)\b\d{1,6}\s+[A-Za-z0-9].*\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?)\b", local):
                     if not any(k in low for k in ("premises", "located", "designated")):
-                        score -= 2
+                        score -= 5
+                if any(k in low for k in ("re:", "dear ", "sincerely", "attention:", "attn:")) and "premises" not in low:
+                    score -= 3
                 candidates.append((score, idx, candidate))
     if not candidates:
         return ""
     candidates.sort(key=lambda x: (-x[0], x[1], 0 if re.search(r"\d", x[2]) else 1))
+    if candidates[0][0] <= 0:
+        return ""
     return candidates[0][2]
 
 
@@ -1557,32 +1571,43 @@ def _extract_floor_from_text(text: str) -> str:
     if not text:
         return ""
     floor_patterns = [
+        r"(?i)\blocated\s+on\s+(\d{1,3}\s*(?:-|–|—|to)\s*\d{1,3})\b",
+        r"(?i)\bfloors?\s+(\d{1,3}\s*(?:-|–|—|to)\s*\d{1,3})\b",
         r"(?i)\bon\s+the\s+(\d{1,3})(?:st|nd|rd|th)?\s+floor\b",
         r"(?i)\b(\d{1,3})(?:st|nd|rd|th)?\s+floor\b",
-        r"(?i)\bfloor\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,8})\b",
+        r"(?i)\bfloor\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,8})\b",
         r"(?i)\blevel\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,8})\b",
     ]
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     segments = _iter_text_segments(lines, max_lines=260)
     candidates: list[tuple[int, int, str]] = []
     for idx, ln in enumerate(segments):
-        low = ln.lower()
         for pat in floor_patterns:
             for m in re.finditer(pat, ln):
                 candidate = _normalize_floor_candidate(m.group(1))
                 if not candidate:
                     continue
+                local = ln[max(0, m.start() - 90): min(len(ln), m.end() + 90)]
+                low = local.lower()
                 score = 1
                 if any(k in low for k in ("premises", "located", "floor of", "sublease premises")):
                     score += 3
+                if "located on" in low:
+                    score += 2
                 if _is_notice_or_party_context(low):
                     score -= 3
                 if any(k in low for k in ("parking", "garage", "basement", "loading dock")):
                     score -= 2
+                if any(k in low for k in ("stories in total", "residential units", "office building")) and "premises" not in low:
+                    score -= 3
+                if "premises will be defined at a later date to be located on" in low:
+                    score += 2
                 candidates.append((score, idx, candidate))
     if not candidates:
         return ""
     candidates.sort(key=lambda x: (-x[0], x[1]))
+    if candidates[0][0] <= 0:
+        return ""
     return candidates[0][2]
 
 
@@ -1688,7 +1713,7 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
         r"(?i)\b(20\d{2})\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\b"
     )
     rev_pat = re.compile(
-        r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?[^\n]{0,80}\b(20\d{2})\b"
+        r"(?i)(?:\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?|([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf))[^\n]{0,80}\b(20\d{2})\b"
     )
     table_pat = re.compile(
         r"(?i)^\s*(20\d{2})\s*(?:\||:|-|–|—)?\s*\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\s*$"
@@ -1707,15 +1732,17 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
                 value = _coerce_float_token(m.group(2), None)
                 if year is None or value is None:
                     continue
-                if not (1990 <= year <= 2200 and 0 < value <= 150):
+                if not (1990 <= year <= 2200 and 3 <= value <= 150):
                     continue
                 results[int(year)] = float(round(value, 4))
         for m in rev_pat.finditer(line):
             value = _coerce_float_token(m.group(1), None)
-            year = _coerce_int_token(m.group(2), None)
+            if value is None:
+                value = _coerce_float_token(m.group(2), None)
+            year = _coerce_int_token(m.group(3), None)
             if year is None or value is None:
                 continue
-            if not (1990 <= year <= 2200 and 0 < value <= 150):
+            if not (1990 <= year <= 2200 and 3 <= value <= 150):
                 continue
             results[int(year)] = float(round(value, 4))
 
@@ -1809,6 +1836,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     v = re.sub(r"(?i)^(?:at|located at|known as|the building located at|building located at)\s+", "", v).strip(" ,.;:-")
     v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
     v = re.sub(r'(?i)\s+and\s+located\s+at.*$', "", v).strip(" ,.;:-")
+    v = re.split(r"(?i)\b(?:it is understood and agreed|provided that|subject to|for the avoidance of doubt|shall refer to)\b", v, maxsplit=1)[0].strip(" ,.;:-")
     low = v.lower()
     if low in {"description of premises", "building size", "building", "premises"}:
         return ""
@@ -1852,6 +1880,8 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
     segments = _iter_text_segments(lines, max_lines=280)
     state_token = r"(?:TX|Texas|CA|California|NY|New York|FL|Florida|IL|Illinois)"
     patterns: list[tuple[re.Pattern[str], int]] = [
+        (re.compile(r'(?i)\bre:\s*[^\n]{0,220}\(\s*["“]?([A-Za-z0-9][A-Za-z0-9&\' .\-/]{2,40})["”]?\s*\)'), 8),
+        (re.compile(r"(?i)\bspace\s+located\s+at\s+([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,60})\s*[–-]"), 7),
         (re.compile(r"(?i)\blease\s+(?:proposal|space|premises)\s+(?:to\s+[^\n]{1,60}\s+for\s+office\s+space\s+at|at)\s+([A-Za-z0-9&' .-]{3,80}?\s*[–-]\s*Building\s*[A-Za-z0-9]+)"), 6),
         (re.compile(r"(?i)\bbuilding\s+commonly\s+known\s+as\s+(?:the\s+)?([^\n,;\.]{3,100})"), 5),
         (re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,100})"), 4),
@@ -1874,6 +1904,8 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
                 score += 1
             if any(token in candidate.lower() for token in ("center", "tower", "plaza", "building", "campus", "park")):
                 score += 1
+            if re.search(r"(?i)[A-Za-z]*\d+[A-Za-z]+", candidate):
+                score += 2
             if _looks_like_address(candidate):
                 score += 1
             if _is_notice_or_party_context(low):
@@ -1923,7 +1955,7 @@ def _extract_first_date_token(text: str) -> Optional[date]:
     if "e.g" in low_text or "example" in low_text:
         return None
     patterns = [
-        r"(?i)\b(\w+\s+\d{1,2},?\s+\d{4})\b",
+        r"(?i)\b((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},?\s+\d{4})\b",
         r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2})\b",
         r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{4})\b",
     ]
@@ -3019,6 +3051,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # ---- RSF: collect candidates with context-aware score ----
     rsf_patterns = [
+        r"(?i)\blocated\s+on\s+\d{1,3}(?:\s*(?:-|–|—|to)\s*\d{1,3})?[^\n]{0,40}\(\s*(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|rentable\s+square\s+feet)\s*\)",
         r"(?i)\b(?:rentable\s+area|rentable\s+square\s+feet|rsf)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
         r"(?i)\b(?:premises|leased\s+premises|sublease\s+premises)[^.:\n]{0,140}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|rsf)\b",
         r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|sf|s\.?f\.?)\b",
@@ -3045,6 +3078,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 score += 5
             if re.search(rf"(?i)\brentable\s+area\s*[:#-]?\s*{value_token}\b", snippet):
                 score += 4
+            if re.search(rf"(?i)\blocated\s+on\s+\d{{1,3}}(?:\s*(?:-|–|—|to)\s*\d{{1,3}})?[^\n]{{0,40}}\(\s*{value_token}\s*(?:rsf|rentable\s+square\s+feet)\s*\)", snippet):
+                score += 8
             if re.search(r"(?i)\bconsisting\s+of\s+approximately\b", low):
                 score += 3
             if any(k in low for k in ("approx", "approximately")):
@@ -3062,6 +3097,10 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 score -= 4
             if any(k in low for k in ("shopping center contains", "center contains", "total rsf", "whole center", "entire center", "building contains approximately")):
                 score -= 5
+            if "defined at a later date" in low:
+                score -= 6
+            if "pending a mutually agreeable architectural test fit" in low:
+                score -= 4
             if any(
                 k in low
                 for k in (
@@ -3127,7 +3166,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # ---- Term: commencement / expiration / ending / through ----
     term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
-    date_token_capture = r"(\w+\s+\d{1,2},?\s+\d{4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})"
+    month_token = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    date_token_capture = rf"({month_token}\s+\d{{1,2}},?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}})"
     comm_direct_pats = [
         rf"(?i)\bcommenc(?:ement|e|ing)(?:\s+date)?(?:\s+on)?(?:\s+the\s+later\s+to\s+occur\s+of)?(?:\s*[:\-]\s*|\s+){date_token_capture}",
         rf"(?i)\b(?:lease\s+)?commencement\b[^.\n]{{0,120}}?\bestimated\s+to\s+be\s+{date_token_capture}",
@@ -3150,14 +3190,14 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     ]
 
     for pat in comm_direct_pats:
-        m = re.search(pat, text)
-        if not m:
-            continue
-        if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
-            continue
-        d = _parse_lease_date(m.group(1))
-        if d:
-            term_candidates["commencement"] = d
+        for m in re.finditer(pat, text):
+            if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
+                continue
+            d = _parse_lease_date(m.group(1))
+            if d:
+                term_candidates["commencement"] = d
+                break
+        if term_candidates["commencement"] is not None:
             break
     if term_candidates["commencement"] is None:
         for pat in comm_context_pats:
@@ -3173,14 +3213,14 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 break
 
     for pat in exp_direct_pats:
-        m = re.search(pat, text)
-        if not m:
-            continue
-        if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
-            continue
-        d = _parse_lease_date(m.group(1))
-        if d:
-            term_candidates["expiration"] = d
+        for m in re.finditer(pat, text):
+            if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
+                continue
+            d = _parse_lease_date(m.group(1))
+            if d:
+                term_candidates["expiration"] = d
+                break
+        if term_candidates["expiration"] is not None:
             break
     if term_candidates["expiration"] is None:
         for pat in exp_context_pats:
@@ -3568,11 +3608,11 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # Parking ratio and economics
     parking_ratio_patterns = [
-        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:spaces?|stalls?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
         r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*1,?000\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*\/\s*1,?000\s*(?:rsf|sf)\b",
-        r"(?i)\b(?:parking\s+ratio|ratio\s+of)\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:licenses?|spaces?|stalls?)\s*(?:per|\/|:)\s*1,?000\s*(?:rsf|sf)\b",
+        r"(?i)\b(?:parking\s+ratio|ratio\s+of)\b[^.\n]{0,80}\b(\d+(?:\.\d+)?)\s*(?:licenses?|spaces?|stalls?|passes?|permits?)\s*(?:per|\/|:)\s*1,?000\s*(?:rsf|sf)\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*:\s*1,?000\s*(?:rsf|sf)\b",
     ]
     for pat in parking_ratio_patterns:
@@ -4358,11 +4398,18 @@ def _normalize_impl(
                     parking_periods.append(ParkingAbatementPeriod(start_month=start_i, end_month=end_i))
                 if parking_periods:
                     updates["parking_abatement_periods"] = parking_periods
-            suite_val = str(extracted_hints.get("suite") or canonical.suite or "").strip()
-            if not suite_val:
+            suite_hint_val = str(extracted_hints.get("suite") or "").strip()
+            floor_hint_val = str(extracted_hints.get("floor") or "").strip()
+            suite_val = suite_hint_val or str(canonical.suite or "").strip()
+            force_suite_blank = bool(floor_hint_val and not suite_hint_val)
+            if force_suite_blank:
+                # Floors-only premises should not retain letterhead/notice suites from weak extraction.
+                updates["suite"] = ""
+                suite_val = ""
+            if not suite_val and not force_suite_blank:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
-            floor_val = str(extracted_hints.get("floor") or canonical.floor or "").strip()
-            if floor_val and not (canonical.floor or "").strip():
+            floor_val = floor_hint_val or str(canonical.floor or "").strip()
+            if floor_val and (floor_hint_val or not (canonical.floor or "").strip() or not suite_val):
                 updates["floor"] = floor_val
             address_val = str(extracted_hints.get("address") or canonical.address or "").strip()
             if address_val and not (canonical.address or "").strip():
@@ -4402,7 +4449,15 @@ def _normalize_impl(
             elif location_label and not (canonical.premises_name or "").strip():
                 updates["premises_name"] = location_label
             scenario_name_val = str(canonical.scenario_name or "").strip()
-            if _looks_like_generic_scenario_name(scenario_name_val):
+            should_replace_scenario_name = _looks_like_generic_scenario_name(scenario_name_val)
+            if (
+                not should_replace_scenario_name
+                and floor_hint_val
+                and not suite_hint_val
+                and re.search(r"(?i)\bsuite\b", scenario_name_val)
+            ):
+                should_replace_scenario_name = True
+            if should_replace_scenario_name:
                 if building_val and location_label:
                     updates["scenario_name"] = f"{building_val} {location_label}"
                 elif building_val:

@@ -367,3 +367,43 @@ def test_extract_hints_parses_option_1_2_counter_with_base_rental_rate_and_abate
     assert hints["option_variants"][1]["free_rent_months"] == 0
     assert hints["option_variants"][1]["base_rate_psf_yr"] == 50.0
     assert hints["option_variants"][1]["escalation_pct"] == 3.0
+
+
+def test_extract_hints_prefers_parseable_expiration_when_earlier_match_is_malformed() -> None:
+    text = (
+        "Sublease Term | Expiring on 31, 2036.\n"
+        "Sublease Premises shall be delivered as-is.\n"
+        "Sublease Term | Expiring on October 31, 2036.\n"
+    )
+    hints = main._extract_lease_hints(text, "sublease.docx", "test-rid")
+    assert str(hints["expiration_date"]) == "2036-10-31"
+
+
+def test_extract_hints_6xguad_style_docx_text_regression() -> None:
+    text = (
+        "1703 West 5th Street, Suite 850\n"
+        "RE: Non-Binding Proposal to Sublease – 400 W 6th Street – Austin, TX (“6xGuad”) – Subtenant SolarWinds\n"
+        "Building & Project Overview | The Project is 66 stories in total with office space and residential units located on floors 34-66.\n"
+        "Sublease Premises | Approximately 100,000 Rentable Square Feet (“RSF”). "
+        "The Premises will be defined at a later date to be located on 26-28 (92,982 RSF) pending a mutually agreeable architectural test fit.\n"
+        "Sublease Term | Expiring on 31, 2036.\n"
+        "Rent Commencement Date | April 1, 2028\n"
+        "Sublease Term | Expiring on October 31, 2036.\n"
+        "Base Rent | $46.00 / RSF / YR NNN with 3% annual escalations beginning in month 13 of Term.\n"
+        "Operating Expenses | Estimated 2025 Operating Expenses are approximately $28.53/rsf.\n"
+        "Parking | Subtenant will contract for non-exclusive parking at a ratio of 2.76 passes per 1,000 RSF leased "
+        "throughout the entire Sublease Term and the current rate for unreserved spaces shall be $200/space/month.\n"
+    )
+    hints = main._extract_lease_hints(text, "2 - Response - Solarwinds - 6xGuad.docx", "test-rid")
+    assert hints["building_name"] == "6xGuad"
+    assert hints["suite"] == ""
+    assert hints["floor"] == "26-28"
+    assert hints["rsf"] == 92982.0
+    assert str(hints["commencement_date"]) == "2028-04-01"
+    assert str(hints["expiration_date"]) == "2036-10-31"
+    assert hints["term_months"] == 103
+    assert hints["parking_ratio"] == 2.76
+    assert hints["parking_rate_monthly"] == 200.0
+    assert hints["opex_psf_year_1"] == 28.53
+    assert hints["opex_source_year"] == 2025
+    assert hints["opex_by_calendar_year"] == {2025: 28.53}
