@@ -1029,6 +1029,28 @@ export default function Home() {
     setIncludedInSummary((prev) => ({ ...prev, [id]: !(prev[id] !== false) }));
   }, []);
 
+  const changeScenarioObligationMode = useCallback(
+    (id: string, mode: "full_original_term" | "remaining_obligation") => {
+      const current = scenarios.find((s) => s.id === id);
+      if (!current?.original_extracted_lease) return;
+      const sourceCommencement = String(
+        current.original_extracted_lease.commencement || current.commencement || ""
+      );
+      if (!hasCommencementBeforeToday(sourceCommencement)) return;
+      const isCurrentlyRemaining = Boolean(current.is_remaining_obligation);
+      const wantsRemaining = mode === "remaining_obligation";
+      if (isCurrentlyRemaining === wantsRemaining) return;
+
+      const modeled = normalizeScenarioEconomics(applyLeaseModelChoice(current, mode));
+      const updatedScenario: ScenarioWithId = { ...modeled, id: current.id };
+      updateScenario(updatedScenario);
+      if (isProduction) {
+        void runComputeForScenario(updatedScenario);
+      }
+    },
+    [isProduction, runComputeForScenario, scenarios, updateScenario]
+  );
+
   const inferredReportLocation = useMemo(() => {
     const ordered = selectedScenario
       ? [selectedScenario, ...scenarios.filter((s) => s.id !== selectedScenario.id)]
@@ -1643,6 +1665,7 @@ export default function Home() {
           onRename={renameScenario}
           onReorder={reorderScenario}
           onToggleIncludeInSummary={toggleIncludeInSummary}
+          onChangeLeaseObligationMode={changeScenarioObligationMode}
           includedInSummary={includedInSummary}
         />
 

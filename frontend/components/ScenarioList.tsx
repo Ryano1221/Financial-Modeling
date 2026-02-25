@@ -4,6 +4,9 @@ import { useState } from "react";
 import { formatRSF, formatDateISO } from "@/lib/format";
 import type { ScenarioWithId } from "@/lib/types";
 import { getPremisesDisplayName } from "@/lib/canonical-api";
+import { hasCommencementBeforeToday } from "@/lib/remaining-obligation";
+
+type LeaseObligationMode = "full_original_term" | "remaining_obligation";
 
 interface ScenarioListProps {
   scenarios: ScenarioWithId[];
@@ -14,6 +17,7 @@ interface ScenarioListProps {
   onRename?: (id: string, newName: string) => void;
   onReorder?: (fromId: string, toId: string) => void;
   onToggleIncludeInSummary?: (id: string) => void;
+  onChangeLeaseObligationMode?: (id: string, mode: LeaseObligationMode) => void;
   includedInSummary?: Record<string, boolean>;
 }
 
@@ -26,6 +30,7 @@ export function ScenarioList({
   onRename,
   onReorder,
   onToggleIncludeInSummary,
+  onChangeLeaseObligationMode,
   includedInSummary = {},
 }: ScenarioListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -43,6 +48,13 @@ export function ScenarioList({
       floor: scenario.floor,
       scenario_name: scenario.name,
     });
+  const canToggleObligationMode = (scenario: ScenarioWithId): boolean => {
+    if (!scenario.original_extracted_lease) return false;
+    const sourceCommencement = String(scenario.original_extracted_lease.commencement || scenario.commencement || "");
+    return hasCommencementBeforeToday(sourceCommencement);
+  };
+  const obligationMode = (scenario: ScenarioWithId): LeaseObligationMode =>
+    scenario.is_remaining_obligation ? "remaining_obligation" : "full_original_term";
 
   const startRename = (s: ScenarioWithId) => {
     setEditingId(s.id);
@@ -161,6 +173,35 @@ export function ScenarioList({
                   </>
                 )}
               </div>
+              <div className="col-span-2">
+                {onChangeLeaseObligationMode && canToggleObligationMode(s) && (
+                  <>
+                    <p className="text-slate-400">Obligation</p>
+                    <div className="mt-0.5 inline-flex flex-wrap items-center gap-2">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-300">
+                        <input
+                          type="radio"
+                          name={`obligation-${s.id}`}
+                          checked={obligationMode(s) === "full_original_term"}
+                          onChange={() => onChangeLeaseObligationMode(s.id, "full_original_term")}
+                          className="border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6]"
+                        />
+                        <span>Full</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-300">
+                        <input
+                          type="radio"
+                          name={`obligation-${s.id}`}
+                          checked={obligationMode(s) === "remaining_obligation"}
+                          onChange={() => onChangeLeaseObligationMode(s.id, "remaining_obligation")}
+                          className="border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6]"
+                        />
+                        <span>Remaining</span>
+                      </label>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -201,7 +242,7 @@ export function ScenarioList({
       </div>
 
       <div className="hidden md:block overflow-x-auto">
-        <table className="w-full min-w-[980px] text-xs sm:text-sm">
+        <table className="w-full min-w-[1120px] text-xs sm:text-sm">
           <thead>
             <tr className="bg-slate-900/35 border-b border-slate-300/20">
               <th className="text-left py-2.5 px-4 font-medium text-slate-300">Name</th>
@@ -210,6 +251,7 @@ export function ScenarioList({
               <th className="text-left py-2.5 px-4 font-medium text-slate-300">Commencement</th>
               <th className="text-left py-2.5 px-4 font-medium text-slate-300">Expiration</th>
               <th className="text-left py-2.5 px-4 font-medium text-slate-300">Opex mode</th>
+              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Obligation</th>
               <th className="text-left py-2.5 px-4 font-medium text-slate-300">Summary</th>
               <th className="text-right py-2.5 px-4 font-medium text-slate-300">Actions</th>
             </tr>
@@ -282,6 +324,34 @@ export function ScenarioList({
                 <td className="py-2.5 px-4 text-slate-300">{formatDateISO(s.expiration)}</td>
                 <td className="py-2.5 px-4 text-slate-300 capitalize">
                   {getOpexModeLabel(s.opex_mode)}
+                </td>
+                <td className="py-2.5 px-4">
+                  {onChangeLeaseObligationMode && canToggleObligationMode(s) ? (
+                    <span className="inline-flex flex-wrap items-center gap-2.5">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-300 text-xs">
+                        <input
+                          type="radio"
+                          name={`obligation-${s.id}`}
+                          checked={obligationMode(s) === "full_original_term"}
+                          onChange={() => onChangeLeaseObligationMode(s.id, "full_original_term")}
+                          className="border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6]"
+                        />
+                        <span>Full</span>
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-300 text-xs">
+                        <input
+                          type="radio"
+                          name={`obligation-${s.id}`}
+                          checked={obligationMode(s) === "remaining_obligation"}
+                          onChange={() => onChangeLeaseObligationMode(s.id, "remaining_obligation")}
+                          className="border-white/20 bg-white/5 text-[#3b82f6] focus:ring-[#3b82f6]"
+                        />
+                        <span>Remaining</span>
+                      </label>
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
                 </td>
                 <td className="py-2.5 px-4">
                   {onToggleIncludeInSummary && (
