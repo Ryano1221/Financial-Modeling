@@ -22,3 +22,5 @@ backend/.env
 backend/.env
 .env
 .env.*
+.vercel
+.env*.local
