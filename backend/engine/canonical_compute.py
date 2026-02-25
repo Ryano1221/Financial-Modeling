@@ -224,7 +224,14 @@ def _annual_opex_psf_for_calendar_year(
                 return float(normalized[calendar_year])
             floor_years = [y for y in normalized if y <= calendar_year]
             if floor_years:
-                return float(normalized[max(floor_years)])
+                floor_year = max(floor_years)
+                floor_value = float(normalized[floor_year])
+                growth = float(lease.opex_growth_rate or 0.0)
+                # When a table gives only prior-year values and escalation is provided,
+                # grow forward from the most recent explicit year.
+                if growth > 0 and calendar_year > floor_year:
+                    return floor_value * ((1.0 + growth) ** (calendar_year - floor_year))
+                return floor_value
             return float(normalized[min(normalized.keys())])
 
     base = float(lease.opex_psf_year_1 or 0.0)
@@ -534,7 +541,7 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
         total_obligation_nominal=round(total_cost_nominal, 2),
         npv_cost=round(npv_cost, 2),
         equalized_avg_cost_psf_year=round((npv_cost / years) / avg_rsf_term, 2) if avg_rsf_term > 0 and years > 0 else 0.0,
-        avg_all_in_cost_psf_year=round((npv_cost / years) / avg_rsf_term, 2) if avg_rsf_term > 0 and years > 0 else 0.0,
+        avg_all_in_cost_psf_year=round((total_cost_nominal / years) / avg_rsf_term, 2) if avg_rsf_term > 0 and years > 0 else 0.0,
         discount_rate_annual=normalized.discount_rate_annual,
         notes=normalized.notes or "",
     )

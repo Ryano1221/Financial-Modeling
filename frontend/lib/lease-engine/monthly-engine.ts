@@ -624,7 +624,9 @@ export function runMonthlyEngine(
         ) / totalParkingSlots)
       : 0;
   const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + parkingTaxPct);
-  const parkingCostMonthly = parking.reduce((a, b) => a + b, 0) / Math.max(1, termMonths);
+  const grossRentNominal = baseRent.reduce((a, b) => a + b, 0) + opex.reduce((a, b) => a + b, 0);
+  const parkingNominal = parking.reduce((a, b) => a + b, 0);
+  const parkingCostMonthly = parkingNominal / Math.max(1, termMonths);
   const metrics: OptionMetrics = {
     buildingName,
     suiteName,
@@ -645,13 +647,13 @@ export function runMonthlyEngine(
     parkingCostPerSpotMonthly,
     parkingSalesTaxPercent: parkingTaxPct,
     parkingCostMonthly,
-    parkingCostAnnual: parking.reduce((a, b) => a + b, 0),
+    parkingCostAnnual: years > 0 ? (parkingNominal / years) : parkingNominal,
     tiBudget: rsf > 0 ? scenario.tiSchedule.budgetTotal / rsf : 0,
     tiAllowance: rsf > 0 ? scenario.tiSchedule.allowanceFromLandlord / rsf : 0,
     tiOutOfPocket: scenario.tiSchedule.outOfPocket,
     grossTiOutOfPocket: scenario.tiSchedule.grossOutOfPocket ?? scenario.tiSchedule.outOfPocket,
-    avgGrossRentPerMonth: baseRent.reduce((a, b) => a + b, 0) / (termMonths || 1),
-    avgGrossRentPerYear: baseRent.reduce((a, b) => a + b, 0) / years || 0,
+    avgGrossRentPerMonth: grossRentNominal / (termMonths || 1),
+    avgGrossRentPerYear: years > 0 ? (grossRentNominal / years) : 0,
     avgAllInCostPerMonth: totalObligation / (termMonths || 1),
     avgAllInCostPerYear: avgCostYear,
     avgCostPsfYr,

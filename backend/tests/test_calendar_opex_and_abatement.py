@@ -37,6 +37,13 @@ def test_calendar_year_opex_escalates_on_january_boundary() -> None:
     assert round(out.monthly_rows[6].opex, 2) == round((10.3 / 12.0) * 10000.0, 2)  # Jan 2027
 
 
+def test_calendar_year_opex_single_explicit_year_still_escalates_forward() -> None:
+    lease = _lease(opex_psf_year_1=10.0, opex_growth_rate=0.03, opex_by_calendar_year={2026: 10.0})
+    out = compute_canonical(lease)
+    assert round(out.monthly_rows[5].opex, 2) == round((10.0 / 12.0) * 10000.0, 2)  # Dec 2026
+    assert round(out.monthly_rows[6].opex, 2) == round((10.3 / 12.0) * 10000.0, 2)  # Jan 2027
+
+
 def test_split_rent_schedule_adds_calendar_year_boundary_rows() -> None:
     rows = main._split_rent_schedule_by_boundaries(
         rent_schedule=[{"start_month": 0, "end_month": 17, "rent_psf_annual": 48.0}],
@@ -95,3 +102,11 @@ def test_gross_abatement_zeros_base_rent_and_opex() -> None:
     assert out.monthly_rows[3].base_rent == 0
     assert out.monthly_rows[2].opex == 0
     assert out.monthly_rows[3].opex == 0
+
+
+def test_avg_all_in_cost_psf_year_uses_nominal_total_cost() -> None:
+    lease = _lease(opex_psf_year_1=12.0, opex_growth_rate=0.03)
+    out = compute_canonical(lease)
+    years = out.metrics.term_months / 12
+    expected = out.metrics.total_obligation_nominal / years / out.metrics.rsf
+    assert round(out.metrics.avg_all_in_cost_psf_year, 2) == round(expected, 2)

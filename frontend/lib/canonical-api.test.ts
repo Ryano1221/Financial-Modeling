@@ -169,6 +169,25 @@ describe("canonicalResponseToEngineResult", () => {
     expect(result.metrics.opexPsfYr).toBeCloseTo(14.3, 6);
   });
 
+  it("derives monthly/year averages from term totals instead of treating totals as annual values", () => {
+    const response = makeCanonicalResponse();
+    response.metrics.term_months = 60;
+    response.metrics.rsf = 10000;
+    response.metrics.base_rent_total = 600000;
+    response.metrics.opex_total = 240000;
+    response.metrics.parking_total = 120000;
+    response.metrics.total_obligation_nominal = 1080000;
+
+    const result = canonicalResponseToEngineResult(response, "scenario-1", "Scenario 1");
+    expect(result.metrics.avgGrossRentPerMonth).toBeCloseTo(14000, 6);
+    expect(result.metrics.avgGrossRentPerYear).toBeCloseTo(168000, 6);
+    expect(result.metrics.parkingCostMonthly).toBeCloseTo(2000, 6);
+    expect(result.metrics.parkingCostAnnual).toBeCloseTo(24000, 6);
+    expect(result.metrics.avgAllInCostPerMonth).toBeCloseTo(18000, 6);
+    expect(result.metrics.avgAllInCostPerYear).toBeCloseTo(216000, 6);
+    expect(result.metrics.avgCostPsfYr).toBeCloseTo(21.6, 6);
+  });
+
 });
 
 describe("backendCanonicalToScenarioInput", () => {

@@ -617,6 +617,22 @@ export function canonicalResponseToEngineResult(
     sourceOpexPsfYr > 0
       ? sourceOpexPsfYr
       : (normalizedOpexPsfYr > 0 ? normalizedOpexPsfYr : backendAverageOpexPsfYr);
+  const years = termMonths > 0 ? termMonths / 12 : 0;
+  const rentNominal = Math.max(0, toNumber(m.base_rent_total, 0));
+  const opexNominal = Math.max(0, toNumber(m.opex_total, 0));
+  const grossRentNominal = rentNominal + opexNominal;
+  const parkingNominal = Math.max(0, toNumber(m.parking_total, 0));
+  const avgGrossRentPerMonth = grossRentNominal / Math.max(1, termMonths);
+  const avgGrossRentPerYear = years > 0 ? (grossRentNominal / years) : grossRentNominal;
+  const parkingCostMonthly = parkingNominal / Math.max(1, termMonths);
+  const parkingCostAnnual = years > 0 ? (parkingNominal / years) : parkingNominal;
+  const avgCostPsfYr = (() => {
+    const metricRsf = Math.max(0, toNumber(m.rsf, 0));
+    if (metricRsf > 0 && years > 0) {
+      return totalObligationEffective / years / metricRsf;
+    }
+    return Math.max(0, toNumber(m.avg_all_in_cost_psf_year, 0));
+  })();
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),
@@ -642,17 +658,17 @@ export function canonicalResponseToEngineResult(
     parkingCostPerSpotMonthlyPreTax: parkingRateMonthly,
     parkingCostPerSpotMonthly: parkingRateMonthly * (1 + parkingSalesTaxRate),
     parkingSalesTaxPercent: parkingSalesTaxRate,
-    parkingCostMonthly: (m.parking_total ?? 0) / 12,
-    parkingCostAnnual: m.parking_total ?? 0,
+    parkingCostMonthly,
+    parkingCostAnnual,
     tiBudget: tiBudgetPsf,
     tiAllowance: tiAllowancePsf,
     tiOutOfPocket: Math.max(0, tiNetAtMonth0),
     grossTiOutOfPocket: tiBudgetTotal,
-    avgGrossRentPerMonth: (m.base_rent_total ?? 0) / 12,
-    avgGrossRentPerYear: m.base_rent_total ?? 0,
+    avgGrossRentPerMonth,
+    avgGrossRentPerYear,
     avgAllInCostPerMonth: totalObligationEffective / Math.max(1, termMonths),
-    avgAllInCostPerYear: totalObligationEffective / (termMonths / 12 || 1),
-    avgCostPsfYr: m.avg_all_in_cost_psf_year ?? 0,
+    avgAllInCostPerYear: years > 0 ? (totalObligationEffective / years) : totalObligationEffective,
+    avgCostPsfYr,
     npvAtDiscount: m.npv_cost ?? 0,
     discountRateUsed: m.discount_rate_annual ?? 0.08,
     totalObligation: totalObligationEffective,

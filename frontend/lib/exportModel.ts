@@ -931,6 +931,9 @@ function buildScenariosFromCanonicalResponses(
     const totalObligationForExport = monthlyGrossSum + monthZeroResidual + tiNetImpact;
     const parkingPreTax = c.parking_rate_monthly ?? 0;
     const parkingTax = c.parking_sales_tax_rate ?? 0.0825;
+    const termMonths = Math.max(1, Number(m.term_months ?? 0) || 0);
+    const years = termMonths > 0 ? termMonths / 12 : 0;
+    const parkingNominal = m.parking_total ?? 0;
     const notesText = [
       m.notes ?? "",
       String(c.notes ?? ""),
@@ -956,8 +959,8 @@ function buildScenariosFromCanonicalResponses(
       parkingCostPerSpotPreTax: parkingPreTax,
       parkingSalesTaxPct: parkingTax,
       parkingCostPerSpotAfterTax: parkingPreTax * (1 + parkingTax),
-      parkingCostMonthly: safeDiv(m.parking_total ?? 0, 12),
-      parkingCostAnnual: m.parking_total ?? 0,
+      parkingCostMonthly: safeDiv(parkingNominal, termMonths),
+      parkingCostAnnual: years > 0 ? safeDiv(parkingNominal, years) : parkingNominal,
       tiBudget: tiBudgetTotal,
       tiAllowance: tiAllowancePsf || (resolvedRsf > 0 ? tiAllowanceTotal / resolvedRsf : 0),
       tiOutOfPocket: 0,
