@@ -1,5 +1,5 @@
 """
-Extract text from PDF and run LLM to produce LeaseExtraction JSON.
+Extract text from PDF/DOCX/DOC and run LLM to produce LeaseExtraction JSON.
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import re
 from typing import BinaryIO
 
 from models import LeaseExtraction
+from scenario_extract import extract_text_from_word
 
 
 def extract_text_from_pdf(file: BinaryIO) -> str:
@@ -84,9 +85,13 @@ JSON:"""
     return json.loads(raw)
 
 
-def extract_lease(pdf_file: BinaryIO) -> LeaseExtraction:
-    """Extract text from PDF, run LLM, return LeaseExtraction."""
-    text = extract_text_from_pdf(pdf_file)
+def extract_lease(file_obj: BinaryIO, filename: str = "") -> LeaseExtraction:
+    """Extract text from PDF/DOCX/DOC, run LLM, return LeaseExtraction."""
+    lower_name = (filename or "").lower()
+    if lower_name.endswith(".pdf"):
+        text = extract_text_from_pdf(file_obj)
+    else:
+        text, _ = extract_text_from_word(file_obj, filename=filename)
     if not text or len(text.strip()) < 50:
         return LeaseExtraction()  # empty extraction
     data = _llm_extract(text)

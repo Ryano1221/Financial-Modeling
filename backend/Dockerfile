@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     poppler-utils \
+    antiword \
+    catdoc \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \

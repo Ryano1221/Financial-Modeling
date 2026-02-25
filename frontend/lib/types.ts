@@ -258,12 +258,12 @@ export interface ReportData {
 /** How extraction was produced: text-only, forced OCR, or auto-triggered OCR */
 export type ExtractionSource = "text" | "ocr" | "auto_ocr";
 
-/** Response from POST /extract (PDF/DOCX extraction) */
+/** Response from POST /extract (PDF/DOCX/DOC extraction) */
 export interface ExtractionResponse {
   scenario: ScenarioInput;
   confidence: Record<string, number>;
   warnings: string[];
-  source: "pdf_text" | "ocr" | "pdf_text+ocr" | "docx";
+  source: "pdf_text" | "ocr" | "pdf_text+ocr" | "docx" | "doc";
   text_length: number;
   /** Present when backend supports auto OCR (default false for old responses). */
   ocr_used?: boolean;

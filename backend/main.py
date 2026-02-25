@@ -57,7 +57,7 @@ from engine.canonical_compute import compute_canonical, normalize_canonical_leas
 from scenario_extract import (
     extract_text_from_pdf,
     extract_text_from_pdf_with_ocr,
-    extract_text_from_docx,
+    extract_text_from_word,
     extract_scenario_from_text,
     extract_prefill_hints,
     text_quality_requires_ocr,
@@ -901,7 +901,7 @@ def extract_document(
     ocr_pages: int = Form(5),
 ) -> ExtractionResponse:
     """
-    Accept PDF or DOCX (multipart): extract text. For PDF, OCR runs when forced, or automatically
+    Accept PDF, DOCX, or DOC (multipart): extract text. For PDF, OCR runs when forced, or automatically
     when text quality is poor (short text, low alnum ratio, replacement chars, many short lines).
     force_ocr: true = always OCR, false = never OCR, omit = auto. Returns ocr_used and extraction_source.
     ocr_pages: max PDF pages to OCR when OCR runs (default 5).
@@ -911,8 +911,8 @@ def extract_document(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     fn = file.filename.lower()
-    if not (fn.endswith(".pdf") or fn.endswith(".docx")):
-        raise HTTPException(status_code=400, detail="File must be PDF or DOCX")
+    if not (fn.endswith(".pdf") or fn.endswith(".docx") or fn.endswith(".doc")):
+        raise HTTPException(status_code=400, detail="File must be PDF, DOCX, or DOC")
     try:
         contents = file.file.read()
     except Exception as e:
@@ -965,10 +965,9 @@ def extract_document(
                     extraction_source = "text"
                     print(f"[extract] path=pdf auto no OCR text_len={len(text)}")
         else:
-            text = extract_text_from_docx(buf)
-            source = "docx"
+            text, source = extract_text_from_word(buf, file.filename or "")
             extraction_source = "text"
-            print(f"[extract] path=docx text_len={len(text)}")
+            print(f"[extract] path=word source={source!r} text_len={len(text)}")
     except ValueError as e:
         print(f"[extract] ValueError: {e!s}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -976,7 +975,10 @@ def extract_document(
         print(f"[extract] ImportError: {e!s}")
         raise HTTPException(
             status_code=503,
-            detail="OCR or DOCX support not available. Install pdf2image, pytesseract, and poppler (system) for OCR; python-docx for DOCX.",
+            detail=(
+                "OCR or Word support not available. Install pdf2image, pytesseract, and poppler (system) "
+                "for OCR; python-docx for DOCX; and antiword/catdoc/LibreOffice for DOC."
+            ),
         ) from e
     except Exception as e:
         print(f"[extract] Text extraction error: {e!s}")
@@ -1012,17 +1014,20 @@ def extract_document(
 @app.post("/upload_lease", response_model=LeaseExtraction)
 def upload_lease(file: UploadFile = File(...)) -> LeaseExtraction:
     """
-    Accept a PDF lease document, extract text, run LLM extraction, return LeaseExtraction
+    Accept a PDF/DOCX/DOC lease document, extract text, run LLM extraction, return LeaseExtraction
     with per-field value, confidence, and citation snippet.
     """
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="File must be a PDF")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    lower_name = file.filename.lower()
+    if not (lower_name.endswith(".pdf") or lower_name.endswith(".docx") or lower_name.endswith(".doc")):
+        raise HTTPException(status_code=400, detail="File must be a PDF, DOCX, or DOC")
     try:
         contents = file.file.read()
         if len(contents) == 0:
             raise HTTPException(status_code=400, detail="Empty file")
         from io import BytesIO
-        return extract_lease(BytesIO(contents))
+        return extract_lease(BytesIO(contents), filename=file.filename)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -5046,8 +5051,8 @@ def _normalize_impl(
         fn = file.filename.lower()
         if source_upper == "PDF" and not fn.endswith(".pdf"):
             raise HTTPException(status_code=400, detail="File must be PDF")
-        if source_upper == "WORD" and not fn.endswith(".docx"):
-            raise HTTPException(status_code=400, detail="File must be DOCX")
+        if source_upper == "WORD" and not (fn.endswith(".docx") or fn.endswith(".doc")):
+            raise HTTPException(status_code=400, detail="File must be DOCX or DOC")
         try:
             contents = file.file.read()
         except Exception as e:
@@ -5057,6 +5062,7 @@ def _normalize_impl(
             raise HTTPException(status_code=400, detail="Empty file")
         buf = BytesIO(contents)
         text = ""
+        word_source = "docx"
         ocr_used = False
         used_fallback = False
         try:
@@ -5073,7 +5079,7 @@ def _normalize_impl(
                         # OCR dependencies may be unavailable in local/dev; continue with text extraction fallback.
                         warnings.append("OCR was unavailable; continued with standard PDF text extraction.")
             else:
-                text = extract_text_from_docx(buf)
+                text, word_source = extract_text_from_word(buf, file.filename or "")
         except Exception as e:
             text = ""
             warnings.append(_safe_extraction_warning(e))
@@ -5096,7 +5102,7 @@ def _normalize_impl(
             pass
         elif text.strip():
             try:
-                extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else "docx")
+                extraction = extract_scenario_from_text(text, "pdf_text" if fn.endswith(".pdf") else word_source)
             except Exception as e:
                 fallback_comm = extracted_hints.get("commencement_date") or date(2026, 1, 1)
                 fallback_exp = extracted_hints.get("expiration_date") or date(2031, 1, 31)
@@ -5658,7 +5664,11 @@ def _normalize_impl(
         extraction_artifacts = _run_extraction_artifacts(
             file_bytes=contents,
             filename=file.filename or "uploaded.pdf",
-            content_type="application/pdf" if fn.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            content_type=(
+                "application/pdf"
+                if fn.endswith(".pdf")
+                else ("application/msword" if fn.endswith(".doc") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            ),
             canonical=canonical,
         )
         merged_review_tasks = _merge_review_tasks(
@@ -5872,7 +5882,7 @@ def _normalize_impl(
 async def extract_lease_canonical(request: Request):
     """
     Authenticated binary extractor endpoint.
-    Accepts raw PDF/DOCX bytes and returns canonical extraction JSON with provenance,
+    Accepts raw PDF/DOCX/DOC bytes and returns canonical extraction JSON with provenance,
     review tasks, confidence, and export_allowed gating.
     """
     user = _require_supabase_user(request)
@@ -5888,15 +5898,21 @@ async def extract_lease_canonical(request: Request):
     if content_type not in {
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
         "application/octet-stream",
     }:
-        raise HTTPException(status_code=415, detail="Unsupported content-type. Use application/pdf or DOCX mime type.")
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported content-type. Use application/pdf, DOCX mime type, or application/msword.",
+        )
 
     filename_header = (request.headers.get("x-filename") or "").strip()
     if filename_header:
         filename = filename_header
     elif "wordprocessingml" in content_type:
         filename = "upload.docx"
+    elif content_type == "application/msword":
+        filename = "upload.doc"
     else:
         filename = "upload.pdf"
 

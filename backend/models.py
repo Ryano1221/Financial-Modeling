@@ -349,7 +349,7 @@ class CreateReportResponse(BaseModel):
     report_id: str
 
 
-# ---- Scenario extraction (PDF/DOCX -> Scenario with confidence) ----
+# ---- Scenario extraction (PDF/DOCX/DOC -> Scenario with confidence) ----
 # ExtractionResponse is defined AFTER Scenario (above).
 
 
@@ -361,7 +361,7 @@ class ExtractionResponse(BaseModel):
     scenario: Scenario
     confidence: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
-    source: str  # one of: "pdf_text", "ocr", "pdf_text+ocr", "docx"
+    source: str  # one of: "pdf_text", "ocr", "pdf_text+ocr", "docx", "doc"
     text_length: int
     ocr_used: bool = False
     extraction_source: ExtractionSource = "text"

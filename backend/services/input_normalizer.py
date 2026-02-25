@@ -367,19 +367,20 @@ def normalize_input(
     elif source in (InputSource.PDF, InputSource.WORD, InputSource.EXCEL):
         try:
             text = ""
+            word_source = "docx"
             if source == InputSource.PDF:
                 from lease_extract import extract_text_from_pdf
                 text = extract_text_from_pdf(payload) if hasattr(payload, "read") else extract_text_from_pdf(open(payload, "rb"))  # type: ignore
             elif source == InputSource.WORD:
-                try:
-                    import docx  # type: ignore
-                    doc = docx.Document(payload) if hasattr(payload, "read") else docx.Document(open(payload, "rb"))  # type: ignore
-                    text = "\n".join(p.text for p in doc.paragraphs)
-                except Exception:
-                    pass
+                from scenario_extract import extract_text_from_word
+                if hasattr(payload, "read"):
+                    text, word_source = extract_text_from_word(payload)  # type: ignore[arg-type]
+                else:
+                    with open(payload, "rb") as fp:  # type: ignore[arg-type]
+                        text, word_source = extract_text_from_word(fp, filename=str(payload))
             if text and len(text.strip()) > 50:
                 from scenario_extract import extract_scenario_from_text
-                extraction = extract_scenario_from_text(text, "pdf_text" if source == InputSource.PDF else "docx")
+                extraction = extract_scenario_from_text(text, "pdf_text" if source == InputSource.PDF else word_source)
                 if extraction and extraction.scenario:
                     canonical = _scenario_to_canonical(extraction.scenario, scenario_id, scenario_name)
                     confidence = 0.78

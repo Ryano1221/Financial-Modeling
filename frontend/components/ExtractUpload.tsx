@@ -83,8 +83,8 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
   const sendFile = useCallback(
     async (file: File) => {
       const fn = file.name.toLowerCase();
-      if (!fn.endsWith(".pdf") && !fn.endsWith(".docx")) {
-        onError("Only .pdf and .docx files are accepted.");
+      if (!fn.endsWith(".pdf") && !fn.endsWith(".docx") && !fn.endsWith(".doc")) {
+        onError("Only .pdf, .docx, and .doc files are accepted.");
         return;
       }
       const rid = crypto.randomUUID();
@@ -215,17 +215,19 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
 
       const accepted = files.filter((f) => {
         const fn = f.name.toLowerCase();
-        return fn.endsWith(".pdf") || fn.endsWith(".docx");
+        return fn.endsWith(".pdf") || fn.endsWith(".docx") || fn.endsWith(".doc");
       });
       const rejectedCount = files.length - accepted.length;
 
       if (accepted.length === 0) {
-        onError("Only .pdf and .docx files are accepted.");
+        onError("Only .pdf, .docx, and .doc files are accepted.");
         return;
       }
 
       if (rejectedCount > 0) {
-        onError(`Ignored ${rejectedCount} unsupported file${rejectedCount === 1 ? "" : "s"}. Only .pdf and .docx are accepted.`);
+        onError(
+          `Ignored ${rejectedCount} unsupported file${rejectedCount === 1 ? "" : "s"}. Only .pdf, .docx, and .doc are accepted.`
+        );
       } else {
         onError("");
       }
@@ -286,11 +288,11 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         `}
       >
         <p className="text-sm sm:text-base font-semibold tracking-tight text-slate-100 mb-5">
-          Drag and drop one or more <strong className="text-slate-50">.pdf</strong> or <strong className="text-slate-50">.docx</strong> lease documents here, or click to choose.
+          Drag and drop one or more <strong className="text-slate-50">.pdf</strong>, <strong className="text-slate-50">.docx</strong>, or <strong className="text-slate-50">.doc</strong> lease documents here, or click to choose.
         </p>
         <input
           type="file"
-          accept=".pdf,.docx"
+          accept=".pdf,.docx,.doc"
           multiple
           onChange={onFileInput}
           disabled={loading}

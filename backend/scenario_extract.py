@@ -9,11 +9,15 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import zipfile
 from calendar import monthrange
 from datetime import date, timedelta
 from io import BytesIO
+from pathlib import Path
 from typing import Any, BinaryIO
 import xml.etree.ElementTree as ET
 
@@ -32,6 +36,8 @@ FALLBACK_HEAD_CHARS = 20_000
 FALLBACK_TAIL_CHARS = 20_000
 # Lines of context around keyword matches for snippet pack
 SNIPPET_CONTEXT_LINES = 24
+DOC_TEXT_COMMAND_TIMEOUT_SECONDS = 30
+MIN_DOC_TEXT_CHARS = 80
 
 FOCUS_KEYWORDS = [
     "rent", "base rent", "rental rate", "term", "commencement", "expiration",
@@ -279,6 +285,176 @@ def extract_text_from_docx(file: BinaryIO) -> str:
         return "\n\n".join(parts) if parts else ""
     except Exception as e:
         raise ValueError(f"Failed to read DOCX: {e}") from e
+
+
+def _clean_word_text(text: str) -> str:
+    text = (text or "").replace("\ufeff", "").replace("\x00", " ").replace("\r", "\n")
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            continue
+        lines.append(line)
+    return "\n\n".join(lines)
+
+
+def _decode_command_output(raw: bytes) -> str:
+    decoded = raw.decode("utf-8", errors="ignore").strip()
+    if not decoded:
+        decoded = raw.decode("latin-1", errors="ignore").strip()
+    return _clean_word_text(decoded)
+
+
+def _extract_printable_text_fallback(raw_bytes: bytes) -> str:
+    decoded = raw_bytes.decode("latin-1", errors="ignore")
+    decoded = decoded.replace("\x00", " ").replace("\r", "\n")
+    lines: list[str] = []
+    for raw_line in decoded.splitlines():
+        line = re.sub(r"[^A-Za-z0-9$%/.,:;()&@#'\"!?+\- ]+", " ", raw_line)
+        line = re.sub(r"\s+", " ", line).strip()
+        if len(line) < 20:
+            continue
+        if not re.search(r"[A-Za-z]{3,}", line):
+            continue
+        lines.append(line)
+    if not lines:
+        return ""
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        if line in seen:
+            continue
+        seen.add(line)
+        deduped.append(line)
+        if len(deduped) >= 400:
+            break
+    return _clean_word_text("\n".join(deduped))
+
+
+def _run_text_command(command: list[str]) -> str:
+    try:
+        proc = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=DOC_TEXT_COMMAND_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception:
+        return ""
+    if proc.returncode != 0 and not proc.stdout:
+        return ""
+    return _decode_command_output(proc.stdout)
+
+
+def _extract_text_with_soffice(source_path: str) -> str:
+    if not shutil.which("soffice"):
+        return ""
+    with tempfile.TemporaryDirectory(prefix="word-soffice-") as tmpdir:
+        command = [
+            "soffice",
+            "--headless",
+            "--convert-to",
+            "txt:Text",
+            "--outdir",
+            tmpdir,
+            source_path,
+        ]
+        try:
+            subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=DOC_TEXT_COMMAND_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except Exception:
+            return ""
+        txt_path = Path(tmpdir) / f"{Path(source_path).stem}.txt"
+        if not txt_path.exists():
+            return ""
+        try:
+            return _clean_word_text(txt_path.read_text(encoding="utf-8", errors="ignore"))
+        except Exception:
+            return ""
+
+
+def extract_text_from_doc(file: BinaryIO, filename: str = "") -> str:
+    """
+    Extract text from legacy .doc files using command-line converters with fallbacks.
+    """
+    try:
+        raw_bytes = file.read()
+        file.seek(0)
+    except Exception as e:
+        raise ValueError(f"Failed to read DOC: {e}") from e
+    if not raw_bytes:
+        return ""
+
+    # Some uploads are mislabeled .doc but are actually OOXML containers.
+    if raw_bytes.startswith(b"PK"):
+        try:
+            return extract_text_from_docx(BytesIO(raw_bytes))
+        except Exception:
+            pass
+
+    suffix = ".doc"
+    lower_name = (filename or "").strip().lower()
+    if lower_name.endswith(".rtf"):
+        suffix = ".rtf"
+    elif lower_name.endswith(".txt"):
+        suffix = ".txt"
+
+    with tempfile.NamedTemporaryFile(prefix="word-upload-", suffix=suffix, delete=False) as tmp:
+        tmp.write(raw_bytes)
+        tmp_path = tmp.name
+
+    try:
+        for command in (
+            ["antiword", tmp_path],
+            ["catdoc", tmp_path],
+            ["textutil", "-convert", "txt", "-stdout", tmp_path],
+        ):
+            if not shutil.which(command[0]):
+                continue
+            text = _run_text_command(command)
+            if len(text) >= MIN_DOC_TEXT_CHARS:
+                return text
+
+        soffice_text = _extract_text_with_soffice(tmp_path)
+        if len(soffice_text) >= MIN_DOC_TEXT_CHARS:
+            return soffice_text
+
+        if suffix == ".txt":
+            plain = _clean_word_text(raw_bytes.decode("utf-8", errors="ignore"))
+            if plain:
+                return plain
+
+        fallback = _extract_printable_text_fallback(raw_bytes)
+        if fallback:
+            return fallback
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+    raise ValueError(
+        "Failed to read DOC. Install at least one converter (antiword, catdoc, or LibreOffice)."
+    )
+
+
+def extract_text_from_word(file: BinaryIO, filename: str = "") -> tuple[str, str]:
+    """
+    Route to DOCX or DOC extraction based on extension + file signature.
+    Returns (text, source) where source is "docx" or "doc".
+    """
+    raw_bytes = file.read()
+    file.seek(0)
+    lower_name = (filename or "").strip().lower()
+    is_docx = lower_name.endswith(".docx") or raw_bytes.startswith(b"PK")
+    if is_docx:
+        return extract_text_from_docx(BytesIO(raw_bytes)), "docx"
+    return extract_text_from_doc(BytesIO(raw_bytes), filename=filename), "doc"
 
 
 def _build_snippet_pack(text: str) -> tuple[str, bool]:

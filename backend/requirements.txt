@@ -6,7 +6,7 @@ python-dotenv>=1.0.0
 pydantic>=2.0.0
 python-multipart>=0.0.9
 
-# Lease extraction (PDF/DOCX + LLM)
+# Lease extraction (PDF/DOCX/DOC + LLM)
 pypdf>=4.0.0
 PyMuPDF>=1.24.0
 pdfplumber>=0.11.0

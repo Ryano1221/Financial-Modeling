@@ -5,7 +5,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Can I upload multiple files at once?",
-    a: "Yes. Drag and drop multiple PDF or DOCX files in one action. Each file is processed into its own scenario for side-by-side comparison.",
+    a: "Yes. Drag and drop multiple PDF, DOCX, or DOC files in one action. Each file is processed into its own scenario for side-by-side comparison.",
   },
   {
     q: "Why do I see fallback values?",
@@ -34,7 +34,7 @@ export default function DocsPage() {
             <section className="space-y-3">
               <h2 className="heading-section">Upload and Analysis Flow</h2>
               <ol className="space-y-2 text-sm sm:text-base text-slate-300 list-decimal pl-5">
-                <li>Upload one or more lease or proposal files (PDF or DOCX).</li>
+                <li>Upload one or more lease or proposal files (PDF, DOCX, or DOC).</li>
                 <li>Extraction reads terms and maps them into scenario fields.</li>
                 <li>Review the scenario editor and confirm or adjust values.</li>
                 <li>Compare options in the matrix, charts, and scenario detail blocks.</li>

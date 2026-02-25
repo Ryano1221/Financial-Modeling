@@ -125,14 +125,14 @@ export default function UploadPage() {
       </div>
 
       <section className="surface-card p-5 mb-6">
-        <h2 className="heading-section mb-4">Upload lease PDF</h2>
+        <h2 className="heading-section mb-4">Upload lease document</h2>
         <p className="text-sm text-slate-300 mb-4">
-          Upload a lease document to extract key terms. Review and edit the extracted fields, then create a scenario.
+          Upload a lease PDF, DOCX, or DOC to extract key terms. Review and edit the extracted fields, then create a scenario.
         </p>
         <div className="flex flex-wrap items-center gap-4">
           <input
             type="file"
-            accept=".pdf,application/pdf"
+            accept=".pdf,.docx,.doc,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             onChange={onFileChange}
             className="text-sm text-slate-300"
           />
