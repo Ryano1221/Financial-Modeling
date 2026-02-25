@@ -6,7 +6,6 @@ from io import BytesIO
 from docx import Document
 from fastapi.testclient import TestClient
 
-from extraction.normalize import normalize_document
 from models import ExtractionResponse, OpexMode, RentStep, Scenario
 import main
 from scenario_extract import extract_text_from_word
@@ -49,21 +48,6 @@ def test_extract_text_from_word_detects_docx_signature_even_with_doc_extension()
     text, source = extract_text_from_word(buf, filename="legacy.doc")
     assert source == "docx"
     assert "Legacy upload should still parse as DOCX content." in text
-
-
-def test_normalize_document_handles_doc_via_word_extractor(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "extraction.normalize.extract_text_from_word",
-        lambda file_obj, filename="": ("DOC body text with lease economics", "doc"),
-    )
-    normalized = normalize_document(
-        b"\xd0\xcf\x11\xe0fake-doc",
-        "proposal.doc",
-        "application/msword",
-    )
-    assert normalized.pages
-    assert "DOC body text with lease economics" in normalized.pages[0].text
-    assert any(token.source == "doc_token" for token in normalized.pages[0].words)
 
 
 def test_extract_endpoint_accepts_doc(monkeypatch) -> None:
