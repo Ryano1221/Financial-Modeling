@@ -2,6 +2,9 @@ import { clearAccessToken, getAccessToken, setAccessToken } from "./auth-token";
 
 const REFRESH_TOKEN_KEY = "thecremodel_supabase_refresh_token";
 const USER_KEY = "thecremodel_supabase_user";
+const DEFAULT_SUPABASE_URL = "https://stvfubfpwwlsigfugnem.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN0dmZ1YmZwd3dsc2lnZnVnbmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1OTczMjcsImV4cCI6MjA4NzE3MzMyN30.DqdAOU90YUSkqT1EsDwKPT7JAjuUxapzfUhr58g1sn0";
 
 export interface SupabaseAuthUser {
   id: string;
@@ -17,8 +20,10 @@ export interface SupabaseAuthSession {
 }
 
 function getEnv(): { url: string; anonKey: string } {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
+  const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
+  const envAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
+  const url = envUrl || DEFAULT_SUPABASE_URL;
+  const anonKey = envAnonKey || DEFAULT_SUPABASE_ANON_KEY;
   if (!url || !anonKey) {
     throw new Error(
       "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
