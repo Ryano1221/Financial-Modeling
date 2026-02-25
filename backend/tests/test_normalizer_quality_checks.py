@@ -68,3 +68,34 @@ def test_derive_field_confidence_penalizes_noisy_building_name() -> None:
     confidence = main._derive_field_confidence(existing={}, canonical=canonical, extracted_hints={})
     assert confidence["building_name"] <= 0.35
     assert confidence["rsf"] >= 0.75
+
+
+def test_derive_field_confidence_replaces_zero_placeholders_and_covers_free_rent() -> None:
+    canonical = main._dict_to_canonical(
+        {
+            "building_name": "Benbrook",
+            "suite": "200",
+            "address": "123 Main St, Austin, TX",
+            "rsf": 4626,
+            "commencement_date": "2026-12-01",
+            "expiration_date": "2034-03-31",
+            "term_months": 88,
+            "free_rent_months": 8,
+            "ti_allowance_psf": 0.0,
+            "parking_count": 19,
+            "parking_sales_tax_rate": 0.0825,
+            "rent_schedule": [
+                {"start_month": 0, "end_month": 11, "rent_psf_annual": 26.0},
+                {"start_month": 12, "end_month": 23, "rent_psf_annual": 26.78},
+            ],
+        }
+    )
+    confidence = main._derive_field_confidence(
+        existing={"expiration_date": 0.0, "free_rent_months": 0.0, "ti_allowance_psf": 0.0},
+        canonical=canonical,
+        extracted_hints={},
+    )
+    assert confidence["expiration_date"] >= 0.75
+    assert confidence["free_rent_months"] >= 0.84
+    assert confidence["parking_count"] >= 0.82
+    assert confidence["ti_allowance_psf"] >= 0.7

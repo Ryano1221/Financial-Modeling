@@ -4644,9 +4644,18 @@ def _derive_field_confidence(
         except (TypeError, ValueError):
             continue
 
-    def set_if_missing(key: str, value: float) -> None:
+    def set_if_missing(key: str, value: float, *, replace_weak: bool = True) -> None:
+        candidate = max(0.0, min(1.0, value))
         if key not in out:
-            out[key] = max(0.0, min(1.0, value))
+            out[key] = candidate
+            return
+        if replace_weak:
+            try:
+                current = float(out.get(key, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                current = 0.0
+            if current <= 0.05:
+                out[key] = candidate
 
     rsf = _coerce_float_token(canonical.rsf, 0.0) or 0.0
     hinted_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
@@ -4688,13 +4697,21 @@ def _derive_field_confidence(
     floor = str(canonical.floor or "").strip()
     set_if_missing("suite", 0.85 if suite else 0.35)
     set_if_missing("floor", 0.85 if floor else 0.35)
+    set_if_missing("address", 0.82 if str(canonical.address or "").strip() else 0.4)
 
     opex = _coerce_float_token(canonical.opex_psf_year_1, 0.0) or 0.0
     set_if_missing("opex_psf_year_1", 0.84 if opex > 0 else 0.35)
+    ti_allowance = _coerce_float_token(canonical.ti_allowance_psf, 0.0) or 0.0
+    set_if_missing("ti_allowance_psf", 0.84 if ti_allowance > 0 else 0.7)
+    free_rent_months = _coerce_int_token(canonical.free_rent_months, 0) or 0
+    set_if_missing("free_rent_months", 0.84 if free_rent_months > 0 else 0.7)
     parking_ratio = _coerce_float_token(canonical.parking_ratio, 0.0) or 0.0
+    parking_count = _coerce_int_token(canonical.parking_count, 0) or 0
     parking_rate = _coerce_float_token(canonical.parking_rate_monthly, 0.0) or 0.0
     set_if_missing("parking_ratio", 0.82 if parking_ratio > 0 else 0.35)
     set_if_missing("parking_rate_monthly", 0.82 if parking_rate > 0 else 0.35)
+    set_if_missing("parking_count", 0.82 if parking_count > 0 else 0.7)
+    set_if_missing("parking_sales_tax_rate", 0.82)
     rent_steps = list(getattr(canonical, "rent_schedule", []) or [])
     set_if_missing("rent_schedule", 0.88 if rent_steps else 0.2)
     return out

@@ -44,6 +44,7 @@ import {
   getPremisesDisplayName,
   normalizeLeaseType,
 } from "@/lib/canonical-api";
+import { shouldRequireNormalizeReview } from "@/lib/normalize-review";
 import {
   effectiveTiAllowancePsf,
   effectiveTiBudgetTotal,
@@ -69,17 +70,10 @@ const NOISY_WARNING_PATTERNS = [
   /automatic extraction failed due to a backend processing issue/i,
   /automatic extraction failed\.\s*heuristic review template loaded/i,
   /ai extraction fallback was used for this upload/i,
+  /extraction pipeline fallback was used due to a backend processing issue/i,
   /rent_schedule was empty; added single step at \$0/i,
   /automatic extraction fallback was used for this upload/i,
   /expiration inferred from \d+-month lease term and commencement date/i,
-];
-const HARD_REVIEW_WARNING_PATTERNS = [
-  /automatic extraction failed/i,
-  /review template/i,
-  /no text could be extracted/i,
-  /could not process this file automatically/i,
-  /could not confidently parse/i,
-  /lease normalization failed/i,
 ];
 
 function nextId(): string {
@@ -162,18 +156,6 @@ function collectCanonicalVariants(
     if (rankDiff !== 0) return rankDiff;
     return canonicalVariantKey(left).localeCompare(canonicalVariantKey(right));
   });
-}
-
-function hasInvalidCanonicalCoreValues(canonical: BackendCanonicalLease): boolean {
-  return (
-    !canonical ||
-    !Number.isFinite(Number(canonical.rsf)) ||
-    Number(canonical.rsf) <= 0 ||
-    !Number.isFinite(Number(canonical.term_months)) ||
-    Number(canonical.term_months) <= 0 ||
-    !Array.isArray(canonical.rent_schedule) ||
-    canonical.rent_schedule.length === 0
-  );
 }
 
 function canonicalDisplayNameForAdd(
@@ -893,27 +875,18 @@ export default function Home() {
         document_type_detected: documentTypeDetected || "unknown",
       }));
       const canonicalVariants = collectCanonicalVariants(canonicalWithDocType, optionVariantsWithDocType);
-      const criticalMissing = new Set(["rsf", "rent_schedule", "term_months", "commencement_date", "expiration_date"]);
-      const hasCriticalMissing = (data.missing_fields ?? []).some((f) => criticalMissing.has(String(f)));
-      const hasHardReviewWarning = warnings.some((w) =>
-        HARD_REVIEW_WARNING_PATTERNS.some((p) => p.test(w))
-      );
       const confidenceScore = Number(data.confidence_score ?? 0);
-      const lowConfidence = !Number.isFinite(confidenceScore) || confidenceScore < 0.85;
-      const reviewTasks = Array.isArray(data.review_tasks) ? data.review_tasks : [];
-      const hasBlockerReviewTask = reviewTasks.some((task) => String(task?.severity ?? "").toLowerCase() === "blocker");
-      const hasWarnReviewTask = reviewTasks.some((task) => String(task?.severity ?? "").toLowerCase() === "warn");
-      const hasInvalidCoreValues = canonicalVariants.some((variant) => hasInvalidCanonicalCoreValues(variant));
-      const needsReview =
-        hasCriticalMissing ||
-        hasHardReviewWarning ||
-        hasInvalidCoreValues ||
-        lowConfidence ||
-        hasBlockerReviewTask ||
-        hasWarnReviewTask;
+      const reviewDecision = shouldRequireNormalizeReview({
+        missingFields: data.missing_fields ?? [],
+        warnings,
+        confidenceScore,
+        reviewTasks: Array.isArray(data.review_tasks) ? data.review_tasks : [],
+        canonicalVariants,
+      });
+      const needsReview = reviewDecision.needsReview;
 
       if (needsReview) {
-        if (lowConfidence) {
+        if (reviewDecision.lowConfidence) {
           warnings.push(`Extraction confidence is ${Math.round(Math.max(0, confidenceScore) * 100)}%; please review before adding.`);
         }
         const queued: NormalizerResponse = {
