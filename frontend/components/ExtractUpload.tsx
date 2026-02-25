@@ -15,7 +15,7 @@ function sleep(ms: number): Promise<void> {
 
 interface ExtractUploadProps {
   showAdvancedOptions?: boolean;
-  onSuccess: (data: NormalizerResponse) => void;
+  onSuccess: (data: NormalizerResponse) => void | Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -137,7 +137,7 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
                   lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type,
                 });
                 console.log("[normalize] calling onSuccess");
-                onSuccess(data);
+                await onSuccess(data);
                 return;
               }
               throw new Error("Unexpected normalize response keys: " + Object.keys(data).join(","));
