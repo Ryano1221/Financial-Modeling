@@ -44,7 +44,6 @@ import {
   getPremisesDisplayName,
   normalizeLeaseType,
 } from "@/lib/canonical-api";
-import { shouldRequireNormalizeReview } from "@/lib/normalize-review";
 import {
   effectiveTiAllowancePsf,
   effectiveTiBudgetTotal,
@@ -52,15 +51,12 @@ import {
   normalizeTiSourceOfTruth,
   syncTiFields,
 } from "@/lib/ti";
-import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
-import { CommencedLeaseChoiceModal } from "@/components/CommencedLeaseChoiceModal";
 import type { CanonicalComputeResponse } from "@/lib/types";
 import type { SupabaseAuthSession } from "@/lib/supabase";
 import { getSession } from "@/lib/supabase";
 import {
   applyLeaseModelChoice,
   hasCommencementBeforeToday,
-  type CommencedLeaseModelChoice,
 } from "@/lib/remaining-obligation";
 import {
   type UserBrandingResponse,
@@ -554,7 +550,6 @@ export default function Home() {
   const [extractError, setExtractError] = useState<string | null>(null);
   const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
   const [lastExtractionSummary, setLastExtractionSummary] = useState<ExtractionSummary | null>(null);
-  const [pendingNormalizeQueue, setPendingNormalizeQueue] = useState<NormalizerResponse[]>([]);
   const [brandId, setBrandId] = useState<string>("default");
   const [globalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
@@ -586,10 +581,7 @@ export default function Home() {
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
-  const [commencedChoiceModalOpen, setCommencedChoiceModalOpen] = useState(false);
-  const commencedChoiceResolverRef = useRef<((choice: CommencedLeaseModelChoice) => void) | null>(null);
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
-  const pendingNormalize = pendingNormalizeQueue[0] ?? null;
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
   const defaultPreparedByFromAuth = useMemo(
@@ -602,20 +594,6 @@ export default function Home() {
       defaultBrokerageLogoPromiseRef.current = fetchPublicAssetDataUrl(CRE_DEFAULT_LOGO_PUBLIC_PATH);
     }
     return await defaultBrokerageLogoPromiseRef.current;
-  }, []);
-
-  const requestCommencedLeaseModelChoice = useCallback((): Promise<CommencedLeaseModelChoice> => {
-    setCommencedChoiceModalOpen(true);
-    return new Promise<CommencedLeaseModelChoice>((resolve) => {
-      commencedChoiceResolverRef.current = resolve;
-    });
-  }, []);
-
-  const resolveCommencedLeaseModelChoice = useCallback((choice: CommencedLeaseModelChoice) => {
-    const resolver = commencedChoiceResolverRef.current;
-    commencedChoiceResolverRef.current = null;
-    setCommencedChoiceModalOpen(false);
-    if (resolver) resolver(choice);
   }, []);
 
   useEffect(() => {
@@ -631,14 +609,6 @@ export default function Home() {
       });
     return () => {
       cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      const resolver = commencedChoiceResolverRef.current;
-      commencedChoiceResolverRef.current = null;
-      if (resolver) resolver("full_original_term");
     };
   }, []);
 
@@ -869,13 +839,11 @@ export default function Home() {
     (
       canonical: BackendCanonicalLease,
       onAdded?: (s: ScenarioWithId) => void,
-      preferredName?: string,
-      forcedModelChoice?: CommencedLeaseModelChoice | null
+      preferredName?: string
     ) => {
       let scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical, preferredName));
       if (hasCommencementBeforeToday(scenarioInput.commencement)) {
-        const choice: CommencedLeaseModelChoice = forcedModelChoice ?? "full_original_term";
-        scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, choice));
+        scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, "remaining_obligation"));
       }
       const scenarioWithId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
       setScenarios((prev) => [...prev, scenarioWithId]);
@@ -917,35 +885,7 @@ export default function Home() {
         document_type_detected: documentTypeDetected || "unknown",
       }));
       const canonicalVariants = collectCanonicalVariants(canonicalWithDocType, optionVariantsWithDocType);
-      const confidenceScore = Number(data.confidence_score ?? 0);
-      const reviewDecision = shouldRequireNormalizeReview({
-        missingFields: data.missing_fields ?? [],
-        warnings,
-        confidenceScore,
-        reviewTasks: Array.isArray(data.review_tasks) ? data.review_tasks : [],
-        canonicalVariants,
-      });
-      const needsReview = reviewDecision.needsReview;
-
-      if (needsReview) {
-        if (reviewDecision.lowConfidence) {
-          warnings.push(`Extraction confidence is ${Math.round(Math.max(0, confidenceScore) * 100)}%; please review before adding.`);
-        }
-        const queued: NormalizerResponse = {
-          ...data,
-          canonical_lease: canonicalWithDocType,
-          option_variants: canonicalVariants,
-          warnings,
-        };
-        setPendingNormalizeQueue((prev) => [...prev, queued]);
-        return;
-      }
-
       const totalVariants = canonicalVariants.length;
-      const commencedChoice: CommencedLeaseModelChoice | null =
-        canonicalVariants.some((variant) => hasCommencementBeforeToday(String(variant.commencement_date || "")))
-          ? await requestCommencedLeaseModelChoice()
-          : null;
       canonicalVariants.forEach((variant, index) => {
         const preferredName = canonicalDisplayNameForAdd(variant, index, totalVariants);
         addScenarioFromCanonical(
@@ -958,64 +898,12 @@ export default function Home() {
             });
             runComputeForScenario(newScenario);
           },
-          preferredName || undefined,
-          commencedChoice
+          preferredName || undefined
         );
       });
     },
-    [addScenarioFromCanonical, requestCommencedLeaseModelChoice, runComputeForScenario]
+    [addScenarioFromCanonical, runComputeForScenario]
   );
-
-  const handleNormalizeConfirm = useCallback(
-    async (canonical: BackendCanonicalLease) => {
-      const canonicalWithDocType: BackendCanonicalLease = {
-        ...canonical,
-        document_type_detected:
-          ((canonical as { document_type_detected?: string })?.document_type_detected || lastExtractionSummary?.document_type_detected || "unknown")
-            .toString()
-            .trim() || "unknown",
-      };
-      const queued = pendingNormalizeQueue[0] ?? null;
-      const queuedVariants = (Array.isArray(queued?.option_variants) ? queued.option_variants : []).map((variant) => ({
-        ...variant,
-        document_type_detected:
-          ((variant as { document_type_detected?: string })?.document_type_detected || canonicalWithDocType.document_type_detected || "unknown")
-            .toString()
-            .trim() || "unknown",
-      }));
-      const canonicalVariants = collectCanonicalVariants(canonicalWithDocType, queuedVariants);
-      const totalVariants = canonicalVariants.length;
-      const commencedChoice: CommencedLeaseModelChoice | null =
-        canonicalVariants.some((variant) => hasCommencementBeforeToday(String(variant.commencement_date || "")))
-          ? await requestCommencedLeaseModelChoice()
-          : null;
-      canonicalVariants.forEach((variant, index) => {
-        const preferredName = canonicalDisplayNameForAdd(variant, index, totalVariants);
-        addScenarioFromCanonical(
-          variant,
-          (newScenario) => {
-            console.log("[compute] about to run (confirm)", {
-              scenarioId: newScenario.id,
-              lease_type: (variant as { lease_type?: string })?.lease_type ?? "NNN",
-              document_type_detected: (variant as { document_type_detected?: string })?.document_type_detected ?? "unknown",
-            });
-            runComputeForScenario(newScenario);
-          },
-          preferredName || undefined,
-          commencedChoice
-        );
-      });
-      setLastExtractWarnings(null);
-      setLastExtractionSummary(null);
-      setPendingNormalizeQueue((prev) => prev.slice(1));
-    },
-    [addScenarioFromCanonical, requestCommencedLeaseModelChoice, runComputeForScenario, lastExtractionSummary, pendingNormalizeQueue]
-  );
-
-  const handleNormalizeCancel = useCallback(() => {
-    setLastExtractionSummary(null);
-    setPendingNormalizeQueue((prev) => prev.slice(1));
-  }, []);
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message || null);
@@ -1682,20 +1570,6 @@ export default function Home() {
                   onSuccess={handleNormalizeSuccess}
                   onError={handleExtractError}
                 />
-                {pendingNormalize && (
-                  <div className="mt-4">
-                    <NormalizeReviewCard
-                      data={pendingNormalize}
-                      onConfirm={handleNormalizeConfirm}
-                      onCancel={handleNormalizeCancel}
-                    />
-                    {pendingNormalizeQueue.length > 1 && (
-                      <p className="mt-2 text-xs text-slate-400">
-                        {pendingNormalizeQueue.length - 1} more extracted file{pendingNormalizeQueue.length - 1 === 1 ? "" : "s"} waiting for review.
-                      </p>
-                    )}
-                  </div>
-                )}
                 {extractError && (
                   <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-200">
                     {extractError}
@@ -2006,11 +1880,6 @@ export default function Home() {
         </div>
         </section>
       </main>
-      <CommencedLeaseChoiceModal
-        open={commencedChoiceModalOpen}
-        onChooseRemaining={() => resolveCommencedLeaseModelChoice("remaining_obligation")}
-        onChooseFull={() => resolveCommencedLeaseModelChoice("full_original_term")}
-      />
     </>
   );
 }
