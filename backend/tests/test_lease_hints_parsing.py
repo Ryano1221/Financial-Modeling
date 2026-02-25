@@ -407,3 +407,87 @@ def test_extract_hints_6xguad_style_docx_text_regression() -> None:
     assert hints["opex_psf_year_1"] == 28.53
     assert hints["opex_source_year"] == 2025
     assert hints["opex_by_calendar_year"] == {2025: 28.53}
+
+
+def test_extract_hints_summit_lantana_prefers_project_name_and_floor_pair() -> None:
+    text = (
+        "PROJECT: The Summit at Lantana\n"
+        "PREMISES: The entirety of floors three (3) and four (4) consisting of approximately 114,558 RSF.\n"
+        "COMMENCEMENT DATE: April 1, 2028\n"
+        "LEASE TERM: Eighty-nine (89) months\n"
+        "RENTAL ABATEMENT: Tenant shall have five (5) months of Base Rental Abatement.\n"
+        "OPERATING EXPENSES: Per existing Lease however the base year for the Cap on Controllables will be reset for 2028.\n"
+        "ALLOWANCE: Following lease execution, Landlord shall provide a Tenant Improvement Allowance in the amount of $45.00 per RSF.\n"
+        "The Tenant Improvement Allowance shall be available and will expire March 31, 2029.\n"
+    )
+    hints = main._extract_lease_hints(text, "summit-counter.docx", "test-rid")
+    assert hints["building_name"] == "The Summit at Lantana"
+    assert hints["suite"] == ""
+    assert hints["floor"] == "3,4"
+    assert hints["rsf"] == 114558.0
+    assert str(hints["commencement_date"]) == "2028-04-01"
+    assert hints["term_months"] == 89
+    assert str(hints["expiration_date"]) == "2035-08-31"
+    assert hints["opex_psf_year_1"] is None
+
+
+def test_extract_hints_zilker_parses_building_floor_ratio_and_unreserved_rate() -> None:
+    text = (
+        "Building: Zilker Point located at 218 South Lamar. Additional information can be found at https://zilkerpoint.com\n"
+        "Premises: Approximately 94,832 RSF on the fifth, sixth and seventh floor (5, 6 & 7).\n"
+        "Lease Commencement Date: April 1, 2028\n"
+        "Term: 132 months from the Lease Commencement Date.\n"
+        "Operating Expenses: Currently operating expenses are estimated to be approximately $18.00/RSF.\n"
+        "Parking: Landlord will provide Tenant employees and visitors up to 3.2 per 1000 parking at market rates. "
+        "Market rates are $175/month for unreserved parking and $250/space for reserved parking, plus tax. "
+        "Landlord shall fix the parking rate for unreserved parking spaces at $125/space/month for the first 3 years.\n"
+    )
+    hints = main._extract_lease_hints(text, "zilker.docx", "test-rid")
+    assert hints["building_name"] == "Zilker Point"
+    assert hints["suite"] == ""
+    assert hints["floor"] == "5,6,7"
+    assert hints["rsf"] == 94832.0
+    assert str(hints["commencement_date"]) == "2028-04-01"
+    assert str(hints["expiration_date"]) == "2039-03-31"
+    assert hints["term_months"] == 132
+    assert hints["parking_ratio"] == 3.2
+    assert hints["parking_rate_monthly"] == 175.0
+
+
+def test_extract_hints_6xguad_prefers_re_alias_over_amenity_text() -> None:
+    text = (
+        "RE: Non-Binding Proposal to Sublease – 400 W 6th Street – Austin, TX (“6xGuad”) – Subtenant SolarWinds\n"
+        "Building & Project Overview: 400 W 6th St Austin, TX 78701.\n"
+        "Amenities: 14th Floor Rooftop Terrace Amenity – A first-class outdoor amenity space.\n"
+        "Sublease Premises: The Premises will be defined to be located on 26-28 (92,982 RSF).\n"
+        "Sublease Term: Expiring on October 31, 2036.\n"
+    )
+    hints = main._extract_lease_hints(text, "6xguad.docx", "test-rid")
+    assert hints["building_name"] == "6xGuad"
+    assert hints["floor"] == "26-28"
+    assert hints["rsf"] == 92982.0
+
+
+def test_extract_hints_300w6th_prefers_unreserved_rate_and_term_months() -> None:
+    text = (
+        "Re: SolarWinds Landlord Counter Proposal to 300 West 6th\n"
+        "LEASED PREMISES: Approximately 94,420 rentable square feet across three full floors with interconnecting stairs\n"
+        "Floor 9 32,142 RSF\n"
+        "Floor 10 31,139 RSF\n"
+        "Floor 11 31,139 RSF\n"
+        "LEASE COMMENCEMENT DATE: April 1, 2028\n"
+        "LEASED PREMISES TERM: One Hundred and Thirty Two (132) Months\n"
+        "TRANSPORTATION: Tenant shall be provided unreserved parking at a ratio of 3:1,000 in the building structured garage on a must take, must pay basis. "
+        "The charge for parking shall be $150.00 per unreserved permit per month plus tax (if applicable) during the initial 3 yrs of the lease and "
+        "$220 per unreserved permit per month plus tax for yr 4.\n"
+        "Reserved parking shall be $250.00/space/month plus tax.\n"
+    )
+    hints = main._extract_lease_hints(text, "300w6th.docx", "test-rid")
+    assert hints["building_name"] == "300 West 6th"
+    assert hints["floor"] == "9,10,11"
+    assert hints["rsf"] == 94420.0
+    assert str(hints["commencement_date"]) == "2028-04-01"
+    assert str(hints["expiration_date"]) == "2039-03-31"
+    assert hints["term_months"] == 132
+    assert hints["parking_ratio"] == 3.0
+    assert hints["parking_rate_monthly"] == 150.0
