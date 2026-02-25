@@ -3950,6 +3950,96 @@ def _split_note_fragments(raw: str) -> list[str]:
     return out
 
 
+_NOTE_PREFIX_PATTERN = re.compile(
+    r"(?i)^\s*(?:"
+    r"assignment\s*(?:/|and)\s*sublease|sublease|assignment|"
+    r"renewal\s*(?:option|/?\s*extension)?|option\s+to\s+renew|"
+    r"parking\s*(?:charges|ratio)?|"
+    r"expense\s*caps?\s*/\s*exclusions|opex\s*(?:exclusions?|cap)|audit\s*rights?|"
+    r"use\s*restrictions?|termination\s*option|expansion\s*option|holdover|"
+    r"rofr|rofo|right\s+of\s+first\s+refusal|right\s+of\s+first\s+offer|"
+    r"right|sublease"
+    r")\s*:\s*"
+)
+
+
+def _strip_note_prefix_noise(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip(" \t,;|")
+    if not cleaned:
+        return ""
+    for _ in range(4):
+        next_val = _NOTE_PREFIX_PATTERN.sub("", cleaned).strip()
+        if next_val == cleaned:
+            break
+        cleaned = next_val
+    return cleaned
+
+
+def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
+    cleaned = _strip_note_prefix_noise(text)
+    low = cleaned.lower()
+    if not cleaned:
+        return ""
+
+    # Assignment/sublease
+    if any(k in low for k in ("assign", "assignment", "sublet", "sublease")):
+        if "may not assign" in low or "without the prior written consent" in low:
+            summary = "Assignment/sublease requires landlord consent"
+        else:
+            summary = "Assignment/sublease rights included"
+        if "all or any portion" in low:
+            summary += " for all or part of premises"
+        if re.search(r"(?i)\bnot\s+(?:be\s+)?unreasonably\s+withheld\b", cleaned):
+            summary += "; consent not unreasonably withheld"
+        if "conditioned or delayed" in low:
+            summary += ", conditioned, or delayed"
+        return _condense_note_text(summary.rstrip(" ,;."), max_chars=max_chars, max_sentences=1)
+
+    # Renewal
+    if "renew" in low or "extension" in low:
+        term_match = re.search(r"(?i)\b(\d{1,3})\s*(?:months?|mos?)\b", cleaned)
+        months_txt = f"{term_match.group(1)} months" if term_match else "stated term"
+        summary = f"Renewal option for {months_txt}"
+        if "fair market" in low or "fmv" in low:
+            summary += " at FMV"
+        if "arbitration" in low:
+            summary += "; FMV dispute via arbitration"
+        return _condense_note_text(summary, max_chars=max_chars, max_sentences=1)
+
+    # Parking
+    if "parking" in low or "permit" in low:
+        parts: list[str] = []
+        ratio_match = re.search(
+            r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?|spaces?|stalls?)?\s*(?:per|/)\s*1,?000\s*(?:rsf|sf|square feet)?\b",
+            cleaned,
+        )
+        if ratio_match:
+            parts.append(f"{ratio_match.group(1)}/1,000 RSF")
+        if "must take and pay" in low:
+            parts.append("must-take-and-pay")
+        convert_match = re.search(r"(?i)\bup to\s*(\d{1,3})\s*%[^.]{0,140}\breserved\b", cleaned)
+        if convert_match:
+            parts.append(f"up to {convert_match.group(1)}% convertible to reserved")
+        if not parts:
+            return _condense_note_text("Parking terms included.", max_chars=max_chars, max_sentences=1)
+        return _condense_note_text(f"Parking: {', '.join(parts)}.", max_chars=max_chars, max_sentences=1)
+
+    # Expense caps / audit / exclusions
+    if any(k in low for k in ("cap", "controllable", "management fee", "audit", "exclude", "exclusion")):
+        cont_cap = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*%\b[^.]{0,80}\bcontrollable\b", cleaned)
+        mgmt_cap = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*%\b[^.]{0,80}\bmanagement\b", cleaned)
+        if cont_cap or mgmt_cap:
+            bits = []
+            if cont_cap:
+                bits.append(f"{cont_cap.group(1)}% controllable-expense cap")
+            if mgmt_cap:
+                bits.append(f"{mgmt_cap.group(1)}% management-fee cap")
+            return _condense_note_text("; ".join(bits) + ".", max_chars=max_chars, max_sentences=1)
+        return _condense_note_text("Expense caps/exclusions or audit rights included.", max_chars=max_chars, max_sentences=1)
+
+    return _condense_note_text(cleaned, max_chars=max_chars, max_sentences=1)
+
+
 def _condense_note_text(text: str, max_chars: int = 320, max_sentences: int = 2) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "")).strip(" \t,;|")
     if not cleaned:
@@ -3999,18 +4089,26 @@ def _condense_note_line(line: str, max_chars: int = 320) -> str:
     if not cleaned:
         return ""
     if len(cleaned) <= max_chars:
-        return cleaned
+        return _strip_note_prefix_noise(cleaned)
 
     labeled = re.match(r"^([A-Za-z][A-Za-z0-9/\- ]{1,45}):\s*(.+)$", cleaned)
     if labeled:
         label = labeled.group(1).strip()
         body = labeled.group(2).strip()
         body_budget = max(60, max_chars - len(label) - 2)
-        compact_body = _condense_note_text(body, max_chars=body_budget)
+        compact_body = _summarize_note_clause(body, max_chars=body_budget)
         combined = f"{label}: {compact_body}".strip()
         if len(combined) <= max_chars:
             return combined
-    return _condense_note_text(cleaned, max_chars=max_chars)
+    return _summarize_note_clause(cleaned, max_chars=max_chars)
+
+
+def _note_dedupe_key(line: str) -> str:
+    base = _strip_note_prefix_noise(str(line or ""))
+    base = base.lower().replace("...", "")
+    base = re.sub(r"[^a-z0-9]+", " ", base).strip()
+    tokens = [token for token in base.split() if token]
+    return " ".join(tokens[:24])
 
 
 def _pack_notes_for_storage(
@@ -4034,7 +4132,7 @@ def _pack_notes_for_storage(
         line = _condense_note_line(raw, max_chars=max_line_chars)
         if not line:
             continue
-        dedupe_key = re.sub(r"\s+", " ", line).strip().lower()
+        dedupe_key = _note_dedupe_key(line)
         if dedupe_key in seen:
             continue
 
@@ -4047,7 +4145,7 @@ def _pack_notes_for_storage(
             line = _condense_note_line(line, max_chars=remaining)
             if not line or len(line) > remaining:
                 break
-            dedupe_key = re.sub(r"\s+", " ", line).strip().lower()
+            dedupe_key = _note_dedupe_key(line)
             if dedupe_key in seen:
                 continue
             projected = total + sep_len + len(line)
@@ -5477,7 +5575,7 @@ def _normalize_impl(
                 updates["notes"] = _pack_notes_for_storage(
                     note_highlights,
                     max_total_chars=1600,
-                    max_line_chars=320,
+                    max_line_chars=190,
                 )
             elif text.strip() and not (canonical.notes or "").strip():
                 updates["notes"] = (
@@ -5490,7 +5588,7 @@ def _normalize_impl(
                     extra_note_lines=extra_note_lines,
                     existing_notes=str(updates.get("notes") or canonical.notes or "").strip(),
                     max_total_chars=1600,
-                    max_line_chars=320,
+                    max_line_chars=190,
                 )
             current_discount = _coerce_float_token(
                 updates.get("discount_rate_annual"),

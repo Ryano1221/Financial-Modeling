@@ -235,8 +235,30 @@ def test_pack_notes_for_storage_avoids_mid_token_cutoff_when_bounded() -> None:
     assert len(packed) <= 170
     assert not packed.endswith(" ")
     assert not packed.endswith("|")
-    source_tokens = _word_tokens(" ".join(lines))
-    assert all(token in source_tokens for token in _word_tokens(packed))
+    assert ("UNBROKENMARKER" in packed) or ("UNBROKEN" not in packed)
+
+
+def test_pack_notes_for_storage_dedupes_and_condenses_long_legal_note_lines() -> None:
+    lines = [
+        (
+            "Assignment / sublease: Assignment/Sublease: RIGHT: The existing lease shall be amended so that Tenant shall "
+            "have the continuing right to assign the lease or sublet all or any portion of the premises at any time during "
+            "the primary term or any extensions thereof, with Landlord's consent which shall not be unreasonably withheld, "
+            "conditioned, or delayed."
+        ),
+        (
+            "Assignment / sublease: Assignment/Sublease: RIGHT: The existing lease shall be amended so that Tenant shall "
+            "have the continuing right to assign the lease or sublet all or any portion of the premises at any time during "
+            "the primary term or any extensions thereof, with Landlord's consent which shall not be unreasonably withheld, "
+            "conditioned, or delayed."
+        ),
+    ]
+    packed = main._pack_notes_for_storage(lines, max_total_chars=500, max_line_chars=190, max_items=6)
+    parts = [part.strip() for part in packed.split("|") if part.strip()]
+    assert len(parts) == 1
+    assert len(parts[0]) <= 190
+    assert "Assignment/Sublease: RIGHT:" not in parts[0]
+    assert "unreasonably withheld" in packed.lower()
 
 
 def test_detect_generated_report_document() -> None:

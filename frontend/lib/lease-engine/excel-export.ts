@@ -128,6 +128,14 @@ const NOTE_CATEGORY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   { label: "Holdover", regex: /\bholdover\b/i },
 ];
 
+const NOTE_PREFIX_PATTERNS: RegExp[] = [
+  /^(assignment\s*(?:\/|and)\s*sublease|sublease|assignment)\s*:\s*/i,
+  /^(renewal\s*(?:option|\/\s*extension)?|option to renew)\s*:\s*/i,
+  /^(parking\s*(?:charges|ratio)?)\s*:\s*/i,
+  /^(expense caps?\s*\/\s*exclusions|opex(?:\s+exclusions?)?|audit rights?)\s*:\s*/i,
+  /^(right|sublease)\s*:\s*/i,
+];
+
 function splitNoteFragments(raw: string): string[] {
   const text = (raw || "").replace(/\r/g, "\n").replace(/\u2022/g, "\n").trim();
   if (!text) return [];
@@ -143,6 +151,87 @@ function splitNoteFragments(raw: string): string[] {
     .filter(Boolean);
 }
 
+function stripNotePrefixNoise(input: string): string {
+  let text = (input || "").replace(/\s+/g, " ").trim();
+  for (let i = 0; i < 4; i += 1) {
+    const before = text;
+    for (const pattern of NOTE_PREFIX_PATTERNS) {
+      text = text.replace(pattern, "").trim();
+    }
+    if (text === before) break;
+  }
+  return text;
+}
+
+function condenseNoteFragment(fragment: string, maxChars = 185): string {
+  const cleaned = stripNotePrefixNoise(fragment);
+  if (!cleaned) return "";
+  const low = cleaned.toLowerCase();
+
+  if (/\bassign|\bsublet|\bsublease/.test(low)) {
+    const bits: string[] = [];
+    if (low.includes("may not assign") || low.includes("without the prior written consent")) {
+      bits.push("requires landlord consent");
+    } else {
+      bits.push("assignment/sublease rights included");
+    }
+    if (low.includes("all or any portion")) bits.push("covers all or part of premises");
+    if (/\bnot\s+(?:be\s+)?unreasonably\s+withheld\b/i.test(cleaned)) bits.push("consent not unreasonably withheld");
+    return bits.join("; ");
+  }
+
+  if (/\brenew|\bextension/.test(low)) {
+    const monthMatch = cleaned.match(/\b(\d{1,3})\s*(?:months?|mos?)\b/i);
+    const term = monthMatch ? `${monthMatch[1]} months` : "stated term";
+    const suffix = low.includes("fair market") || low.includes("fmv") ? " at FMV" : "";
+    return `Renewal option for ${term}${suffix}`;
+  }
+
+  if (/\bparking|\bpermit/.test(low)) {
+    const ratioMatch = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:permits?|spaces?|stalls?)?\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf)?\b/i);
+    const ratio = ratioMatch ? `${ratioMatch[1]}/1,000 RSF` : "";
+    const mustTake = low.includes("must take and pay") ? "must-take-and-pay" : "";
+    const convertMatch = cleaned.match(/\bup to\s*(\d{1,3})\s*%[^.]{0,140}\breserved\b/i);
+    const convert = convertMatch ? `up to ${convertMatch[1]}% convertible to reserved` : "";
+    const parts = [ratio, mustTake, convert].filter(Boolean);
+    if (parts.length > 0) return `Parking: ${parts.join(", ")}`;
+    return "Parking terms included";
+  }
+
+  if (/\bcontrollable\b|\bmanagement\b|\bcap\b/.test(low)) {
+    const controllable = cleaned.match(/\b(\d+(?:\.\d+)?)\s*%\b[^.]{0,80}\bcontrollable\b/i);
+    const management = cleaned.match(/\b(\d+(?:\.\d+)?)\s*%\b[^.]{0,80}\bmanagement\b/i);
+    const parts = [
+      controllable ? `${controllable[1]}% controllable-expense cap` : "",
+      management ? `${management[1]}% management-fee cap` : "",
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join("; ");
+  }
+
+  if (cleaned.length <= maxChars) return cleaned;
+  const sentences = cleaned
+    .split(/(?<=[.!?;:])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (sentences.length > 0 && sentences[0].length <= maxChars) return sentences[0];
+  const wordBudget = Math.max(12, maxChars - 3);
+  const words = cleaned.split(/\s+/);
+  const compact: string[] = [];
+  let length = 0;
+  for (const word of words) {
+    const delta = word.length + (compact.length > 0 ? 1 : 0);
+    if (length + delta > wordBudget) break;
+    compact.push(word);
+    length += delta;
+  }
+  return `${compact.join(" ").trim().replace(/[ ,;:.]+$/g, "")}...`;
+}
+
+function noteDedupeKey(fragment: string): string {
+  const cleaned = stripNotePrefixNoise(fragment).toLowerCase().replace(/\.\.\.$/g, "");
+  return cleaned.replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).slice(0, 22).join(" ");
+}
+
 function classifyNoteCategory(detail: string): string {
   for (const pattern of NOTE_CATEGORY_PATTERNS) {
     if (pattern.regex.test(detail)) return pattern.label;
@@ -155,11 +244,13 @@ function formatNotesByCategory(raw: string): string {
   if (fragments.length === 0) return "";
   const grouped = new Map<string, string[]>();
   for (const fragment of fragments) {
-    const category = classifyNoteCategory(fragment);
+    const condensed = condenseNoteFragment(fragment);
+    if (!condensed) continue;
+    const category = classifyNoteCategory(condensed);
     const existing = grouped.get(category) ?? [];
-    const compact = fragment.replace(/\s+/g, " ").trim();
-    if (!existing.some((item) => item.toLowerCase() === compact.toLowerCase())) {
-      existing.push(compact);
+    const key = noteDedupeKey(condensed);
+    if (!existing.some((item) => noteDedupeKey(item) === key)) {
+      existing.push(condensed);
       grouped.set(category, existing);
     }
   }
