@@ -1,5 +1,7 @@
 """Regression tests for building/suite/address hint extraction from lease text."""
 
+from datetime import date
+
 import main
 
 
@@ -50,6 +52,23 @@ def test_extract_hints_multiline_located_at_suite_building_clause() -> None:
     assert hints["building_name"] == "Barton Creek Plaza, Austin, Texas"
 
 
+def test_extract_hints_foster_style_letter_prefers_building_name_over_boilerplate() -> None:
+    text = (
+        "RE: Lease Renewal Proposal for Foster LLP\n"
+        "Thank you for the opportunity to present the following proposal. We are very interested in continuing "
+        "our relationship with your client as a tenant at Vista Ridge.\n"
+        "Address: 912 S. Capital of Texas Hwy, Austin, TX 78746\n"
+        "Contraction Premises: Suite 450 containing approximately 5,944 RSF\n"
+        "Term: Sixty-three (63) months\n"
+    )
+    hints = main._extract_lease_hints(text, "renewal-proposal.docx", "test-rid")
+    assert hints["building_name"] == "Vista Ridge"
+    assert hints["address"] == "912 S. Capital of Texas Hwy, Austin, TX 78746"
+    assert hints["suite"] == "450"
+    assert hints["rsf"] == 5944.0
+    assert hints["term_months"] == 63
+
+
 def test_extract_hints_prefers_premises_suite_over_notice_addresses() -> None:
     text = (
         "Description of Premises:\n"
@@ -96,6 +115,19 @@ def test_extract_hints_parses_commencement_and_expiration_from_term_clause() -> 
     assert str(hints["commencement_date"]) == "2024-09-01"
     assert str(hints["expiration_date"]) == "2027-05-31"
     assert hints["term_months"] == 33
+
+
+def test_extract_hints_amendment_prefers_extended_term_not_whereas_schedule() -> None:
+    text = (
+        "WHEREAS, the term of the Lease is scheduled to expire on August 31, 2019; and\n"
+        "NOW, THEREFORE, Landlord and Tenant agree the Lease is hereby amended as follows:\n"
+        "The Original Term of the Lease is hereby extended for the period commencing on September 1, 2019 "
+        "and ending on November 30, 2026.\n"
+    )
+    hints = main._extract_lease_hints(text, "first-amendment.pdf", "test-rid")
+    assert str(hints["commencement_date"]) == "2019-09-01"
+    assert str(hints["expiration_date"]) == "2026-11-30"
+    assert hints["term_months"] == 87
 
 
 def test_extract_hints_prefers_subject_premises_rsf_over_rofr_space() -> None:
@@ -270,6 +302,43 @@ def test_detect_generated_report_document() -> None:
         "Start month End month Rate\\n"
     )
     assert main._looks_like_generated_report_document(text) is True
+
+
+def test_detect_generated_financial_analysis_document() -> None:
+    text = (
+        "Financial Analysis\n"
+        "Existing Obligation\n"
+        "Landlord Renewal Proposal\n"
+        "Cash Flow Summary\n"
+        "Total Estimated Obligation\n"
+        "This analysis is not to be used for accounting purposes.\n"
+    )
+    assert main._looks_like_generated_report_document(text) is True
+
+
+def test_remaining_obligation_rollforward_and_schedule_shift() -> None:
+    rolled = main._remaining_obligation_rollforward(
+        date(2019, 9, 1),
+        date(2026, 11, 30),
+        analysis_date=date(2026, 2, 25),
+    )
+    assert rolled == (date(2026, 3, 1), 9, 78)
+
+    schedule = [
+        {"start_month": 0, "end_month": 14, "rent_psf_annual": 18.5},
+        {"start_month": 15, "end_month": 26, "rent_psf_annual": 19.0},
+        {"start_month": 27, "end_month": 38, "rent_psf_annual": 19.5},
+        {"start_month": 39, "end_month": 50, "rent_psf_annual": 20.0},
+        {"start_month": 51, "end_month": 62, "rent_psf_annual": 20.5},
+        {"start_month": 63, "end_month": 74, "rent_psf_annual": 21.0},
+        {"start_month": 75, "end_month": 86, "rent_psf_annual": 21.5},
+    ]
+    shifted = main._shift_rent_schedule_for_elapsed_months(
+        schedule,
+        elapsed_months=78,
+        remaining_term_months=9,
+    )
+    assert shifted == [{"start_month": 0, "end_month": 8, "rent_psf_annual": 21.5}]
 
 
 def test_generic_scenario_name_detection_flags_suite_only_names() -> None:

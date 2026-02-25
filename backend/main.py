@@ -1426,6 +1426,151 @@ def _rent_schedule_rows_equal(left_rows: list, right_rows: list) -> bool:
     return _normalize(left_rows) == _normalize(right_rows)
 
 
+def _first_day_of_month(value: date) -> date:
+    return date(value.year, value.month, 1)
+
+
+def _first_day_next_month(value: date) -> date:
+    if value.month == 12:
+        return date(value.year + 1, 1, 1)
+    return date(value.year, value.month + 1, 1)
+
+
+def _remaining_obligation_rollforward(
+    commencement: Optional[date],
+    expiration: Optional[date],
+    *,
+    analysis_date: Optional[date] = None,
+) -> Optional[tuple[date, int, int]]:
+    if not isinstance(commencement, date) or not isinstance(expiration, date):
+        return None
+    anchor = analysis_date or date.today()
+    analysis_start = _first_day_of_month(anchor)
+    if anchor.day > 1:
+        analysis_start = _first_day_next_month(analysis_start)
+    if commencement >= analysis_start:
+        return None
+    if expiration < analysis_start:
+        return None
+    elapsed_months = max(0, (analysis_start.year - commencement.year) * 12 + (analysis_start.month - commencement.month))
+    remaining_term = _month_diff(analysis_start, expiration)
+    if remaining_term <= 0:
+        return None
+    return analysis_start, int(remaining_term), int(elapsed_months)
+
+
+def _shift_rent_schedule_for_elapsed_months(
+    rent_schedule: list,
+    *,
+    elapsed_months: int,
+    remaining_term_months: int,
+) -> list[dict]:
+    if elapsed_months <= 0 or remaining_term_months <= 0:
+        return []
+    shifted: list[dict] = []
+    max_end = max(0, int(remaining_term_months) - 1)
+    for row in rent_schedule or []:
+        if isinstance(row, dict):
+            start_raw = row.get("start_month")
+            end_raw = row.get("end_month")
+            rate_raw = row.get("rent_psf_annual")
+        else:
+            start_raw = getattr(row, "start_month", None)
+            end_raw = getattr(row, "end_month", None)
+            rate_raw = getattr(row, "rent_psf_annual", None)
+        start_i = _coerce_int_token(start_raw, None)
+        end_i = _coerce_int_token(end_raw, start_i)
+        rate = _coerce_float_token(rate_raw, 0.0)
+        if start_i is None or end_i is None:
+            continue
+        if end_i < elapsed_months:
+            continue
+        new_start = max(0, int(start_i) - elapsed_months)
+        new_end = min(max_end, int(end_i) - elapsed_months)
+        if new_end < new_start:
+            continue
+        shifted.append(
+            {
+                "start_month": int(new_start),
+                "end_month": int(new_end),
+                "rent_psf_annual": max(0.0, float(rate)),
+            }
+        )
+    if not shifted:
+        return []
+    shifted.sort(key=lambda item: (int(item["start_month"]), int(item["end_month"]), float(item["rent_psf_annual"])))
+    merged: list[dict] = []
+    for row in shifted:
+        if not merged:
+            merged.append(row)
+            continue
+        prev = merged[-1]
+        prev_rate = round(float(prev["rent_psf_annual"]), 6)
+        row_rate = round(float(row["rent_psf_annual"]), 6)
+        if int(row["start_month"]) <= int(prev["end_month"]) + 1 and prev_rate == row_rate:
+            prev["end_month"] = max(int(prev["end_month"]), int(row["end_month"]))
+            continue
+        if int(row["start_month"]) <= int(prev["end_month"]):
+            row = {**row, "start_month": int(prev["end_month"]) + 1}
+            if int(row["start_month"]) > int(row["end_month"]):
+                continue
+        merged.append(row)
+    if merged and int(merged[-1]["end_month"]) < max_end:
+        merged[-1] = {**merged[-1], "end_month": max_end}
+    return merged
+
+
+def _shift_abatement_periods_for_elapsed_months(
+    periods: list,
+    *,
+    elapsed_months: int,
+    remaining_term_months: int,
+    include_scope: bool,
+    fallback_scope: str = "base",
+) -> list[dict]:
+    if elapsed_months <= 0 or remaining_term_months <= 0:
+        return []
+    out: list[dict] = []
+    max_end = max(0, int(remaining_term_months) - 1)
+    for period in periods or []:
+        if isinstance(period, dict):
+            start_raw = period.get("start_month")
+            end_raw = period.get("end_month")
+            scope_raw = period.get("scope", fallback_scope)
+        else:
+            start_raw = getattr(period, "start_month", None)
+            end_raw = getattr(period, "end_month", None)
+            scope_raw = getattr(period, "scope", fallback_scope)
+        start_i = _coerce_int_token(start_raw, None)
+        end_i = _coerce_int_token(end_raw, start_i)
+        if start_i is None or end_i is None:
+            continue
+        if end_i < elapsed_months:
+            continue
+        new_start = max(0, int(start_i) - elapsed_months)
+        new_end = min(max_end, int(end_i) - elapsed_months)
+        if new_end < new_start:
+            continue
+        row = {"start_month": int(new_start), "end_month": int(new_end)}
+        if include_scope:
+            scope = str(scope_raw or fallback_scope).strip().lower()
+            if scope not in {"base", "gross"}:
+                scope = fallback_scope
+            row["scope"] = scope
+        out.append(row)
+    out.sort(key=lambda item: (int(item["start_month"]), int(item["end_month"])))
+    deduped: list[dict] = []
+    seen: set[tuple[int, int, str]] = set()
+    for row in out:
+        scope_key = str(row.get("scope", "")) if include_scope else ""
+        key = (int(row["start_month"]), int(row["end_month"]), scope_key)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
 def _normalize_suite_candidate(raw: str) -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:-")
     if not v:
@@ -1441,7 +1586,13 @@ def _normalize_suite_candidate(raw: str) -> str:
             "landlord", "tenant", "lease", "premises", "building", "property",
             "office", "floor", "term", "year", "month", "rent", "address",
             "located", "option", "renewal", "expiration", "commencement",
+            "in", "at", "on",
         }:
+            return ""
+        if re.fullmatch(
+            r"(?i)(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NH|NJ|NM|NV|NY|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV|WY|DC)",
+            token,
+        ):
             return ""
         # Suites are typically numeric/alphanumeric short tokens; reject long words without digits.
         if len(token) == 1 and not token.isdigit():
@@ -1865,6 +2016,8 @@ def _clean_address_candidate(raw: str) -> str:
     v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
     v = re.sub(r'(?i),\s*(?:suite|ste\.?|unit|floor)\s*$', "", v).strip(" ,.;:-")
     v = re.sub(r'(?i)\s+and\s+located\s+at.*$', "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)\s+\b(?:contraction|contract)\s+premises\b.*$", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)\s+\b(?:premises|term|lease term)\b\s*[:#-].*$", "", v).strip(" ,.;:-")
     return v
 
 
@@ -1876,9 +2029,10 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
         return ""
     segments = _iter_text_segments(lines, max_lines=280)
 
-    street_suffix = r"(?:Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|Lane|Ln\.?|Way|Plaza|Parkway|Pkwy\.?|Expressway|Expy\.?)"
+    street_suffix = r"(?:Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|Lane|Ln\.?|Way|Plaza|Parkway|Pkwy\.?|Expressway|Expy\.?|Highway|Hwy\.?|Circle|Cir\.?|Trail|Trl\.?)"
     core_addr = rf"(\d{{1,6}}\s+[A-Za-z0-9\.\- ]{{2,100}}\b{street_suffix}\b(?:\s*,?\s*(?:Suite|Ste\.?|Unit|Floor)\s*[A-Za-z0-9\-]+)?(?:,\s*[A-Za-z0-9 .'-]{{2,50}}){{0,3}})"
     addr_patterns = [
+        rf"(?i)\baddress\s*[:#-]\s*{core_addr}",
         rf"(?i)\blocated\s+(?:on\s+the\s+\d+(?:st|nd|rd|th)\s+floor\s+of|at)\s+{core_addr}",
         rf"(?i)\bbuilding\s+located\s+at\s+{core_addr}",
         rf"(?i)\b(?:premises|leased premises)\s+(?:located\s+at|at)\s+{core_addr}",
@@ -1913,7 +2067,7 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
                     score += 2
                 elif re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*[A-Za-z0-9\-]+\b", candidate):
                     score -= 3
-            if score > best_score:
+            if score > best_score or (score == best_score and len(candidate) > len(best)):
                 best_score = score
                 best = candidate
     return best
@@ -1923,7 +2077,7 @@ def _looks_like_address(value: str) -> bool:
     v = " ".join((value or "").split()).strip()
     if not v:
         return False
-    if re.search(r"\b\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9\.\- ]{2,100}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|drive|dr\.?|road|rd\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?)\b", v, re.I):
+    if re.search(r"\b\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9\.\- ]{2,100}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|drive|dr\.?|road|rd\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|highway|hwy\.?|circle|cir\.?|trail|trl\.?)\b", v, re.I):
         low = v.lower()
         if any(k in low for k in ("rsf", "cam", "reconciliation", "rent", "rate per", "month", "year")):
             return False
@@ -1947,6 +2101,8 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     v = re.sub(r"(?i)^(?:at|located at|known as|the building located at|building located at)\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)^lease\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)^[A-Za-z0-9&' .-]{1,60}\s+for\s+office(?:\s+space)?\s+", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)^.*?\bas\s+a\s+tenant\s+at\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\bhttps?://\S+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+located\s+at\s+\d[\dA-Za-z .,'-]{3,120}$", "", v).strip(" ,.;:-")
     # "Summit at Lantana 7171 Southwest Parkway" -> "Summit at Lantana".
@@ -1986,6 +2142,11 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
             "fitness facility",
             "conference facility",
             "ground floor amenities",
+            "present the following proposal",
+            "opportunity to present",
+            "continuing our relationship",
+            "on behalf of the landlord",
+            "basic terms and conditions",
         )
     ):
         return ""
@@ -2001,8 +2162,14 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
             "commencement",
             "expiration",
             "term of",
+            "proposal",
+            "counterproposal",
         )
     ):
+        return ""
+    if re.search(r"[.!?]", v) and not _looks_like_address(v):
+        return ""
+    if len(v.split()) > 12 and not _looks_like_address(v):
         return ""
     # Keep values that are at least somewhat informative.
     if len(v) < 4:
@@ -2017,6 +2184,8 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
     segments = _iter_text_segments(lines, max_lines=280)
     state_token = r"(?:TX|Texas|CA|California|NY|New York|FL|Florida|IL|Illinois)"
     patterns: list[tuple[re.Pattern[str], int]] = [
+        (re.compile(r"(?i)\bfor\s+office\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
+        (re.compile(r"(?i)\bas\s+a\s+tenant\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
         (re.compile(r'(?i)^\s*re:\s*[^\n]{0,220}\(\s*["“]([A-Za-z0-9][A-Za-z0-9&\' .\-/]{1,40})["”]\s*\)'), 12),
         (re.compile(r"(?i)^\s*project\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80})"), 11),
         (re.compile(r"(?i)\bre:\s*[^\n]{0,160}\bto\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80})"), 8),
@@ -2211,6 +2380,36 @@ def _is_non_term_expiration_context(context: str) -> bool:
         "right of first refusal",
     )
     return any(token in low for token in noisy_tokens)
+
+
+def _is_historical_recital_context(context: str) -> bool:
+    low = (context or "").lower()
+    if not low:
+        return False
+    historical_markers = (
+        "whereas",
+        "entered into",
+        "lease dated",
+        "scheduled to expire",
+        "original landlord",
+        "original term",
+        "formerly known as",
+        "by mesne assignments",
+    )
+    extension_markers = (
+        "hereby extended",
+        "extend the term",
+        "extended for the period",
+        "for the period commencing",
+        "amended as follows",
+        "renewal term",
+        "extension term",
+    )
+    if "scheduled to expire" in low:
+        return True
+    if any(marker in low for marker in historical_markers):
+        return not any(marker in low for marker in extension_markers)
+    return False
 
 
 _WORD_UNITS = {
@@ -2692,6 +2891,33 @@ def _looks_like_generated_report_document(text: str) -> bool:
     low = (text or "").lower()
     if not low:
         return False
+    strong_markers = [
+        "financial analysis",
+        "cash flow summary",
+        "total estimated obligation",
+        "this analysis is not to be used for accounting purposes",
+        "existing obligation",
+        "landlord renewal proposal",
+        "comparison matrix",
+        "equalized comparison",
+        "lease economics comparison",
+    ]
+    soft_markers = [
+        "multi-scenario report generated",
+        "avg cost/sf/year",
+        "average cost/sf/year",
+        "average gross rent/sf/year",
+        "start month end month rate",
+        "npv @ 8%",
+        "no clause notes extracted",
+        "review rofr/rofo",
+    ]
+    strong_hits = sum(1 for marker in strong_markers if marker in low)
+    soft_hits = sum(1 for marker in soft_markers if marker in low)
+    if strong_hits >= 4:
+        return True
+    if strong_hits >= 2 and soft_hits >= 1:
+        return True
     markers = [
         "lease economics comparison",
         "comparison matrix",
@@ -2726,6 +2952,10 @@ def _looks_like_generic_scenario_name(name: str) -> bool:
         "tenant",
         "witnesseth",
         "whereas",
+        "present the following proposal",
+        "continuing our relationship",
+        "opportunity to present",
+        "basic terms and conditions",
     )
     if any(x in low for x in bad_fragments):
         return True
@@ -3246,6 +3476,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     }
     if not text:
         return hints
+    if _looks_like_generated_report_document(text):
+        return hints
 
     suite_hint = _extract_suite_from_text(text)
 
@@ -3367,7 +3599,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     # ---- Term: commencement / expiration / ending / through ----
     term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
     month_token = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
-    date_token_capture = rf"({month_token}\s+\d{{1,2}},?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}})"
+    date_token_value = rf"(?:{month_token}\s+\d{{1,2}},?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}})"
+    date_token_capture = rf"({date_token_value})"
+    paired_term_pats = [
+        rf"(?i)\b(?:the\s+period\s+)?commenc(?:ing|ement|e)\s+on\s+({date_token_value})\s*(?:,|\s)+and\s+ending\s+on\s+({date_token_value})",
+        rf"(?i)\b(?:from|commencing)\s+({date_token_value})\s+(?:to|through|until)\s+({date_token_value})",
+    ]
     comm_direct_pats = [
         rf"(?i)\bcommenc(?:ement|e|ing)(?:\s+date)?(?:\s+on)?(?:\s+the\s+later\s+to\s+occur\s+of)?(?:\s*[:\-]\s*|\s+){date_token_capture}",
         rf"(?i)\b(?:lease\s+)?commencement\b[^.\n]{{0,120}}?\bestimated\s+to\s+be\s+{date_token_capture}",
@@ -3389,16 +3626,34 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         r"(?i)\b(?:termination|expiration)\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
     ]
 
-    for pat in comm_direct_pats:
+    for pat in paired_term_pats:
         for m in re.finditer(pat, text):
-            if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
+            local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
+            if _is_historical_recital_context(local):
                 continue
-            d = _parse_lease_date(m.group(1))
-            if d:
-                term_candidates["commencement"] = d
+            comm_d = _parse_lease_date(m.group(1))
+            exp_d = _parse_lease_date(m.group(2))
+            if comm_d and exp_d and exp_d > comm_d:
+                term_candidates["commencement"] = comm_d
+                term_candidates["expiration"] = exp_d
                 break
-        if term_candidates["commencement"] is not None:
+        if term_candidates["commencement"] is not None and term_candidates["expiration"] is not None:
             break
+
+    if term_candidates["commencement"] is None:
+        for pat in comm_direct_pats:
+            for m in re.finditer(pat, text):
+                if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
+                    continue
+                local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
+                if _is_historical_recital_context(local):
+                    continue
+                d = _parse_lease_date(m.group(1))
+                if d:
+                    term_candidates["commencement"] = d
+                    break
+            if term_candidates["commencement"] is not None:
+                break
     if term_candidates["commencement"] is None:
         for pat in comm_context_pats:
             m = re.search(pat, text)
@@ -3407,24 +3662,29 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             candidate_text = m.group(1) or ""
             if "e.g" in candidate_text.lower() or "example" in candidate_text.lower():
                 continue
+            if _is_historical_recital_context(candidate_text):
+                continue
             d = _extract_first_date_token(candidate_text)
             if d:
                 term_candidates["commencement"] = d
                 break
 
-    for pat in exp_direct_pats:
-        for m in re.finditer(pat, text):
-            if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
-                continue
-            local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
-            if _is_non_term_expiration_context(local):
-                continue
-            d = _parse_lease_date(m.group(1))
-            if d:
-                term_candidates["expiration"] = d
+    if term_candidates["expiration"] is None:
+        for pat in exp_direct_pats:
+            for m in re.finditer(pat, text):
+                if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
+                    continue
+                local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
+                if _is_non_term_expiration_context(local):
+                    continue
+                if _is_historical_recital_context(local):
+                    continue
+                d = _parse_lease_date(m.group(1))
+                if d:
+                    term_candidates["expiration"] = d
+                    break
+            if term_candidates["expiration"] is not None:
                 break
-        if term_candidates["expiration"] is not None:
-            break
     if term_candidates["expiration"] is None:
         for pat in exp_context_pats:
             m = re.search(pat, text)
@@ -3434,6 +3694,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if "e.g" in candidate_text.lower() or "example" in candidate_text.lower():
                 continue
             if _is_non_term_expiration_context(candidate_text):
+                continue
+            if _is_historical_recital_context(candidate_text):
                 continue
             d = _extract_first_date_token(candidate_text)
             if d:
@@ -3458,6 +3720,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 for nxt in lines[idx + 1: idx + 8]:
                     if "e.g" in nxt.lower() or "example" in nxt.lower():
                         continue
+                    if _is_historical_recital_context(f"{ln} {nxt}"):
+                        continue
                     d = _extract_first_date_token(nxt)
                     if d:
                         term_candidates["commencement"] = d
@@ -3468,6 +3732,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                         continue
                     local = f"{ln} {nxt}"
                     if _is_non_term_expiration_context(local):
+                        continue
+                    if _is_historical_recital_context(local):
                         continue
                     d = _extract_first_date_token(nxt)
                     if d:
@@ -3484,8 +3750,25 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if term_from_text is not None:
         hints["term_months"] = term_from_text
     if hints["commencement_date"] and hints["expiration_date"]:
-        term_from_dates = _month_diff(hints["commencement_date"], hints["expiration_date"])
-        if (
+        if hints["expiration_date"] <= hints["commencement_date"]:
+            if term_from_text is not None and term_from_text > 0:
+                hints["term_months"] = int(term_from_text)
+                try:
+                    hints["expiration_date"] = _expiration_from_term_months(
+                        hints["commencement_date"],
+                        int(term_from_text),
+                    )
+                except Exception:
+                    hints["expiration_date"] = None
+            else:
+                hints["expiration_date"] = None
+                hints["term_months"] = None
+        term_from_dates = (
+            _month_diff(hints["commencement_date"], hints["expiration_date"])
+            if hints["expiration_date"] is not None
+            else 0
+        )
+        if hints["expiration_date"] is not None and (
             term_from_text is not None
             and (term_from_dates <= 0 or abs(int(term_from_dates) - int(term_from_text)) >= 6)
         ):
@@ -3497,7 +3780,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 )
             except Exception:
                 pass
-        else:
+        elif hints["expiration_date"] is not None:
             hints["term_months"] = term_from_dates
     elif hints["commencement_date"] and hints.get("term_months"):
         try:
@@ -5042,6 +5325,7 @@ def _normalize_impl(
     extraction_artifacts: dict = _empty_extraction_artifacts()
     extraction_text_for_summary = ""
     extraction_filename_for_summary = ""
+    doc_type_hint = "unknown"
     option_variants: list[CanonicalLease] = []
 
     if source_upper in ("PDF", "WORD"):
@@ -5084,6 +5368,7 @@ def _normalize_impl(
             text = ""
             warnings.append(_safe_extraction_warning(e))
         extraction_text_for_summary = text or ""
+        doc_type_hint = _detect_document_type(text, file.filename or "") if text.strip() else "unknown"
 
         extracted_hints = _extract_lease_hints(text, file.filename or "", rid)
         note_highlights = _extract_lease_note_highlights(text)
@@ -5182,6 +5467,8 @@ def _normalize_impl(
                     field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
                     confidence_score = max((sum(field_confidence.values()) / max(1, len(field_confidence))), 0.82) if field_confidence else 0.82
                     warnings.extend(extraction.warnings or [])
+                    if any("fallback" in str(w).lower() for w in (extraction.warnings or [])):
+                        used_fallback = True
                 else:
                     canonical = _dict_to_canonical({}, "", "")
                     confidence_score = 0.4
@@ -5215,6 +5502,22 @@ def _normalize_impl(
                 rsf_conf = 0.0
             if _should_override_rsf(canonical.rsf, hinted_rsf, hinted_rsf_score, rsf_conf):
                 updates["rsf"] = hinted_rsf
+            else:
+                current_rsf_val = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0) or 0.0
+                rsf_has_explicit_evidence = bool(
+                    re.search(
+                        r"(?i)\b\d{1,3}(?:,\d{3})+\s*(?:rsf|rentable\s+square\s+feet|square\s*feet|sf)\b",
+                        text,
+                    )
+                )
+                if (
+                    current_rsf_val > 0
+                    and hinted_rsf is None
+                    and doc_type_hint in {"amendment", "lease"}
+                    and not rsf_has_explicit_evidence
+                ):
+                    updates["rsf"] = 0.0
+                    warnings.append("RSF was not explicitly stated in this document; cleared inferred placeholder RSF for review.")
             if extracted_hints.get("commencement_date"):
                 updates["commencement_date"] = extracted_hints["commencement_date"]
             if extracted_hints.get("expiration_date"):
@@ -5282,7 +5585,8 @@ def _normalize_impl(
                 suite_val = ""
             if not suite_val and not force_suite_blank:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
-            floor_val = floor_hint_val or str(canonical.floor or "").strip()
+            suite_val = _normalize_suite_candidate(suite_val)
+            floor_val = _normalize_floor_candidate(floor_hint_val or str(canonical.floor or "").strip())
             if floor_val and (floor_hint_val or not (canonical.floor or "").strip() or not suite_val):
                 updates["floor"] = floor_val
             address_val = str(extracted_hints.get("address") or canonical.address or "").strip()
@@ -5358,6 +5662,15 @@ def _normalize_impl(
                 updates["opex_psf_year_1"] = hinted_opex
                 if _coerce_float_token(canonical.expense_stop_psf, 0.0) <= 0:
                     updates["expense_stop_psf"] = hinted_opex
+            elif doc_type_hint in {"amendment", "lease"}:
+                existing_opex = _coerce_float_token(updates.get("opex_psf_year_1", canonical.opex_psf_year_1), 0.0) or 0.0
+                opex_has_explicit_evidence = bool(
+                    re.search(r"(?i)\b(?:operating\s+expenses?|opex|cam|common\s+area\s+maintenance)\b", text)
+                )
+                if existing_opex > 0 and not opex_has_explicit_evidence:
+                    updates["opex_psf_year_1"] = 0.0
+                    updates["expense_stop_psf"] = 0.0
+                    warnings.append("OpEx was not explicitly stated in this document; cleared inferred placeholder OpEx for review.")
             opex_source_year = _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
             commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
             commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0
@@ -5546,6 +5859,66 @@ def _normalize_impl(
                     if target_term_months <= 0:
                         updates["term_months"] = int(normalized_phase[-1]["end_month"]) + 1
                     warnings.append("Phase-in occupancy schedule detected and applied to monthly calculations.")
+
+            current_commencement = updates.get("commencement_date", canonical.commencement_date)
+            current_expiration = updates.get("expiration_date", canonical.expiration_date)
+            lower_extracted_text = (text or "").lower()
+            should_roll_to_remaining = (
+                doc_type_hint == "amendment"
+                or "existing obligation" in lower_extracted_text
+                or "remaining obligation" in lower_extracted_text
+            )
+            remaining_window = (
+                _remaining_obligation_rollforward(current_commencement, current_expiration)
+                if should_roll_to_remaining
+                else None
+            )
+            if remaining_window:
+                remaining_commencement, remaining_term_months, elapsed_months = remaining_window
+                updates["commencement_date"] = remaining_commencement
+                updates["term_months"] = remaining_term_months
+                existing_rent = updates.get("rent_schedule", canonical.rent_schedule) or []
+                shifted_rent = _shift_rent_schedule_for_elapsed_months(
+                    list(existing_rent),
+                    elapsed_months=elapsed_months,
+                    remaining_term_months=remaining_term_months,
+                )
+                if shifted_rent:
+                    updates["rent_schedule"] = [RentScheduleStep(**row) for row in shifted_rent]
+                existing_free_periods = updates.get("free_rent_periods", canonical.free_rent_periods) or []
+                shifted_free_periods = _shift_abatement_periods_for_elapsed_months(
+                    list(existing_free_periods),
+                    elapsed_months=elapsed_months,
+                    remaining_term_months=remaining_term_months,
+                    include_scope=True,
+                    fallback_scope=str(updates.get("free_rent_scope", canonical.free_rent_scope) or "base"),
+                )
+                if shifted_free_periods:
+                    updates["free_rent_periods"] = [FreeRentPeriod(**row) for row in shifted_free_periods]
+                    updates["free_rent_months"] = sum(
+                        max(0, int(row["end_month"]) - int(row["start_month"]) + 1)
+                        for row in shifted_free_periods
+                    )
+                else:
+                    updates["free_rent_periods"] = []
+                    updates["free_rent_months"] = 0
+                existing_parking_periods = updates.get("parking_abatement_periods", canonical.parking_abatement_periods) or []
+                shifted_parking_periods = _shift_abatement_periods_for_elapsed_months(
+                    list(existing_parking_periods),
+                    elapsed_months=elapsed_months,
+                    remaining_term_months=remaining_term_months,
+                    include_scope=False,
+                )
+                if shifted_parking_periods:
+                    updates["parking_abatement_periods"] = [
+                        ParkingAbatementPeriod(**row) for row in shifted_parking_periods
+                    ]
+                else:
+                    updates["parking_abatement_periods"] = []
+                warnings.append(
+                    "Lease has already commenced; modeled remaining obligation from the current analysis period."
+                )
+
             effective_term = _coerce_int_token(
                 updates.get("term_months"),
                 _coerce_int_token(canonical.term_months, 0),
