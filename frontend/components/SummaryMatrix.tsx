@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 import { METRIC_LABELS, METRIC_DISPLAY_NAMES, formatMetricValue } from "@/lib/lease-engine/excel-export";
 import type { EqualizedComparisonResult } from "@/lib/equalized";
-import { formatCurrency, formatCurrencyPerSF, formatDateISO } from "@/lib/format";
+import { formatCurrency, formatCurrencyPerSF, formatDateISO, formatPercent } from "@/lib/format";
 import type { ScenarioWithId } from "@/lib/types";
 import { effectiveTiBudgetTotal, round2 } from "@/lib/ti";
 
@@ -126,6 +126,20 @@ export function SummaryMatrix({
         isMeaningfulMetricValue(metricKey, r.scenarioId, (r.metrics as OptionMetrics)[metricKey])
       )
   );
+
+  const getMetricLabel = (metricKey: keyof OptionMetrics): string => {
+    if (metricKey !== "npvAtDiscount") return METRIC_DISPLAY_NAMES[metricKey] ?? metricKey;
+    const rates = results
+      .map((r) => Number(r.metrics.discountRateUsed))
+      .filter((value) => Number.isFinite(value));
+    if (rates.length === results.length && rates.length > 0) {
+      const uniqueRates = new Set(rates.map((value) => value.toFixed(6)));
+      if (uniqueRates.size === 1) {
+        return `NPV @ ${formatPercent(rates[0], { decimals: 1 })} Discount Rate`;
+      }
+    }
+    return "NPV @ Discount Rate (per scenario)";
+  };
 
   const renderEqualizedSection = () => (
     <div className="px-5 py-4 bg-slate-900/45">
@@ -251,7 +265,7 @@ export function SummaryMatrix({
                 const noteBullets = notesCell ? getNotes(formatted) : [];
                 return (
                   <div key={`matrix-mobile-${r.scenarioId}-${key}`} className="pt-1 border-t border-slate-300/10 first:border-0 first:pt-0">
-                    <dt className="text-slate-400 mb-1">{METRIC_DISPLAY_NAMES[key] ?? key}</dt>
+                    <dt className="text-slate-400 mb-1">{getMetricLabel(key)}</dt>
                     <dd className="text-slate-200">
                       {notesCell ? (
                         noteBullets.length > 0 ? (
@@ -294,7 +308,7 @@ export function SummaryMatrix({
             {visibleMatrixMetricKeys.map((key) => (
               <tr key={key} className="border-b border-slate-300/10 hover:bg-slate-400/10">
                 <td className="py-2.5 px-4 font-medium text-slate-200">
-                  {METRIC_DISPLAY_NAMES[key] ?? key}
+                  {getMetricLabel(key)}
                 </td>
                 {results.map((r) => {
                   const value = (r.metrics as OptionMetrics)[key];

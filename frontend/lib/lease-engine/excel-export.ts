@@ -416,6 +416,7 @@ export function formatMetricValue(key: string, value: unknown): string {
   if (key === "notes") return formatNotesByCategory(String(value));
   if (key === "abatementType" || key === "abatementAppliedWhen") return String(value);
   if (typeof value === "number") {
+    if (key === "npvAtDiscount") return formatCurrency(value);
     if (key === "abatementAmount") return formatCurrency(value);
     if (key === "tiBudget") return formatCurrencyPerSF(value);
     if (key === "tiAllowance") return formatCurrencyPerSF(value);
