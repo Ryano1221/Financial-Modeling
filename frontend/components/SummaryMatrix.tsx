@@ -169,7 +169,7 @@ export function SummaryMatrix({
         </p>
       ) : (
         <>
-          <div className="md:hidden mt-3 space-y-3">
+          <div className="xl:hidden mt-3 space-y-3">
             {results.map((r) => (
               <div key={`eq-mobile-${r.scenarioId}`} className="border border-slate-300/20 bg-slate-950/55 p-3">
                 <h3 className="text-sm font-semibold text-slate-100 mb-2 whitespace-normal break-words">{r.scenarioName}</h3>
@@ -184,14 +184,16 @@ export function SummaryMatrix({
               </div>
             ))}
           </div>
-          <div className="hidden md:block overflow-x-auto mt-3">
-            <table className="w-full min-w-[780px] text-xs sm:text-sm border border-slate-300/15">
+          <div className="hidden xl:block overflow-x-auto mt-3">
+            <table className="w-full min-w-[720px] table-fixed text-xs sm:text-sm border border-slate-300/15">
               <thead>
                 <tr className="bg-slate-900/35 border-b border-slate-300/20">
-                  <th className="text-left py-2.5 px-4 font-medium text-slate-300 w-64">Metric</th>
+                  <th className="text-left py-2.5 px-4 font-medium text-slate-300 w-[34%]">Metric</th>
                   {results.map((r) => (
-                    <th key={`eq-${r.scenarioId}`} className="text-right py-2.5 px-4 font-medium text-slate-300 min-w-[10rem]">
-                      {r.scenarioName}
+                    <th key={`eq-${r.scenarioId}`} className="text-right py-2.5 px-4 font-medium text-slate-300 align-top">
+                      <span className="inline-block max-w-full whitespace-normal break-words leading-snug">
+                        {r.scenarioName}
+                      </span>
                     </th>
                   ))}
                 </tr>
@@ -262,7 +264,7 @@ export function SummaryMatrix({
           This model leverages AI driven lease data extraction. Please review all extracted inputs for accuracy and confirm assumptions prior to relying on outputs. Any field can be edited above if adjustments are required. Metrics are calculated by the lease engine using each option&apos;s specified discount rate or the global default when not set.
         </p>
       </div>
-      <div className="md:hidden p-3 space-y-3">
+      <div className="xl:hidden p-3 space-y-3">
         {results.map((r) => (
           <div key={`matrix-mobile-${r.scenarioId}`} className="border border-slate-300/20 bg-slate-950/55 p-3">
             <h3 className="text-sm font-semibold text-slate-100 mb-2 whitespace-normal break-words">{r.scenarioName}</h3>
@@ -301,14 +303,16 @@ export function SummaryMatrix({
           </div>
         ))}
       </div>
-      <div className="hidden md:block overflow-x-auto">
-        <table className="w-full min-w-[780px] text-xs sm:text-sm">
+      <div className="hidden xl:block overflow-x-auto">
+        <table className="w-full min-w-[720px] table-fixed text-xs sm:text-sm">
           <thead>
             <tr className="bg-slate-900/35 border-b border-slate-300/20">
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300 w-48">Metric</th>
+              <th className="text-left py-2.5 px-4 font-medium text-slate-300 w-[30%]">Metric</th>
               {results.map((r) => (
-                <th key={r.scenarioId} className="text-right py-2.5 px-4 font-medium text-slate-300 min-w-[10rem]">
-                  {r.scenarioName}
+                <th key={r.scenarioId} className="text-right py-2.5 px-4 font-medium text-slate-300 align-top">
+                  <span className="inline-block max-w-full whitespace-normal break-words leading-snug">
+                    {r.scenarioName}
+                  </span>
                 </th>
               ))}
             </tr>
@@ -316,7 +320,7 @@ export function SummaryMatrix({
           <tbody>
             {visibleMatrixMetricKeys.map((key) => (
               <tr key={key} className="border-b border-slate-300/10 hover:bg-slate-400/10">
-                <td className="py-2.5 px-4 font-medium text-slate-200">
+                <td className="py-2.5 px-4 font-medium text-slate-200 whitespace-normal break-words">
                   {getMetricLabel(key)}
                 </td>
                 {results.map((r) => {
@@ -327,7 +331,7 @@ export function SummaryMatrix({
                   return (
                     <td
                       key={r.scenarioId}
-                      className={`py-2.5 px-4 text-slate-300 align-top ${notesCell ? "text-left" : "text-right"}`}
+                      className={`py-2.5 px-4 text-slate-300 align-top whitespace-normal break-words ${notesCell ? "text-left" : "text-right"}`}
                     >
                       {notesCell ? (
                         noteBullets.length > 0 ? (
