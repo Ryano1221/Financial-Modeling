@@ -11,6 +11,7 @@ import type {
 } from "./canonical-schema";
 
 const DEFAULT_DISCOUNT_RATE = 0.08;
+const NPV_DISCOUNT_LOOKBACK_MONTHS = 16;
 
 function parseDate(s: string): { year: number; month: number; day: number } {
   const [y, m, d] = s.split("-").map(Number);
@@ -112,7 +113,8 @@ function getDiscountRate(s: LeaseScenarioCanonical, globalDiscountRate?: number)
 function preCommencementDiscountMonths(commencementDate: string): number {
   const start = parseDate(commencementDate);
   const now = new Date();
-  const delta = (start.year - now.getFullYear()) * 12 + (start.month - now.getMonth());
+  const anchor = new Date(now.getFullYear(), now.getMonth() - NPV_DISCOUNT_LOOKBACK_MONTHS, 1);
+  const delta = (start.year - anchor.getFullYear()) * 12 + (start.month - anchor.getMonth());
   return Math.max(0, Math.floor(delta));
 }
 
@@ -519,7 +521,7 @@ export function runMonthlyEngine(
 
   // Underwriting NPV convention excludes parking from discounted cashflows.
   const npvSubjectTotal = total.map((value, idx) => value - (parking[idx] ?? 0));
-  const monthlyRate = Math.pow(1 + discountRate, 1 / 12) - 1;
+  const monthlyRate = discountRate > 0 ? (discountRate / 12) : 0;
   const oneTimeMonth0 = (scenario.otherCashFlows.oneTimeCosts ?? []).reduce(
     (sum, cost) => sum + ((cost.month ?? 0) === 0 ? (Number(cost.amount) || 0) : 0),
     0

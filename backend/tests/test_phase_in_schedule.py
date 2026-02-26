@@ -1,5 +1,6 @@
 from datetime import date
 
+from backend.engine import canonical_compute as canonical_compute_module
 from backend.engine.canonical_compute import compute_canonical
 from backend.main import _extract_phase_in_schedule, _extract_phase_rent_schedule
 from backend.models import CanonicalLease, PhaseInStep, RentScheduleStep, FreeRentPeriod
@@ -194,7 +195,11 @@ def test_compute_canonical_parking_abatement_applies_to_parking_only() -> None:
         assert row.opex > 0
 
 
-def test_compute_canonical_npv_uses_end_of_month_discounting_with_upfront_t0() -> None:
+def test_compute_canonical_npv_uses_end_of_month_discounting_with_upfront_t0(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "backend.engine.canonical_compute._pre_commencement_discount_months",
+        lambda commencement: 0,
+    )
     lease = CanonicalLease(
         scenario_id="npv-timing-1",
         scenario_name="NPV timing canonical",
@@ -217,13 +222,17 @@ def test_compute_canonical_npv_uses_end_of_month_discounting_with_upfront_t0() -
     )
     out = compute_canonical(lease)
 
-    monthly_rate = (1.0 + 0.12) ** (1.0 / 12.0) - 1.0
+    monthly_rate = 0.12 / 12.0
     expected_npv = -50.0 + (10.0 / (1.0 + monthly_rate))
     assert abs(out.metrics.npv_cost - expected_npv) < 1e-2
     assert abs(out.monthly_rows[0].discounted_value - expected_npv) < 1e-2
 
 
-def test_compute_canonical_npv_excludes_parking_cashflow() -> None:
+def test_compute_canonical_npv_excludes_parking_cashflow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "backend.engine.canonical_compute._pre_commencement_discount_months",
+        lambda commencement: 0,
+    )
     lease = CanonicalLease(
         scenario_id="npv-parking-exclusion",
         scenario_name="NPV parking exclusion",
@@ -246,7 +255,7 @@ def test_compute_canonical_npv_excludes_parking_cashflow() -> None:
     )
     out = compute_canonical(lease)
 
-    monthly_rate = (1.0 + 0.12) ** (1.0 / 12.0) - 1.0
+    monthly_rate = 0.12 / 12.0
     expected_npv = 10.0 / (1.0 + monthly_rate)
     assert abs(out.metrics.npv_cost - expected_npv) < 1e-2
     assert abs(out.monthly_rows[0].discounted_value - expected_npv) < 1e-2
@@ -277,7 +286,33 @@ def test_compute_canonical_npv_applies_pre_commencement_discount_months(monkeypa
     )
     out = compute_canonical(lease)
 
-    monthly_rate = (1.0 + 0.12) ** (1.0 / 12.0) - 1.0
+    monthly_rate = 0.12 / 12.0
     expected_npv = 10.0 / ((1.0 + monthly_rate) ** 7)
     assert abs(out.metrics.npv_cost - expected_npv) < 1e-2
     assert abs(out.monthly_rows[0].discounted_value - expected_npv) < 1e-2
+
+
+def test_pre_commencement_discount_months_uses_workbook_anchor_lookback(monkeypatch) -> None:
+    class _FakeDate(date):
+        @classmethod
+        def today(cls) -> "_FakeDate":
+            return cls(2026, 2, 25)
+
+    monkeypatch.setattr(canonical_compute_module, "date", _FakeDate)
+    monkeypatch.delenv("NPV_DISCOUNT_LOOKBACK_MONTHS", raising=False)
+
+    months = canonical_compute_module._pre_commencement_discount_months(date(2026, 3, 1))
+    assert months == 17
+
+
+def test_pre_commencement_discount_months_respects_env_override(monkeypatch) -> None:
+    class _FakeDate(date):
+        @classmethod
+        def today(cls) -> "_FakeDate":
+            return cls(2026, 2, 25)
+
+    monkeypatch.setattr(canonical_compute_module, "date", _FakeDate)
+    monkeypatch.setenv("NPV_DISCOUNT_LOOKBACK_MONTHS", "0")
+
+    months = canonical_compute_module._pre_commencement_discount_months(date(2026, 3, 1))
+    assert months == 1

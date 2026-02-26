@@ -100,7 +100,7 @@ def test_compute_cashflows_npv_uses_end_of_month_discounting_with_upfront_t0():
     )
     _, result = compute_cashflows(scenario)
 
-    monthly_rate = (1.0 + 0.12) ** (1.0 / 12.0) - 1.0
+    monthly_rate = 0.12 / 12.0
     expected_npv = 50.0 + (10.0 / (1.0 + monthly_rate))
     assert abs(result.npv_cost - expected_npv) < 1e-6
 

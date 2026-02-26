@@ -22,11 +22,12 @@ class CashflowDetails:
 
 def _monthly_discount_rate(annual_rate: float) -> float:
     """
-    Convert an annual effective discount rate to an effective monthly rate.
+    Convert an annual discount rate to the nominal monthly rate used in
+    underwriting spreadsheets: annual_rate / 12.
     """
     if annual_rate <= 0:
         return 0.0
-    return pow(1.0 + annual_rate, 1.0 / 12.0) - 1.0
+    return annual_rate / 12.0
 
 
 def _build_rent_schedule_monthly(scenario: Scenario, total_months: int) -> List[float]:

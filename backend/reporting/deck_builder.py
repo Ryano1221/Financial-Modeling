@@ -1141,7 +1141,7 @@ def _scenario_monthly_cashflow_rows(entry: dict[str, Any]) -> list[dict[str, Any
     sublease_start = max(0, _safe_int(scenario.get("sublease_start_month"), 0))
     sublease_duration = max(0, _safe_int(scenario.get("sublease_duration_months"), 0))
     discount_rate_annual = max(0.0, _safe_float(scenario.get("discount_rate_annual"), 0.08))
-    monthly_discount = (1.0 + discount_rate_annual) ** (1.0 / 12.0) - 1.0 if discount_rate_annual > 0 else 0.0
+    monthly_discount = (discount_rate_annual / 12.0) if discount_rate_annual > 0 else 0.0
 
     rows: list[dict[str, Any]] = []
     cumulative_pv = 0.0

@@ -1001,7 +1001,7 @@ function computeEqualizedMetrics(scenario: WorkbookScenario, start: Date, end: D
   const annualFactor = days / 365;
   const gross = rows.reduce((sum, row) => sum + row.baseRent + row.opex + row.parking, 0);
   const recurring = rows.reduce((sum, row) => sum + row.grossCashFlow, 0);
-  const rate = Math.pow(1 + (scenario.discountRate || 0.08), 1 / 12) - 1;
+  const rate = (scenario.discountRate || 0.08) / 12;
   const npv = rows.reduce((sum, row, idx) => sum + row.grossCashFlow / Math.pow(1 + rate, idx), 0);
   return {
     avgGrossRentPsfYear: safeDiv(gross, Math.max(1, scenario.rsf) * annualFactor),
@@ -1613,7 +1613,7 @@ function createEqualizedSheet(
         const monthlyCol = toColumnLetter(scenarioCol + 1);
         const range = `${monthlyFormulaSheet}!${monthlyCol}${equalizedFirstMonthlyRow}:${monthlyCol}${equalizedLastMonthlyRow}`;
         const startRef = `${monthlyFormulaSheet}!${monthlyCol}${equalizedFirstMonthlyRow}`;
-        const monthlyRate = Number((Math.pow(1 + (scenario.discountRate || 0), 1 / 12) - 1).toFixed(12));
+        const monthlyRate = Number((((scenario.discountRate || 0) / 12)).toFixed(12));
         return `IFERROR(SUMPRODUCT(${range},1/POWER(1+${monthlyRate},ROW(${range})-ROW(${startRef}))),0)`;
       },
     },
@@ -1961,7 +1961,7 @@ function createAppendixSheet(
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
     cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   });
-  const monthlyDiscountRate = Number((Math.pow(1 + (scenario.discountRate || 0), 1 / 12) - 1).toFixed(12));
+  const monthlyDiscountRate = Number((((scenario.discountRate || 0) / 12)).toFixed(12));
   const tiBudgetTotal = Math.max(0, scenario.tiBudget || 0);
   const tiAllowanceTotal = Math.max(0, (scenario.tiAllowance || 0) * Math.max(0, scenario.rsf || 0));
   const appendixMonthlyRows = scenario.monthlyRows.map((monthlyRow) => ({ ...monthlyRow }));

@@ -129,11 +129,11 @@ describe("scenario abatement periods", () => {
 
   it("discounts recurring month-1 cashflow and keeps upfront month-0 costs at t0", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+    vi.setSystemTime(new Date("2024-01-01T12:00:00Z"));
     const scenario = makeScenario({
       rsf: 1,
-      commencement: "2026-01-01",
-      expiration: "2026-01-31",
+      commencement: "2024-01-01",
+      expiration: "2024-01-31",
       rent_steps: [{ start: 0, end: 0, rate_psf_yr: 120 }],
       opex_mode: "nnn",
       base_opex_psf_yr: 0,
@@ -147,8 +147,8 @@ describe("scenario abatement periods", () => {
       free_rent_months: 0,
     });
     const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.12);
-    const monthlyRate = Math.pow(1 + 0.12, 1 / 12) - 1;
-    const expected = 50 + (10 / (1 + monthlyRate));
+    const monthlyRate = 0.12 / 12;
+    const expected = 50 + (10 / Math.pow(1 + monthlyRate, 17));
 
     expect(result.termMonths).toBe(1);
     expect(result.metrics.npvAtDiscount).toBeCloseTo(expected, 8);
@@ -157,11 +157,11 @@ describe("scenario abatement periods", () => {
 
   it("excludes parking cashflow from NPV while keeping it in total obligation", () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-02-01T12:00:00Z"));
+    vi.setSystemTime(new Date("2024-01-01T12:00:00Z"));
     const scenario = makeScenario({
       rsf: 1,
-      commencement: "2026-01-01",
-      expiration: "2026-01-31",
+      commencement: "2024-01-01",
+      expiration: "2024-01-31",
       rent_steps: [{ start: 0, end: 0, rate_psf_yr: 120 }],
       opex_mode: "nnn",
       base_opex_psf_yr: 0,
@@ -176,8 +176,8 @@ describe("scenario abatement periods", () => {
       free_rent_months: 0,
     });
     const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.12);
-    const monthlyRate = Math.pow(1 + 0.12, 1 / 12) - 1;
-    const expectedNpv = 10 / (1 + monthlyRate);
+    const monthlyRate = 0.12 / 12;
+    const expectedNpv = 10 / Math.pow(1 + monthlyRate, 17);
 
     expect(result.metrics.totalObligation).toBeCloseTo(110, 8);
     expect(result.metrics.npvAtDiscount).toBeCloseTo(expectedNpv, 8);
@@ -204,8 +204,8 @@ describe("scenario abatement periods", () => {
       free_rent_months: 0,
     });
     const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.12);
-    const monthlyRate = Math.pow(1 + 0.12, 1 / 12) - 1;
-    const expectedNpv = 10 / Math.pow(1 + monthlyRate, 8); // 7 pre-start months + month 1
+    const monthlyRate = 0.12 / 12;
+    const expectedNpv = 10 / Math.pow(1 + monthlyRate, 24); // 23 pre-start months + month 1
 
     expect(result.metrics.npvAtDiscount).toBeCloseTo(expectedNpv, 8);
     expect(result.monthly[0].discountedValue).toBeCloseTo(expectedNpv, 8);

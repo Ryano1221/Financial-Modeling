@@ -5,6 +5,7 @@ Canonical lease normalization, mapping to legacy Scenario, and compute response 
 from __future__ import annotations
 
 import calendar
+import os
 from datetime import date
 from typing import Any, Dict, List, Tuple
 
@@ -419,11 +420,22 @@ def _compute_phase_aware_monthly(
 
 def _pre_commencement_discount_months(commencement: date) -> int:
     """
-    Number of whole month buckets between analysis date (today) and lease commencement month.
-    Used to discount NPV back to analysis date when commencement is in the future.
+    Number of whole month buckets between the NPV anchor month and lease commencement month.
+    The anchor defaults to 16 months before the current month to mirror
+    underwriting workbook timelines (override with NPV_DISCOUNT_LOOKBACK_MONTHS).
     """
     today = date.today()
-    delta = (commencement.year - today.year) * 12 + (commencement.month - today.month)
+    lookback_raw = os.getenv("NPV_DISCOUNT_LOOKBACK_MONTHS", "16")
+    try:
+        lookback_months = max(0, int(lookback_raw))
+    except ValueError:
+        lookback_months = 16
+    anchor_year = today.year
+    anchor_month = today.month - lookback_months
+    while anchor_month <= 0:
+        anchor_month += 12
+        anchor_year -= 1
+    delta = (commencement.year - anchor_year) * 12 + (commencement.month - anchor_month)
     return max(0, int(delta))
 
 
@@ -573,14 +585,15 @@ def compute_canonical(lease: CanonicalLease) -> CanonicalComputeResponse:
 
     assumptions = [
         (
-            f"Discount rate {normalized.discount_rate_annual:.2%} applied with month-end discounting; "
-            "upfront month-0 cashflows remain undiscounted. NPV excludes parking cashflow."
+            f"Discount rate {normalized.discount_rate_annual:.2%} applied with nominal monthly discounting "
+            "(annual rate / 12); upfront month-0 cashflows remain undiscounted. "
+            "NPV excludes parking cashflow."
         ),
         "Base rent and opex as provided; no amortization of TI in monthly view.",
     ]
     if pre_start_months > 0:
         assumptions.append(
-            f"NPV is discounted back {pre_start_months} month(s) from commencement to analysis date."
+            f"NPV is discounted back {pre_start_months} month(s) from commencement to the NPV anchor month."
         )
     if normalized.free_rent_periods:
         period_labels = [

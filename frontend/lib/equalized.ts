@@ -231,7 +231,7 @@ export function computeEqualizedComparison(
     const annualizedDivisor =
       monthDivisor > 0 ? monthDivisor / 12 : windowDays > 0 ? windowDays / 365 : 0;
 
-    const monthlyDiscount = Math.pow(1 + Math.max(0, fullEngine.discountRateUsed), 1 / 12) - 1;
+    const monthlyDiscount = Math.max(0, fullEngine.discountRateUsed) / 12;
     const npvCost = discountedSeries.reduce(
       (acc, cf, idx) => acc + cf / Math.pow(1 + monthlyDiscount, idx),
       0
