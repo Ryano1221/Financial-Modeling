@@ -197,9 +197,9 @@ function condenseNoteFragment(fragment: string, maxChars = 185): string {
   }
 
   if (/\brenew|\bextension/.test(low)) {
-    const optionCountMatch = cleaned.match(/\b(\d{1,2}|one|two|three)\s+(?:option|options)\b/i);
+    const optionCountMatch = cleaned.match(/\b(\d{1,2}|one|two|three|four|five)\s+(?:option|options)\b/i);
     const rawCount = optionCountMatch?.[1]?.toLowerCase();
-    const countMap: Record<string, string> = { one: "1", two: "2", three: "3" };
+    const countMap: Record<string, string> = { one: "1", two: "2", three: "3", four: "4", five: "5" };
     const optionCount = rawCount ? (countMap[rawCount] ?? rawCount) : "";
     const monthMatch = cleaned.match(/\b(\d{1,3})\s*(?:months?|mos?)\b/i);
     const yearMatch = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b/i);
@@ -207,8 +207,6 @@ function condenseNoteFragment(fragment: string, maxChars = 185): string {
     if (optionCount) details.push(`${optionCount} option${optionCount === "1" ? "" : "s"}`);
     if (monthMatch) details.push(`${monthMatch[1]} months`);
     else if (yearMatch) details.push(`${yearMatch[1]} years`);
-    if (low.includes("fair market") || low.includes("fmv")) details.push("FMV");
-    if (low.includes("arbitration")) details.push("arbitration");
     if (details.length === 0) return "";
     return `Renewal option: ${details.join(", ")}`;
   }

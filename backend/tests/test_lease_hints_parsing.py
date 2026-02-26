@@ -330,6 +330,14 @@ def test_summarize_note_clause_renewal_without_terms_returns_empty() -> None:
     assert summary == ""
 
 
+def test_summarize_note_clause_renewal_keeps_only_count_and_duration() -> None:
+    summary = main._summarize_note_clause(
+        "Renewal option: Tenant shall have one option to renew for 60 months at FMV with arbitration.",
+        max_chars=160,
+    )
+    assert summary == "Renewal option: 1 option, 60 months"
+
+
 def test_detect_generated_report_document() -> None:
     text = (
         "Lease Economics Comparison\\n"

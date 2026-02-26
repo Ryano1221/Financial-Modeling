@@ -42,4 +42,13 @@ describe("notes formatting", () => {
     expect(formatted).not.toContain("stated term");
     expect(formatted).toContain("Operating expenses: OpEx estimate");
   });
+
+  it("formats renewal notes with only option count and duration", () => {
+    const raw =
+      "Renewal / extension: Tenant shall have one option to renew for 60 months at FMV with arbitration.";
+    const formatted = formatMetricValue("notes", raw);
+    expect(formatted).toContain("Renewal / extension: Renewal option: 1 option, 60 months");
+    expect(formatted).not.toContain("FMV");
+    expect(formatted).not.toContain("arbitration");
+  });
 });

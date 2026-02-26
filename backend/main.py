@@ -4622,10 +4622,10 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
     # Renewal
     if "renew" in low or "extension" in low:
         option_count = ""
-        count_match = re.search(r"(?i)\b(\d{1,2}|one|two|three)\s+(?:option|options)\b", cleaned)
+        count_match = re.search(r"(?i)\b(\d{1,2}|one|two|three|four|five)\s+(?:option|options)\b", cleaned)
         if count_match:
             raw_count = count_match.group(1).lower()
-            count_map = {"one": "1", "two": "2", "three": "3"}
+            count_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5"}
             option_count = count_map.get(raw_count, raw_count)
         term_match = re.search(r"(?i)\b(\d{1,3})\s*(?:months?|mos?)\b", cleaned)
         years_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b", cleaned)
@@ -4636,10 +4636,6 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
             details.append(f"{term_match.group(1)} months")
         elif years_match:
             details.append(f"{years_match.group(1)} years")
-        if "fair market" in low or "fmv" in low:
-            details.append("FMV")
-        if "arbitration" in low:
-            details.append("arbitration")
         if not details:
             return ""
         summary = "Renewal option: " + ", ".join(details)
