@@ -7,9 +7,9 @@ const BACKEND_TIMEOUT_MS = 300000;
 
 function getBackendBaseUrl() {
   const v =
-    process.env.BACKEND_URL?.trim() ||
     process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
     process.env.NEXT_PUBLIC_BACKEND_URL?.trim() ||
+    process.env.BACKEND_URL?.trim() ||
     "";
   return v.endsWith("/") ? v.slice(0, -1) : v;
 }
