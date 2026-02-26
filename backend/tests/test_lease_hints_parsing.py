@@ -517,6 +517,24 @@ def test_extract_hints_parses_option_1_2_counter_with_base_rental_rate_and_abate
     assert hints["option_variants"][1]["escalation_pct"] == 3.0
 
 
+def test_extract_option_counter_terms_parses_label_value_escalation_rows() -> None:
+    text = (
+        "TERM: Option 1: sixty (60) months. Option 2: eighty-four (84) months.\n"
+        "BASE RENTAL RATE: "
+        "Option 1: 60 Month Term | $42.00 NNN | Annual Base Rent Escalation: 3.00%. "
+        "Option 2: 84 Month Term | $40.00 NNN | Annual Base Rent Escalation: 2.50%.\n"
+        "IMPROVEMENTS: N/A.\n"
+    )
+    option_hints = main._extract_option_counter_terms(text)
+
+    assert option_hints["selected_option"] == "b"
+    options = {str(o["option_key"]): o for o in option_hints["options"]}
+    assert options["a"]["escalation_pct"] == 3.0
+    assert options["b"]["escalation_pct"] == 2.5
+    assert options["a"]["rent_schedule"][0]["rent_psf_annual"] == 42.0
+    assert options["a"]["rent_schedule"][1]["rent_psf_annual"] == 43.26
+
+
 def test_extract_hints_prefers_parseable_expiration_when_earlier_match_is_malformed() -> None:
     text = (
         "Sublease Term | Expiring on 31, 2036.\n"

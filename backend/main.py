@@ -2839,6 +2839,43 @@ def _extract_free_rent_months_from_option_block(block: str) -> int | None:
     return None
 
 
+def _extract_annual_rent_escalation_pct(block: str) -> float | None:
+    if not block:
+        return None
+    candidates: list[tuple[int, float, int]] = []
+    patterns: list[tuple[str, int, int]] = [
+        (
+            r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+base\s+rent(?:al)?(?:\s+rate)?)?\s+"
+            r"(?:increase|increases|escalation|escalations|escalator)\b",
+            1,
+            4,
+        ),
+        (
+            r"(?i)\bannual(?:\s+base\s+rent(?:al)?(?:\s+rate)?)?\s+"
+            r"(?:increase|increases|escalation|escalations|escalator)\b"
+            r"(?:\s*[:|=]\s*|[^\n%]{0,20}?)(\d+(?:\.\d+)?)\s*%",
+            1,
+            4,
+        ),
+    ]
+    for pattern, group_index, base_score in patterns:
+        for m in re.finditer(pattern, block):
+            pct = _coerce_float_token(m.group(group_index), None)
+            if pct is None or pct <= 0 or pct > 25:
+                continue
+            segment = (m.group(0) or "").lower()
+            score = base_score
+            if any(tok in segment for tok in ("base rent", "rental rate", "rent escalation", "rent increase")):
+                score += 4
+            if any(tok in segment for tok in ("opex", "operating expense", "cam")):
+                score -= 6
+            candidates.append((score, float(pct), m.start()))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda row: (-row[0], row[2]))
+    return candidates[0][1]
+
+
 def _extract_option_counter_terms(text: str) -> dict:
     if not text:
         return {}
@@ -2867,16 +2904,11 @@ def _extract_option_counter_terms(text: str) -> dict:
         )
     )
     abatement_section = abatement_matches[-1].group(1) if abatement_matches else ""
-    esc_match = re.search(
-        r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+base\s+rent)?\s+(?:increase|increases|escalation|escalations)\b",
-        base_section,
+    esc_default_from_base = _extract_annual_rent_escalation_pct(base_section)
+    esc_default_from_flat = _extract_annual_rent_escalation_pct(flat)
+    escalation_pct_default = float(
+        esc_default_from_base if esc_default_from_base is not None else (esc_default_from_flat or 0.0)
     )
-    if not esc_match:
-        esc_match = re.search(
-            r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+base\s+rent)?\s+(?:increase|increases|escalation|escalations)\b",
-            flat,
-        )
-    escalation_pct_default = float(esc_match.group(1)) if esc_match else 0.0
 
     option_data: dict[str, dict] = {}
     for raw_label, block in _extract_option_blocks(term_section):
@@ -2935,9 +2967,9 @@ def _extract_option_counter_terms(text: str) -> dict:
             rate = _coerce_float_token(rate_match.group(1), 0.0) or 0.0
             if 2.0 <= rate <= 500.0:
                 data["base_rate_psf_yr"] = float(rate)
-        esc_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+increases?\b", block)
-        if esc_match:
-            data["escalation_pct"] = _coerce_float_token(esc_match.group(1), escalation_pct_default) or escalation_pct_default
+        block_escalation = _extract_annual_rent_escalation_pct(block)
+        if block_escalation is not None:
+            data["escalation_pct"] = block_escalation
 
     if not option_data:
         return {}

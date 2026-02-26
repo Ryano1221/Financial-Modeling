@@ -96,6 +96,26 @@ def test_regex_prefill_prefers_basic_rent_over_opex_line_in_proposal() -> None:
     assert steps[-1]["end"] == 62
 
 
+def test_regex_prefill_parses_label_value_annual_base_rent_escalation() -> None:
+    text = (
+        "Premises: Suite 230 consisting of 3,947 RSF.\n"
+        "Lease Commencement: May 1, 2027\n"
+        "Lease Expiration: April 30, 2032\n"
+        "Base Rent | $42.00/SF\n"
+        "Annual Base Rent Escalation | 3.00%\n"
+        "Base Operating Expenses | $26.80/SF\n"
+        "Annual Opex Escalation | 3.00%\n"
+    )
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 42.0}
+    assert steps[1]["rate_psf_yr"] == 43.26
+    assert steps[-1]["end"] == 58
+
+
 def test_regex_prefill_prefers_tia_per_sf_over_total_budget() -> None:
     text = (
         "Tenant Improvement Allowance (TIA): $35.00 per RSF.\n"

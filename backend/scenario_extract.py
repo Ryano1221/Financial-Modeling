@@ -598,6 +598,37 @@ _RE_ANNUAL_ESCALATION = re.compile(
 _RE_ANNUAL_ESCALATION_GENERIC = re.compile(
     r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+(?:escalat(?:ion|ions)|increase(?:s)?)\b"
 )
+_RE_ANNUAL_ESCALATION_LABEL_VALUE = re.compile(
+    r"(?i)\bannual(?:\s+base\s+rent(?:al)?(?:\s+rate)?)?\s+"
+    r"(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+    r"(?:\s*[:|=]\s*|[^\n%]{0,20}?)(\d+(?:\.\d+)?)\s*%"
+)
+
+
+def _extract_annual_rent_escalation_pct(text: str) -> float | None:
+    if not text:
+        return None
+    candidates: list[tuple[int, float, int]] = []
+    patterns = (
+        (_RE_ANNUAL_ESCALATION_GENERIC, 1, 4),
+        (_RE_ANNUAL_ESCALATION_LABEL_VALUE, 1, 4),
+    )
+    for pattern, group_index, base_score in patterns:
+        for match in pattern.finditer(text):
+            pct = _coerce_float_token(match.group(group_index), None)
+            if pct is None or pct <= 0 or pct > 25:
+                continue
+            segment = (match.group(0) or "").lower()
+            score = base_score
+            if any(tok in segment for tok in ("base rent", "rental rate", "rent escalation", "rent increase")):
+                score += 4
+            if any(tok in segment for tok in ("opex", "operating expense", "cam")):
+                score -= 6
+            candidates.append((score, float(pct), match.start()))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda row: (-row[0], row[2]))
+    return candidates[0][1]
 
 
 def _parse_text_date_token(s: str) -> str | None:
@@ -1390,8 +1421,7 @@ def _regex_prefill(text: str) -> dict:
 
     # If only base rate + annual escalation language exists, synthesize yearly steps.
     if "rent_steps" not in prefill and "rate_psf_yr" in prefill:
-        esc_generic = _RE_ANNUAL_ESCALATION_GENERIC.search(text)
-        esc_rate = _coerce_float_token(esc_generic.group(1), None) if esc_generic else None
+        esc_rate = _extract_annual_rent_escalation_pct(text)
         inferred_term = _coerce_int_token(prefill.get("term_months"), None)
         if inferred_term is None and comm and exp:
             inferred_term = _term_month_count(_safe_date(comm), _safe_date(exp))
