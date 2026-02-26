@@ -29,4 +29,17 @@ describe("notes formatting", () => {
     expect(formatted).toContain("must-take-and-pay");
     expect(formatted).toContain("up to 10% convertible to reserved");
   });
+
+  it("drops vague renewal and numeric noise while keeping useful notes", () => {
+    const raw = [
+      "General: 8",
+      "Renewal / extension: Renewal option for stated term",
+      "Operating expenses: OpEx estimate: source year 2026 value escalated 3.00% YoY to 2027 ($26.80/SF).",
+    ].join(" | ");
+
+    const formatted = formatMetricValue("notes", raw);
+    expect(formatted).not.toContain("General: 8");
+    expect(formatted).not.toContain("stated term");
+    expect(formatted).toContain("Operating expenses: OpEx estimate");
+  });
 });

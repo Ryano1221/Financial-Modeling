@@ -131,6 +131,8 @@ const NOTE_CATEGORY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
 ];
 
 const NOTE_PREFIX_PATTERNS: RegExp[] = [
+  /^(general)\s*:\s*/i,
+  /^(operating expenses?)\s*:\s*/i,
   /^(assignment\s*(?:\/|and)\s*sublease|sublease|assignment)\s*:\s*/i,
   /^(renewal\s*(?:option|\/\s*extension)?|option to renew)\s*:\s*/i,
   /^(parking\s*(?:charges|ratio)?)\s*:\s*/i,
@@ -165,6 +167,18 @@ function stripNotePrefixNoise(input: string): string {
   return text;
 }
 
+function isMeaningfulNoteFragment(input: string): boolean {
+  const cleaned = stripNotePrefixNoise(input).trim();
+  if (!cleaned) return false;
+  const low = cleaned.toLowerCase();
+  if (["n/a", "na", "none", "null", "-", "--", "general"].includes(low)) return false;
+  if (/^\d+(?:\.\d+)?$/.test(low)) return false;
+  if (/^[\W_]+$/.test(cleaned)) return false;
+  if (!/[a-z]/i.test(cleaned)) return false;
+  if (cleaned.length < 8 && !/[a-z]{2,}/i.test(cleaned)) return false;
+  return true;
+}
+
 function condenseNoteFragment(fragment: string, maxChars = 185): string {
   const cleaned = stripNotePrefixNoise(fragment);
   if (!cleaned) return "";
@@ -183,10 +197,20 @@ function condenseNoteFragment(fragment: string, maxChars = 185): string {
   }
 
   if (/\brenew|\bextension/.test(low)) {
+    const optionCountMatch = cleaned.match(/\b(\d{1,2}|one|two|three)\s+(?:option|options)\b/i);
+    const rawCount = optionCountMatch?.[1]?.toLowerCase();
+    const countMap: Record<string, string> = { one: "1", two: "2", three: "3" };
+    const optionCount = rawCount ? (countMap[rawCount] ?? rawCount) : "";
     const monthMatch = cleaned.match(/\b(\d{1,3})\s*(?:months?|mos?)\b/i);
-    const term = monthMatch ? `${monthMatch[1]} months` : "stated term";
-    const suffix = low.includes("fair market") || low.includes("fmv") ? " at FMV" : "";
-    return `Renewal option for ${term}${suffix}`;
+    const yearMatch = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b/i);
+    const details: string[] = [];
+    if (optionCount) details.push(`${optionCount} option${optionCount === "1" ? "" : "s"}`);
+    if (monthMatch) details.push(`${monthMatch[1]} months`);
+    else if (yearMatch) details.push(`${yearMatch[1]} years`);
+    if (low.includes("fair market") || low.includes("fmv")) details.push("FMV");
+    if (low.includes("arbitration")) details.push("arbitration");
+    if (details.length === 0) return "";
+    return `Renewal option: ${details.join(", ")}`;
   }
 
   if (/\bparking|\bpermit/.test(low)) {
@@ -248,6 +272,7 @@ function formatNotesByCategory(raw: string): string {
   for (const fragment of fragments) {
     const condensed = condenseNoteFragment(fragment);
     if (!condensed) continue;
+    if (!isMeaningfulNoteFragment(condensed)) continue;
     const category = classifyNoteCategory(condensed);
     const existing = grouped.get(category) ?? [];
     const key = noteDedupeKey(condensed);

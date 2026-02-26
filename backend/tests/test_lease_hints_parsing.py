@@ -313,6 +313,23 @@ def test_pack_notes_for_storage_dedupes_and_condenses_long_legal_note_lines() ->
     assert "unreasonably withheld" in packed.lower()
 
 
+def test_pack_notes_for_storage_filters_numeric_noise_fragments() -> None:
+    lines = [
+        "General: 8",
+        "8",
+        "Operating expenses: OpEx estimate: source year 2026 value escalated 3.00% YoY to 2027 ($26.80/SF).",
+    ]
+    packed = main._pack_notes_for_storage(lines, max_total_chars=500, max_line_chars=220, max_items=6)
+    assert "General: 8" not in packed
+    assert "| 8" not in packed
+    assert "OpEx estimate" in packed
+
+
+def test_summarize_note_clause_renewal_without_terms_returns_empty() -> None:
+    summary = main._summarize_note_clause("Renewal option for stated term", max_chars=120)
+    assert summary == ""
+
+
 def test_detect_generated_report_document() -> None:
     text = (
         "Lease Economics Comparison\\n"

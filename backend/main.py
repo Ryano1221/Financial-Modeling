@@ -4550,7 +4550,7 @@ def _split_note_fragments(raw: str) -> list[str]:
     out: list[str] = []
     for part in parts:
         cleaned = re.sub(r"\s+", " ", part).strip(" \t,;|")
-        if cleaned:
+        if cleaned and _is_meaningful_note_fragment(cleaned):
             out.append(cleaned)
     return out
 
@@ -4559,6 +4559,7 @@ _NOTE_PREFIX_PATTERN = re.compile(
     r"(?i)^\s*(?:"
     r"assignment\s*(?:/|and)\s*sublease|sublease|assignment|"
     r"renewal\s*(?:option|/?\s*extension)?|option\s+to\s+renew|"
+    r"general|operating\s*expenses?|"
     r"parking\s*(?:charges|ratio)?|"
     r"expense\s*caps?\s*/\s*exclusions|opex\s*(?:exclusions?|cap)|audit\s*rights?|"
     r"use\s*restrictions?|termination\s*option|expansion\s*option|holdover|"
@@ -4578,6 +4579,24 @@ def _strip_note_prefix_noise(text: str) -> str:
             break
         cleaned = next_val
     return cleaned
+
+
+def _is_meaningful_note_fragment(text: str) -> bool:
+    cleaned = _strip_note_prefix_noise(str(text or "")).strip()
+    if not cleaned:
+        return False
+    low = cleaned.lower()
+    if low in {"n/a", "na", "none", "null", "-", "--", "general"}:
+        return False
+    if re.fullmatch(r"\d+(?:\.\d+)?", low):
+        return False
+    if re.fullmatch(r"[\W_]+", cleaned):
+        return False
+    if not re.search(r"[a-zA-Z]", cleaned):
+        return False
+    if len(cleaned) < 8 and not re.search(r"[a-zA-Z]{2,}", cleaned):
+        return False
+    return True
 
 
 def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
@@ -4602,13 +4621,28 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
 
     # Renewal
     if "renew" in low or "extension" in low:
+        option_count = ""
+        count_match = re.search(r"(?i)\b(\d{1,2}|one|two|three)\s+(?:option|options)\b", cleaned)
+        if count_match:
+            raw_count = count_match.group(1).lower()
+            count_map = {"one": "1", "two": "2", "three": "3"}
+            option_count = count_map.get(raw_count, raw_count)
         term_match = re.search(r"(?i)\b(\d{1,3})\s*(?:months?|mos?)\b", cleaned)
-        months_txt = f"{term_match.group(1)} months" if term_match else "stated term"
-        summary = f"Renewal option for {months_txt}"
+        years_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b", cleaned)
+        details: list[str] = []
+        if option_count:
+            details.append(f"{option_count} option{'s' if option_count != '1' else ''}")
+        if term_match:
+            details.append(f"{term_match.group(1)} months")
+        elif years_match:
+            details.append(f"{years_match.group(1)} years")
         if "fair market" in low or "fmv" in low:
-            summary += " at FMV"
+            details.append("FMV")
         if "arbitration" in low:
-            summary += "; FMV dispute via arbitration"
+            details.append("arbitration")
+        if not details:
+            return ""
+        summary = "Renewal option: " + ", ".join(details)
         return _condense_note_text(summary, max_chars=max_chars, max_sentences=1)
 
     # Parking
@@ -4693,6 +4727,8 @@ def _condense_note_line(line: str, max_chars: int = 320) -> str:
     cleaned = re.sub(r"^\s*(?:[-*]|\u2022|•)\s*", "", str(line or "")).strip()
     if not cleaned:
         return ""
+    if not _is_meaningful_note_fragment(cleaned):
+        return ""
     if len(cleaned) <= max_chars:
         return _strip_note_prefix_noise(cleaned)
 
@@ -4736,6 +4772,8 @@ def _pack_notes_for_storage(
     for raw in merged:
         line = _condense_note_line(raw, max_chars=max_line_chars)
         if not line:
+            continue
+        if not _is_meaningful_note_fragment(line):
             continue
         dedupe_key = _note_dedupe_key(line)
         if dedupe_key in seen:
@@ -4885,6 +4923,8 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
             note = snippet
         else:
             note = f"{label}: {snippet}"
+        if not _is_meaningful_note_fragment(note):
+            continue
         if note in seen:
             continue
         seen.add(note)
