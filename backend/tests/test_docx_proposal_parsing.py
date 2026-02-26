@@ -179,3 +179,26 @@ def test_regex_prefill_parses_ti_allowance_from_tenant_improvements_clause() -> 
     )
     prefill = _regex_prefill(text)
     assert prefill.get("ti_allowance_psf") == 1.5
+
+
+def test_regex_prefill_parses_total_ti_allowance_and_converts_to_psf() -> None:
+    text = (
+        "Premises: Suite 230 consisting of 3,947 RSF.\n"
+        "Tenant Improvement Allowance: Owner shall provide Tenant with a Tenant Improvement Allowance of $50,000.00.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_total") == 50000.0
+    assert abs(float(prefill.get("ti_allowance_psf") or 0.0) - (50000.0 / 3947.0)) < 0.01
+
+
+def test_extract_lease_hints_parses_total_ti_allowance_in_docx_style_text() -> None:
+    text = (
+        "Building: Lamar Central\n"
+        "Premises: Suite 230 consisting of 3,947 RSF.\n"
+        "Commencement Date: May 1, 2027.\n"
+        "Lease Term: Sixty (60) months from the Commencement Date.\n"
+        "Tenant Improvement Allowance: Owner shall provide Tenant with a Tenant Improvement Allowance, of $50,000.00.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints.get("ti_allowance_total") == 50000.0
+    assert abs(float(hints.get("ti_allowance_psf") or 0.0) - (50000.0 / 3947.0)) < 0.01

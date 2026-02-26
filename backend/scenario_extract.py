@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import time
 import zipfile
+import gc
 from calendar import monthrange
 from datetime import date, timedelta
 from io import BytesIO
@@ -28,7 +29,10 @@ logger = logging.getLogger(__name__)
 # Early exit: skip OCR if PDF text is at least this long and high quality
 OCR_EARLY_EXIT_MIN_CHARS = 1500
 # When OCR runs, only process this many pages (default)
-DEFAULT_OCR_PAGES = 5
+DEFAULT_OCR_PAGES = 3
+# Cap OCR memory by limiting PDF size and render DPI.
+OCR_MAX_PDF_BYTES = int(os.environ.get("OCR_MAX_PDF_BYTES", str(8 * 1024 * 1024)))
+OCR_RENDER_DPI = int(os.environ.get("OCR_RENDER_DPI", "120"))
 # Snippet pack cap
 SNIPPET_PACK_MAX_CHARS = 20_000
 # Fallback truncation when snippet pack too small
@@ -157,15 +161,36 @@ def _run_ocr_on_pdf(file: BinaryIO, max_pages: int = DEFAULT_OCR_PAGES) -> str:
             "Also install system deps: poppler (e.g. brew install poppler) and tesseract (e.g. brew install tesseract)."
         ) from e
     t0 = time.perf_counter()
+    tmp_pdf_path: str | None = None
     try:
-        pdf_bytes = file.read()
+        with tempfile.NamedTemporaryFile(prefix="ocr-input-", suffix=".pdf", delete=False) as tmp:
+            file.seek(0)
+            shutil.copyfileobj(file, tmp)
+            tmp_pdf_path = tmp.name
     except Exception as e:
         raise ValueError(f"OCR failed (is poppler installed?): {e}") from e
+
+    try:
+        file_size = int(Path(tmp_pdf_path).stat().st_size) if tmp_pdf_path else 0
+    except Exception:
+        file_size = 0
+    if file_size > OCR_MAX_PDF_BYTES:
+        logger.warning(
+            "[extract] OCR skipped: pdf bytes=%d exceeds OCR_MAX_PDF_BYTES=%d",
+            file_size,
+            OCR_MAX_PDF_BYTES,
+        )
+        if tmp_pdf_path:
+            try:
+                os.unlink(tmp_pdf_path)
+            except Exception:
+                pass
+        return ""
 
     # Process one page at a time to avoid holding many rendered images in memory.
     total_pages = max_pages
     try:
-        info = pdf2image.pdfinfo_from_bytes(pdf_bytes)
+        info = pdf2image.pdfinfo_from_path(tmp_pdf_path)
         detected_pages = int(info.get("Pages", max_pages))
         total_pages = max(0, min(max_pages, detected_pages))
     except Exception:
@@ -176,10 +201,13 @@ def _run_ocr_on_pdf(file: BinaryIO, max_pages: int = DEFAULT_OCR_PAGES) -> str:
     processed_pages = 0
     for page_num in range(1, total_pages + 1):
         try:
-            images = pdf2image.convert_from_bytes(
-                pdf_bytes,
+            images = pdf2image.convert_from_path(
+                tmp_pdf_path,
                 first_page=page_num,
                 last_page=page_num,
+                dpi=max(72, OCR_RENDER_DPI),
+                grayscale=True,
+                fmt="jpeg",
                 thread_count=1,
             )
         except Exception:
@@ -195,9 +223,15 @@ def _run_ocr_on_pdf(file: BinaryIO, max_pages: int = DEFAULT_OCR_PAGES) -> str:
         except Exception:
             pass
         del images
+        gc.collect()
         processed_pages += 1
     elapsed = time.perf_counter() - t0
     logger.info("[extract] OCR duration=%.2fs pages=%d", elapsed, processed_pages)
+    if tmp_pdf_path:
+        try:
+            os.unlink(tmp_pdf_path)
+        except Exception:
+            pass
     return "\n\n".join(texts) if texts else ""
 
 
@@ -547,6 +581,10 @@ _RE_TI = re.compile(
 )
 _RE_TIA_KEYWORD = re.compile(
     r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
+)
+_RE_TI_ALLOWANCE_TOTAL = re.compile(
+    r"(?i)\b(?:ti(?:a)?|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
+    r"[^\n$]{0,260}\$\s*([\d,]+(?:\.\d+)?)"
 )
 _RE_PSF_AMOUNT = re.compile(
     rf"(?i)\$?\s*([\d,]+(?:\.\d+)?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
@@ -1282,8 +1320,10 @@ def _regex_prefill(text: str) -> dict:
         prefill["term_months"] = int(term_months)
         if comm and not exp:
             prefill["expiration"] = _expiration_from_term_months(_safe_date(comm), term_months).isoformat()
-    # TI allowance ($/sf): prioritize explicit per-SF language and TIA cues.
+    # TI allowance: capture both $/SF and total-dollar allowance language.
     ti_allowance_psf = None
+    ti_allowance_total = None
+    ti_total_candidates: list[tuple[int, float, int]] = []
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for idx, line in enumerate(lines):
         line_low = line.lower()
@@ -1318,6 +1358,31 @@ def _regex_prefill(text: str) -> dict:
             if 0.5 <= value <= 500:
                 ti_allowance_psf = value
                 break
+        for total_match in re.finditer(r"\$\s*([\d,]+(?:\.\d+)?)", window):
+            try:
+                total_value = float(total_match.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            if total_value <= 500:
+                continue
+            local = window[max(0, total_match.start() - 80): min(len(window), total_match.end() + 90)]
+            local_low = local.lower()
+            if "outside of the tenant improvement allowance" in local_low:
+                continue
+            if not re.search(r"(?i)\b(?:allowance|tenant improvements?|tia|ti)\b", local):
+                continue
+            if "project management fee" in local_low:
+                continue
+            score = 0
+            if any(tok in local_low for tok in ("tenant improvement allowance", "ti allowance", "improvement allowance")):
+                score += 6
+            if "allowance" in local_low:
+                score += 3
+            if any(tok in local_low for tok in ("budget", "cost", "fee")) and "allowance" not in local_low:
+                score -= 6
+            if total_value >= 1000:
+                score += 1
+            ti_total_candidates.append((score, float(total_value), idx))
         if ti_allowance_psf is not None:
             break
     if ti_allowance_psf is None:
@@ -1331,8 +1396,37 @@ def _regex_prefill(text: str) -> dict:
                         ti_allowance_psf = fallback_val
                 except ValueError:
                     pass
+    if ti_total_candidates:
+        ti_total_candidates.sort(key=lambda row: (-row[0], row[2], -row[1]))
+        if ti_total_candidates[0][0] > -2:
+            ti_allowance_total = ti_total_candidates[0][1]
+    if ti_allowance_total is None:
+        total_candidates: list[tuple[int, float, int]] = []
+        for m in _RE_TI_ALLOWANCE_TOTAL.finditer(text):
+            value = _coerce_float_token(m.group(1), 0.0) or 0.0
+            if value <= 500:
+                continue
+            seg = (m.group(0) or "").lower()
+            score = 2
+            if "tenant improvement allowance" in seg or "ti allowance" in seg:
+                score += 4
+            if "allowance" in seg:
+                score += 2
+            if any(tok in seg for tok in ("budget", "fee")) and "allowance" not in seg:
+                score -= 5
+            total_candidates.append((score, float(value), m.start()))
+        if total_candidates:
+            total_candidates.sort(key=lambda row: (-row[0], row[2], -row[1]))
+            if total_candidates[0][0] > -2:
+                ti_allowance_total = total_candidates[0][1]
+    if ti_allowance_total is not None:
+        prefill["ti_allowance_total"] = float(round(ti_allowance_total, 2))
+    if ti_allowance_psf is None and ti_allowance_total is not None:
+        rsf_for_ti = _coerce_float_token(prefill.get("rsf"), None)
+        if rsf_for_ti is not None and rsf_for_ti > 0:
+            ti_allowance_psf = float(ti_allowance_total) / float(rsf_for_ti)
     if ti_allowance_psf is not None:
-        prefill["ti_allowance_psf"] = float(ti_allowance_psf)
+        prefill["ti_allowance_psf"] = float(round(ti_allowance_psf, 4))
     # Free rent months
     m = _RE_FREE_RENT.search(text)
     if m:

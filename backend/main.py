@@ -3789,6 +3789,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "opex_source_year": None,
         "opex_by_calendar_year": {},
         "ti_allowance_psf": None,
+        "ti_allowance_total": None,
         "ti_budget_psf": None,
         "ti_budget_total": None,
         "free_rent_scope": None,
@@ -4284,6 +4285,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     prefill_ti_allowance = _coerce_float_token(prefill_hints.get("ti_allowance_psf"), 0.0) or 0.0
     if prefill_ti_allowance > 0:
         hints["ti_allowance_psf"] = float(round(prefill_ti_allowance, 4))
+    prefill_ti_allowance_total = _coerce_float_token(prefill_hints.get("ti_allowance_total"), 0.0) or 0.0
+    if prefill_ti_allowance_total > 0:
+        hints["ti_allowance_total"] = float(round(prefill_ti_allowance_total, 2))
+        if not (_coerce_float_token(hints.get("ti_allowance_psf"), 0.0) or 0.0):
+            rsf_for_ti = _coerce_float_token(hints.get("rsf"), 0.0) or 0.0
+            if rsf_for_ti > 0:
+                hints["ti_allowance_psf"] = float(round(prefill_ti_allowance_total / rsf_for_ti, 4))
     prefill_ti_budget_total = _coerce_float_token(prefill_hints.get("ti_budget_total"), 0.0) or 0.0
     if prefill_ti_budget_total > 0:
         hints["ti_budget_total"] = float(round(prefill_ti_budget_total, 2))
@@ -6348,6 +6356,11 @@ def _normalize_impl(
                     "using 3% annual escalation thereafter."
                 )
             hinted_ti_allowance = _coerce_float_token(extracted_hints.get("ti_allowance_psf"), 0.0) or 0.0
+            if hinted_ti_allowance <= 0:
+                hinted_ti_allowance_total = _coerce_float_token(extracted_hints.get("ti_allowance_total"), 0.0) or 0.0
+                effective_rsf_for_ti = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0) or 0.0
+                if hinted_ti_allowance_total > 0 and effective_rsf_for_ti > 0:
+                    hinted_ti_allowance = hinted_ti_allowance_total / effective_rsf_for_ti
             if hinted_ti_allowance > 0:
                 updates["ti_allowance_psf"] = hinted_ti_allowance
                 updates["ti_source_of_truth"] = "psf"
