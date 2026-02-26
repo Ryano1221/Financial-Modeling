@@ -4631,24 +4631,78 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
 
     # Renewal
     if "renew" in low or "extension" in low:
-        option_count = ""
-        count_match = re.search(r"(?i)\b(\d{1,2}|one|two|three|four|five)\s+(?:option|options)\b", cleaned)
-        if count_match:
-            raw_count = count_match.group(1).lower()
-            count_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5"}
-            option_count = count_map.get(raw_count, raw_count)
-        term_match = re.search(r"(?i)\b(\d{1,3})\s*(?:months?|mos?)\b", cleaned)
-        years_match = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b", cleaned)
-        details: list[str] = []
-        if option_count:
-            details.append(f"{option_count} option{'s' if option_count != '1' else ''}")
-        if term_match:
-            details.append(f"{term_match.group(1)} months")
-        elif years_match:
-            details.append(f"{years_match.group(1)} years")
-        if not details:
+        count_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5"}
+
+        option_number = ""
+        option_word = ""
+        m_opt_num_word = re.search(
+            r"(?i)\b(\d{1,2})\s*\(\s*([A-Za-z-]+)\s*\)\s+(?:renewal\s+)?(?:option|options)\b",
+            cleaned,
+        )
+        m_opt_word_num = re.search(
+            r"(?i)\b([A-Za-z-]+)\s*\(\s*(\d{1,2})\s*\)\s+(?:renewal\s+)?(?:option|options)\b",
+            cleaned,
+        )
+        m_opt_plain = re.search(r"(?i)\b(\d{1,2}|one|two|three|four|five)\s+(?:renewal\s+)?(?:option|options)\b", cleaned)
+        if m_opt_num_word:
+            option_number = m_opt_num_word.group(1)
+            option_word = m_opt_num_word.group(2).capitalize()
+        elif m_opt_word_num:
+            raw_word = m_opt_word_num.group(1).lower()
+            option_number = m_opt_word_num.group(2)
+            option_word = raw_word.capitalize()
+        elif m_opt_plain:
+            raw_count = m_opt_plain.group(1).lower()
+            option_number = count_map.get(raw_count, raw_count)
+
+        duration = ""
+        m_year_num_word = re.search(
+            r"(?i)\b(\d+(?:\.\d+)?)\s*\(\s*([A-Za-z-]+)\s*\)\s*(years?|yrs?)\b",
+            cleaned,
+        )
+        m_year_word_num = re.search(
+            r"(?i)\b([A-Za-z-]+)\s*\(\s*(\d+(?:\.\d+)?)\s*\)\s*(years?|yrs?)\b",
+            cleaned,
+        )
+        m_month_num_word = re.search(
+            r"(?i)\b(\d{1,3})\s*\(\s*([A-Za-z-]+)\s*\)\s*(months?|mos?)\b",
+            cleaned,
+        )
+        m_month_word_num = re.search(
+            r"(?i)\b([A-Za-z-]+)\s*\(\s*(\d{1,3})\s*\)\s*(months?|mos?)\b",
+            cleaned,
+        )
+        m_year_plain = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*(years?|yrs?)\b", cleaned)
+        m_month_plain = re.search(r"(?i)\b(\d{1,3})\s*(months?|mos?)\b", cleaned)
+        if m_year_num_word:
+            duration = f"{m_year_num_word.group(1)} ({m_year_num_word.group(2).capitalize()}) years"
+        elif m_year_word_num:
+            duration = f"{m_year_word_num.group(2)} ({m_year_word_num.group(1).capitalize()}) years"
+        elif m_month_num_word:
+            duration = f"{m_month_num_word.group(1)} ({m_month_num_word.group(2).capitalize()}) months"
+        elif m_month_word_num:
+            duration = f"{m_month_word_num.group(2)} ({m_month_word_num.group(1).capitalize()}) months"
+        elif m_year_plain:
+            duration = f"{m_year_plain.group(1)} years"
+        elif m_month_plain:
+            duration = f"{m_month_plain.group(1)} months"
+
+        if not duration:
             return ""
-        summary = "Renewal option: " + ", ".join(details)
+
+        if option_number:
+            option_plural = "" if option_number == "1" else "s"
+            option_text = (
+                f"{option_number} ({option_word}) renewal option{option_plural}"
+                if option_word
+                else f"{option_number} renewal option{option_plural}"
+            )
+        else:
+            option_text = "Renewal option"
+
+        summary = f"{option_text} for {duration}"
+        if "fair market" in low or "fmv" in low:
+            summary += " at FMV"
         return _condense_note_text(summary, max_chars=max_chars, max_sentences=1)
 
     # Parking

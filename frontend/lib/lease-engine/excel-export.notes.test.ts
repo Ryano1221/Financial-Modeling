@@ -47,8 +47,14 @@ describe("notes formatting", () => {
     const raw =
       "Renewal / extension: Tenant shall have one option to renew for 60 months at FMV with arbitration.";
     const formatted = formatMetricValue("notes", raw);
-    expect(formatted).toContain("Renewal / extension: Renewal option: 1 option, 60 months");
-    expect(formatted).not.toContain("FMV");
+    expect(formatted).toContain("Renewal / extension: 1 renewal option for 60 months at FMV");
     expect(formatted).not.toContain("arbitration");
+  });
+
+  it("formats renewal notes with numeric + word years when present", () => {
+    const raw =
+      "Renewal / extension: Tenant has one (1) renewal option for 4 (Four) years at fair market value.";
+    const formatted = formatMetricValue("notes", raw);
+    expect(formatted).toContain("Renewal / extension: 1 (One) renewal option for 4 (Four) years at FMV");
   });
 });

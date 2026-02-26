@@ -197,18 +197,50 @@ function condenseNoteFragment(fragment: string, maxChars = 185): string {
   }
 
   if (/\brenew|\bextension/.test(low)) {
-    const optionCountMatch = cleaned.match(/\b(\d{1,2}|one|two|three|four|five)\s+(?:option|options)\b/i);
-    const rawCount = optionCountMatch?.[1]?.toLowerCase();
     const countMap: Record<string, string> = { one: "1", two: "2", three: "3", four: "4", five: "5" };
-    const optionCount = rawCount ? (countMap[rawCount] ?? rawCount) : "";
-    const monthMatch = cleaned.match(/\b(\d{1,3})\s*(?:months?|mos?)\b/i);
-    const yearMatch = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:years?|yrs?)\b/i);
-    const details: string[] = [];
-    if (optionCount) details.push(`${optionCount} option${optionCount === "1" ? "" : "s"}`);
-    if (monthMatch) details.push(`${monthMatch[1]} months`);
-    else if (yearMatch) details.push(`${yearMatch[1]} years`);
-    if (details.length === 0) return "";
-    return `Renewal option: ${details.join(", ")}`;
+    let optionNumber = "";
+    let optionWord = "";
+    const optionNumWord = cleaned.match(/\b(\d{1,2})\s*\(\s*([A-Za-z-]+)\s*\)\s+(?:renewal\s+)?(?:option|options)\b/i);
+    const optionWordNum = cleaned.match(/\b([A-Za-z-]+)\s*\(\s*(\d{1,2})\s*\)\s+(?:renewal\s+)?(?:option|options)\b/i);
+    const optionPlain = cleaned.match(/\b(\d{1,2}|one|two|three|four|five)\s+(?:renewal\s+)?(?:option|options)\b/i);
+    if (optionNumWord) {
+      optionNumber = optionNumWord[1];
+      optionWord = optionNumWord[2][0].toUpperCase() + optionNumWord[2].slice(1).toLowerCase();
+    } else if (optionWordNum) {
+      optionNumber = optionWordNum[2];
+      optionWord = optionWordNum[1][0].toUpperCase() + optionWordNum[1].slice(1).toLowerCase();
+    } else if (optionPlain) {
+      const raw = optionPlain[1].toLowerCase();
+      optionNumber = countMap[raw] ?? raw;
+    }
+
+    let duration = "";
+    const yearNumWord = cleaned.match(/\b(\d+(?:\.\d+)?)\s*\(\s*([A-Za-z-]+)\s*\)\s*(years?|yrs?)\b/i);
+    const yearWordNum = cleaned.match(/\b([A-Za-z-]+)\s*\(\s*(\d+(?:\.\d+)?)\s*\)\s*(years?|yrs?)\b/i);
+    const monthNumWord = cleaned.match(/\b(\d{1,3})\s*\(\s*([A-Za-z-]+)\s*\)\s*(months?|mos?)\b/i);
+    const monthWordNum = cleaned.match(/\b([A-Za-z-]+)\s*\(\s*(\d{1,3})\s*\)\s*(months?|mos?)\b/i);
+    const yearPlain = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(years?|yrs?)\b/i);
+    const monthPlain = cleaned.match(/\b(\d{1,3})\s*(months?|mos?)\b/i);
+    if (yearNumWord) {
+      duration = `${yearNumWord[1]} (${yearNumWord[2][0].toUpperCase() + yearNumWord[2].slice(1).toLowerCase()}) years`;
+    } else if (yearWordNum) {
+      duration = `${yearWordNum[2]} (${yearWordNum[1][0].toUpperCase() + yearWordNum[1].slice(1).toLowerCase()}) years`;
+    } else if (monthNumWord) {
+      duration = `${monthNumWord[1]} (${monthNumWord[2][0].toUpperCase() + monthNumWord[2].slice(1).toLowerCase()}) months`;
+    } else if (monthWordNum) {
+      duration = `${monthWordNum[2]} (${monthWordNum[1][0].toUpperCase() + monthWordNum[1].slice(1).toLowerCase()}) months`;
+    } else if (yearPlain) {
+      duration = `${yearPlain[1]} years`;
+    } else if (monthPlain) {
+      duration = `${monthPlain[1]} months`;
+    }
+    if (!duration) return "";
+
+    const optionText = optionNumber
+      ? `${optionNumber}${optionWord ? ` (${optionWord})` : ""} renewal option${optionNumber === "1" ? "" : "s"}`
+      : "Renewal option";
+    const fmvSuffix = low.includes("fair market") || low.includes("fmv") ? " at FMV" : "";
+    return `${optionText} for ${duration}${fmvSuffix}`;
   }
 
   if (/\bparking|\bpermit/.test(low)) {
