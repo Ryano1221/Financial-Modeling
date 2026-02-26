@@ -31,10 +31,10 @@ export function SummaryMatrix({
   const emptyStringMarkers = new Set(["", "-", "—", "none", "n/a", "na"]);
 
   const equalizedRows = [
-    "Equalized avg cost/SF/year",
-    "Equalized avg cost/month",
-    "Equalized avg cost/year",
-    "Equalized total cost",
+    "Equalized Avg Cost/SF/YR",
+    "Equalized Avg Cost/Month",
+    "Equalized Avg Cost/YR",
+    "Equalized Total Cost",
     "Equalized NPV",
   ] as const;
 
