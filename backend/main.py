@@ -2374,11 +2374,16 @@ def _extract_property_name_from_party_entities(text: str, suite_hint: str = "") 
     return ""
 
 
-def _extract_dated_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], Optional[float]]:
+def _extract_dated_rent_table_schedule_and_rsf(
+    text: str,
+    commencement_hint: Optional[date] = None,
+) -> tuple[list[dict], Optional[float]]:
     """
     Parse amendment-style rent tables with date ranges and rent columns, e.g.
     "Sep 1, 2019 - Nov 30, 2020 $18.50 $186,498.50 $15,541.54".
     Returns (rent_schedule, inferred_rsf_from_annual_div_psf).
+    When commencement_hint is provided, rows ending before that date are ignored and
+    returned month offsets are aligned to that commencement.
     """
     if not text:
         return [], None
@@ -2490,10 +2495,75 @@ def _extract_dated_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], O
                 "annual_total": annual_total,
             }
         )
+
+    # OCR fallback for fragmented schedule tables where each value appears on its own line, e.g.:
+    # 6/1/2028
+    # 5/31/2029
+    # $3,993,449
+    # $30.96
+    if len(rows) < 2:
+        date_line_pattern = re.compile(r"^\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s*$")
+        money_token_pattern = re.compile(r"(?i)[\$§S]\s*([\d][\d,]*(?:\.\d{1,4})?)")
+        for idx in range(len(lines) - 1):
+            if not date_line_pattern.match(lines[idx]):
+                continue
+            if not date_line_pattern.match(lines[idx + 1]):
+                continue
+            start_date = _parse_lease_date(lines[idx])
+            end_date = _parse_lease_date(lines[idx + 1])
+            if not start_date or not end_date or end_date < start_date:
+                continue
+
+            annual_total = 0.0
+            rate_psf: Optional[float] = None
+            for probe_idx in range(idx + 2, min(len(lines), idx + 10)):
+                probe = lines[probe_idx]
+                if date_line_pattern.match(probe):
+                    break
+                for token_match in money_token_pattern.finditer(probe):
+                    raw_num = str(token_match.group(1) or "")
+                    raw_val = _parse_number_token(raw_num)
+                    if raw_val is None:
+                        continue
+                    value = float(raw_val)
+                    if annual_total <= 0 and value >= 1_000:
+                        annual_total = value
+                        continue
+                    candidate_rate = value
+                    digits_only = re.sub(r"\D", "", raw_num)
+                    if (
+                        candidate_rate > 250
+                        and "." not in raw_num
+                        and "," not in raw_num
+                        and 1 <= len(digits_only) <= 4
+                    ):
+                        candidate_rate = candidate_rate / 100.0
+                    if 1.0 <= candidate_rate <= 250.0:
+                        rate_psf = float(candidate_rate)
+                        break
+                if rate_psf is not None:
+                    break
+            if rate_psf is None:
+                continue
+            rows.append(
+                {
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "rate_psf_annual": float(rate_psf),
+                    "annual_total": float(max(0.0, annual_total)),
+                }
+            )
     if len(rows) < 2:
         return [], None
     rows.sort(key=lambda row: (row["start_date"], row["end_date"]))
-    commencement = rows[0]["start_date"]
+    commencement = commencement_hint or rows[0]["start_date"]
+    rows = [row for row in rows if row["end_date"] >= commencement]
+    if not rows:
+        return [], None
+    rows.sort(key=lambda row: (row["start_date"], row["end_date"]))
+    if commencement_hint is None:
+        commencement = rows[0]["start_date"]
+
     def month_index(base: date, value: date) -> int:
         months = (value.year - base.year) * 12 + (value.month - base.month)
         if value.day < base.day:
@@ -2503,7 +2573,8 @@ def _extract_dated_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], O
     schedule: list[dict] = []
     rsf_candidates: list[float] = []
     for row in rows:
-        start_month = month_index(commencement, row["start_date"])
+        effective_start = row["start_date"] if row["start_date"] >= commencement else commencement
+        start_month = month_index(commencement, effective_start)
         end_month = month_index(commencement, row["end_date"])
         if start_month < 0 or end_month < start_month:
             continue
@@ -4152,7 +4223,10 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             except Exception:
                 pass
 
-    table_rent_schedule, table_rsf = _extract_dated_rent_table_schedule_and_rsf(text)
+    table_rent_schedule, table_rsf = _extract_dated_rent_table_schedule_and_rsf(
+        text,
+        commencement_hint=hints.get("commencement_date"),
+    )
     if table_rent_schedule:
         current_hint_schedule = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
         if not current_hint_schedule or len(table_rent_schedule) > len(current_hint_schedule):

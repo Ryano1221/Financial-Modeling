@@ -150,6 +150,94 @@ def test_extract_hints_amendment_dated_rent_table_derives_schedule_and_rsf() -> 
     assert int(hints["_rsf_score"]) >= 8
 
 
+def test_extract_dated_rent_table_parses_fragmented_ocr_schedule_and_aligns_to_commencement() -> None:
+    text = (
+        "Annual Rent\n"
+        "Start\n"
+        "End\n"
+        "Current\n"
+        "5/31/2026\n"
+        "$3,762,638\n"
+        "$29.17\n"
+        "6/1/2026\n"
+        "5/31/2027\n"
+        "$3,837,453\n"
+        "$29.75\n"
+        "6/1/2027\n"
+        "5/31/2028\n"
+        "$3,914,847\n"
+        "$30.35\n"
+        "6/1/2028\n"
+        "5/31/2029\n"
+        "$3,993,449\n"
+        "$30.96\n"
+        "2.0%\n"
+        "6/1/2029\n"
+        "5/31/2030\n"
+        "$4,073,373\n"
+        "$31.58\n"
+        "6/1/2030\n"
+        "5/31/2031\n"
+        "$4,154,730\n"
+        "$32.21\n"
+        "6/1/2031\n"
+        "5/31/2032\n"
+        "$4,237,817\n"
+        "$32.85\n"
+        "6/1/2032\n"
+        "5/31/2033\n"
+        "$4,322,573\n"
+        "$33.51\n"
+    )
+    schedule, _ = main._extract_dated_rent_table_schedule_and_rsf(text, commencement_hint=date(2028, 6, 1))
+    assert schedule and schedule[0]["start_month"] == 0
+    assert schedule[0]["end_month"] == 11
+    assert schedule[0]["rent_psf_annual"] == 30.96
+    assert schedule[-1]["end_month"] == 59
+
+
+def test_extract_hints_prefers_commencement_row_from_fragmented_rent_schedule() -> None:
+    text = (
+        "COMMENCEMENT DATE: June 1, 2028.\n"
+        "LEASE TERM: expires May 31, 2033.\n"
+        "OPERATING EXPENSES: 2026 estimated operating expenses $18.16/psf.\n"
+        "Rent Schedule\n"
+        "6/1/2026\n"
+        "5/31/2027\n"
+        "$3,837,453\n"
+        "$29.75\n"
+        "6/1/2027\n"
+        "5/31/2028\n"
+        "$3,914,847\n"
+        "$30.35\n"
+        "6/1/2028\n"
+        "5/31/2029\n"
+        "$3,993,449\n"
+        "$30.96\n"
+        "6/1/2029\n"
+        "5/31/2030\n"
+        "$4,073,373\n"
+        "$31.58\n"
+        "6/1/2030\n"
+        "5/31/2031\n"
+        "$4,154,730\n"
+        "$32.21\n"
+        "6/1/2031\n"
+        "5/31/2032\n"
+        "$4,237,817\n"
+        "$32.85\n"
+        "6/1/2032\n"
+        "5/31/2033\n"
+        "$4,322,573\n"
+        "$33.51\n"
+    )
+    hints = main._extract_lease_hints(text, "q2-response.docx", "test-rid")
+    assert str(hints["commencement_date"]) == "2028-06-01"
+    assert hints["term_months"] == 60
+    assert hints["rent_schedule"][0]["rent_psf_annual"] == 30.96
+    assert hints["rent_schedule"][0]["start_month"] == 0
+
+
 def test_extract_hints_prefers_subject_premises_rsf_over_rofr_space() -> None:
     text = (
         "Description of Premises: The Premises is known as Suite 300 located at "

@@ -33,6 +33,10 @@ DEFAULT_OCR_PAGES = 3
 # Cap OCR memory by limiting PDF size and render DPI.
 OCR_MAX_PDF_BYTES = int(os.environ.get("OCR_MAX_PDF_BYTES", str(8 * 1024 * 1024)))
 OCR_RENDER_DPI = int(os.environ.get("OCR_RENDER_DPI", "120"))
+# DOCX image OCR controls (for embedded rent schedule screenshots/tables).
+DOCX_OCR_MAX_IMAGES = int(os.environ.get("DOCX_OCR_MAX_IMAGES", "2"))
+DOCX_OCR_MIN_IMAGE_AREA = int(os.environ.get("DOCX_OCR_MIN_IMAGE_AREA", str(200 * 120)))
+DOCX_OCR_MAX_TOTAL_IMAGE_BYTES = int(os.environ.get("DOCX_OCR_MAX_TOTAL_IMAGE_BYTES", str(6 * 1024 * 1024)))
 # Snippet pack cap
 SNIPPET_PACK_MAX_CHARS = 20_000
 # Fallback truncation when snippet pack too small
@@ -316,6 +320,93 @@ def extract_text_from_docx(file: BinaryIO) -> str:
                 parts.extend(xml_lines)
         except Exception:
             pass
+
+        def _extract_docx_image_ocr_chunks(docx_bytes: bytes) -> list[str]:
+            try:
+                from PIL import Image
+                import pytesseract
+            except Exception:
+                return []
+
+            image_chunks: list[str] = []
+            try:
+                with zipfile.ZipFile(BytesIO(docx_bytes)) as zf:
+                    media_files = [
+                        name
+                        for name in zf.namelist()
+                        if name.startswith("word/media/")
+                        and name.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"))
+                    ]
+                    if not media_files:
+                        return []
+
+                    candidates: list[tuple[int, str, bytes]] = []
+                    for name in media_files:
+                        try:
+                            data = zf.read(name)
+                            if not data:
+                                continue
+                            with Image.open(BytesIO(data)) as img:
+                                width, height = img.size
+                            area = int(width) * int(height)
+                            if area < DOCX_OCR_MIN_IMAGE_AREA:
+                                continue
+                            candidates.append((area, name, data))
+                        except Exception:
+                            continue
+            except Exception:
+                return []
+
+            if not candidates:
+                return []
+
+            candidates.sort(key=lambda row: row[0], reverse=True)
+            bytes_budget = DOCX_OCR_MAX_TOTAL_IMAGE_BYTES
+            taken = 0
+            for _area, name, data in candidates:
+                if taken >= DOCX_OCR_MAX_IMAGES:
+                    break
+                if bytes_budget <= 0:
+                    break
+                if len(data) > bytes_budget:
+                    continue
+                try:
+                    from PIL import Image  # keep import local for optional dependency behavior
+                    import pytesseract
+
+                    with Image.open(BytesIO(data)) as img:
+                        img_l = img.convert("L")
+                        width, height = img_l.size
+                        if max(width, height) < 1200:
+                            scale = 2
+                            img_l = img_l.resize((max(1, width * scale), max(1, height * scale)))
+                        ocr_raw = pytesseract.image_to_string(img_l, config="--oem 1 --psm 11")
+                    ocr_text = _clean_word_text(ocr_raw)
+                    if len(ocr_text) < 80:
+                        continue
+                    if sum(ch.isdigit() for ch in ocr_text) < 8:
+                        continue
+                    image_chunks.append(f"[DOCX IMAGE OCR {Path(name).name}]\n{ocr_text}")
+                    bytes_budget -= len(data)
+                    taken += 1
+                except Exception:
+                    continue
+            return image_chunks
+
+        # OCR embedded DOCX images only when rent economics look incomplete.
+        current_text = "\n\n".join(parts)
+        has_base_rent_amount = bool(
+            re.search(
+                r"(?is)\b(?:base\s+(?:annual\s+net\s+)?rental?\s+rate|base\s+rent)\b[^\n]{0,140}\$\s*[\d,]+(?:\.\d+)?",
+                current_text,
+            )
+        )
+        should_ocr_images = bool(
+            re.search(r"(?i)\b(as\s+shown\s+on\s+the\s+attached\s+schedule|attached\s+schedule|rent\s+schedule)\b", current_text)
+        ) or not has_base_rent_amount
+        if should_ocr_images:
+            parts.extend(_extract_docx_image_ocr_chunks(raw_bytes))
+
         return "\n\n".join(parts) if parts else ""
     except Exception as e:
         raise ValueError(f"Failed to read DOCX: {e}") from e
@@ -1323,6 +1414,7 @@ def _regex_prefill(text: str) -> dict:
     # TI allowance: capture both $/SF and total-dollar allowance language.
     ti_allowance_psf = None
     ti_allowance_total = None
+    ti_psf_candidates: list[tuple[int, float, int]] = []
     ti_total_candidates: list[tuple[int, float, int]] = []
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for idx, line in enumerate(lines):
@@ -1346,18 +1438,34 @@ def _regex_prefill(text: str) -> dict:
             local_low = local.lower()
             if not re.search(r"(?i)\b(?:allowance|tenant improvements?|tia|ti)\b", local):
                 continue
-            if (
-                "allowance" not in local_low
-                and re.search(r"(?i)\b(?:base rent|rental rate|operating expenses?|opex|cam)\b", local)
-            ):
+            if re.search(r"(?i)\b(?:base rent|rental rate)\b", local):
                 continue
             try:
                 value = float(amount_match.group(1).replace(",", ""))
             except ValueError:
                 continue
-            if 0.5 <= value <= 500:
-                ti_allowance_psf = value
-                break
+            if not (0.5 <= value <= 500):
+                continue
+            score = 0
+            if line_has_ti_keyword or line_is_allowance_with_ti_context:
+                score += 6
+            if any(
+                tok in local_low
+                for tok in (
+                    "tenant improvement allowance",
+                    "ti allowance",
+                    "improvement allowance",
+                    " tia ",
+                )
+            ):
+                score += 8
+            elif "allowance" in local_low:
+                score += 4
+            if re.search(r"(?i)\b(?:operating expenses?|opex|cam|base year)\b", local):
+                score -= 10
+            if "outside of the tenant improvement allowance" in local_low or "test-fit" in local_low or "test fit" in local_low:
+                score -= 8
+            ti_psf_candidates.append((score, value, idx))
         for total_match in re.finditer(r"\$\s*([\d,]+(?:\.\d+)?)", window):
             try:
                 total_value = float(total_match.group(1).replace(",", ""))
@@ -1383,8 +1491,10 @@ def _regex_prefill(text: str) -> dict:
             if total_value >= 1000:
                 score += 1
             ti_total_candidates.append((score, float(total_value), idx))
-        if ti_allowance_psf is not None:
-            break
+    if ti_psf_candidates:
+        ti_psf_candidates.sort(key=lambda row: (-row[0], row[2], -row[1]))
+        if ti_psf_candidates[0][0] > -2:
+            ti_allowance_psf = ti_psf_candidates[0][1]
     if ti_allowance_psf is None:
         m = _RE_TI.search(text)
         if m:
