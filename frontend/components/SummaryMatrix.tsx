@@ -114,6 +114,15 @@ export function SummaryMatrix({
   };
 
   const visibleMatrixMetricKeys = matrixMetricKeys.filter((metricKey) =>
+    metricKey === "discountRateUsed"
+      ? (() => {
+        const rates = results
+          .map((r) => Number(r.metrics.discountRateUsed))
+          .filter((value) => Number.isFinite(value));
+        if (rates.length !== results.length || rates.length <= 1) return false;
+        return new Set(rates.map((value) => value.toFixed(6))).size > 1;
+      })()
+      :
     metricKey === "parkingSalesTaxPercent"
       ? results.some((r) => {
         const metrics = r.metrics as OptionMetrics;
