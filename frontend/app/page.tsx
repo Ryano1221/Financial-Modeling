@@ -30,7 +30,6 @@ import type {
   ReportMeta,
   ScenarioInput,
   BackendCanonicalLease,
-  ExtractionSummary,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
@@ -70,34 +69,9 @@ const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
 const CRE_DEFAULT_BROKERAGE_NAME = "The CRE Model";
 const CRE_DEFAULT_PREPARED_BY = "The CRE Model";
 const CRE_DEFAULT_LOGO_PUBLIC_PATH = "/brand/logo.png";
-const NOISY_WARNING_PATTERNS = [
-  /automatic extraction failed due to a backend processing issue/i,
-  /automatic extraction failed\.\s*heuristic review template loaded/i,
-  /ai extraction fallback was used for this upload/i,
-  /extraction pipeline fallback was used due to a backend processing issue/i,
-  /rent_schedule was empty; added single step at \$0/i,
-  /automatic extraction fallback was used for this upload/i,
-  /expiration inferred from \d+-month lease term and commencement date/i,
-];
 
 function nextId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function sanitizeExtractionWarnings(warnings?: string[] | null): string[] {
-  const source = Array.isArray(warnings) ? warnings : [];
-  const deduped: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of source) {
-    const msg = String(raw ?? "").replace(/\s+/g, " ").trim();
-    if (!msg) continue;
-    if (NOISY_WARNING_PATTERNS.some((p) => p.test(msg))) continue;
-    const key = msg.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(msg);
-  }
-  return deduped;
 }
 
 function cleanMaybeString(value: unknown): string {
@@ -550,8 +524,6 @@ export default function Home() {
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
-  const [lastExtractWarnings, setLastExtractWarnings] = useState<string[] | null>(null);
-  const [lastExtractionSummary, setLastExtractionSummary] = useState<ExtractionSummary | null>(null);
   const [brandId, setBrandId] = useState<string>("default");
   const [globalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
@@ -895,9 +867,6 @@ export default function Home() {
     async (data: NormalizerResponse) => {
       const hasCanonical = !!data?.canonical_lease;
       console.log("[compute] about to call", { hasCanonical });
-      const warnings = sanitizeExtractionWarnings(data.warnings);
-      setLastExtractWarnings(warnings.length > 0 ? warnings : null);
-      setLastExtractionSummary(data.extraction_summary ?? null);
       setExtractError(null);
 
       if (!data.canonical_lease) {
@@ -939,10 +908,6 @@ export default function Home() {
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message || null);
-    if (message) {
-      setLastExtractWarnings(null);
-      setLastExtractionSummary(null);
-    }
   }, []);
 
   useEffect(() => {
@@ -1661,53 +1626,6 @@ export default function Home() {
                 {showDiagnostics && (
                   <div className="mt-4">
                     <Diagnostics />
-                  </div>
-                )}
-                {lastExtractWarnings && lastExtractWarnings.length > 0 && (
-                  <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm">
-                    <p className="font-medium text-amber-200 mb-1">Warnings from extraction</p>
-                    <ul className="list-disc list-inside text-amber-100/90 space-y-0.5">
-                      {lastExtractWarnings.map((w, i) => (
-                        <li key={i}>{w}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {lastExtractionSummary && (
-                  <div className="mt-3 p-3 rounded-lg bg-slate-900/45 border border-slate-300/20 text-sm">
-                    <p className="font-medium text-slate-100 mb-2">Extraction summary</p>
-                    <div className="space-y-1 text-slate-300 text-xs">
-                      <p>
-                        <span className="text-slate-400">Document type detected:</span>{" "}
-                        {lastExtractionSummary.document_type_detected || "unknown"}
-                      </p>
-                      {lastExtractionSummary.key_terms_found.length > 0 && (
-                        <div>
-                          <p className="text-slate-400">Key terms found</p>
-                          <ul className="list-disc list-inside text-slate-300">
-                            {lastExtractionSummary.key_terms_found.map((item, i) => (
-                              <li key={`${item}-${i}`}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {lastExtractionSummary.key_terms_missing.length > 0 && (
-                        <div>
-                          <p className="text-slate-400">Key terms missing</p>
-                          <ul className="list-disc list-inside text-slate-300">
-                            {lastExtractionSummary.key_terms_missing.map((item, i) => (
-                              <li key={`${item}-${i}`}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      {lastExtractionSummary.sections_searched.length > 0 && (
-                        <p>
-                          <span className="text-slate-400">Sections searched:</span>{" "}
-                          {lastExtractionSummary.sections_searched.join(", ")}
-                        </p>
-                      )}
-                    </div>
                   </div>
                 )}
               </UploadExtractCard>
