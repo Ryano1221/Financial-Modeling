@@ -416,6 +416,8 @@ function ReportContent() {
   const sortedByNpv = [...derived].sort((a, b) => a.npvCost - b.npvCost);
   const best = sortedByNpv[0];
 
+  const hasParkingCosts = derived.some((d) => toNumber(d.parkingMonthly) > 0);
+
   const matrixRows: MatrixRow[] = [
     { label: "Building", value: (d) => d.buildingName || "-" },
     { label: "Suite / floor", value: (d) => d.suite || "-" },
@@ -435,7 +437,7 @@ function ReportContent() {
     { label: "Parking ratio", value: (d) => `${formatNumber(d.parkingRatio, { decimals: 2 })}/1,000 SF` },
     { label: "Allotted parking spaces", value: (d) => formatNumber(d.parkingSpaces) },
     { label: "Parking cost ($/spot/month, pre-tax)", value: (d) => formatCurrency(d.parkingCostPerSpotMonthlyPreTax) },
-    { label: "Parking sales tax", value: (d) => formatPercent(d.parkingSalesTaxRate) },
+    ...(hasParkingCosts ? [{ label: "Parking sales tax", value: (d: DerivedScenario) => formatPercent(d.parkingSalesTaxRate) }] : []),
     { label: "Parking cost ($/spot/month, after tax)", value: (d) => formatCurrency(d.parkingCostPerSpotMonthly) },
     { label: "Monthly parking cost", value: (d) => formatCurrency(d.parkingMonthly) },
     { label: "TI allowance", value: (d) => formatCurrencyPerSF(d.tiAllowancePsf) },

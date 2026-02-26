@@ -596,12 +596,18 @@ _RE_ANNUAL_ESCALATION = re.compile(
     r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+escalat(?:ion|ions)\b[^\n]{0,80}\bstarting\s+in\s+month\s*(\d{1,3})\b"
 )
 _RE_ANNUAL_ESCALATION_GENERIC = re.compile(
-    r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+(?:escalat(?:ion|ions)|increase(?:s)?)\b"
+    r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
+    r"(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
 )
 _RE_ANNUAL_ESCALATION_LABEL_VALUE = re.compile(
-    r"(?i)\bannual(?:\s+base\s+rent(?:al)?(?:\s+rate)?)?\s+"
+    r"(?i)\bannual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
     r"(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
-    r"(?:\s*[:|=]\s*|[^\n%]{0,20}?)(\d+(?:\.\d+)?)\s*%"
+    r"(?:\s*[:|=]\s*|[^\n%]{0,120}?)(\d+(?:\.\d+)?)\s*%"
+)
+_RE_BASE_RENT_INCREASE_PERCENT_AFTER = re.compile(
+    r"(?i)\b(?:base\s+rent(?:al)?(?:\s+rate)?|rent(?:al)?\s+rate)\b[^\n]{0,120}?"
+    r"\b(?:increase(?:s|d)?|escalat(?:e|ed|ion|ions)|escalator)\b[^\n%]{0,80}?"
+    r"(\d+(?:\.\d+)?)\s*%\s*(?:per\s+year|annually|annual(?:ly)?)?"
 )
 
 
@@ -612,6 +618,7 @@ def _extract_annual_rent_escalation_pct(text: str) -> float | None:
     patterns = (
         (_RE_ANNUAL_ESCALATION_GENERIC, 1, 4),
         (_RE_ANNUAL_ESCALATION_LABEL_VALUE, 1, 4),
+        (_RE_BASE_RENT_INCREASE_PERCENT_AFTER, 1, 5),
     )
     for pattern, group_index, base_score in patterns:
         for match in pattern.finditer(text):
@@ -628,7 +635,10 @@ def _extract_annual_rent_escalation_pct(text: str) -> float | None:
     if not candidates:
         return None
     candidates.sort(key=lambda row: (-row[0], row[2]))
-    return candidates[0][1]
+    best_score, best_pct, _ = candidates[0]
+    if best_score <= 0:
+        return None
+    return best_pct
 
 
 def _parse_text_date_token(s: str) -> str | None:

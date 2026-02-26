@@ -2845,17 +2845,24 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
     candidates: list[tuple[int, float, int]] = []
     patterns: list[tuple[str, int, int]] = [
         (
-            r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+base\s+rent(?:al)?(?:\s+rate)?)?\s+"
+            r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
             r"(?:increase|increases|escalation|escalations|escalator)\b",
             1,
             4,
         ),
         (
-            r"(?i)\bannual(?:\s+base\s+rent(?:al)?(?:\s+rate)?)?\s+"
+            r"(?i)\bannual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
             r"(?:increase|increases|escalation|escalations|escalator)\b"
-            r"(?:\s*[:|=]\s*|[^\n%]{0,20}?)(\d+(?:\.\d+)?)\s*%",
+            r"(?:\s*[:|=]\s*|[^\n%]{0,120}?)(\d+(?:\.\d+)?)\s*%",
             1,
             4,
+        ),
+        (
+            r"(?i)\b(?:base\s+rent(?:al)?(?:\s+rate)?|rent(?:al)?\s+rate)\b[^\n]{0,120}?"
+            r"\b(?:increase(?:s|d)?|escalat(?:e|ed|ion|ions)|escalator)\b[^\n%]{0,80}?"
+            r"(\d+(?:\.\d+)?)\s*%\s*(?:per\s+year|annually|annual(?:ly)?)?",
+            1,
+            5,
         ),
     ]
     for pattern, group_index, base_score in patterns:
@@ -2873,7 +2880,10 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
     if not candidates:
         return None
     candidates.sort(key=lambda row: (-row[0], row[2]))
-    return candidates[0][1]
+    best_score, best_pct, _ = candidates[0]
+    if best_score <= 0:
+        return None
+    return best_pct
 
 
 def _extract_option_counter_terms(text: str) -> dict:

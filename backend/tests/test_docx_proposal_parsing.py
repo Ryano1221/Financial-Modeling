@@ -116,6 +116,44 @@ def test_regex_prefill_parses_label_value_annual_base_rent_escalation() -> None:
     assert steps[-1]["end"] == 58
 
 
+def test_regex_prefill_parses_annual_rental_increases_with_percent_after_phrase() -> None:
+    text = (
+        "Premises: Suite 230 consisting of 3,947 RSF.\n"
+        "Commencement Date: May 1, 2027.\n"
+        "Lease Term: Sixty (60) months from the Commencement Date.\n"
+        "Lease Rate: First year Base Rental Rate: $42.00 NNN\n"
+        "Annual Rental Increases: The Base Rental Rate shall increase 3% per year.\n"
+        "Base Operating Expenses: $26.80/SF.\n"
+        "Parking: Per existing lease.\n"
+    )
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 42.0}
+    assert steps[1]["rate_psf_yr"] == 43.26
+    assert steps[-1]["end"] == 59
+
+
+def test_extract_lease_hints_builds_escalated_schedule_from_annual_rental_increases_phrase() -> None:
+    text = (
+        "Building: Lamar Central\n"
+        "Premises: Suite 230 consisting of 3,947 RSF.\n"
+        "Commencement Date: May 1, 2027.\n"
+        "Lease Term: Sixty (60) months from the Commencement Date.\n"
+        "Lease Rate: First year Base Rental Rate: $42.00 NNN\n"
+        "Annual Rental Increases: The Base Rental Rate shall increase 3% per year.\n"
+        "Base Operating Expenses: $26.80/SF.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    schedule = hints.get("rent_schedule")
+    assert isinstance(schedule, list)
+    assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 42.0}
+    assert schedule[1]["rent_psf_annual"] == 43.26
+    assert schedule[-1]["end_month"] == 59
+
+
 def test_regex_prefill_prefers_tia_per_sf_over_total_budget() -> None:
     text = (
         "Tenant Improvement Allowance (TIA): $35.00 per RSF.\n"

@@ -35,7 +35,7 @@ export function SummaryMatrix({
     "Equalized avg cost/month",
     "Equalized avg cost/year",
     "Equalized total cost",
-    "Equalized NPV (t0 at start)",
+    "Equalized NPV",
   ] as const;
 
   const getEqualizedCellValue = (rowIdx: number, scenarioId: string) => {
@@ -114,9 +114,17 @@ export function SummaryMatrix({
   };
 
   const visibleMatrixMetricKeys = matrixMetricKeys.filter((metricKey) =>
-    results.some((r) =>
-      isMeaningfulMetricValue(metricKey, r.scenarioId, (r.metrics as OptionMetrics)[metricKey])
-    )
+    metricKey === "parkingSalesTaxPercent"
+      ? results.some((r) => {
+        const metrics = r.metrics as OptionMetrics;
+        return (
+          Math.abs(Number(metrics.parkingCostMonthly) || 0) > numericZeroTolerance ||
+          Math.abs(Number(metrics.parkingCostAnnual) || 0) > numericZeroTolerance
+        );
+      })
+      : results.some((r) =>
+        isMeaningfulMetricValue(metricKey, r.scenarioId, (r.metrics as OptionMetrics)[metricKey])
+      )
   );
 
   const renderEqualizedSection = () => (
@@ -228,7 +236,7 @@ export function SummaryMatrix({
         <p className="heading-kicker mb-1">Portfolio comparison</p>
         <h2 className="heading-section">Comparison matrix</h2>
         <p className="text-xs text-slate-400 mt-1">
-          Metrics from lease engine. Each option uses its own discount rate when set, otherwise the global default. Export Excel for the full workbook.
+          This model leverages AI driven lease data extraction. Please review all extracted inputs for accuracy and confirm assumptions prior to relying on outputs. Any field can be edited above if adjustments are required. Metrics are calculated by the lease engine using each option&apos;s specified discount rate or the global default when not set.
         </p>
       </div>
       <div className="md:hidden p-3 space-y-3">
