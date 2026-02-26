@@ -162,3 +162,67 @@ def test_normalize_impl_amendment_retains_inferred_rsf_and_opex_when_not_explici
     assert canonical.opex_psf_year_1 > 0
     assert any("retained inferred RSF value" in str(w) for w in result.warnings)
     assert any("retained inferred OpEx value" in str(w) for w in result.warnings)
+
+
+def test_normalize_impl_escalates_prior_year_opex_table_to_commencement_year(monkeypatch) -> None:
+    monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: ("proposal text", "docx"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "counter_proposal")
+    monkeypatch.setattr(
+        main,
+        "_extract_lease_hints",
+        lambda _text, _filename, _rid: {
+            "building_name": "Lamar Central",
+            "suite": "230",
+            "rsf": 3947.0,
+            "commencement_date": date(2027, 5, 1),
+            "expiration_date": date(2032, 4, 30),
+            "term_months": 60,
+            "opex_psf_year_1": 26.02,
+            "opex_source_year": 2026,
+            "opex_growth_rate": 0.03,
+            "opex_by_calendar_year": {2026: 26.02},
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Lamar Central Suite 230",
+                rsf=3947.0,
+                commencement=date(2027, 5, 1),
+                expiration=date(2032, 4, 30),
+                rent_steps=[RentStep(start=0, end=59, rate_psf_yr=42.0)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=26.02,
+                base_year_opex_psf_yr=26.02,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"base_opex_psf_yr": 0.9},
+            warnings=[],
+            source="docx",
+            text_length=120,
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="lamar-counter.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+    canonical = result.canonical_lease
+
+    assert canonical.opex_psf_year_1 == 26.8006
+    assert canonical.expense_stop_psf == 26.8006

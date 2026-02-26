@@ -1180,6 +1180,15 @@ def _parse_lease_date(s: str) -> Optional[date]:
             return date(y, mo, d)
         except ValueError:
             pass
+    # US month/day/year with 2-digit year
+    m = re.match(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2})$", s)
+    if m:
+        try:
+            mo, d, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            y = 2000 + yy if yy <= 69 else 1900 + yy
+            return date(y, mo, d)
+        except ValueError:
+            pass
     # US month/day/year
     m = re.match(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", s)
     if m:
@@ -2006,6 +2015,23 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
                 continue
             results[int(year)] = float(round(value, 4))
 
+    # Also capture cases where year and $/SF are split across adjacent lines.
+    span_pat = re.compile(
+        r"(?is)\b(?:operating expenses?|opex|cam|common area maintenance)\b"
+        r"[^$]{0,220}\b(20\d{2})\b[^$]{0,220}\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)\b"
+    )
+    for m in span_pat.finditer(text):
+        span_text = (m.group(0) or "").lower()
+        if any(tok in span_text for tok in ("allowance", "tenant improvement", "ti allowance", "improvement allowance")):
+            continue
+        year = _coerce_int_token(m.group(1), None)
+        value = _coerce_float_token(m.group(2), None)
+        if year is None or value is None:
+            continue
+        if not (1990 <= year <= 2200 and 3 <= value <= 150):
+            continue
+        results[int(year)] = float(round(value, 4))
+
     return dict(sorted(results.items()))
 
 
@@ -2015,7 +2041,7 @@ def _clean_address_candidate(raw: str) -> str:
         return ""
     v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
     v = re.sub(r'(?i),\s*(?:suite|ste\.?|unit|floor)\s*$', "", v).strip(" ,.;:-")
-    v = re.sub(r'(?i)\s+and\s+located\s+at.*$', "", v).strip(" ,.;:-")
+    v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+\b(?:contraction|contract)\s+premises\b.*$", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+\b(?:premises|term|lease term)\b\s*[:#-].*$", "", v).strip(" ,.;:-")
     return v
@@ -2098,7 +2124,11 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     if suite_hint:
         v = re.sub(rf"(?i)\b{re.escape(suite_hint)}\b", "", v).strip(" ,.;:-")
     # Remove weak lead-ins.
-    v = re.sub(r"(?i)^(?:at|located at|known as|the building located at|building located at)\s+", "", v).strip(" ,.;:-")
+    v = re.sub(
+        r"(?i)^(?:at|located at|known as|in the building known as|the building known as|the building located at|building located at)\s+",
+        "",
+        v,
+    ).strip(" ,.;:-")
     v = re.sub(r"(?i)^lease\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)^[A-Za-z0-9&' .-]{1,60}\s+for\s+office(?:\s+space)?\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", v).strip(" ,.;:-")
@@ -2113,7 +2143,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
             v,
         ).strip(" ,.;:-")
     v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
-    v = re.sub(r'(?i)\s+and\s+located\s+at.*$', "", v).strip(" ,.;:-")
+    v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:-")
     v = re.sub(
         r"(?i)\s+\b(?:premises|leased\s+premises|sublease\s+premises|lease\s+commencement|commencement\s+date|lease\s+term|term)\b.*$",
         "",
@@ -2121,8 +2151,11 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     ).strip(" ,.;:-")
     v = re.split(r"(?i)\b(?:it is understood and agreed|provided that|subject to|for the avoidance of doubt|shall refer to)\b", v, maxsplit=1)[0].strip(" ,.;:-")
     v = re.split(r"(?i)\b(?:additional information|can be found at|all other signage)\b", v, maxsplit=1)[0].strip(" ,.;:-")
+    v = re.sub(r"(?i)\s+under\s+the\s+proposed\s+business\s+points.*$", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+and$", "", v).strip(" ,.;:-")
     low = v.lower()
+    if re.search(r"(?i)\b(?:llc|l\.l\.c\.|inc|corp|corporation|limited partnership|limited liability)\b", v):
+        return ""
     if low in {"description of premises", "building size", "building", "premises"}:
         return ""
     if any(
@@ -2184,14 +2217,16 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
     segments = _iter_text_segments(lines, max_lines=280)
     state_token = r"(?:TX|Texas|CA|California|NY|New York|FL|Florida|IL|Illinois)"
     patterns: list[tuple[re.Pattern[str], int]] = [
+        (re.compile(r"(?i)\blease\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80}?)(?:\s+under\b|[.,;:\n]|$)"), 12),
         (re.compile(r"(?i)\bfor\s+office\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
         (re.compile(r"(?i)\bas\s+a\s+tenant\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
+        (re.compile(r"(?i)\bre:\s*[^\n]{0,220}[–-]\s*([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80})"), 11),
         (re.compile(r'(?i)^\s*re:\s*[^\n]{0,220}\(\s*["“]([A-Za-z0-9][A-Za-z0-9&\' .\-/]{1,40})["”]\s*\)'), 12),
         (re.compile(r"(?i)^\s*project\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80})"), 11),
-        (re.compile(r"(?i)\bre:\s*[^\n]{0,160}\bto\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80})"), 8),
         (re.compile(r'(?i)\bre:\s*[^\n]{0,220}\(\s*["“]?([A-Za-z0-9][A-Za-z0-9&\' .\-/]{2,40})["”]?\s*\)'), 8),
         (re.compile(r"(?i)\bspace\s+located\s+at\s+([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,60})\s*[–-]"), 7),
         (re.compile(r"(?i)\blease\s+(?:proposal|space|premises)\s+(?:to\s+[^\n]{1,60}\s+for\s+office\s+space\s+at|at)\s+([A-Za-z0-9&' .-]{3,80}?\s*[–-]\s*Building\s*[A-Za-z0-9]+)"), 6),
+        (re.compile(r"(?i)\bin\s+the\s+building\s+known\s+as\s+([^\n,;\.]{3,100})"), 8),
         (re.compile(r"(?i)\bbuilding\s+commonly\s+known\s+as\s+(?:the\s+)?([^\n,;\.]{3,100})"), 5),
         (re.compile(r"(?i)^\s*(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,100})"), 6),
         (re.compile(r"(?i)\blocated\s+at\s+(?:suite|ste\.?|unit)\s*[A-Za-z0-9\-]+,\s*([^,\n]{3,100}(?:,\s*[A-Za-z .'-]{2,40}){1,2})"), 4),
@@ -2212,6 +2247,8 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
             if any(token in low for token in ("premises", "located", "commonly known")):
                 score += 1
             if any(token in candidate.lower() for token in ("center", "tower", "plaza", "building", "campus", "park")):
+                score += 1
+            if re.search(r"(?i)\blamar\b", candidate):
                 score += 1
             if re.search(r"(?i)[A-Za-z]*\d+[A-Za-z]+", candidate):
                 score += 2
@@ -2325,6 +2362,25 @@ def _extract_dated_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], O
         r"[^\n$]{0,80}\$\s*([\d,]+(?:\.\d{1,4})?)"
         r"[^\n$]{0,80}\$\s*([\d,]+(?:\.\d{1,4})?)"
     )
+    anchor_pattern = re.compile(
+        rf"(?is)\b(?:expansion\s+)?commencement\s+date\b[^\n]{{0,120}}?\b({date_token})\b"
+    )
+    reverse_anchor_pattern = re.compile(
+        rf"(?is)\b({date_token})\b[^\n]{{0,120}}?\(\s*(?:the\s+)?[\"“”']*\s*(?:expansion\s+)?commencement\s+date\b"
+    )
+    range_rate_pattern = re.compile(
+        rf"(?i)\b(.{{1,80}}?)\s*(?:-|–|—|to|through|thru)\s*({date_token})\b"
+        r"[^\n$]{0,120}\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf)\b"
+        r"(?:[^\n$]{0,80}\$\s*([\d,]+(?:\.\d{1,4})?))?"
+    )
+    anchor_date = None
+    m_rev_anchor = reverse_anchor_pattern.search(text)
+    if m_rev_anchor:
+        anchor_date = _parse_lease_date(m_rev_anchor.group(1))
+    if anchor_date is None:
+        m_anchor = anchor_pattern.search(text)
+        if m_anchor:
+            anchor_date = _parse_lease_date(m_anchor.group(1))
     rows: list[dict] = []
     for match in re.finditer(row_pattern, text):
         start_date = _parse_lease_date(match.group(1))
@@ -2357,6 +2413,48 @@ def _extract_dated_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], O
                 "annual_total": float(annual_total),
             }
         )
+
+    # Handle charts that provide date-range + $/RSF and a single amount column
+    # (often monthly base rent), including rows like:
+    # "Expansion Commencement Date - 1/31/25  $40.00/RSF $4,790.00"
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for idx, line in enumerate(lines):
+        m = range_rate_pattern.search(line)
+        if not m:
+            continue
+        left_raw = " ".join((m.group(1) or "").split()).strip(" ,.;:-")
+        end_raw = m.group(2)
+        rate_psf = _parse_number_token(m.group(3))
+        amount2 = _parse_number_token(m.group(4)) if m.group(4) is not None else None
+        if rate_psf is None or not (1.0 <= float(rate_psf) <= 250.0):
+            continue
+        end_date = _parse_lease_date(end_raw)
+        if not end_date:
+            continue
+        start_date = _parse_lease_date(left_raw)
+        if not start_date and re.search(r"(?i)\bcommencement\s+date\b", left_raw):
+            start_date = anchor_date
+        if not start_date or end_date < start_date:
+            continue
+        local_context = " ".join(lines[max(0, idx - 6): min(len(lines), idx + 3)]).lower()
+        if not any(tok in local_context for tok in ("base rent", "rental rate", "rent chart", "lease months")):
+            continue
+        if any(tok in local_context for tok in ("operating expense", "opex", "cam", "reconciliation")):
+            continue
+        annual_total = 0.0
+        if amount2 is not None and float(amount2) > 1_000:
+            # Keep as annual only when the implied RSF is plausible for annualized dollars.
+            implied_rsf = float(amount2) / max(float(rate_psf), 1.0)
+            if implied_rsf > 2_000:
+                annual_total = float(amount2)
+        rows.append(
+            {
+                "start_date": start_date,
+                "end_date": end_date,
+                "rate_psf_annual": float(rate_psf),
+                "annual_total": annual_total,
+            }
+        )
     if len(rows) < 2:
         return [], None
     rows.sort(key=lambda row: (row["start_date"], row["end_date"]))
@@ -2382,8 +2480,9 @@ def _extract_dated_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], O
             }
         )
         rate = float(row["rate_psf_annual"])
-        if rate > 0:
-            inferred_rsf = float(row["annual_total"]) / rate
+        annual_total = float(row.get("annual_total") or 0.0)
+        if rate > 0 and annual_total > 0:
+            inferred_rsf = annual_total / rate
             if 300 <= inferred_rsf <= 2_000_000:
                 rsf_candidates.append(inferred_rsf)
     if not schedule:
@@ -3638,6 +3737,21 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|sf|s\.?f\.?)\b",
     ]
     rsf_candidates: list[dict] = []
+    strong_total_match = re.search(
+        r"(?i)\bamended\s+to\s+reflect\s+a\s+total\s+of\s+(\d{1,3}(?:,\d{3})+|\d{3,7})\s+rentable\s+square\s+feet\b",
+        text,
+    )
+    if strong_total_match:
+        value = _parse_number_token(strong_total_match.group(1))
+        if value is not None and 100 <= value <= 2_000_000:
+            rsf_candidates.append(
+                {
+                    "value": value,
+                    "snippet": "amended to reflect a total of rentable square feet",
+                    "score": 20,
+                    "start": strong_total_match.start(),
+                }
+            )
     for pat in rsf_patterns:
         for m in re.finditer(pat, text):
             value = _parse_number_token(m.group(1))
@@ -3663,6 +3777,10 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 score += 8
             if re.search(r"(?i)\bconsisting\s+of\s+approximately\b", low):
                 score += 3
+            if any(k in low for k in ("total of", "amended to reflect a total", "expanded premises", "total premises")):
+                score += 6
+            if any(k in low for k in ("initial leased premises", "initial premises", "original premises")):
+                score -= 8
             if any(k in low for k in ("approx", "approximately")):
                 score += 1
             if 2_000 <= value <= 300_000:
@@ -5798,6 +5916,15 @@ def _normalize_impl(
             should_replace_scenario_name = _looks_like_generic_scenario_name(scenario_name_val)
             if (
                 not should_replace_scenario_name
+                and re.search(r"(?i)\bin\s+the\s+building\s+known\s+as\b", scenario_name_val)
+            ):
+                should_replace_scenario_name = True
+            if not should_replace_scenario_name and suite_val:
+                scenario_suite = _extract_suite_from_text(scenario_name_val)
+                if scenario_suite and _normalize_suite_candidate(scenario_suite) != suite_val:
+                    should_replace_scenario_name = True
+            if (
+                not should_replace_scenario_name
                 and floor_hint_val
                 and not suite_hint_val
                 and re.search(r"(?i)\bsuite\b", scenario_name_val)
@@ -5852,13 +5979,34 @@ def _normalize_impl(
                     if prior_years:
                         prior_year = max(prior_years)
                         year_rate = float(hinted_opex_by_year[prior_year])
+                        growth_rate = _coerce_float_token(updates.get("opex_growth_rate"), None)
+                        if growth_rate is None or growth_rate <= 0:
+                            growth_rate = _coerce_float_token(extracted_hints.get("opex_growth_rate"), None)
+                        if growth_rate is None or growth_rate <= 0:
+                            growth_rate = _coerce_float_token(canonical.opex_growth_rate, None)
+                        if growth_rate is None or growth_rate <= 0:
+                            growth_rate = 0.03
+                        growth_rate = max(0.0, float(growth_rate))
+                        if prior_year < commencement_year and growth_rate > 0:
+                            year_rate = round(
+                                year_rate * ((1.0 + growth_rate) ** (commencement_year - prior_year)),
+                                4,
+                            )
+                            updates["opex_growth_rate"] = growth_rate
                         updates["opex_psf_year_1"] = year_rate
                         updates["expense_stop_psf"] = year_rate
                         if prior_year < commencement_year:
-                            extra_note_lines.append(
-                                f"OpEx table provided through {prior_year}; carried forward ${year_rate:,.2f}/SF "
-                                f"for {commencement_year}+ until updated values are provided."
-                            )
+                            if growth_rate > 0:
+                                extra_note_lines.append(
+                                    f"OpEx estimate: source year {prior_year} value escalated "
+                                    f"{growth_rate * 100:.2f}% YoY to {commencement_year} "
+                                    f"(${year_rate:,.2f}/SF)."
+                                )
+                            else:
+                                extra_note_lines.append(
+                                    f"OpEx table provided through {prior_year}; carried forward ${year_rate:,.2f}/SF "
+                                    f"for {commencement_year}+ until updated values are provided."
+                                )
             if (
                 hinted_opex > 0
                 and not hinted_opex_by_year

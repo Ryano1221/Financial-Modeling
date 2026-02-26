@@ -1001,8 +1001,7 @@ function computeEqualizedMetrics(scenario: WorkbookScenario, start: Date, end: D
   const annualFactor = days / 365;
   const gross = rows.reduce((sum, row) => sum + row.baseRent + row.opex + row.parking, 0);
   const recurring = rows.reduce((sum, row) => sum + row.grossCashFlow, 0);
-  const rate = (scenario.discountRate || 0.08) / 12;
-  const npv = rows.reduce((sum, row, idx) => sum + row.grossCashFlow / Math.pow(1 + rate, idx), 0);
+  const npv = rows.reduce((sum, row) => sum + row.discountedValue, 0);
   return {
     avgGrossRentPsfYear: safeDiv(gross, Math.max(1, scenario.rsf) * annualFactor),
     avgGrossRentMonth: safeDiv(gross, monthCount),
@@ -1608,13 +1607,13 @@ function createEqualizedSheet(
       label: "Equalized NPV (t0=start)",
       format: "currency0",
       getter: (metrics) => metrics.npv,
-      formula: (scenario, scenarioCol) => {
+      formula: (_scenario, scenarioCol) => {
         if (!hasOverlap || equalizedMonthCount <= 0 || equalizedFirstMonthlyRow <= 0 || equalizedLastMonthlyRow <= 0) return null;
-        const monthlyCol = toColumnLetter(scenarioCol + 1);
-        const range = `${monthlyFormulaSheet}!${monthlyCol}${equalizedFirstMonthlyRow}:${monthlyCol}${equalizedLastMonthlyRow}`;
-        const startRef = `${monthlyFormulaSheet}!${monthlyCol}${equalizedFirstMonthlyRow}`;
-        const monthlyRate = Number((((scenario.discountRate || 0) / 12)).toFixed(12));
-        return `IFERROR(SUMPRODUCT(${range},1/POWER(1+${monthlyRate},ROW(${range})-ROW(${startRef}))),0)`;
+        const scenarioIdx = Math.max(0, scenarioCol - 2);
+        const discountedHelperCol = (2 * scenarioCount) + 4 + scenarioIdx;
+        const helperColLetter = toColumnLetter(discountedHelperCol);
+        const range = `${monthlyFormulaSheet}!${helperColLetter}${equalizedFirstMonthlyRow}:${helperColLetter}${equalizedLastMonthlyRow}`;
+        return `IFERROR(SUM(${range}),0)`;
       },
     },
   ];
@@ -1718,18 +1717,30 @@ function createMonthlyGrossMatrixSheet(
     scenario.monthlyRows.forEach((row) => map.set(monthKey(row.date), row.grossCashFlow));
     return map;
   });
+  const discountedMaps = scenarios.map((scenario) => {
+    const map = new Map<string, number>();
+    scenario.monthlyRows.forEach((row) => map.set(monthKey(row.date), row.discountedValue));
+    return map;
+  });
   const parkingMaps = scenarios.map((scenario) => {
     const map = new Map<string, number>();
     scenario.monthlyRows.forEach((row) => map.set(monthKey(row.date), row.parking || 0));
     return map;
   });
   const parkingHelperStartCol = cols + 2;
+  const discountedHelperStartCol = parkingHelperStartCol + scenarios.length;
   scenarios.forEach((_, idx) => {
-    const helperCol = parkingHelperStartCol + idx;
-    const col = sheet.getColumn(helperCol);
-    col.hidden = true;
-    col.width = 2;
-    sheet.getCell(headerRow, helperCol).value = `__parking_helper_${idx + 1}`;
+    const parkingHelperCol = parkingHelperStartCol + idx;
+    const parkingCol = sheet.getColumn(parkingHelperCol);
+    parkingCol.hidden = true;
+    parkingCol.width = 2;
+    sheet.getCell(headerRow, parkingHelperCol).value = `__parking_helper_${idx + 1}`;
+
+    const discountedHelperCol = discountedHelperStartCol + idx;
+    const discountedCol = sheet.getColumn(discountedHelperCol);
+    discountedCol.hidden = true;
+    discountedCol.width = 2;
+    sheet.getCell(headerRow, discountedHelperCol).value = `__discounted_helper_${idx + 1}`;
   });
 
   let row = headerRow + 1;
@@ -1853,6 +1864,7 @@ function createMonthlyGrossMatrixSheet(
       const active = start && end ? (date.getTime() >= addMonths(start, 0).getTime() && date.getTime() <= addMonths(end, 0).getTime()) : false;
       const value = active ? monthlyMaps[idx].get(key) : undefined;
       const parkingValue = active ? parkingMaps[idx].get(key) : undefined;
+      const discountedValue = active ? discountedMaps[idx].get(key) : undefined;
       const cell = sheet.getCell(row, idx + 3);
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
       if (value == null || Number.isNaN(value)) {
@@ -1864,6 +1876,8 @@ function createMonthlyGrossMatrixSheet(
       }
       const helperCol = parkingHelperStartCol + idx;
       sheet.getCell(row, helperCol).value = Number((parkingValue ?? 0).toFixed(6));
+      const discountedHelperCol = discountedHelperStartCol + idx;
+      sheet.getCell(row, discountedHelperCol).value = Number((discountedValue ?? 0).toFixed(6));
     });
     for (let c = 1; c <= cols; c++) {
       const rowCell = sheet.getCell(row, c);

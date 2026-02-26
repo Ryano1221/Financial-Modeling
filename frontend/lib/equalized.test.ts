@@ -52,6 +52,23 @@ function makeScenario(overrides: Partial<ScenarioWithId>): ScenarioWithId {
 }
 
 describe("computeEqualizedComparison", () => {
+  function expectEqualizedNpvMatchesMain(
+    scenario: ScenarioWithId,
+    discountRate = 0.08
+  ): void {
+    const equalized = computeEqualizedComparison([scenario], discountRate, null);
+    expect(equalized.needsCustomWindow).toBe(false);
+    expect(equalized.windowStart).toBe(scenario.commencement);
+    expect(equalized.windowEnd).toBe(scenario.expiration);
+
+    const metrics = equalized.metricsByScenario[scenario.id];
+    expect(metrics).toBeDefined();
+    if (!metrics) throw new Error("Expected equalized metrics for scenario");
+
+    const main = runMonthlyEngine(scenarioToCanonical(scenario), discountRate);
+    expect(metrics.npvCost).toBeCloseTo(main.metrics.npvAtDiscount, 6);
+  }
+
   it("uses overlap max commencement and min expiration", () => {
     const a = makeScenario({ id: "a", commencement: "2026-01-01", expiration: "2026-12-31" });
     const b = makeScenario({ id: "b", commencement: "2026-03-01", expiration: "2026-10-31" });
@@ -212,6 +229,53 @@ describe("computeEqualizedComparison", () => {
     const baseTotal = result.metricsByScenario["ti-base"].totalCost;
     const withTiTotal = result.metricsByScenario["ti-with"].totalCost;
     expect(withTiTotal).toBeCloseTo(baseTotal - 15000, 2);
+  });
+
+  it("matches main NPV when parking is present", () => {
+    const scenario = makeScenario({
+      id: "npv-parking",
+      commencement: "2026-01-01",
+      expiration: "2026-12-31",
+      parking_spaces: 20,
+      parking_cost_monthly_per_space: 150,
+      parking_sales_tax_rate: 0.0825,
+    });
+    expectEqualizedNpvMatchesMain(scenario, 0.08);
+  });
+
+  it("matches main NPV when no parking is present", () => {
+    const scenario = makeScenario({
+      id: "npv-no-parking",
+      commencement: "2026-01-01",
+      expiration: "2026-12-31",
+      parking_spaces: 0,
+      parking_cost_monthly_per_space: 0,
+    });
+    expectEqualizedNpvMatchesMain(scenario, 0.08);
+  });
+
+  it("matches main NPV when pre-commencement discount months are greater than zero", () => {
+    const scenario = makeScenario({
+      id: "npv-prestart",
+      commencement: "2099-01-01",
+      expiration: "2099-12-31",
+    });
+    expectEqualizedNpvMatchesMain(scenario, 0.08);
+  });
+
+  it("matches main NPV when upfront month-0 items are present", () => {
+    const scenario = makeScenario({
+      id: "npv-upfront",
+      commencement: "2026-01-01",
+      expiration: "2026-12-31",
+      broker_fee: 25000,
+      security_deposit_months: 2,
+      one_time_costs: [{ name: "Legal", month: 0, amount: 10000 }],
+      ti_budget_total: 50000,
+      ti_allowance_psf: 3,
+      rsf: 10000,
+    });
+    expectEqualizedNpvMatchesMain(scenario, 0.08);
   });
 
 });

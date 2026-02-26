@@ -202,7 +202,7 @@ export function computeEqualizedComparison(
 
     let grossRentInWindow = 0;
     let totalCostInWindow = 0;
-    const discountedSeries: number[] = [];
+    let npvCost = 0;
 
     for (let i = 0; i < fullEngine.monthly.length; i += 1) {
       const row = fullEngine.monthly[i];
@@ -223,19 +223,14 @@ export function computeEqualizedComparison(
       grossRentInWindow += grossRow.baseRent * fraction;
       const clippedTotal = row.total * fraction;
       totalCostInWindow += clippedTotal;
-      discountedSeries.push(clippedTotal);
+      // NPV should follow underwriting stream/timing from the main engine.
+      npvCost += Number.isFinite(row.discountedValue) ? row.discountedValue : 0;
     }
 
     const rsf = Math.max(0, Number(scenario.rsf) || 0);
     const monthDivisor = windowMonthCount > 0 ? windowMonthCount : 0;
     const annualizedDivisor =
       monthDivisor > 0 ? monthDivisor / 12 : windowDays > 0 ? windowDays / 365 : 0;
-
-    const monthlyDiscount = Math.max(0, fullEngine.discountRateUsed) / 12;
-    const npvCost = discountedSeries.reduce(
-      (acc, cf, idx) => acc + cf / Math.pow(1 + monthlyDiscount, idx),
-      0
-    );
 
     metricsByScenario[scenario.id] = {
       scenarioId: scenario.id,

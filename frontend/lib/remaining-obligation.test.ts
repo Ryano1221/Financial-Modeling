@@ -103,4 +103,18 @@ describe("remaining-obligation date boundaries", () => {
     expect(restored.abatement_periods).toEqual(source.abatement_periods);
     expect(restored.is_remaining_obligation).toBe(false);
   });
+
+  it("rolls base OpEx to remaining-start year using calendar-year OpEx map", () => {
+    const source = makeScenario({
+      commencement: "2024-09-01",
+      expiration: "2027-04-30",
+      base_opex_psf_yr: 24.54,
+      opex_growth: 0.03,
+      opex_by_calendar_year: { "2024": 24.54 },
+    });
+    const remaining = applyLeaseModelChoice(source, "remaining_obligation", new Date(2026, 1, 28));
+
+    expect(remaining.remaining_obligation_start_date).toBe("2026-03-01");
+    expect(remaining.base_opex_psf_yr).toBeCloseTo(26.0345, 4);
+  });
 });

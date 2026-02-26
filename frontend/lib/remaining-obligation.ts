@@ -59,6 +59,48 @@ function monthDelta(startIso: string, endIso: string): number {
   return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
 }
 
+function yearFromIso(dateIso: string): number | null {
+  const parsed = parseIsoAsLocalDate(dateIso);
+  if (!parsed) return null;
+  return parsed.getFullYear();
+}
+
+function normalizeOpexByYear(raw: ScenarioInput["opex_by_calendar_year"]): Record<number, number> {
+  const out: Record<number, number> = {};
+  for (const [yearRaw, valueRaw] of Object.entries(raw ?? {})) {
+    const year = Number(yearRaw);
+    const value = Number(valueRaw);
+    if (!Number.isFinite(year) || !Number.isFinite(value)) continue;
+    if (year < 1900 || year > 2200 || value < 0) continue;
+    out[Math.floor(year)] = value;
+  }
+  return out;
+}
+
+function rolledBaseOpexForRemaining(
+  scenario: ScenarioInput,
+  snapshot: OriginalExtractedLeaseSnapshot,
+  remainingStartDate: string
+): number {
+  const targetYear = yearFromIso(remainingStartDate);
+  if (!targetYear) return Math.max(0, Number(scenario.base_opex_psf_yr) || 0);
+  const growth = Math.max(0, Number(scenario.opex_growth) || 0);
+  const explicitByYear = normalizeOpexByYear(scenario.opex_by_calendar_year);
+  const explicitYears = Object.keys(explicitByYear).map(Number).sort((a, b) => a - b);
+  if (explicitYears.length > 0) {
+    const floorYears = explicitYears.filter((y) => y <= targetYear);
+    const baselineYear = floorYears.length > 0 ? floorYears[floorYears.length - 1] : explicitYears[0];
+    const baselineValue = explicitByYear[baselineYear];
+    const yearsForward = Math.max(0, targetYear - baselineYear);
+    return baselineValue * Math.pow(1 + growth, yearsForward);
+  }
+  const commencementYear = yearFromIso(snapshot.commencement);
+  const base = Math.max(0, Number(scenario.base_opex_psf_yr) || 0);
+  if (!commencementYear || base <= 0) return base;
+  const yearsForward = Math.max(0, targetYear - commencementYear);
+  return base * Math.pow(1 + growth, yearsForward);
+}
+
 function isIsoBefore(leftIso: string, rightIso: string): boolean {
   const left = parseIsoAsLocalDate(leftIso);
   const right = parseIsoAsLocalDate(rightIso);
@@ -315,6 +357,7 @@ export function applyRemainingObligationModel<T extends ScenarioInput | Scenario
   const snapshot = scenario.original_extracted_lease ?? snapshotFromScenario(scenario);
   const remainingStartDate = scenario.remaining_obligation_start_date || firstDayOfNextMonthLocal(now);
   const elapsedMonths = Math.max(0, monthDelta(snapshot.commencement, remainingStartDate));
+  const rolledBaseOpex = rolledBaseOpexForRemaining(scenario, snapshot, remainingStartDate);
 
   const shiftedRent = shiftRentSteps(cloneRentSteps(snapshot.rent_steps), elapsedMonths);
   const shiftedPhaseIn = shiftPhaseInSteps(clonePhaseInSteps(snapshot.phase_in_steps), elapsedMonths);
@@ -357,6 +400,7 @@ export function applyRemainingObligationModel<T extends ScenarioInput | Scenario
     security_deposit_months: 0,
     ti_allowance_psf: 0,
     ti_budget_total: 0,
+    base_opex_psf_yr: Number(rolledBaseOpex.toFixed(4)),
     is_remaining_obligation: true,
     remaining_obligation_start_date: remainingStartDate,
     original_extracted_lease: snapshot,
