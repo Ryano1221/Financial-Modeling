@@ -193,12 +193,11 @@ export function SummaryMatrix({
     const disabled = !scenario || rsf <= 0 || !onUpdateTiBudgetPsf;
     return (
       <input
-        type="number"
-        min={0}
-        step={0.01}
+        type="text"
         value={value}
         disabled={disabled}
         inputMode="decimal"
+        autoComplete="off"
         onChange={(e) =>
           setTiBudgetDrafts((prev) => ({
             ...prev,
