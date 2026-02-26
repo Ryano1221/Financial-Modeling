@@ -47,7 +47,7 @@ describe("notes formatting", () => {
     const raw =
       "Renewal / extension: Tenant shall have one option to renew for 60 months at FMV with arbitration.";
     const formatted = formatMetricValue("notes", raw);
-    expect(formatted).toContain("Renewal / extension: 1 renewal option for 60 months at FMV");
+    expect(formatted).toContain("Renewal / extension: 1 (One) renewal option for 60 (Sixty) months at FMV");
     expect(formatted).not.toContain("arbitration");
   });
 

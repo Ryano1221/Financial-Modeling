@@ -179,6 +179,87 @@ function isMeaningfulNoteFragment(input: string): boolean {
   return true;
 }
 
+const SIMPLE_NUMBER_WORDS: Record<number, string> = {
+  0: "zero",
+  1: "one",
+  2: "two",
+  3: "three",
+  4: "four",
+  5: "five",
+  6: "six",
+  7: "seven",
+  8: "eight",
+  9: "nine",
+  10: "ten",
+  11: "eleven",
+  12: "twelve",
+  13: "thirteen",
+  14: "fourteen",
+  15: "fifteen",
+  16: "sixteen",
+  17: "seventeen",
+  18: "eighteen",
+  19: "nineteen",
+  20: "twenty",
+  30: "thirty",
+  40: "forty",
+  50: "fifty",
+  60: "sixty",
+  70: "seventy",
+  80: "eighty",
+  90: "ninety",
+};
+
+function titleCaseWord(input: string): string {
+  return input
+    .split(/([-\s])/)
+    .map((token) => {
+      if (token === "-" || token === " ") return token;
+      if (!token) return "";
+      return token[0].toUpperCase() + token.slice(1).toLowerCase();
+    })
+    .join("")
+    .trim();
+}
+
+function intToWords(num: number): string {
+  const n = Math.floor(Math.max(0, num));
+  if (Object.prototype.hasOwnProperty.call(SIMPLE_NUMBER_WORDS, n)) return SIMPLE_NUMBER_WORDS[n];
+  if (n < 100) {
+    const tens = Math.floor(n / 10) * 10;
+    const ones = n % 10;
+    const tensWord = SIMPLE_NUMBER_WORDS[tens] ?? "";
+    if (ones === 0) return tensWord;
+    const onesWord = SIMPLE_NUMBER_WORDS[ones] ?? "";
+    return `${tensWord}-${onesWord}`.replace(/^-|-$/g, "");
+  }
+  if (n < 1000) {
+    const hundreds = Math.floor(n / 100);
+    const rem = n % 100;
+    const head = `${SIMPLE_NUMBER_WORDS[hundreds] ?? String(hundreds)} hundred`;
+    if (rem === 0) return head;
+    return `${head} ${intToWords(rem)}`.trim();
+  }
+  return String(n);
+}
+
+function wordToInt(input: string): number | null {
+  const raw = (input || "").trim().toLowerCase();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const token = raw.replace(/_/g, "-").replace(/\s+/g, "-");
+  for (const [num, word] of Object.entries(SIMPLE_NUMBER_WORDS)) {
+    if (word === token) return Number(num);
+  }
+  const parts = token.split("-").filter(Boolean);
+  if (parts.length === 2) {
+    const left = wordToInt(parts[0]);
+    const right = wordToInt(parts[1]);
+    if (left != null && right != null && left >= 20 && right < 10) return left + right;
+  }
+  return null;
+}
+
 function condenseNoteFragment(fragment: string, maxChars = 185): string {
   const cleaned = stripNotePrefixNoise(fragment);
   if (!cleaned) return "";
@@ -197,50 +278,64 @@ function condenseNoteFragment(fragment: string, maxChars = 185): string {
   }
 
   if (/\brenew|\bextension/.test(low)) {
-    const countMap: Record<string, string> = { one: "1", two: "2", three: "3", four: "4", five: "5" };
-    let optionNumber = "";
+    let optionNumber: number | null = null;
     let optionWord = "";
     const optionNumWord = cleaned.match(/\b(\d{1,2})\s*\(\s*([A-Za-z-]+)\s*\)\s+(?:renewal\s+)?(?:option|options)\b/i);
     const optionWordNum = cleaned.match(/\b([A-Za-z-]+)\s*\(\s*(\d{1,2})\s*\)\s+(?:renewal\s+)?(?:option|options)\b/i);
-    const optionPlain = cleaned.match(/\b(\d{1,2}|one|two|three|four|five)\s+(?:renewal\s+)?(?:option|options)\b/i);
+    const optionPlain = cleaned.match(/\b(\d{1,3}|[A-Za-z-]+)\s+(?:renewal\s+)?(?:option|options)\b/i);
     if (optionNumWord) {
-      optionNumber = optionNumWord[1];
-      optionWord = optionNumWord[2][0].toUpperCase() + optionNumWord[2].slice(1).toLowerCase();
+      optionNumber = Number(optionNumWord[1]);
+      optionWord = titleCaseWord(optionNumWord[2]);
     } else if (optionWordNum) {
-      optionNumber = optionWordNum[2];
-      optionWord = optionWordNum[1][0].toUpperCase() + optionWordNum[1].slice(1).toLowerCase();
+      optionNumber = Number(optionWordNum[2]);
+      optionWord = titleCaseWord(optionWordNum[1]);
     } else if (optionPlain) {
-      const raw = optionPlain[1].toLowerCase();
-      optionNumber = countMap[raw] ?? raw;
+      optionNumber = /^\d+$/.test(optionPlain[1]) ? Number(optionPlain[1]) : wordToInt(optionPlain[1]);
     }
+    if (optionNumber == null && /\brenewal\s+option\b/i.test(cleaned)) optionNumber = 1;
 
-    let duration = "";
+    let durationAmount: number | null = null;
+    let durationWord = "";
+    let durationUnit = "";
     const yearNumWord = cleaned.match(/\b(\d+(?:\.\d+)?)\s*\(\s*([A-Za-z-]+)\s*\)\s*(years?|yrs?)\b/i);
     const yearWordNum = cleaned.match(/\b([A-Za-z-]+)\s*\(\s*(\d+(?:\.\d+)?)\s*\)\s*(years?|yrs?)\b/i);
     const monthNumWord = cleaned.match(/\b(\d{1,3})\s*\(\s*([A-Za-z-]+)\s*\)\s*(months?|mos?)\b/i);
     const monthWordNum = cleaned.match(/\b([A-Za-z-]+)\s*\(\s*(\d{1,3})\s*\)\s*(months?|mos?)\b/i);
-    const yearPlain = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(years?|yrs?)\b/i);
-    const monthPlain = cleaned.match(/\b(\d{1,3})\s*(months?|mos?)\b/i);
+    const yearPlain = cleaned.match(/\b(\d{1,3}|[A-Za-z-]+)\s*(years?|yrs?)\b/i);
+    const monthPlain = cleaned.match(/\b(\d{1,3}|[A-Za-z-]+)\s*(months?|mos?)\b/i);
     if (yearNumWord) {
-      duration = `${yearNumWord[1]} (${yearNumWord[2][0].toUpperCase() + yearNumWord[2].slice(1).toLowerCase()}) years`;
+      durationAmount = Number(yearNumWord[1]);
+      durationWord = titleCaseWord(yearNumWord[2]);
+      durationUnit = "years";
     } else if (yearWordNum) {
-      duration = `${yearWordNum[2]} (${yearWordNum[1][0].toUpperCase() + yearWordNum[1].slice(1).toLowerCase()}) years`;
+      durationAmount = Number(yearWordNum[2]);
+      durationWord = titleCaseWord(yearWordNum[1]);
+      durationUnit = "years";
     } else if (monthNumWord) {
-      duration = `${monthNumWord[1]} (${monthNumWord[2][0].toUpperCase() + monthNumWord[2].slice(1).toLowerCase()}) months`;
+      durationAmount = Number(monthNumWord[1]);
+      durationWord = titleCaseWord(monthNumWord[2]);
+      durationUnit = "months";
     } else if (monthWordNum) {
-      duration = `${monthWordNum[2]} (${monthWordNum[1][0].toUpperCase() + monthWordNum[1].slice(1).toLowerCase()}) months`;
+      durationAmount = Number(monthWordNum[2]);
+      durationWord = titleCaseWord(monthWordNum[1]);
+      durationUnit = "months";
     } else if (yearPlain) {
-      duration = `${yearPlain[1]} years`;
+      durationAmount = /^\d+$/.test(yearPlain[1]) ? Number(yearPlain[1]) : wordToInt(yearPlain[1]);
+      durationUnit = "years";
     } else if (monthPlain) {
-      duration = `${monthPlain[1]} months`;
+      durationAmount = /^\d+$/.test(monthPlain[1]) ? Number(monthPlain[1]) : wordToInt(monthPlain[1]);
+      durationUnit = "months";
     }
-    if (!duration) return "";
+    if (durationAmount == null) return "";
 
-    const optionText = optionNumber
-      ? `${optionNumber}${optionWord ? ` (${optionWord})` : ""} renewal option${optionNumber === "1" ? "" : "s"}`
-      : "Renewal option";
+    if (!durationWord) durationWord = titleCaseWord(intToWords(durationAmount));
+    const durationText = `${durationAmount} (${durationWord || String(durationAmount)}) ${durationUnit}`;
+
+    if (optionNumber == null) optionNumber = 1;
+    if (!optionWord) optionWord = titleCaseWord(intToWords(optionNumber));
+    const optionText = `${optionNumber} (${optionWord || String(optionNumber)}) renewal option${optionNumber === 1 ? "" : "s"}`;
     const fmvSuffix = low.includes("fair market") || low.includes("fmv") ? " at FMV" : "";
-    return `${optionText} for ${duration}${fmvSuffix}`;
+    return `${optionText} for ${durationText}${fmvSuffix}`;
   }
 
   if (/\bparking|\bpermit/.test(low)) {

@@ -4609,6 +4609,99 @@ def _is_meaningful_note_fragment(text: str) -> bool:
     return True
 
 
+_SIMPLE_NUMBER_WORDS: dict[int, str] = {
+    0: "zero",
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+    11: "eleven",
+    12: "twelve",
+    13: "thirteen",
+    14: "fourteen",
+    15: "fifteen",
+    16: "sixteen",
+    17: "seventeen",
+    18: "eighteen",
+    19: "nineteen",
+    20: "twenty",
+    30: "thirty",
+    40: "forty",
+    50: "fifty",
+    60: "sixty",
+    70: "seventy",
+    80: "eighty",
+    90: "ninety",
+}
+
+
+def _title_case_number_word(text: str) -> str:
+    chunks = re.split(r"([-\s])", str(text or "").strip())
+    out: list[str] = []
+    for chunk in chunks:
+        if chunk in {"-", " "}:
+            out.append(chunk)
+        elif chunk:
+            out.append(chunk[:1].upper() + chunk[1:].lower())
+    return "".join(out).strip()
+
+
+def _int_to_words(num: int) -> str:
+    n = int(num)
+    if n in _SIMPLE_NUMBER_WORDS:
+        return _SIMPLE_NUMBER_WORDS[n]
+    if n < 0:
+        return ""
+    if n < 100:
+        tens = (n // 10) * 10
+        ones = n % 10
+        tens_word = _SIMPLE_NUMBER_WORDS.get(tens, "")
+        if ones == 0:
+            return tens_word
+        ones_word = _SIMPLE_NUMBER_WORDS.get(ones, "")
+        if tens_word and ones_word:
+            return f"{tens_word}-{ones_word}"
+        return tens_word or ones_word
+    if n < 1000:
+        hundreds = n // 100
+        rem = n % 100
+        head = f"{_SIMPLE_NUMBER_WORDS.get(hundreds, str(hundreds))} hundred"
+        if rem == 0:
+            return head
+        tail = _int_to_words(rem)
+        return f"{head} {tail}".strip()
+    return str(n)
+
+
+def _word_to_int(word: str) -> Optional[int]:
+    token = str(word or "").strip().lower()
+    if not token:
+        return None
+    if token.isdigit():
+        try:
+            return int(token)
+        except ValueError:
+            return None
+    token = token.replace("_", "-").replace(" ", "-")
+    if token in _SIMPLE_NUMBER_WORDS.values():
+        for k, v in _SIMPLE_NUMBER_WORDS.items():
+            if v == token:
+                return int(k)
+    parts = [part for part in token.split("-") if part]
+    if len(parts) == 2:
+        left = _word_to_int(parts[0])
+        right = _word_to_int(parts[1])
+        if left is not None and right is not None and left >= 20 and right < 10:
+            return left + right
+    return None
+
+
 def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
     cleaned = _strip_note_prefix_noise(text)
     low = cleaned.lower()
@@ -4631,9 +4724,7 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
 
     # Renewal
     if "renew" in low or "extension" in low:
-        count_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5"}
-
-        option_number = ""
+        option_number: Optional[int] = None
         option_word = ""
         m_opt_num_word = re.search(
             r"(?i)\b(\d{1,2})\s*\(\s*([A-Za-z-]+)\s*\)\s+(?:renewal\s+)?(?:option|options)\b",
@@ -4643,25 +4734,29 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
             r"(?i)\b([A-Za-z-]+)\s*\(\s*(\d{1,2})\s*\)\s+(?:renewal\s+)?(?:option|options)\b",
             cleaned,
         )
-        m_opt_plain = re.search(r"(?i)\b(\d{1,2}|one|two|three|four|five)\s+(?:renewal\s+)?(?:option|options)\b", cleaned)
+        m_opt_plain = re.search(r"(?i)\b(\d{1,3}|[A-Za-z-]+)\s+(?:renewal\s+)?(?:option|options)\b", cleaned)
         if m_opt_num_word:
-            option_number = m_opt_num_word.group(1)
-            option_word = m_opt_num_word.group(2).capitalize()
+            option_number = _coerce_int_token(m_opt_num_word.group(1), None)
+            option_word = _title_case_number_word(m_opt_num_word.group(2))
         elif m_opt_word_num:
-            raw_word = m_opt_word_num.group(1).lower()
-            option_number = m_opt_word_num.group(2)
-            option_word = raw_word.capitalize()
+            option_number = _coerce_int_token(m_opt_word_num.group(2), None)
+            option_word = _title_case_number_word(m_opt_word_num.group(1))
         elif m_opt_plain:
-            raw_count = m_opt_plain.group(1).lower()
-            option_number = count_map.get(raw_count, raw_count)
+            option_number = _coerce_int_token(m_opt_plain.group(1), None)
+            if option_number is None:
+                option_number = _word_to_int(m_opt_plain.group(1))
+        if option_number is None and re.search(r"(?i)\brenewal\s+option\b", cleaned):
+            option_number = 1
 
-        duration = ""
+        duration_amount: Optional[int] = None
+        duration_word = ""
+        duration_unit = ""
         m_year_num_word = re.search(
-            r"(?i)\b(\d+(?:\.\d+)?)\s*\(\s*([A-Za-z-]+)\s*\)\s*(years?|yrs?)\b",
+            r"(?i)\b(\d{1,3})\s*\(\s*([A-Za-z-]+)\s*\)\s*(years?|yrs?)\b",
             cleaned,
         )
         m_year_word_num = re.search(
-            r"(?i)\b([A-Za-z-]+)\s*\(\s*(\d+(?:\.\d+)?)\s*\)\s*(years?|yrs?)\b",
+            r"(?i)\b([A-Za-z-]+)\s*\(\s*(\d{1,3})\s*\)\s*(years?|yrs?)\b",
             cleaned,
         )
         m_month_num_word = re.search(
@@ -4672,35 +4767,52 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
             r"(?i)\b([A-Za-z-]+)\s*\(\s*(\d{1,3})\s*\)\s*(months?|mos?)\b",
             cleaned,
         )
-        m_year_plain = re.search(r"(?i)\b(\d+(?:\.\d+)?)\s*(years?|yrs?)\b", cleaned)
-        m_month_plain = re.search(r"(?i)\b(\d{1,3})\s*(months?|mos?)\b", cleaned)
+        m_year_plain = re.search(r"(?i)\b(\d{1,3}|[A-Za-z-]+)\s*(years?|yrs?)\b", cleaned)
+        m_month_plain = re.search(r"(?i)\b(\d{1,3}|[A-Za-z-]+)\s*(months?|mos?)\b", cleaned)
         if m_year_num_word:
-            duration = f"{m_year_num_word.group(1)} ({m_year_num_word.group(2).capitalize()}) years"
+            duration_amount = _coerce_int_token(m_year_num_word.group(1), None)
+            duration_word = _title_case_number_word(m_year_num_word.group(2))
+            duration_unit = "years"
         elif m_year_word_num:
-            duration = f"{m_year_word_num.group(2)} ({m_year_word_num.group(1).capitalize()}) years"
+            duration_amount = _coerce_int_token(m_year_word_num.group(2), None)
+            duration_word = _title_case_number_word(m_year_word_num.group(1))
+            duration_unit = "years"
         elif m_month_num_word:
-            duration = f"{m_month_num_word.group(1)} ({m_month_num_word.group(2).capitalize()}) months"
+            duration_amount = _coerce_int_token(m_month_num_word.group(1), None)
+            duration_word = _title_case_number_word(m_month_num_word.group(2))
+            duration_unit = "months"
         elif m_month_word_num:
-            duration = f"{m_month_word_num.group(2)} ({m_month_word_num.group(1).capitalize()}) months"
+            duration_amount = _coerce_int_token(m_month_word_num.group(2), None)
+            duration_word = _title_case_number_word(m_month_word_num.group(1))
+            duration_unit = "months"
         elif m_year_plain:
-            duration = f"{m_year_plain.group(1)} years"
+            duration_amount = _coerce_int_token(m_year_plain.group(1), None)
+            if duration_amount is None:
+                duration_amount = _word_to_int(m_year_plain.group(1))
+            duration_unit = "years"
         elif m_month_plain:
-            duration = f"{m_month_plain.group(1)} months"
+            duration_amount = _coerce_int_token(m_month_plain.group(1), None)
+            if duration_amount is None:
+                duration_amount = _word_to_int(m_month_plain.group(1))
+            duration_unit = "months"
 
-        if not duration:
+        if duration_amount is None:
             return ""
 
-        if option_number:
-            option_plural = "" if option_number == "1" else "s"
-            option_text = (
-                f"{option_number} ({option_word}) renewal option{option_plural}"
-                if option_word
-                else f"{option_number} renewal option{option_plural}"
-            )
-        else:
-            option_text = "Renewal option"
+        if not duration_word:
+            duration_word = _title_case_number_word(_int_to_words(duration_amount))
+        if not duration_word:
+            duration_word = str(duration_amount)
+        duration_text = f"{duration_amount} ({duration_word}) {duration_unit}"
 
-        summary = f"{option_text} for {duration}"
+        if option_number is None:
+            option_number = 1
+        if not option_word:
+            option_word = _title_case_number_word(_int_to_words(option_number)) or str(option_number)
+        option_plural = "" if option_number == 1 else "s"
+        option_text = f"{option_number} ({option_word}) renewal option{option_plural}"
+
+        summary = f"{option_text} for {duration_text}"
         if "fair market" in low or "fmv" in low:
             summary += " at FMV"
         return _condense_note_text(summary, max_chars=max_chars, max_sentences=1)

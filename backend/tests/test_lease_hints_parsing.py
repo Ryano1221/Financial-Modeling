@@ -335,7 +335,7 @@ def test_summarize_note_clause_renewal_keeps_only_count_and_duration() -> None:
         "Renewal option: Tenant shall have one option to renew for 60 months at FMV with arbitration.",
         max_chars=160,
     )
-    assert summary == "1 renewal option for 60 months at FMV"
+    assert summary == "1 (One) renewal option for 60 (Sixty) months at FMV"
 
 
 def test_summarize_note_clause_renewal_supports_numeric_and_word_years() -> None:
