@@ -129,6 +129,12 @@ VERSION = (os.environ.get("RENDER_GIT_COMMIT") or "").strip() or "unknown"
 PUBLIC_BRANDING_ORG_ID = "public"
 PUBLIC_BRANDING_MAX_LOGO_BYTES = 1_500_000
 PUBLIC_BRANDING_ALLOWED_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
+MAX_EXTRACT_UPLOAD_BYTES = int(os.environ.get("MAX_EXTRACT_UPLOAD_BYTES", str(15 * 1024 * 1024)))
+MAX_NORMALIZE_UPLOAD_BYTES = int(os.environ.get("MAX_NORMALIZE_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+MAX_UPLOAD_LEASE_BYTES = int(os.environ.get("MAX_UPLOAD_LEASE_BYTES", str(15 * 1024 * 1024)))
+MAX_EXTRACTION_ARTIFACTS_BYTES = int(os.environ.get("MAX_EXTRACTION_ARTIFACTS_BYTES", str(8 * 1024 * 1024)))
+SAFE_OCR_MAX_PAGES = int(os.environ.get("SAFE_OCR_MAX_PAGES", "3"))
+SKIP_OCR_ABOVE_BYTES = int(os.environ.get("SKIP_OCR_ABOVE_BYTES", str(8 * 1024 * 1024)))
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip().rstrip("/")
 SUPABASE_ANON_KEY = (os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or "").strip()
 SUPABASE_SERVICE_ROLE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
@@ -898,7 +904,7 @@ def delete_user_branding_logo(request: Request):
 def extract_document(
     file: UploadFile = File(...),
     force_ocr: Optional[bool] = Form(None),
-    ocr_pages: int = Form(5),
+    ocr_pages: int = Form(3),
 ) -> ExtractionResponse:
     """
     Accept PDF, DOCX, or DOC (multipart): extract text. For PDF, OCR runs when forced, or automatically
@@ -922,6 +928,18 @@ def extract_document(
     print(f"[extract] filename={filename!r} content_type={content_type!r} size_bytes={size}")
     if size == 0:
         raise HTTPException(status_code=400, detail="Empty file")
+    if size > MAX_EXTRACT_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"File too large for extraction ({size} bytes). "
+                f"Limit is {MAX_EXTRACT_UPLOAD_BYTES} bytes."
+            ),
+        )
+
+    size_forces_no_ocr = fn.endswith(".pdf") and size > SKIP_OCR_ABOVE_BYTES and force_ocr is not False
+    if size_forces_no_ocr:
+        force_ocr = False
 
     cache_key: bool | str = "auto" if force_ocr is None else force_ocr
     cached = get_cached_extraction(contents, cache_key)
@@ -934,11 +952,16 @@ def extract_document(
     source = "docx"
     ocr_used = False
     extraction_source: str = "text"
+    ocr_skip_warning: str | None = (
+        "OCR was skipped for this large PDF to prevent memory issues; using native PDF text extraction."
+        if size_forces_no_ocr
+        else None
+    )
     try:
         if fn.endswith(".pdf"):
-            pages = 5
+            pages = SAFE_OCR_MAX_PAGES
             try:
-                pages = max(1, min(50, int(ocr_pages)))
+                pages = max(1, min(max(1, SAFE_OCR_MAX_PAGES), int(ocr_pages)))
             except (TypeError, ValueError):
                 pass
             if force_ocr is True:
@@ -993,6 +1016,10 @@ def extract_document(
         raise HTTPException(status_code=422, detail="No text could be extracted from the document")
     try:
         response = extract_scenario_from_text(text, source=source)
+        if ocr_skip_warning:
+            warnings = list(response.warnings or [])
+            warnings.append(ocr_skip_warning)
+            response = response.model_copy(update={"warnings": warnings})
         response = response.model_copy(update={"ocr_used": ocr_used, "extraction_source": extraction_source})
         set_cached_extraction(contents, cache_key, response.model_dump(mode="json"))
         return response
@@ -1026,6 +1053,14 @@ def upload_lease(file: UploadFile = File(...)) -> LeaseExtraction:
         contents = file.file.read()
         if len(contents) == 0:
             raise HTTPException(status_code=400, detail="Empty file")
+        if len(contents) > MAX_UPLOAD_LEASE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"File too large for lease upload ({len(contents)} bytes). "
+                    f"Limit is {MAX_UPLOAD_LEASE_BYTES} bytes."
+                ),
+            )
         from io import BytesIO
         return extract_lease(BytesIO(contents), filename=file.filename)
     except ValueError as e:
@@ -5752,6 +5787,33 @@ def _run_extraction_artifacts(
     content_type: str,
     canonical: CanonicalLease,
 ) -> dict:
+    if len(file_bytes) > MAX_EXTRACTION_ARTIFACTS_BYTES:
+        _LOG.warning(
+            "extraction_pipeline_skipped_large_file file=%s size=%d limit=%d",
+            filename,
+            len(file_bytes),
+            MAX_EXTRACTION_ARTIFACTS_BYTES,
+        )
+        return {
+            "canonical_extraction": _canonical_only_extraction(canonical, doc_type="unknown"),
+            "provenance": {},
+            "review_tasks": [
+                {
+                    "field_path": "pipeline",
+                    "severity": "warn",
+                    "issue_code": "PIPELINE_SKIPPED_LARGE_FILE",
+                    "message": (
+                        "Deep extraction checks were skipped for a large file to keep memory usage stable."
+                    ),
+                    "candidates": [],
+                    "recommended_value": None,
+                    "evidence": [],
+                }
+            ],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.7, "status": "yellow", "export_allowed": True},
+        }
+
     try:
         extraction = build_extract_response(
             file_bytes=file_bytes,
@@ -5873,6 +5935,14 @@ def _normalize_impl(
         _LOG.info("NORMALIZE_FILE rid=%s filename=%s size=%s", rid, file.filename or "", len(contents))
         if len(contents) == 0:
             raise HTTPException(status_code=400, detail="Empty file")
+        if len(contents) > MAX_NORMALIZE_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"File too large for normalization ({len(contents)} bytes). "
+                    f"Limit is {MAX_NORMALIZE_UPLOAD_BYTES} bytes."
+                ),
+            )
         buf = BytesIO(contents)
         text = ""
         word_source = "docx"
@@ -5881,9 +5951,10 @@ def _normalize_impl(
         try:
             if fn.endswith(".pdf"):
                 text = extract_text_from_pdf(buf)
-                if text_quality_requires_ocr(text):
+                allow_ocr = len(contents) <= SKIP_OCR_ABOVE_BYTES
+                if allow_ocr and text_quality_requires_ocr(text):
                     buf.seek(0)
-                    pages = max(1, min(50, 5))
+                    pages = max(1, SAFE_OCR_MAX_PAGES)
                     try:
                         text, _ = extract_text_from_pdf_with_ocr(buf, force_ocr=True, ocr_pages=pages)
                         ocr_used = True
@@ -5891,6 +5962,10 @@ def _normalize_impl(
                     except Exception:
                         # OCR dependencies may be unavailable in local/dev; continue with text extraction fallback.
                         warnings.append("OCR was unavailable; continued with standard PDF text extraction.")
+                elif not allow_ocr:
+                    warnings.append(
+                        "OCR was skipped for this large PDF to keep processing stable; native PDF text extraction was used."
+                    )
             else:
                 text, word_source = extract_text_from_word(buf, file.filename or "")
         except Exception as e:
@@ -7380,6 +7455,76 @@ def build_report_preview(req: ReportRequest) -> str:
     from reporting.report_builder import build_report_html
     html_str = build_report_html(req.scenario, compute_result, brand, meta_dict)
     return HTMLResponse(html_str, headers={"X-Report-ID": report_id})
+
+
+@app.post("/report/deck")
+def build_report_deck_pdf_endpoint(req: CreateReportRequest) -> Response:
+    """
+    Build multi-scenario deck PDF directly from payload (no persisted report_id hop).
+    """
+    data = {
+        "scenarios": [{"scenario": entry.scenario, "result": entry.result.model_dump()} for entry in req.scenarios],
+        "branding": req.branding.model_dump(exclude_none=True) if req.branding else {},
+    }
+    branding = data.get("branding") if isinstance(data.get("branding"), dict) else {}
+    org_id = str(branding.get("org_id") or branding.get("orgId") or "public")
+    theme_hash = str(branding.get("theme_hash") or branding.get("themeHash") or _branding_theme_hash(branding))
+
+    cached_deck_pdf = get_cached_report_deck(data, org_id, theme_hash)
+    if cached_deck_pdf is not None:
+        return Response(
+            content=cached_deck_pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": 'inline; filename="lease-deck.pdf"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    try:
+        from reporting.deck_builder import render_report_deck_pdf
+        pdf_bytes = render_report_deck_pdf(data)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Playwright not installed. Run: pip install playwright && playwright install chromium",
+        )
+    except Exception as e:
+        launch_msg = str(e).lower()
+        missing_runtime_libs = any(
+            token in launch_msg
+            for token in (
+                "error while loading shared libraries",
+                "libatk",
+                "libgtk",
+                "libx11",
+                "libnss",
+                "exitcode=127",
+            )
+        )
+        if missing_runtime_libs:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "PDF runtime dependencies are missing on backend. "
+                    "Install Playwright system libraries in Docker image."
+                ),
+            )
+        raise HTTPException(
+            status_code=500,
+            detail="Deck PDF generation failed. Use /report/preview or /reports/{report_id}/preview to inspect rendered HTML.",
+        ) from e
+
+    set_cached_report_deck(data, org_id, theme_hash, pdf_bytes)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="lease-deck.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.get("/reports/{report_id}/pdf")

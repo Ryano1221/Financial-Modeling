@@ -1226,23 +1226,24 @@ export default function Home() {
       const meta = buildReportMeta();
       const resolvedPreparedBy = meta.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
       const headers = getAuthHeaders();
+      const deckPayload = {
+        scenarios: scenariosForDeck,
+        branding: {
+          client_name: meta.prepared_for || "Client",
+          prepared_by_name: resolvedPreparedBy,
+          date: meta.report_date || formatDateMmDdYyyy(new Date()),
+          market: meta.market || "",
+          submarket: meta.submarket || "",
+          client_logo_asset_url: clientLogoUrl,
+          client_logo_asset_bytes: clientLogoBase64 || undefined,
+          confidentiality_line: meta.confidential ? "Confidential" : "",
+        },
+      };
       try {
         const res = await fetchApiProxy("/reports", {
           method: "POST",
           headers,
-          body: JSON.stringify({
-            scenarios: scenariosForDeck,
-            branding: {
-              client_name: meta.prepared_for || "Client",
-              prepared_by_name: resolvedPreparedBy,
-              date: meta.report_date || formatDateMmDdYyyy(new Date()),
-              market: meta.market || "",
-              submarket: meta.submarket || "",
-              client_logo_asset_url: clientLogoUrl,
-              client_logo_asset_bytes: clientLogoBase64 || undefined,
-              confidentiality_line: meta.confidential ? "Confidential" : "",
-            },
-          }),
+          body: JSON.stringify(deckPayload),
         });
         if (!res.ok) {
           const text = await res.text();
@@ -1261,6 +1262,23 @@ export default function Home() {
       } catch (deckErr) {
         const msg = deckErr instanceof Error ? deckErr.message : String(deckErr);
         console.error("[exportPdfDeck] deck route failed:", msg.slice(0, 600));
+      }
+
+      // Direct multi-scenario deck route fallback (no persisted report_id hop).
+      try {
+        const directDeck = await fetchApiProxy("/report/deck", {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify(deckPayload),
+        });
+        if (directDeck.ok) {
+          const blob = await directDeck.blob();
+          downloadBlob(blob, "lease-deck.pdf");
+          return;
+        }
+      } catch (directDeckErr) {
+        const msg = directDeckErr instanceof Error ? directDeckErr.message : String(directDeckErr);
+        console.error("[exportPdfDeck] direct /report/deck fallback failed:", msg.slice(0, 600));
       }
 
       // Last-resort fallback only when there is a single scenario.
