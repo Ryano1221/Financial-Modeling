@@ -1629,7 +1629,7 @@ export default function Home() {
               <UploadExtractCard>
                 <p className="heading-kicker mb-2">Extract from document</p>
                 <h2 className="heading-section mb-3">
-                  Upload & extract
+                  UPLOAD AND EXTRACT
                 </h2>
                 <ExtractUpload
                   showAdvancedOptions={showDiagnostics}
@@ -1677,7 +1677,7 @@ export default function Home() {
 
         <section className="pt-7 border-t border-slate-300/20">
           <p className="heading-kicker mb-2">Exports</p>
-          <h2 className="heading-section mb-2">Compute & report</h2>
+          <h2 className="heading-section mb-2">COMPUTE AND REPORT</h2>
           <p className="text-sm text-slate-300 mb-4">
             Export Excel or PDF directly from your current scenarios. Analysis refresh is optional.
           </p>

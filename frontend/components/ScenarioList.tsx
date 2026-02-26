@@ -87,7 +87,7 @@ export function ScenarioList({
     <div className="table-shell">
       <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
         <p className="heading-kicker mb-1">Scenarios</p>
-        <h2 className="heading-section mb-2">Scenario manager</h2>
+        <h2 className="heading-section mb-2">SCENARIO MANAGER</h2>
         <p className="text-xs text-slate-400">Rename, drag to reorder, include in summary. Information is stored securely.</p>
       </div>
       <div className="md:hidden p-3 space-y-3">
