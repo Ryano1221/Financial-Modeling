@@ -40,7 +40,14 @@ WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
-RUN python -m playwright install --with-deps chromium
+RUN set -eux; \
+    for attempt in 1 2 3; do \
+      python -m playwright install chromium && exit 0; \
+      echo "playwright install failed (attempt ${attempt}); retrying..."; \
+      sleep 10; \
+    done; \
+    echo "playwright install failed after retries" >&2; \
+    exit 1
 
 COPY backend/ ./
 

@@ -45,8 +45,16 @@ ENV PYTHONPATH=/app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
-# Ensure Playwright browser binary exists at runtime for /report and /reports/{id}/pdf
-RUN python -m playwright install --with-deps chromium
+# Ensure Playwright browser binary exists at runtime for /report and /reports/{id}/pdf.
+# Use retries to reduce transient network failure during cloud builds.
+RUN set -eux; \
+    for attempt in 1 2 3; do \
+      python -m playwright install chromium && exit 0; \
+      echo "playwright install failed (attempt ${attempt}); retrying..."; \
+      sleep 10; \
+    done; \
+    echo "playwright install failed after retries" >&2; \
+    exit 1
 
 COPY . .
 
