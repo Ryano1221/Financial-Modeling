@@ -7,6 +7,7 @@ import type { EqualizedComparisonResult } from "@/lib/equalized";
 import { formatCurrency, formatCurrencyPerSF, formatDateISO, formatPercent } from "@/lib/format";
 import type { ScenarioWithId } from "@/lib/types";
 import { effectiveTiBudgetTotal, round2 } from "@/lib/ti";
+import { buildOverarchingAssumptionNotes } from "@/lib/global-assumptions";
 
 interface SummaryMatrixProps {
   results: EngineResult[];
@@ -255,6 +256,10 @@ export function SummaryMatrix({
     );
   };
 
+  const overarchingNotes = buildOverarchingAssumptionNotes(
+    results.map((r) => Number(r.metrics.discountRateUsed))
+  );
+
   return (
     <div className="table-shell">
       <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
@@ -357,6 +362,16 @@ export function SummaryMatrix({
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="px-5 py-4 border-t border-slate-300/20 bg-slate-900/35">
+        <p className="heading-kicker mb-1">Overarching notes</p>
+        <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
+          {overarchingNotes.map((note, index) => (
+            <li key={`overarching-note-${index}`} className="whitespace-normal break-words">
+              {index + 1}) {note}
+            </li>
+          ))}
+        </ul>
       </div>
       <div className="border-t border-slate-300/20">
         {renderEqualizedSection()}

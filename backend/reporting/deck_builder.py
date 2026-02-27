@@ -1673,7 +1673,7 @@ def ScenarioDetailSections(entry: dict[str, Any], plan: DeckRenderPlan) -> list[
             <tr><td>Equalized avg yearly cost</td><td>{_esc(_fmt_currency(result.get("equalized_avg_cost_year")))}</td></tr>
             <tr><td>Equalized avg cost/SF/year</td><td>{_esc(_fmt_psf(result.get("equalized_avg_cost_psf_year")))}</td></tr>
             <tr><td>Equalized total cost</td><td>{_esc(_fmt_currency(result.get("equalized_total_cost")))}</td></tr>
-            <tr><td>Equalized NPV (t0=start)</td><td>{_esc(_fmt_currency(result.get("equalized_npv_cost")))}</td></tr>
+            <tr><td>Equalized NPV</td><td>{_esc(_fmt_currency(result.get("equalized_npv_cost")))}</td></tr>
           </tbody>
         </table>
       </article>
@@ -1939,12 +1939,63 @@ def _metric_rows_for(entries: list[dict[str, Any]]) -> list[tuple[str, list[str]
         )
         rows.append(
             (
-                "Equalized NPV (t0=start)",
+                "Equalized NPV",
                 [_fmt_currency(e["result"].get("equalized_npv_cost")) for e in entries],
                 "text",
             )
         )
     return rows
+
+
+def _comparison_discount_rate_note(entries: list[dict[str, Any]]) -> str:
+    rates: list[float] = []
+    for entry in entries:
+        scenario = entry.get("scenario") or {}
+        result = entry.get("result") or {}
+        rate = _safe_float(
+            scenario.get("discount_rate_annual"),
+            _safe_float(result.get("discount_rate_used"), float("nan")),
+        )
+        if math.isfinite(rate) and rate >= 0:
+            rates.append(rate)
+    if not rates:
+        return "Discount rate assumptions should be reviewed."
+
+    unique = sorted({round(rate, 8) for rate in rates})
+    if len(unique) == 1:
+        return f"{_fmt_percent(unique[0], precision=2)} discount rate is used."
+
+    formatted = [_fmt_percent(rate, precision=2) for rate in unique]
+    if len(formatted) <= 3:
+        return f"Scenario-specific discount rates are used ({', '.join(formatted)})."
+    return "Scenario-specific discount rates are used."
+
+
+def _comparison_overarching_notes(entries: list[dict[str, Any]]) -> list[str]:
+    return [
+        "Gross Rental Rates include all standard operating expenses.",
+        "Tenant Improvement Costs shown are assumptions based on the below high-level estimates.",
+        "TI out of Pocket is the difference between estimated tenant buildout costs and tenant allowance.",
+        "Total Estimated Obligation includes full service rental costs, buildout costs, and parking. Landlord's Net Effective Return includes total net rent less concession and lease commission.",
+        "Numbers are pre-tax dollars and do not take into account depreciation for upfront costs (parking includes sales tax if applicable).",
+        _comparison_discount_rate_note(entries),
+    ]
+
+
+def _comparison_overarching_notes_block(entries: list[dict[str, Any]]) -> str:
+    notes = _comparison_overarching_notes(entries)
+    items_html = "".join(
+        f"<li><span class='note-index'>{idx})</span> {_esc(note)}</li>"
+        for idx, note in enumerate(notes, start=1)
+    )
+    return f"""
+    <section class="matrix-overarching-notes">
+      <h3>Overarching notes</h3>
+      <ul class="bullet-list matrix-overarching-list">
+        {items_html}
+      </ul>
+    </section>
+    """
 
 
 def _matrix_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[DeckPage]:
@@ -1981,6 +2032,7 @@ def _matrix_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> list[D
                     f"Options {start}-{end} of {len(entries)}{suffix}",
                 )}
                 {ComparisonMatrixTable(option_chunk, metrics_chunk)}
+                {_comparison_overarching_notes_block(option_chunk)}
                 """
             pages.append(
                 DeckPage(
@@ -2742,6 +2794,34 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
     .matrix-table.matrix-compact .bullet-mini li {{
       margin: 0 0 0.5mm 0;
       line-height: 1.15;
+    }}
+    .matrix-overarching-notes {{
+      margin-top: 2.4mm;
+      border: 1px solid #111;
+      padding: 2.5mm 3mm;
+      background: #fbfbfb;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }}
+    .matrix-overarching-notes h3 {{
+      margin: 0 0 1.5mm 0;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #222;
+    }}
+    .matrix-overarching-list {{
+      margin: 0;
+      padding-left: 5mm;
+      font-size: 8px;
+      line-height: 1.4;
+    }}
+    .matrix-overarching-list li {{
+      margin: 0 0 0.9mm 0;
+    }}
+    .matrix-overarching-list .note-index {{
+      font-weight: 700;
+      margin-right: 0.8mm;
     }}
     .axis-note {{
       margin: 0 0 2mm 0;

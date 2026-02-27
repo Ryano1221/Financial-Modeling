@@ -186,6 +186,10 @@ describe("exportModel institutional workbook", () => {
       expect(notesMetricRow).toBeNull();
       const notesHintRow = findRowByFirstCell(summary, "Notes are listed in full on the Notes sheet.");
       expect(notesHintRow).not.toBeNull();
+      const overarchingNotesHeaderRow = findRowByFirstCell(summary, "OVERARCHING NOTES");
+      expect(overarchingNotesHeaderRow).not.toBeNull();
+      const discountRateAssumptionRow = findRowByFirstCell(summary, "6) 8.0% discount rate is used.");
+      expect(discountRateAssumptionRow).not.toBeNull();
       const derivedFormulaRows = [
         "Parking cost ($/spot/month, after tax)",
         "Total obligation",
@@ -201,7 +205,7 @@ describe("exportModel institutional workbook", () => {
           expect(value).toHaveProperty("formula");
         }
       });
-      if (notesHintRow != null) expect(summary.pageSetup.printArea).toBe(`A1:E${notesHintRow}`);
+      if (discountRateAssumptionRow != null) expect(summary.pageSetup.printArea).toBe(`A1:E${discountRateAssumptionRow}`);
       expect(summary.pageSetup.horizontalCentered).toBe(true);
 
       const images = summary.getImages();
@@ -221,7 +225,7 @@ describe("exportModel institutional workbook", () => {
         "Equalized avg cost/month",
         "Equalized avg cost/year",
         "Equalized total cost",
-        "Equalized NPV (t0=start)",
+        "Equalized NPV",
       ];
       equalizedFormulaRows.forEach((label) => {
         const formulaRow = findRowByFirstCell(equalized, label);

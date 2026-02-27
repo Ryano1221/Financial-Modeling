@@ -64,6 +64,8 @@ def test_build_report_deck_html_includes_required_sections():
     assert "Custom disclaimer for this client package." in html
     assert "Alex Broker" in html
     assert "Client Holdings" in html
+    assert "Overarching notes" in html
+    assert "6.00% discount rate is used." in html
 
 
 def test_build_report_deck_uses_logo_in_cover_header_and_prepared_by():
@@ -94,6 +96,19 @@ def test_comparison_matrix_supports_ten_options_on_one_page():
     assert html.count("Comparison Matrix") >= 1
     assert "Options 1-10 of 10" in html
     assert "Long Building Name Scenario 0 With Additional Descriptor" in html
+
+
+def test_overarching_notes_show_scenario_specific_discount_line_when_rates_vary():
+    payload = {
+        "scenarios": [
+            _entry("Rate A", 8000, 35.0),
+            _entry("Rate B", 8000, 36.0),
+        ],
+        "branding": {"client_name": "Portfolio Client", "broker_name": "theCREmodel"},
+    }
+    payload["scenarios"][1]["scenario"]["discount_rate_annual"] = 0.08
+    html = build_report_deck_html(payload)
+    assert "Scenario-specific discount rates are used (6.00%, 8.00%)." in html
 
 
 def test_cost_visuals_and_abstracts_paginate_for_large_sets():

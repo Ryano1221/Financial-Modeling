@@ -6,6 +6,7 @@ import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-e
 import type { CanonicalComputeResponse } from "@/lib/types";
 import { EXCEL_THEME } from "@/lib/excel-style-constants";
 import { CRE_DEFAULT_LOGO_DATA_URL } from "@/lib/default-brokerage-logo-data-url";
+import { buildOverarchingAssumptionNotes } from "@/lib/global-assumptions";
 
 export const TEMPLATE_VERSION = "3.0";
 const SHEET_NAMES = {
@@ -1384,6 +1385,7 @@ function createSummarySheet(
       formula: () => `IFERROR(INDEX(${equalizedFormulaSheet}!$A:$ZZ,MATCH("Equalized avg cost/SF/year",${equalizedFormulaSheet}!$A:$A,0),COLUMN()),0)`,
     },
   ];
+  const overarchingNotes = buildOverarchingAssumptionNotes(scenarios.map((scenario) => Number(scenario.discountRate)));
 
   let row = headerRow + 1;
   for (const def of rows) {
@@ -1452,7 +1454,51 @@ function createSummarySheet(
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
   }
 
-  const endRow = noteRow;
+  let notesRow = noteRow + 1;
+  sheet.mergeCells(notesRow, metricCol, notesRow, layoutLastCol);
+  const overarchingHeaderCell = sheet.getCell(notesRow, metricCol);
+  overarchingHeaderCell.value = "OVERARCHING NOTES";
+  overarchingHeaderCell.font = {
+    name: EXCEL_THEME.font.family,
+    bold: true,
+    size: EXCEL_THEME.font.labelSize,
+    color: { argb: COLORS.secondaryText },
+  };
+  overarchingHeaderCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  for (let c = metricCol; c <= layoutLastCol; c++) {
+    const cell = sheet.getCell(notesRow, c);
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+    cell.border = {
+      ...(cell.border ?? {}),
+      top: { style: "thin", color: { argb: COLORS.border } },
+    };
+  }
+  sheet.getRow(notesRow).height = EXCEL_THEME.rowHeights.body;
+  notesRow += 1;
+
+  for (let i = 0; i < overarchingNotes.length; i++) {
+    sheet.mergeCells(notesRow, metricCol, notesRow, layoutLastCol);
+    const noteLineCell = sheet.getCell(notesRow, metricCol);
+    noteLineCell.value = `${i + 1}) ${overarchingNotes[i]}`;
+    noteLineCell.font = {
+      name: EXCEL_THEME.font.family,
+      size: EXCEL_THEME.font.bodySize,
+      color: { argb: COLORS.text },
+    };
+    noteLineCell.alignment = { horizontal: "left", vertical: "top", wrapText: true };
+    for (let c = metricCol; c <= layoutLastCol; c++) {
+      const cell = sheet.getCell(notesRow, c);
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+      cell.border = {
+        ...(cell.border ?? {}),
+        bottom: { style: "thin", color: { argb: COLORS.border } },
+      };
+    }
+    sheet.getRow(notesRow).height = EXCEL_THEME.rowHeights.body;
+    notesRow += 1;
+  }
+
+  const endRow = notesRow - 1;
   autoAdjustRowHeights(sheet, headerRow, endRow);
   applyPrintSettings(sheet, {
     landscape: true,
@@ -1604,7 +1650,7 @@ function createEqualizedSheet(
     },
     {
       key: "npv",
-      label: "Equalized NPV (t0=start)",
+      label: "Equalized NPV",
       format: "currency0",
       getter: (metrics) => metrics.npv,
       formula: (_scenario, scenarioCol) => {
