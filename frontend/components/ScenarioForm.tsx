@@ -1189,14 +1189,21 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-slate-300">Commission % (e.g. 0.04 = 4%)</span>
+          <span className="text-sm text-slate-300">Commission % (enter 6 for 6%)</span>
           <input
             type="number"
             min={0}
-            max={1}
-            step={0.001}
-            value={scenario.commission_rate ?? 0}
-            onChange={(e) => update("commission_rate", Math.max(0, Number(e.target.value) || 0))}
+            max={100}
+            step={0.01}
+            value={(() => {
+              const raw = Math.max(0, Number(scenario.commission_rate) || 0);
+              return raw <= 1 ? round2(raw * 100) : raw;
+            })()}
+            onChange={(e) => {
+              const parsed = Math.max(0, Number(e.target.value) || 0);
+              const asDecimal = parsed > 1 ? parsed / 100 : parsed;
+              update("commission_rate", asDecimal);
+            }}
             className={inputClass}
           />
         </label>

@@ -24,6 +24,14 @@ function monthDiff(start: string, endInclusive: string): number {
   return Math.max(0, months);
 }
 
+function normalizeCommissionRateDecimal(value: unknown, fallback = 0.06): number {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  const asDecimal = parsed > 1 ? parsed / 100 : parsed;
+  return Math.min(1, Math.max(0, asDecimal));
+}
+
 export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const termMonths = monthDiff(s.commencement, s.expiration);
   const rsf = s.rsf;
@@ -94,12 +102,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
     isRemainingObligation: Boolean(s.is_remaining_obligation),
     documentTypeDetected: (s.document_type_detected ?? "").trim() || undefined,
     discountRateAnnual: s.discount_rate_annual,
-    commissionRate: (() => {
-      const raw = s.commission_rate;
-      if (raw === undefined || raw === null || String(raw).trim() === "") return 0.06;
-      const parsed = Number(raw);
-      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0.06;
-    })(),
+    commissionRate: normalizeCommissionRateDecimal(s.commission_rate, 0.06),
     commissionAppliesTo: s.commission_applies_to === "base_rent" ? "base_rent" : "gross_obligation",
     partyAndPremises: {
       premisesName,

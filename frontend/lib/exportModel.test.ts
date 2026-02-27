@@ -192,9 +192,12 @@ describe("exportModel institutional workbook", () => {
         summary,
         "• Landlord's Net Effective Return includes total net rent less concession and lease commission."
       );
-      expect(landlordNetEffectiveRow).not.toBeNull();
+      expect(landlordNetEffectiveRow).toBeNull();
       const discountRateAssumptionRow = findRowByFirstCell(summary, "• 8.0% discount rate is used.");
       expect(discountRateAssumptionRow).not.toBeNull();
+      expect(findRowByFirstCell(summary, "Commission %")).toBeNull();
+      expect(findRowByFirstCell(summary, "Commission basis")).toBeNull();
+      expect(findRowByFirstCell(summary, "Commission")).toBeNull();
       const derivedFormulaRows = [
         "Parking cost ($/spot/month, after tax)",
         "Total obligation",
@@ -210,8 +213,6 @@ describe("exportModel institutional workbook", () => {
           expect(value).toHaveProperty("formula");
         }
       });
-      const nerRow = findRowByFirstCell(summary, "NER (Net Effective Rate)");
-      expect(nerRow).not.toBeNull();
       if (discountRateAssumptionRow != null) expect(summary.pageSetup.printArea).toBe(`A1:E${discountRateAssumptionRow}`);
       expect(summary.pageSetup.horizontalCentered).toBe(true);
 

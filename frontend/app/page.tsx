@@ -373,10 +373,11 @@ function normalizeScenarioCommission<T extends ScenarioInput | ScenarioWithId>(s
   const input = scenario as ScenarioInput | ScenarioWithId;
   const rawRate = (input.commission_rate as unknown);
   const parsedRate = Number(rawRate);
-  const commissionRate =
+  const normalizedRate =
     rawRate === undefined || rawRate === null || String(rawRate).trim() === ""
       ? 0.06
       : (Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 0.06);
+  const commissionRate = Math.min(1, normalizedRate > 1 ? normalizedRate / 100 : normalizedRate);
   const commissionBasis = input.commission_applies_to === "base_rent"
     ? "base_rent"
     : "gross_obligation";

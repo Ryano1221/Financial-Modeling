@@ -38,10 +38,6 @@ export const SUMMARY_MATRIX_ROW_LABELS = [
   "TI budget",
   "TI allowance ($/SF)",
   "TI out of pocket",
-  "Commission %",
-  "Commission basis",
-  "Commission",
-  "NER (Net Effective Rate)",
   "Total obligation",
   "NPV cost",
   "Avg cost/year",
@@ -966,7 +962,8 @@ function buildScenariosFromCanonicalResponses(
     const tiAllowancePsfAnnualized = resolvedRsf > 0 && termYears > 0 ? tiAllowanceTotal / termYears / resolvedRsf : 0;
     const abatementPsfAnnualized = resolvedRsf > 0 && termYears > 0 ? (m.free_rent_value_total ?? 0) / termYears / resolvedRsf : 0;
     const commissionPsfAnnualized = resolvedRsf > 0 && termYears > 0 ? (Math.max(0, Number(item.sourceCommissionAmount) || 0) / termYears / resolvedRsf) : 0;
-    const netEffectiveRatePsfYear = baseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
+    const rawNetEffectiveRatePsfYear = baseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
+    const netEffectiveRatePsfYear = Math.min(baseRentPsfYr, rawNetEffectiveRatePsfYear);
     return {
       id: `canonical-${idx + 1}`,
       name: normalizeText(item.scenarioName, `Scenario ${idx + 1}`),
@@ -1381,15 +1378,6 @@ function createSummarySheet(
     { type: "metric", label: "TI budget", format: "currency0", getter: (s) => s.tiBudget },
     { type: "metric", label: "TI allowance ($/SF)", format: "currency2", getter: (s) => s.tiAllowance },
     { type: "metric", label: "TI out of pocket", format: "currency0", getter: (s) => s.tiOutOfPocket },
-    { type: "metric", label: "Commission %", format: "percent", getter: (s) => s.commissionRate },
-    {
-      type: "metric",
-      label: "Commission basis",
-      format: "text",
-      getter: (s) => (s.commissionAppliesTo === "gross_obligation" ? "Gross obligation (OpEx not escalated)" : "Total base rent"),
-    },
-    { type: "metric", label: "Commission", format: "currency0", getter: (s) => s.commissionAmount },
-    { type: "metric", label: "NER (Net Effective Rate)", format: "currency2", getter: (s) => s.netEffectiveRatePsfYear },
     { type: "section", label: "SUMMARY METRICS" },
     {
       type: "metric",
@@ -1421,7 +1409,10 @@ function createSummarySheet(
       formula: () => `IFERROR(INDEX(${equalizedFormulaSheet}!$A:$ZZ,MATCH("Equalized avg cost/SF/year",${equalizedFormulaSheet}!$A:$A,0),COLUMN()),0)`,
     },
   ];
-  const overarchingNotes = buildOverarchingAssumptionNotes(scenarios.map((scenario) => Number(scenario.discountRate)));
+  const overarchingNotes = buildOverarchingAssumptionNotes(
+    scenarios.map((scenario) => Number(scenario.discountRate)),
+    { includeCommissionNote: false }
+  );
 
   let row = headerRow + 1;
   for (const def of rows) {

@@ -27,7 +27,9 @@ function toNumber(value: unknown, fallback: number = 0): number {
 function normalizeCommissionRate(value: unknown, fallback = 0.06): number {
   if (value === undefined || value === null || String(value).trim() === "") return fallback;
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  const asDecimal = parsed > 1 ? parsed / 100 : parsed;
+  return Math.min(1, Math.max(0, asDecimal));
 }
 
 function normalizeCommissionBasis(value: unknown): "base_rent" | "gross_obligation" {
@@ -669,17 +671,16 @@ export function canonicalResponseToEngineResult(
     }
     return Math.max(0, toNumber(m.avg_all_in_cost_psf_year, 0));
   })();
-  const netEffectiveRatePsfYr = sourceEngineResult
-    ? toNumber(sourceEngineResult.metrics.netEffectiveRatePsfYr, 0)
-    : (() => {
-        const metricRsf = Math.max(0, toNumber(m.rsf, 0));
-        const termYears = termMonths > 0 ? termMonths / 12 : 0;
-        if (metricRsf <= 0 || termYears <= 0) return 0;
-        const abatementPsfAnnualized = effectiveAbatementAmount / termYears / metricRsf;
-        const tiAllowancePsfAnnualized = tiAllowanceTotal / termYears / metricRsf;
-        const commissionPsfAnnualized = commissionAmount / termYears / metricRsf;
-        return effectiveBaseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
-      })();
+  const netEffectiveRatePsfYr = (() => {
+    const metricRsf = Math.max(0, toNumber(m.rsf, 0));
+    const termYears = termMonths > 0 ? termMonths / 12 : 0;
+    if (metricRsf <= 0 || termYears <= 0) return 0;
+    const abatementPsfAnnualized = effectiveAbatementAmount / termYears / metricRsf;
+    const tiAllowancePsfAnnualized = tiAllowanceTotal / termYears / metricRsf;
+    const commissionPsfAnnualized = commissionAmount / termYears / metricRsf;
+    const rawNer = effectiveBaseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
+    return Math.min(effectiveBaseRentPsfYr, rawNer);
+  })();
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),

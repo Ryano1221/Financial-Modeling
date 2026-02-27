@@ -75,6 +75,16 @@ describe("commission calculations", () => {
     expect(result.metrics.commissionBasis).toBe("Gross obligation (OpEx not escalated)");
   });
 
+  it("treats whole-number commission input as percent points", () => {
+    const scenario = makeScenario({
+      commission_rate: 6,
+      commission_applies_to: "base_rent",
+    });
+    const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.08);
+    expect(result.metrics.commissionPercent).toBeCloseTo(6, 8);
+    expect(result.metrics.commissionAmount).toBeCloseTo(14400, 6);
+  });
+
   it("computes NER as average base rate minus TI allowance, abatement, and commission (annualized $/SF)", () => {
     const scenario = makeScenario({
       rsf: 10000,
@@ -98,5 +108,6 @@ describe("commission calculations", () => {
     // 6% * (base 220,000 + opex 100,000) / 10,000 = 1.92
     // NER = 24 - 2 - 2 - 1.92 = 18.08
     expect(result.metrics.netEffectiveRatePsfYr).toBeCloseTo(18.08, 6);
+    expect(result.metrics.netEffectiveRatePsfYr).toBeLessThanOrEqual(result.metrics.baseRentPsfYr);
   });
 });

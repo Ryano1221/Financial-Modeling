@@ -699,8 +699,9 @@ export function runMonthlyEngine(
   const commissionPsfAnnualized = years > 0 && avgRsfTerm > 0
     ? commissionAmount / years / avgRsfTerm
     : 0;
-  const netEffectiveRatePsfYr =
+  const rawNetEffectiveRatePsfYr =
     avgBaseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
+  const netEffectiveRatePsfYr = Math.min(avgBaseRentPsfYr, rawNetEffectiveRatePsfYr);
   const metrics: OptionMetrics = {
     buildingName,
     suiteName,
