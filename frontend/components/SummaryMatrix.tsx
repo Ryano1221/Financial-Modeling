@@ -115,8 +115,8 @@ export function SummaryMatrix({
   };
 
   const visibleMatrixMetricKeys = matrixMetricKeys.filter((metricKey) =>
-    metricKey === "commissionPercent" || metricKey === "commissionBasis" || metricKey === "commissionAmount"
-      ? true
+    metricKey === "commissionPercent" || metricKey === "commissionBasis"
+      ? false
       :
     metricKey === "discountRateUsed"
       ? (() => {
