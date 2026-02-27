@@ -783,3 +783,27 @@ def test_extract_hints_300w6th_prefers_unreserved_rate_and_term_months() -> None
 def test_clean_building_candidate_strips_tenant_prefix_from_office_phrase() -> None:
     cleaned = main._clean_building_candidate("Maev for office Eastlake at Tillery")
     assert cleaned == "Eastlake at Tillery"
+
+
+def test_extract_hints_parses_building_table_and_net_rental_response_dates() -> None:
+    text = (
+        "LL Proposal: November 12, 2025\n"
+        "Tenant Response December 23, 2025\n"
+        "BUILDING: | Aspen Lake 2 - 10124 Lake Creek Pkwy | Aspen Lake 2 - 10124 Lake Creek Pkwy\n"
+        "PREMISES: | 128,990 rentable square feet making up the entire Building.\n"
+        "COMMENCEMENT DATE: | May 1st, 2028.\n"
+        "LEASE TERM: | Through August, 30, 2033.\n"
+        "BASE ANNUAL NET RENTAL RATE: | Months 1-12: Annual Base Rent: $29.69/RSF Beginning in Month 13: 2.5% Annual Increases. "
+        "The first four months of Annual Base Rent shall be abated.\n"
+        "OPERATING EXPENSES: | The estimated 2026 Operating Expenses are $16.34/RSF.\n"
+    )
+    hints = main._extract_lease_hints(text, "AL2_Q2 T Response 2.17.26.docx", "test-rid")
+
+    assert hints["building_name"] == "Aspen Lake 2"
+    assert hints["rsf"] == 128990.0
+    assert str(hints["commencement_date"]) == "2028-05-01"
+    assert str(hints["expiration_date"]) == "2033-08-30"
+    assert hints["term_months"] == 64
+    assert hints["lease_type"] == "NNN"
+    assert hints["free_rent_scope"] == "base"
+    assert hints["free_rent_end_month"] == 3

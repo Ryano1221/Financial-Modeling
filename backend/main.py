@@ -1207,6 +1207,14 @@ def _parse_lease_date(s: str) -> Optional[date]:
     s = s.strip()[:64]
     if not s:
         return None
+    s = re.sub(r"(?i)\b(\d{1,2})(st|nd|rd|th)\b", r"\1", s)
+    s = re.sub(
+        r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+        r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,\s*(\d{1,2})",
+        r"\1 \2",
+        s,
+    )
+    s = re.sub(r"\s+", " ", s).strip()
     # ISO
     m = re.match(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
     if m:
@@ -2169,7 +2177,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     v = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)^.*?\bas\s+a\s+tenant\s+at\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\bhttps?://\S+", "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)\s+located\s+at\s+\d[\dA-Za-z .,'-]{3,120}$", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)\s+located\s+at\s+\d[\dA-Za-z .,'-]{3,160}(?:\.\s*.*)?$", "", v).strip(" ,.;:-")
     # "Summit at Lantana 7171 Southwest Parkway" -> "Summit at Lantana".
     if not re.match(r"^\d", v) and " - " not in v:
         v = re.sub(
@@ -2188,6 +2196,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     v = re.split(r"(?i)\b(?:additional information|can be found at|all other signage)\b", v, maxsplit=1)[0].strip(" ,.;:-")
     v = re.sub(r"(?i)\s+under\s+the\s+proposed\s+business\s+points.*$", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+and$", "", v).strip(" ,.;:-")
+    v = v.strip(" ,.;:-–—")
     low = v.lower()
     if re.search(r"(?i)\b(?:llc|l\.l\.c\.|inc|corp|corporation|limited partnership|limited liability)\b", v):
         return ""
@@ -2252,6 +2261,8 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
     segments = _iter_text_segments(lines, max_lines=280)
     state_token = r"(?:TX|Texas|CA|California|NY|New York|FL|Florida|IL|Illinois)"
     patterns: list[tuple[re.Pattern[str], int]] = [
+        (re.compile(r"(?i)^\s*building\s*:\s*\|\s*([^|\n,;]{2,120})"), 16),
+        (re.compile(r"(?i)^\s*building\s*:\s*([^|\n,;]{2,120})"), 15),
         (re.compile(r"(?i)\blease\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80}?)(?:\s+under\b|[.,;:\n]|$)"), 12),
         (re.compile(r"(?i)\bfor\s+office\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
         (re.compile(r"(?i)\bas\s+a\s+tenant\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
@@ -2276,6 +2287,13 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
             if not m:
                 continue
             candidate = _clean_building_candidate(m.group(1), suite_hint=suite_hint)
+            if "|" in seg and base_score >= 15:
+                short_from_pipe = re.match(
+                    r"(?i)^(.+?)\s+[–-]\s+\d{1,6}\s+[A-Za-z0-9 .,'-]{2,120}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|highway|hwy\.?)\b.*$",
+                    candidate or "",
+                )
+                if short_from_pipe:
+                    candidate = _clean_building_candidate(short_from_pipe.group(1), suite_hint=suite_hint)
             if not candidate:
                 continue
             score = base_score
@@ -2622,7 +2640,7 @@ def _extract_first_date_token(text: str) -> Optional[date]:
     if "e.g" in low_text or "example" in low_text:
         return None
     patterns = [
-        r"(?i)\b((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},?\s+\d{4})\b",
+        r"(?i)\b((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,?\s*\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b",
         r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2})\b",
         r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{4})\b",
     ]
@@ -4015,7 +4033,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     # ---- Term: commencement / expiration / ending / through ----
     term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
     month_token = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
-    date_token_value = rf"(?:{month_token}\s+\d{{1,2}},?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}})"
+    date_token_value = rf"(?:{month_token}\s*,?\s*\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}})"
     date_token_capture = rf"({date_token_value})"
     paired_term_pats = [
         rf"(?i)\b(?:the\s+period\s+)?commenc(?:ing|ement|e)\s+on\s+({date_token_value})\s*(?:,|\s)+and\s+ending\s+on\s+({date_token_value})",
@@ -4132,6 +4150,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 or "estimated expiration date" in low_ln
                 or re.search(r"(?i)\b(?:expiration|termination)\s+date\s*[:\-]\s*$", low_ln)
             )
+            is_term_label = bool(
+                re.search(r"(?i)\b(?:lease|sublease|leased\s+premises)?\s*term\s*[:\-]\s*$", low_ln)
+            )
             if term_candidates["commencement"] is None and is_comm_label:
                 for nxt in lines[idx + 1: idx + 8]:
                     if "e.g" in nxt.lower() or "example" in nxt.lower():
@@ -4150,6 +4171,21 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                     if _is_non_term_expiration_context(local):
                         continue
                     if _is_historical_recital_context(local):
+                        continue
+                    d = _extract_first_date_token(nxt)
+                    if d:
+                        term_candidates["expiration"] = d
+                        break
+            if term_candidates["expiration"] is None and is_term_label:
+                for nxt in lines[idx + 1: idx + 8]:
+                    if "e.g" in nxt.lower() or "example" in nxt.lower():
+                        continue
+                    local = f"{ln} {nxt}"
+                    if _is_non_term_expiration_context(local):
+                        continue
+                    if _is_historical_recital_context(local):
+                        continue
+                    if not re.search(r"(?i)\b(?:through|until|ending\s+on|to)\b", nxt):
                         continue
                     d = _extract_first_date_token(nxt)
                     if d:
@@ -4249,7 +4285,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     elif re.search(r"(?i)\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement)\b", text) or re.search(
         r"(?i)\bmonths?\b[^\n]{0,80}\bof\s+base\s+rent(?:\s+only)?\b[^\n]{0,80}\babated\b",
         text,
-    ):
+    ) or re.search(r"(?i)\b(?:annual\s+)?base\s+rent\b[^\n]{0,80}\b(?:shall\s+be\s+)?abated\b", text):
         hints["free_rent_scope"] = "base"
 
     free_range_match = re.search(
@@ -4280,6 +4316,18 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         free_count = 0
         if free_count_match:
             free_count = _coerce_int_token(free_count_match.group(1), 0) or _coerce_int_token(free_count_match.group(2), 0) or 0
+        if free_count <= 0:
+            free_word_match = re.search(
+                r"(?i)\b(?:the\s+)?first\s+([a-z\-]+)\s+months?\b[^\n]{0,120}\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,80}\b(?:abated|abatement|free)\b",
+                text,
+            )
+            if not free_word_match:
+                free_word_match = re.search(
+                    r"(?i)\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,120}\b(?:abated|abatement|free)\b[^\n]{0,80}\bfirst\s+([a-z\-]+)\s+months?\b",
+                    text,
+                )
+            if free_word_match:
+                free_count = _word_token_to_int(free_word_match.group(1)) or 0
         if free_count and free_count > 0:
             hints["free_rent_start_month"] = 0
             hints["free_rent_end_month"] = max(0, int(free_count) - 1)
@@ -4570,6 +4618,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if m:
         hints["lease_type"] = re.sub(r"\s+", " ", m.group(1).strip())
     elif re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", text):
+        hints["lease_type"] = "NNN"
+    elif re.search(r"(?i)\b(?:base\s+annual\s+)?net\s+rental\s+rate\b|\bnet\s+rent(?:al)?\b", text):
         hints["lease_type"] = "NNN"
 
     # Parking ratio and economics
@@ -6331,6 +6381,12 @@ def _normalize_impl(
                 and re.search(r"(?i)\bsuite\b", scenario_name_val)
             ):
                 should_replace_scenario_name = True
+            if (
+                not should_replace_scenario_name
+                and not suite_val
+                and re.search(r"(?i)\bsuite\s+[A-Za-z]{3,}\b", scenario_name_val)
+            ):
+                should_replace_scenario_name = True
             if should_replace_scenario_name:
                 if building_val and location_label:
                     updates["scenario_name"] = f"{building_val} {location_label}"
@@ -6380,55 +6436,12 @@ def _normalize_impl(
                     if prior_years:
                         prior_year = max(prior_years)
                         year_rate = float(hinted_opex_by_year[prior_year])
-                        growth_rate = _coerce_float_token(updates.get("opex_growth_rate"), None)
-                        if growth_rate is None or growth_rate <= 0:
-                            growth_rate = _coerce_float_token(extracted_hints.get("opex_growth_rate"), None)
-                        if growth_rate is None or growth_rate <= 0:
-                            growth_rate = _coerce_float_token(canonical.opex_growth_rate, None)
-                        if growth_rate is None or growth_rate <= 0:
-                            growth_rate = 0.03
-                        growth_rate = max(0.0, float(growth_rate))
-                        if prior_year < commencement_year and growth_rate > 0:
-                            year_rate = round(
-                                year_rate * ((1.0 + growth_rate) ** (commencement_year - prior_year)),
-                                4,
-                            )
-                            updates["opex_growth_rate"] = growth_rate
                         updates["opex_psf_year_1"] = year_rate
                         updates["expense_stop_psf"] = year_rate
                         if prior_year < commencement_year:
-                            if growth_rate > 0:
-                                extra_note_lines.append(
-                                    f"OpEx estimate: source year {prior_year} value escalated "
-                                    f"{growth_rate * 100:.2f}% YoY to {commencement_year} "
-                                    f"(${year_rate:,.2f}/SF)."
-                                )
-                            else:
-                                extra_note_lines.append(
-                                    f"OpEx table provided through {prior_year}; carried forward ${year_rate:,.2f}/SF "
-                                    f"for {commencement_year}+ until updated values are provided."
-                                )
-            if (
-                hinted_opex > 0
-                and not hinted_opex_by_year
-                and opex_source_year >= 1900
-                and commencement_year >= 1900
-                and opex_source_year < commencement_year
-            ):
-                years_forward = commencement_year - opex_source_year
-                escalated_opex = round(hinted_opex * (1.03 ** years_forward), 4)
-                updates["opex_psf_year_1"] = escalated_opex
-                updates["expense_stop_psf"] = escalated_opex
-                updates["opex_growth_rate"] = 0.03
-                estimate_note = (
-                    f"OpEx estimate: source year {opex_source_year} value ${hinted_opex:,.2f}/SF escalated "
-                    f"3% YoY to {commencement_year} (${escalated_opex:,.2f}/SF), then 3% YoY thereafter."
-                )
-                extra_note_lines.append(estimate_note)
-                warnings.append(
-                    f"OpEx estimated at 3% YoY from {opex_source_year} to {commencement_year}; "
-                    "using 3% annual escalation thereafter."
-                )
+                            extra_note_lines.append(
+                                f"OpEx table provided through {prior_year}; using ${year_rate:,.2f}/SF as the starting OpEx."
+                            )
             hinted_ti_allowance = _coerce_float_token(extracted_hints.get("ti_allowance_psf"), 0.0) or 0.0
             if hinted_ti_allowance <= 0:
                 hinted_ti_allowance_total = _coerce_float_token(extracted_hints.get("ti_allowance_total"), 0.0) or 0.0

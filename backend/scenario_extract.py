@@ -96,7 +96,7 @@ def _detect_opex_mode_from_text(raw_text: str) -> str | None:
         return "full_service"
     if any(k in low for k in _NNN_OPEX_CUES) and "not nnn" not in low and "no nnn" not in low:
         return "nnn"
-    if " gross " in low and "base year" not in low and "expense stop" not in low and "modified gross" not in low:
+    if re.search(r"(?i)\b(?:lease|expense|rent)\s*(?:type|structure|mode)\b[^\n]{0,40}\bgross\b", raw_text or ""):
         return "full_service"
     return None
 
@@ -656,7 +656,7 @@ _RE_ISO_DATE = re.compile(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3
 _RE_US_DATE = re.compile(r"\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\d|3[01])[/-](20\d{2})\b")
 _RE_MONTH_DATE = re.compile(
     r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
-    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2}),?\s+(20\d{2})\b"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,?\s*(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d{2})\b"
 )
 _RE_COMM_LABEL = re.compile(
     r"(?i)\b(?:estimated\s+commencement(?:\s+date)?|commencement(?:\s+date)?|commencing|lease\s+commencement)\b[^A-Za-z0-9]{0,20}([^\n]{0,120})"
@@ -774,6 +774,14 @@ def _parse_text_date_token(s: str) -> str | None:
     token = (s or "").strip()
     if not token:
         return None
+    token = re.sub(r"(?i)\b(\d{1,2})(st|nd|rd|th)\b", r"\1", token)
+    token = re.sub(
+        r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+        r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,\s*(\d{1,2})",
+        r"\1 \2",
+        token,
+    )
+    token = re.sub(r"\s+", " ", token).strip()
     m = _RE_ISO_DATE.search(token)
     if m:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -1278,6 +1286,27 @@ def _regex_prefill(text: str) -> dict:
     def _in_example_context(raw_text: str, idx: int) -> bool:
         prefix = raw_text[max(0, idx - 28):idx].lower()
         return ("e.g" in prefix) or ("example" in prefix)
+    def _in_negotiation_timeline_context(raw_text: str, idx: int) -> bool:
+        window = raw_text[max(0, idx - 90): min(len(raw_text), idx + 90)].lower()
+        timeline_markers = (
+            "ll proposal",
+            "tenant response",
+            "ll response",
+            "landlord response",
+            "counter proposal",
+            "request for proposal",
+        )
+        if not any(marker in window for marker in timeline_markers):
+            return False
+        lease_markers = (
+            "commencement",
+            "expiration",
+            "lease term",
+            "premises",
+            "base rent",
+            "operating expenses",
+        )
+        return not any(marker in window for marker in lease_markers)
 
     # RSF: score all matches; avoid ratio/rate contexts (e.g., "per 1,000 RSF").
     rsf_best: tuple[int, int, float] | None = None  # (score, start, value)
@@ -1375,17 +1404,23 @@ def _regex_prefill(text: str) -> dict:
         for hit in _RE_ISO_DATE.finditer(text):
             if _in_example_context(text, hit.start()):
                 continue
+            if _in_negotiation_timeline_context(text, hit.start()):
+                continue
             iso = _parse_text_date_token(hit.group(0))
             if iso:
                 generic_dates.append(iso)
         for hit in _RE_US_DATE.finditer(text):
             if _in_example_context(text, hit.start()):
                 continue
+            if _in_negotiation_timeline_context(text, hit.start()):
+                continue
             iso = _parse_text_date_token(hit.group(0))
             if iso:
                 generic_dates.append(iso)
         for hit in _RE_MONTH_DATE.finditer(text):
             if _in_example_context(text, hit.start()):
+                continue
+            if _in_negotiation_timeline_context(text, hit.start()):
                 continue
             iso = _parse_text_date_token(hit.group(0))
             if iso:
@@ -1411,6 +1446,8 @@ def _regex_prefill(text: str) -> dict:
         prefill["term_months"] = int(term_months)
         if comm and not exp:
             prefill["expiration"] = _expiration_from_term_months(_safe_date(comm), term_months).isoformat()
+    elif comm and exp:
+        prefill["term_months"] = _term_month_count(_safe_date(comm), _safe_date(exp))
     # TI allowance: capture both $/SF and total-dollar allowance language.
     ti_allowance_psf = None
     ti_allowance_total = None
@@ -1673,6 +1710,16 @@ def _regex_prefill(text: str) -> dict:
     # Scenario name from building/suite if possible
     building = None
     suite = None
+    building_row_match = re.search(r"(?im)^\s*building\s*:\s*\|\s*([^|\n]+)", text)
+    if not building_row_match:
+        building_row_match = re.search(r"(?im)^\s*building\s*:\s*([^\n|]+)", text)
+    if building_row_match:
+        building = " ".join((building_row_match.group(1) or "").split()).strip(" ,.-")
+        building = re.sub(
+            r"(?i)\s+[–-]\s+\d{1,6}\s+[A-Za-z0-9 .,'-]{2,120}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|highway|hwy\.?)\b.*$",
+            "",
+            building,
+        ).strip(" ,.-")
     premises_line_match = re.search(r"(?im)^\s*premises\s*:\s*([^\n]+)$", text)
     if premises_line_match:
         premises_line = premises_line_match.group(1)
@@ -1680,7 +1727,7 @@ def _regex_prefill(text: str) -> dict:
         if m:
             suite = m.group(1).strip(" ,.-")
     m = _RE_BUILDING.search(text)
-    if m:
+    if m and not building:
         building = m.group(1).strip(" ,.-")
     if not building:
         m = re.search(

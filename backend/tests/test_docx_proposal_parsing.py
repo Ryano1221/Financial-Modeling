@@ -202,3 +202,21 @@ def test_extract_lease_hints_parses_total_ti_allowance_in_docx_style_text() -> N
     hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
     assert hints.get("ti_allowance_total") == 50000.0
     assert abs(float(hints.get("ti_allowance_psf") or 0.0) - (50000.0 / 3947.0)) < 0.01
+
+
+def test_regex_prefill_ignores_timeline_dates_and_parses_ordinal_and_through_dates() -> None:
+    text = (
+        "LL Proposal: November 12, 2025\n"
+        "Tenant Response December 23, 2025\n"
+        "BUILDING: | Aspen Lake 2 - 10124 Lake Creek Pkwy | Aspen Lake 2 - 10124 Lake Creek Pkwy\n"
+        "PREMISES: | 128,990 rentable square feet making up the entire Building.\n"
+        "COMMENCEMENT DATE: | May 1st, 2028.\n"
+        "LEASE TERM: | Through August, 30, 2033.\n"
+        "BASE ANNUAL NET RENTAL RATE: | Months 1-12: Annual Base Rent: $29.69/RSF\n"
+    )
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("commencement") == "2028-05-01"
+    assert prefill.get("expiration") == "2033-08-30"
+    assert prefill.get("term_months") in {63, 64}
+    assert prefill.get("name") == "Aspen Lake 2"

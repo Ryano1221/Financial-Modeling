@@ -164,7 +164,7 @@ def test_normalize_impl_amendment_retains_inferred_rsf_and_opex_when_not_explici
     assert any("retained inferred OpEx value" in str(w) for w in result.warnings)
 
 
-def test_normalize_impl_escalates_prior_year_opex_table_to_commencement_year(monkeypatch) -> None:
+def test_normalize_impl_keeps_source_year_opex_when_commencement_year_missing_from_table(monkeypatch) -> None:
     monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: ("proposal text", "docx"))
     monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
     monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "counter_proposal")
@@ -224,5 +224,5 @@ def test_normalize_impl_escalates_prior_year_opex_table_to_commencement_year(mon
     result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
     canonical = result.canonical_lease
 
-    assert canonical.opex_psf_year_1 == 26.8006
-    assert canonical.expense_stop_psf == 26.8006
+    assert canonical.opex_psf_year_1 == 26.02
+    assert canonical.expense_stop_psf == 26.02
