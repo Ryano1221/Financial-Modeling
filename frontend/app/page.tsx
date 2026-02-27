@@ -1440,7 +1440,9 @@ export default function Home() {
               sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
               sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
               sourceCommissionRate: Math.max(0, Number(s.commission_rate) || 0),
-              sourceCommissionAppliesTo: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
+              sourceCommissionAppliesTo:
+                (s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent") as
+                  "gross_obligation" | "base_rent",
               sourceCommissionAmount: Math.max(0, Number(sourceEngine.metrics.commissionAmount) || 0),
               sourceIsRemainingObligation: Boolean(s.is_remaining_obligation),
             };
@@ -1476,7 +1478,9 @@ export default function Home() {
                 sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
                 sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
                 sourceCommissionRate: Math.max(0, Number(s.commission_rate) || 0),
-                sourceCommissionAppliesTo: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
+                sourceCommissionAppliesTo:
+                  (s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent") as
+                    "gross_obligation" | "base_rent",
                 sourceCommissionAmount: Math.max(0, Number(sourceEngine.metrics.commissionAmount) || 0),
                 sourceIsRemainingObligation: Boolean(s.is_remaining_obligation),
               };
