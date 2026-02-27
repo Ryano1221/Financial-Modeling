@@ -72,7 +72,7 @@ describe("commission calculations", () => {
 
     // Base rent total: 480,000; flat OpEx total: 200,000; commission @10% => 68,000.
     expect(result.metrics.commissionAmount).toBeCloseTo(68000, 6);
-    expect(result.metrics.commissionBasis).toBe("Gross obligation (OpEx not escalated)");
+    expect(result.metrics.commissionBasis).toBe("Gross obligation");
   });
 
   it("treats whole-number commission input as percent points", () => {

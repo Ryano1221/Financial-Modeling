@@ -122,7 +122,7 @@ function normalizeCommissionBasis(
 
 function commissionBasisLabel(value: "base_rent" | "gross_obligation"): string {
   return value === "gross_obligation"
-    ? "Gross obligation (OpEx not escalated)"
+    ? "Gross obligation"
     : "Total base rent";
 }
 

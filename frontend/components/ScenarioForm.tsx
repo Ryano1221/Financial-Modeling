@@ -1220,7 +1220,7 @@ export function ScenarioForm({
             className={inputClass}
           >
             <option value="base_rent">Total base rent</option>
-            <option value="gross_obligation">Gross obligation (OpEx not escalated)</option>
+            <option value="gross_obligation">Gross obligation</option>
           </select>
         </label>
         <div className="block sm:col-span-2 xl:col-span-3 rounded-xl border border-slate-300/20 bg-slate-900/30 px-3 py-2 text-xs text-slate-300">

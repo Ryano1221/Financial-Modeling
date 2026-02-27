@@ -607,7 +607,7 @@ export function canonicalResponseToEngineResult(
   const commissionBasisLabel = sourceEngineResult
     ? String(sourceEngineResult.metrics.commissionBasis || "").trim()
     : (sourceCommissionBasis === "gross_obligation"
-      ? "Gross obligation (OpEx not escalated)"
+      ? "Gross obligation"
       : "Total base rent");
   const commissionAmount = sourceEngineResult
     ? Math.max(0, toNumber(sourceEngineResult.metrics.commissionAmount, 0))
