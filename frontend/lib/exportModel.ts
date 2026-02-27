@@ -1479,7 +1479,7 @@ function createSummarySheet(
   for (let i = 0; i < overarchingNotes.length; i++) {
     sheet.mergeCells(notesRow, metricCol, notesRow, layoutLastCol);
     const noteLineCell = sheet.getCell(notesRow, metricCol);
-    noteLineCell.value = `${i + 1}) ${overarchingNotes[i]}`;
+    noteLineCell.value = `• ${overarchingNotes[i]}`;
     noteLineCell.font = {
       name: EXCEL_THEME.font.family,
       size: EXCEL_THEME.font.bodySize,

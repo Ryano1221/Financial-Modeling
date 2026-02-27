@@ -188,7 +188,12 @@ describe("exportModel institutional workbook", () => {
       expect(notesHintRow).not.toBeNull();
       const overarchingNotesHeaderRow = findRowByFirstCell(summary, "OVERARCHING NOTES");
       expect(overarchingNotesHeaderRow).not.toBeNull();
-      const discountRateAssumptionRow = findRowByFirstCell(summary, "6) 8.0% discount rate is used.");
+      const landlordNetEffectiveRow = findRowByFirstCell(
+        summary,
+        "• Landlord's Net Effective Return includes total net rent less concession and lease commission."
+      );
+      expect(landlordNetEffectiveRow).not.toBeNull();
+      const discountRateAssumptionRow = findRowByFirstCell(summary, "• 8.0% discount rate is used.");
       expect(discountRateAssumptionRow).not.toBeNull();
       const derivedFormulaRows = [
         "Parking cost ($/spot/month, after tax)",

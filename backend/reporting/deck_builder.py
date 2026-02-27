@@ -1976,7 +1976,8 @@ def _comparison_overarching_notes(entries: list[dict[str, Any]]) -> list[str]:
         "Gross Rental Rates include all standard operating expenses.",
         "Tenant Improvement Costs shown are assumptions based on the below high-level estimates.",
         "TI out of Pocket is the difference between estimated tenant buildout costs and tenant allowance.",
-        "Total Estimated Obligation includes full service rental costs, buildout costs, and parking. Landlord's Net Effective Return includes total net rent less concession and lease commission.",
+        "Total Estimated Obligation includes full service rental costs, buildout costs, and parking.",
+        "Landlord's Net Effective Return includes total net rent less concession and lease commission.",
         "Numbers are pre-tax dollars and do not take into account depreciation for upfront costs (parking includes sales tax if applicable).",
         _comparison_discount_rate_note(entries),
     ]
@@ -1985,8 +1986,8 @@ def _comparison_overarching_notes(entries: list[dict[str, Any]]) -> list[str]:
 def _comparison_overarching_notes_block(entries: list[dict[str, Any]]) -> str:
     notes = _comparison_overarching_notes(entries)
     items_html = "".join(
-        f"<li><span class='note-index'>{idx})</span> {_esc(note)}</li>"
-        for idx, note in enumerate(notes, start=1)
+        f"<li>{_esc(note)}</li>"
+        for note in notes
     )
     return f"""
     <section class="matrix-overarching-notes">
@@ -2818,10 +2819,6 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
     }}
     .matrix-overarching-list li {{
       margin: 0 0 0.9mm 0;
-    }}
-    .matrix-overarching-list .note-index {{
-      font-weight: 700;
-      margin-right: 0.8mm;
     }}
     .axis-note {{
       margin: 0 0 2mm 0;

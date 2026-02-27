@@ -368,7 +368,7 @@ export function SummaryMatrix({
         <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
           {overarchingNotes.map((note, index) => (
             <li key={`overarching-note-${index}`} className="whitespace-normal break-words">
-              {index + 1}) {note}
+              {note}
             </li>
           ))}
         </ul>
