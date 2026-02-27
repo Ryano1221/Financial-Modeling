@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+from datetime import date, timedelta
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,206 @@ from .schema import validate_canonical_extraction
 from .sections import retrieve_section_snippets
 from .tables import extract_rent_step_candidates
 from .validate import validate_extraction
+
+
+def _parse_date(value: Any) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m.%d.%Y", "%m-%d-%Y"):
+        try:
+            from datetime import datetime
+
+            return datetime.strptime(raw, fmt).date()
+        except Exception:
+            continue
+    return None
+
+
+def _month_diff(start: date, end: date) -> int:
+    months = (end.year - start.year) * 12 + (end.month - start.month)
+    if end.day < start.day:
+        months -= 1
+    return max(0, months)
+
+
+def _expiration_from_term_months(commencement: date, term_months: int) -> date:
+    tm = max(1, int(term_months))
+    total = (commencement.month - 1) + tm
+    year = commencement.year + (total // 12)
+    month = (total % 12) + 1
+    anniv = date(year, month, min(commencement.day, 28))
+    return anniv - timedelta(days=1)
+
+
+def _commencement_from_term_months(expiration: date, term_months: int) -> date:
+    tm = max(1, int(term_months))
+    anchor = expiration + timedelta(days=1)
+    y = anchor.year
+    m = anchor.month - tm
+    while m <= 0:
+        y -= 1
+        m += 12
+    return date(y, m, 1)
+
+
+def _repair_rent_schedule(steps: list[dict[str, Any]], term_months: int) -> list[dict[str, Any]]:
+    if term_months <= 0:
+        return [{"start_month": 0, "end_month": 0, "rate_psf_annual": 0.0}]
+    if not steps:
+        return [{"start_month": 0, "end_month": max(0, term_months - 1), "rate_psf_annual": 0.0}]
+
+    ordered = sorted(
+        [
+            {
+                "start_month": max(0, int(s.get("start_month") or 0)),
+                "end_month": max(0, int(s.get("end_month") or 0)),
+                "rate_psf_annual": max(0.0, float(s.get("rate_psf_annual") or 0.0)),
+            }
+            for s in steps
+            if isinstance(s, dict)
+        ],
+        key=lambda x: (int(x["start_month"]), int(x["end_month"])),
+    )
+    if not ordered:
+        return [{"start_month": 0, "end_month": max(0, term_months - 1), "rate_psf_annual": 0.0}]
+
+    fixed: list[dict[str, Any]] = []
+    expected = 0
+    for raw in ordered:
+        start = int(raw["start_month"])
+        end = int(raw["end_month"])
+        rate = float(raw["rate_psf_annual"])
+        if not fixed and start != 0:
+            start = 0
+        if start != expected:
+            start = expected
+        if end < start:
+            end = start
+        fixed.append({"start_month": start, "end_month": end, "rate_psf_annual": rate})
+        expected = end + 1
+
+    target_end = max(0, term_months - 1)
+    fixed = [s for s in fixed if int(s["start_month"]) <= target_end]
+    if not fixed:
+        return [{"start_month": 0, "end_month": target_end, "rate_psf_annual": 0.0}]
+    fixed[-1]["end_month"] = target_end
+    return fixed
+
+
+def _finalize_extraction(extraction: dict[str, Any], *, solver_debug: dict[str, Any] | None = None, solver_degraded: bool = False) -> dict[str, Any]:
+    term = extraction.setdefault("term", {})
+    premises = extraction.setdefault("premises", {})
+    opex = extraction.setdefault("opex", {})
+    logs: list[dict[str, Any]] = []
+    degraded = bool(solver_degraded)
+
+    comm = _parse_date(term.get("commencement_date"))
+    exp = _parse_date(term.get("expiration_date"))
+    tm_raw = term.get("term_months")
+    try:
+        term_months = max(0, int(tm_raw)) if tm_raw not in (None, "") else 0
+    except Exception:
+        term_months = 0
+
+    if comm and exp and term_months <= 0:
+        term_months = max(0, _month_diff(comm, exp))
+        logs.append({"action": "derive", "field": "term.term_months", "reason": "from dates"})
+
+    if comm and term_months > 0 and not exp:
+        exp = _expiration_from_term_months(comm, term_months)
+        term["expiration_date"] = exp.isoformat()
+        logs.append({"action": "derive", "field": "term.expiration_date", "reason": "from commencement + term"})
+
+    if exp and term_months > 0 and not comm:
+        comm = _commencement_from_term_months(exp, term_months)
+        term["commencement_date"] = comm.isoformat()
+        logs.append({"action": "derive", "field": "term.commencement_date", "reason": "from expiration - term"})
+
+    if term_months <= 0 and extraction.get("rent_steps"):
+        try:
+            term_months = max(0, max(int(s.get("end_month") or 0) for s in (extraction.get("rent_steps") or [])) + 1)
+            logs.append({"action": "derive", "field": "term.term_months", "reason": "from rent schedule"})
+        except Exception:
+            term_months = 0
+
+    if term_months <= 0:
+        degraded = True
+        logs.append({"action": "fallback", "field": "term.term_months", "value": 0, "reason": "unable to derive term"})
+
+    term["term_months"] = int(term_months)
+    if comm and "commencement_date" not in term:
+        term["commencement_date"] = comm.isoformat()
+    if exp and "expiration_date" not in term:
+        term["expiration_date"] = exp.isoformat()
+
+    repaired_steps = _repair_rent_schedule(list(extraction.get("rent_steps") or []), int(term_months))
+    if repaired_steps != list(extraction.get("rent_steps") or []):
+        logs.append({"action": "repair", "field": "rent_steps", "reason": "contiguous coverage normalized"})
+    extraction["rent_steps"] = repaired_steps
+
+    if premises.get("rsf") in (None, ""):
+        premises["rsf"] = 0.0
+        degraded = True
+        logs.append({"action": "fallback", "field": "premises.rsf", "value": 0.0, "reason": "missing"})
+
+    cues_text = " ".join(str(e.get("snippet") or "") for e in (extraction.get("evidence") or [])).lower()
+    mode = str(opex.get("mode") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if mode not in {"nnn", "base_year", "full_service"}:
+        if any(k in cues_text for k in ("base year", "expense stop", "modified gross", "gross with stop")):
+            mode = "base_year"
+        elif any(k in cues_text for k in ("full service", "full-service", "gross rent", "gross lease")):
+            mode = "full_service"
+        elif any(k in cues_text for k in ("nnn", "triple net", "cam", "additional rent")):
+            mode = "nnn"
+        else:
+            mode = "nnn"
+            degraded = True
+        logs.append({"action": "derive", "field": "opex.mode", "value": mode, "reason": "from cues/default"})
+    opex["mode"] = mode
+
+    base = opex.get("base_psf_year_1")
+    try:
+        base_val = None if base in (None, "") else float(base)
+    except Exception:
+        base_val = None
+
+    if mode == "full_service" and base_val is None:
+        opex["base_psf_year_1"] = 0.0
+        logs.append({"action": "derive", "field": "opex.base_psf_year_1", "value": 0.0, "reason": "full service includes expenses"})
+    elif mode in {"nnn", "base_year"} and base_val is None:
+        candidates: list[float] = []
+        for ev in extraction.get("evidence") or []:
+            snippet = str(ev.get("snippet") or "")
+            if not any(tok in snippet.lower() for tok in ("opex", "operating expense", "cam", "base year", "expense stop")):
+                continue
+            import re
+
+            m = re.search(r"\$?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/\s*sf|psf)", snippet, flags=re.IGNORECASE)
+            if m:
+                try:
+                    candidates.append(float(m.group(1)))
+                except Exception:
+                    continue
+        if candidates:
+            opex["base_psf_year_1"] = max(0.0, float(sorted(candidates)[0]))
+            logs.append({"action": "derive", "field": "opex.base_psf_year_1", "reason": "from opex snippets"})
+        else:
+            opex["base_psf_year_1"] = 0.0
+            degraded = True
+            logs.append({"action": "fallback", "field": "opex.base_psf_year_1", "value": 0.0, "reason": "missing"})
+
+    if opex.get("growth_rate") in (None, ""):
+        opex["growth_rate"] = 0.03
+        logs.append({"action": "derive", "field": "opex.growth_rate", "value": 0.03, "reason": "default"})
+
+    extraction["abatements"] = list(extraction.get("abatements") or [])
+    extraction["auto_qa"] = {
+        "solver": solver_debug or {},
+        "normalization_log": logs,
+    }
+    extraction["extraction_quality"] = "degraded" if degraded else "standard"
+    return extraction
 
 
 def _canonical_opex_mode(canonical: CanonicalLease) -> str:
@@ -203,6 +404,8 @@ def run_extraction_pipeline(
     resolved = reconciled.get("resolved") or {}
     provenance = reconciled.get("provenance") or {}
     reconcile_margin = float(reconciled.get("reconcile_margin") or 0.5)
+    solver_debug = reconciled.get("solver_debug") if isinstance(reconciled.get("solver_debug"), dict) else {}
+    solver_degraded = bool(reconciled.get("degraded"))
 
     extraction: dict[str, Any] = {
         "document": classification,
@@ -236,6 +439,12 @@ def run_extraction_pipeline(
     }
 
     _apply_canonical_fallback(extraction, canonical_lease, provenance)
+
+    extraction = _finalize_extraction(
+        extraction,
+        solver_debug=solver_debug,
+        solver_degraded=solver_degraded,
+    )
 
     extraction = validate_extraction(
         extraction,

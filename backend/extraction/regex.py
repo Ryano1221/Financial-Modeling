@@ -143,6 +143,21 @@ def _mk_candidate(field: str, value: Any, page: int | None, snippet: str, source
     }
 
 
+def _nearest_keyword_distance(line_low: str, idx: int, keywords: tuple[str, ...]) -> int | None:
+    best: int | None = None
+    for kw in keywords:
+        start = 0
+        while True:
+            pos = line_low.find(kw, start)
+            if pos < 0:
+                break
+            dist = abs(pos - idx)
+            if best is None or dist < best:
+                best = dist
+            start = pos + 1
+    return best
+
+
 def _detect_opex_mode_from_line(line: str) -> tuple[str, float] | None:
     low = f" {line.lower()} "
     if any(k in low for k in BASE_YEAR_CUES):
@@ -164,6 +179,7 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
         "term_months": [],
         "abatement_scope": [],
         "abatement_classification": [],
+        "rent_definition_scope": [],
         "phase_in_detected": [],
         "opex_mode": [],
         "opex_psf_year_1": [],
@@ -186,12 +202,33 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                     dt = _parse_date_token(m.group(1))
                     if not dt:
                         continue
-                    if "commenc" in low and "rent" not in low:
-                        out["commencement_date"].append(_mk_candidate("commencement_date", dt, page.page_number, ln, "pdf_text_regex", 0.74))
-                    if "rent commenc" in low or "rent start" in low:
-                        out["rent_commencement_date"].append(_mk_candidate("rent_commencement_date", dt, page.page_number, ln, "pdf_text_regex", 0.74))
-                    if "expir" in low or "terminat" in low:
-                        out["expiration_date"].append(_mk_candidate("expiration_date", dt, page.page_number, ln, "pdf_text_regex", 0.74))
+                    idx = m.start()
+                    comm_dist = _nearest_keyword_distance(low, idx, ("commenc", "lease commencement", "term commencement"))
+                    rent_comm_dist = _nearest_keyword_distance(low, idx, ("rent commenc", "rent start"))
+                    exp_dist = _nearest_keyword_distance(low, idx, ("expir", "terminat", "through", "ending"))
+
+                    if rent_comm_dist is not None and (exp_dist is None or rent_comm_dist <= exp_dist):
+                        out["rent_commencement_date"].append(
+                            _mk_candidate("rent_commencement_date", dt, page.page_number, ln, "pdf_text_regex", 0.74)
+                        )
+                    if comm_dist is not None and (exp_dist is None or comm_dist < exp_dist):
+                        out["commencement_date"].append(
+                            _mk_candidate("commencement_date", dt, page.page_number, ln, "pdf_text_regex", 0.75)
+                        )
+                    if exp_dist is not None and (comm_dist is None or exp_dist < comm_dist):
+                        out["expiration_date"].append(
+                            _mk_candidate("expiration_date", dt, page.page_number, ln, "pdf_text_regex", 0.75)
+                        )
+                    # Single-label lines fallback.
+                    if comm_dist is None and exp_dist is None:
+                        if "commenc" in low and "rent" not in low:
+                            out["commencement_date"].append(
+                                _mk_candidate("commencement_date", dt, page.page_number, ln, "pdf_text_regex", 0.70)
+                            )
+                        if "expir" in low or "terminat" in low:
+                            out["expiration_date"].append(
+                                _mk_candidate("expiration_date", dt, page.page_number, ln, "pdf_text_regex", 0.70)
+                            )
 
             tm = re.search(r"(?:term|lease term)[^\d]{0,20}(\d{1,3})\s*(?:months?|mos?)", ln, flags=re.IGNORECASE)
             if tm:
@@ -227,6 +264,17 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 out["abatement_classification"].append(
                     _mk_candidate("abatement_classification", "rent_abatement", page.page_number, ln, "pdf_text_regex", 0.76)
                 )
+
+            # Definitions: use for abatement scope disambiguation where "Rent" includes additional rent.
+            if "rent" in low and ("means" in low or "defined as" in low):
+                if any(k in low for k in ("additional rent", "operating expenses", "cam", "common area maintenance")):
+                    out["rent_definition_scope"].append(
+                        _mk_candidate("rent_definition_scope", "rent_includes_additional", page.page_number, ln, "pdf_text_regex", 0.74)
+                    )
+                elif "base rent" in low and "only" in low:
+                    out["rent_definition_scope"].append(
+                        _mk_candidate("rent_definition_scope", "rent_base_only", page.page_number, ln, "pdf_text_regex", 0.70)
+                    )
 
             opex_mode = _detect_opex_mode_from_line(ln)
             if opex_mode:
