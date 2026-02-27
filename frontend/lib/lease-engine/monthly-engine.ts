@@ -725,8 +725,11 @@ export function runMonthlyEngine(
     parkingCostAnnual: years > 0 ? (parkingNominal / years) : parkingNominal,
     tiBudget: rsf > 0 ? scenario.tiSchedule.budgetTotal / rsf : 0,
     tiAllowance: rsf > 0 ? scenario.tiSchedule.allowanceFromLandlord / rsf : 0,
-    tiOutOfPocket: scenario.tiSchedule.outOfPocket,
-    grossTiOutOfPocket: scenario.tiSchedule.grossOutOfPocket ?? scenario.tiSchedule.outOfPocket,
+    tiOutOfPocket: Math.max(0, scenario.tiSchedule.outOfPocket),
+    grossTiOutOfPocket: Math.max(
+      0,
+      scenario.tiSchedule.grossOutOfPocket ?? scenario.tiSchedule.outOfPocket
+    ),
     avgGrossRentPerMonth: grossRentNominal / (termMonths || 1),
     avgGrossRentPerYear: years > 0 ? (grossRentNominal / years) : 0,
     avgAllInCostPerMonth: totalObligation / (termMonths || 1),

@@ -152,7 +152,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       budgetTotal: tiBudgetTotal,
       allowanceFromLandlord: tiAllowanceTotal,
       outOfPocket: Math.max(0, tiNetImpact),
-      grossOutOfPocket: tiBudgetTotal,
+      grossOutOfPocket: Math.max(0, tiNetImpact),
       amortizeOop: false,
     },
     otherCashFlows: {

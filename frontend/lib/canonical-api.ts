@@ -711,7 +711,7 @@ export function canonicalResponseToEngineResult(
     tiBudget: tiBudgetPsf,
     tiAllowance: tiAllowancePsf,
     tiOutOfPocket: Math.max(0, tiNetAtMonth0),
-    grossTiOutOfPocket: tiBudgetTotal,
+    grossTiOutOfPocket: Math.max(0, tiNetAtMonth0),
     avgGrossRentPerMonth,
     avgGrossRentPerYear,
     avgAllInCostPerMonth: totalObligationEffective / Math.max(1, termMonths),

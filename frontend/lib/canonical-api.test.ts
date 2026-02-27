@@ -188,6 +188,25 @@ describe("canonicalResponseToEngineResult", () => {
     expect(result.metrics.avgCostPsfYr).toBeCloseTo(21.6, 6);
   });
 
+  it("sets TI out of pocket to zero when TI budget and allowance are equal", () => {
+    const sourceScenario = makeScenario({
+      rsf: 205072,
+      ti_allowance_psf: 120,
+      ti_budget_total: 205072 * 120,
+      ti_source_of_truth: "psf",
+    });
+
+    const result = canonicalResponseToEngineResult(
+      makeCanonicalResponse(),
+      sourceScenario.id,
+      sourceScenario.name,
+      sourceScenario
+    );
+
+    expect(result.metrics.tiOutOfPocket).toBe(0);
+    expect(result.metrics.grossTiOutOfPocket).toBe(0);
+  });
+
 });
 
 describe("backendCanonicalToScenarioInput", () => {
