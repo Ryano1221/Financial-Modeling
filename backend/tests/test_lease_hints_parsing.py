@@ -807,3 +807,22 @@ def test_extract_hints_parses_building_table_and_net_rental_response_dates() -> 
     assert hints["lease_type"] == "NNN"
     assert hints["free_rent_scope"] == "base"
     assert hints["free_rent_end_month"] == 3
+
+
+def test_extract_hints_al1_primary_lease_term_prefers_150_month_term_over_rent_commencement_months() -> None:
+    text = (
+        "PREMISES: Approximately 205,072 rentable square feet.\n"
+        "LEASE COMMENCEMENT DATE: May 1, 2028.\n"
+        "RENT COMMENCEMENT DATE: Six (6) months after the Commencement Date. For clarity, "
+        "Tenant shall not pay base rent or parking during this period of time.\n"
+        "PRIMARY LEASE TERM: Please provide a proposal for a twelve (12) year term + 6 months "
+        "(150 month term) (\"Term\").\n"
+        "BASE ANNUAL NET RENTAL RATE: $28.00 NNN escalating by 3% per annum beginning Month 13.\n"
+        "Estimated operating expenses for 2026: $19.35 per RSF.\n"
+    )
+    hints = main._extract_lease_hints(text, "Aspen Lake 1 - Q2 - Landlord Response 2.26.2026.docx", "test-rid")
+
+    assert hints["rsf"] == 205072.0
+    assert str(hints["commencement_date"]) == "2028-05-01"
+    assert str(hints["expiration_date"]) == "2040-10-31"
+    assert hints["term_months"] == 150

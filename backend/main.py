@@ -2672,6 +2672,54 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     )
 
     month_candidates: list[tuple[int, int, int]] = []
+
+    # Handle explicit "150 month term" style language first.
+    explicit_month_term_patterns = [
+        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+term\b",
+        r"(?i)\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+term\b",
+        r"(?i)\bterm\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
+    ]
+    for pat in explicit_month_term_patterns:
+        for m in re.finditer(pat, text):
+            context = (m.group(0) or "").lower()
+            if any(k in context for k in disqualifying_tokens):
+                continue
+            months = _coerce_int_token(m.group(1), 0)
+            if not (1 <= months <= 600):
+                continue
+            score = 8
+            if "primary lease term" in context:
+                score += 6
+            elif re.search(r"(?i)\b(?:lease\s+term|sublease\s+term|initial\s+term)\b", context):
+                score += 4
+            if "month term" in context:
+                score += 4
+            if months >= 24:
+                score += 2
+            month_candidates.append((score, m.start(), int(months)))
+
+    # Handle "12 years + 6 months" expressions in term clauses.
+    composite_term_patterns = [
+        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b",
+        r"(?i)\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\bterm\b",
+    ]
+    for pat in composite_term_patterns:
+        for m in re.finditer(pat, text):
+            context = (m.group(0) or "").lower()
+            if any(k in context for k in disqualifying_tokens):
+                continue
+            years = _coerce_int_token(m.group(1), 0)
+            extra_months = _coerce_int_token(m.group(2), 0)
+            if not (0 <= extra_months <= 11 and 1 <= years <= 50):
+                continue
+            total_months = years * 12 + extra_months
+            score = 9
+            if "primary lease term" in context:
+                score += 6
+            elif re.search(r"(?i)\b(?:lease\s+term|sublease\s+term|initial\s+term)\b", context):
+                score += 4
+            month_candidates.append((score, m.start(), int(total_months)))
+
     term_month_patterns = [
         r"(?i)\b(?:leased\s+premises\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\s*[:\-]\s*[^.\n]{0,120}?\((\d{1,3})\)\s*(?:calendar\s+)?months?\b",
         r"(?i)\b(?:leased\s+premises\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\s*[:\-]\s*[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
@@ -2691,6 +2739,8 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
                 score += 6
             elif re.search(r"(?i)\bterm\s*[:\-]", context):
                 score += 4
+            if "month term" in context:
+                score += 2
             if months >= 24:
                 score += 2
             month_candidates.append((score, m.start(), int(months)))
