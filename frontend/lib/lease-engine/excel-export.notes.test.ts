@@ -57,4 +57,25 @@ describe("notes formatting", () => {
     const formatted = formatMetricValue("notes", raw);
     expect(formatted).toContain("Renewal / extension: 1 (One) renewal option for 4 (Four) years at FMV");
   });
+
+  it("drops placeholder USE notes and classifies ratio/expense-cap fragments", () => {
+    const raw = [
+      "Renewal / extension: 1 (One) renewal option for 3 (Three) years",
+      "General: 4.1/1,000 RSF.",
+      "General: Expense caps/exclusions or audit rights included.",
+      "General: USE",
+      "Parking: Parking terms included",
+      "Operating expenses: OpEx table provided through 2026",
+      "Operating expenses: using $19.35/SF as the starting OpEx.",
+    ].join(" | ");
+
+    const formatted = formatMetricValue("notes", raw);
+
+    expect(formatted).toContain("Renewal / extension: 1 (One) renewal option for 3 (Three) years");
+    expect(formatted).toContain("Parking: 4.1/1,000 RSF.");
+    expect(formatted).toContain("Expense caps / exclusions: Expense caps/exclusions or audit rights included.");
+    expect(formatted).toContain("Operating expenses: OpEx table provided through 2026");
+    expect(formatted).toContain("Operating expenses: using $19.35/SF as the starting OpEx.");
+    expect(formatted).not.toContain("General: USE");
+  });
 });

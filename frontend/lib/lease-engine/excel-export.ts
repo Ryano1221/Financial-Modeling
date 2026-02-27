@@ -132,8 +132,8 @@ const NOTE_CATEGORY_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   { label: "Termination", regex: /\btermination\b|\bearly termination\b/i },
   { label: "Assignment / sublease", regex: /\bassignment\b|\bsublease\b/i },
   { label: "Operating expenses", regex: /\bopex\b|\boperating expense\b|\bexpense stop\b|\bbase year\b/i },
-  { label: "Expense caps / exclusions", regex: /\bcap\b|\bexcluded\b|\bexclusion\b|\bcontrollable\b/i },
-  { label: "Parking", regex: /\bparking\b|\bspace(s)?\b|\bratio\b/i },
+  { label: "Expense caps / exclusions", regex: /\bcaps?\b|\bexcluded\b|\bexclusions?\b|\bcontrollable\b|\baudit rights?\b|\bmanagement fees?\b/i },
+  { label: "Parking", regex: /\bparking\b|\bspace(s)?\b|\bratio\b|\b\d+(?:\.\d+)?\s*\/\s*1,?000\s*(?:rsf|sf)\b/i },
   { label: "Use / restrictions", regex: /\bpermitted use\b|\buse restriction\b|\bexclusive use\b|\buse shall be\b/i },
   { label: "Holdover", regex: /\bholdover\b/i },
 ];
@@ -179,6 +179,19 @@ function isMeaningfulNoteFragment(input: string): boolean {
   const cleaned = stripNotePrefixNoise(input).trim();
   if (!cleaned) return false;
   const low = cleaned.toLowerCase();
+  const placeholders = new Set([
+    "use",
+    "general",
+    "parking",
+    "renewal",
+    "extension",
+    "assignment",
+    "sublease",
+    "opex",
+    "operating expenses",
+    "audit rights",
+  ]);
+  if (placeholders.has(low)) return false;
   if (["n/a", "na", "none", "null", "-", "--", "general"].includes(low)) return false;
   if (/^\d+(?:\.\d+)?$/.test(low)) return false;
   if (/^[\W_]+$/.test(cleaned)) return false;
