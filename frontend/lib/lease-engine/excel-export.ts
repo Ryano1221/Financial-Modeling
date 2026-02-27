@@ -74,6 +74,9 @@ export const METRIC_LABELS: (keyof OptionMetrics)[] = [
   "avgAllInCostPerYear",
   "avgCostPsfYr",
   "npvAtDiscount",
+  "commissionPercent",
+  "commissionBasis",
+  "commissionAmount",
   "discountRateUsed",
   "totalObligation",
   "equalizedAvgCostPsfYr",
@@ -111,6 +114,9 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   avgAllInCostPerYear: "Avg All-In Cost/Year",
   avgCostPsfYr: "Avg Cost/RSF/YR",
   npvAtDiscount: "NPV @ Discount Rate",
+  commissionPercent: "Commission %",
+  commissionBasis: "Commission Basis",
+  commissionAmount: "Commission",
   discountRateUsed: "Discount Rate Used",
   totalObligation: "Total Estimated Obligation",
   equalizedAvgCostPsfYr: "Equalized Avg Cost/RSF/YR",
@@ -418,9 +424,11 @@ export function formatMetricValue(key: string, value: unknown): string {
   if (typeof value === "number") {
     if (key === "npvAtDiscount") return formatCurrency(value);
     if (key === "abatementAmount") return formatCurrency(value);
+    if (key === "commissionAmount") return formatCurrency(value);
     if (key === "tiBudget") return formatCurrencyPerSF(value);
     if (key === "tiAllowance") return formatCurrencyPerSF(value);
     if (key === "discountRateUsed") return formatPercent(value, { decimals: 1 });
+    if (key === "commissionPercent") return formatPercent(value, { decimals: 2 });
     if (key === "escalationPercent" || key === "opexEscalationPercent" || key === "parkingSalesTaxPercent") return formatPercent(value);
     if (key === "rsf") return formatRSF(value);
     if (key === "termMonths") return formatMonths(value);
@@ -567,6 +575,9 @@ export async function buildWorkbook(
     const m = result.metrics;
     [
       ["NPV @ discount rate", m.npvAtDiscount],
+      ["Commission %", formatPercent(m.commissionPercent / 100, { decimals: 2 })],
+      ["Commission basis", m.commissionBasis],
+      ["Commission", m.commissionAmount],
       ["Discount rate used", formatPercent(m.discountRateUsed, { decimals: 1 })],
       ["Total estimated obligation", m.totalObligation],
       ["Avg cost/RSF/year", m.avgCostPsfYr],

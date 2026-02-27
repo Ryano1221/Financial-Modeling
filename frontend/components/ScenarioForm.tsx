@@ -45,6 +45,8 @@ const defaultScenarioInput: ScenarioInput = {
   base_year_opex_psf_yr: 10,
   opex_growth: 0.03,
   discount_rate_annual: 0.08,
+  commission_rate: 0,
+  commission_applies_to: "base_rent",
   parking_spaces: 0,
   parking_cost_monthly_per_space: 0,
   parking_sales_tax_rate: 0.0825,
@@ -1185,6 +1187,34 @@ export function ScenarioForm({
             }
             className={inputClass}
           />
+        </label>
+        <label className="block">
+          <span className="text-sm text-slate-300">Commission % (e.g. 0.04 = 4%)</span>
+          <input
+            type="number"
+            min={0}
+            max={1}
+            step={0.001}
+            value={scenario.commission_rate ?? 0}
+            onChange={(e) => update("commission_rate", Math.max(0, Number(e.target.value) || 0))}
+            className={inputClass}
+          />
+        </label>
+        <label className="block">
+          <span className="text-sm text-slate-300">Commission basis</span>
+          <select
+            value={scenario.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent"}
+            onChange={(e) =>
+              update(
+                "commission_applies_to",
+                e.target.value === "gross_obligation" ? "gross_obligation" : "base_rent"
+              )
+            }
+            className={inputClass}
+          >
+            <option value="base_rent">Total base rent</option>
+            <option value="gross_obligation">Gross obligation (OpEx not escalated)</option>
+          </select>
         </label>
         <label className="block">
           <span className="text-sm text-slate-300">Parking spaces</span>

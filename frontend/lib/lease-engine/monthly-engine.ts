@@ -88,6 +88,9 @@ export interface OptionMetrics {
   avgAllInCostPerYear: number;
   avgCostPsfYr: number;
   npvAtDiscount: number;
+  commissionPercent: number;
+  commissionBasis: string;
+  commissionAmount: number;
   discountRateUsed: number;
   totalObligation: number;
   equalizedAvgCostPsfYr: number;
@@ -108,6 +111,18 @@ export interface EngineResult {
 function getDiscountRate(s: LeaseScenarioCanonical, globalDiscountRate?: number): number {
   if (s.discountRateAnnual != null && s.discountRateAnnual >= 0) return s.discountRateAnnual;
   return globalDiscountRate ?? DEFAULT_DISCOUNT_RATE;
+}
+
+function normalizeCommissionBasis(
+  value: LeaseScenarioCanonical["commissionAppliesTo"]
+): "base_rent" | "gross_obligation" {
+  return value === "gross_obligation" ? "gross_obligation" : "base_rent";
+}
+
+function commissionBasisLabel(value: "base_rent" | "gross_obligation"): string {
+  return value === "gross_obligation"
+    ? "Gross obligation (OpEx not escalated)"
+    : "Total base rent";
 }
 
 function preCommencementDiscountMonths(commencementDate: string): number {
@@ -637,6 +652,34 @@ export function runMonthlyEngine(
       : 0;
   const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + parkingTaxPct);
   const grossRentNominal = baseRent.reduce((a, b) => a + b, 0) + opex.reduce((a, b) => a + b, 0);
+  const baseRentNominal = baseRent.reduce((a, b) => a + b, 0);
+  const commissionRate = Math.max(0, Number(scenario.commissionRate) || 0);
+  const commissionBasis = normalizeCommissionBasis(scenario.commissionAppliesTo);
+  const opexNoEscalation = monthlyOpex(
+    termMonths,
+    scenario.expenseSchedule.baseOpexPsfYr,
+    scenario.expenseSchedule.baseYearOpexPsfYr,
+    0,
+    scenario.expenseSchedule.leaseType,
+    effectiveRsf,
+    comm
+  );
+  for (const abatement of normalizedAbatements) {
+    if (abatement.appliesTo !== "gross") continue;
+    for (let m = abatement.start; m <= abatement.end; m += 1) {
+      if (abatement.type === "full") {
+        opexNoEscalation[m] = 0;
+      } else {
+        opexNoEscalation[m] = opexNoEscalation[m] * (1 - abatement.partialRate);
+      }
+    }
+  }
+  const opexNoEscalationNominal = opexNoEscalation.reduce((a, b) => a + b, 0);
+  const commissionBase =
+    commissionBasis === "gross_obligation"
+      ? (baseRentNominal + opexNoEscalationNominal)
+      : baseRentNominal;
+  const commissionAmount = commissionRate > 0 ? commissionBase * commissionRate : 0;
   const parkingNominal = parking.reduce((a, b) => a + b, 0);
   const parkingCostMonthly = parkingNominal / Math.max(1, termMonths);
   const metrics: OptionMetrics = {
@@ -670,6 +713,9 @@ export function runMonthlyEngine(
     avgAllInCostPerYear: avgCostYear,
     avgCostPsfYr,
     npvAtDiscount: npv,
+    commissionPercent: commissionRate * 100,
+    commissionBasis: commissionBasisLabel(commissionBasis),
+    commissionAmount,
     discountRateUsed: discountRate,
     totalObligation,
     equalizedAvgCostPsfYr: equalizedAvgPsfYr,

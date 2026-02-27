@@ -94,6 +94,8 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
     isRemainingObligation: Boolean(s.is_remaining_obligation),
     documentTypeDetected: (s.document_type_detected ?? "").trim() || undefined,
     discountRateAnnual: s.discount_rate_annual,
+    commissionRate: Math.max(0, Number(s.commission_rate) || 0),
+    commissionAppliesTo: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
     partyAndPremises: {
       premisesName,
       premisesLabel: buildingName,

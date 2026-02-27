@@ -143,6 +143,8 @@ export interface DatesAndTermCanonical {
   rentEscalationDate?: string;
 }
 
+export type CommissionAppliesToCanonical = "base_rent" | "gross_obligation";
+
 /** Full canonical LeaseScenario */
 export interface LeaseScenarioCanonical {
   id: string;
@@ -152,6 +154,10 @@ export interface LeaseScenarioCanonical {
   documentTypeDetected?: string;
   /** Global discount rate default 8%; overridden per option if set */
   discountRateAnnual?: number;
+  /** Lease commission rate as decimal (e.g. 0.04 = 4%). */
+  commissionRate?: number;
+  /** Commission base selector. */
+  commissionAppliesTo?: CommissionAppliesToCanonical;
   partyAndPremises: PartyAndPremisesCanonical;
   datesAndTerm: DatesAndTermCanonical;
   rentSchedule: RentScheduleCanonical;

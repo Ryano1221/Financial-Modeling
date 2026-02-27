@@ -303,6 +303,8 @@ export function scenarioInputToBackendCanonical(
     free_rent_periods: effectiveAbatementPeriods,
     parking_abatement_periods: normalizedParkingAbatementPeriods,
     discount_rate_annual: s.discount_rate_annual ?? 0.08,
+    commission_rate: Math.max(0, Number(s.commission_rate) || 0),
+    commission_applies_to: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
     rent_schedule: (s.rent_steps ?? []).map((step) => ({
       start_month: step.start,
       end_month: step.end,
@@ -433,6 +435,8 @@ export function backendCanonicalToScenarioInput(
     base_year_opex_psf_yr: c.expense_stop_psf ?? c.opex_psf_year_1 ?? 0,
     opex_growth: c.opex_growth_rate ?? 0,
     discount_rate_annual: c.discount_rate_annual ?? 0.08,
+    commission_rate: Math.max(0, Number(c.commission_rate) || 0),
+    commission_applies_to: c.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
     parking_spaces: c.parking_count ?? 0,
     parking_cost_monthly_per_space: c.parking_rate_monthly ?? 0,
     parking_sales_tax_rate: c.parking_sales_tax_rate ?? 0.0825,
@@ -578,6 +582,24 @@ export function canonicalResponseToEngineResult(
       return null;
     }
   })();
+  const sourceCommissionRate = Math.max(0, Number(scenarioSource?.commission_rate) || 0);
+  const sourceCommissionBasis = scenarioSource?.commission_applies_to === "gross_obligation"
+    ? "gross_obligation"
+    : "base_rent";
+  const fallbackCommissionBase = sourceCommissionBasis === "gross_obligation"
+    ? Math.max(0, toNumber(m.base_rent_total, 0) + toNumber(m.opex_total, 0))
+    : Math.max(0, toNumber(m.base_rent_total, 0));
+  const commissionPercent = sourceEngineResult
+    ? Math.max(0, toNumber(sourceEngineResult.metrics.commissionPercent, 0))
+    : (sourceCommissionRate * 100);
+  const commissionBasisLabel = sourceEngineResult
+    ? String(sourceEngineResult.metrics.commissionBasis || "").trim()
+    : (sourceCommissionBasis === "gross_obligation"
+      ? "Gross obligation (OpEx not escalated)"
+      : "Total base rent");
+  const commissionAmount = sourceEngineResult
+    ? Math.max(0, toNumber(sourceEngineResult.metrics.commissionAmount, 0))
+    : Math.max(0, fallbackCommissionBase * sourceCommissionRate);
   const sourceAbatementAmount = sourceEngineResult
     ? Math.max(0, toNumber(sourceEngineResult.metrics.abatementAmount, 0))
     : null;
@@ -674,6 +696,9 @@ export function canonicalResponseToEngineResult(
     avgAllInCostPerYear: years > 0 ? (totalObligationEffective / years) : totalObligationEffective,
     avgCostPsfYr,
     npvAtDiscount: m.npv_cost ?? 0,
+    commissionPercent,
+    commissionBasis: commissionBasisLabel,
+    commissionAmount,
     discountRateUsed: m.discount_rate_annual ?? 0.08,
     totalObligation: totalObligationEffective,
     equalizedAvgCostPsfYr: m.equalized_avg_cost_psf_year ?? 0,

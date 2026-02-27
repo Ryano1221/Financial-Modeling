@@ -369,9 +369,24 @@ function normalizeScenarioParkingTax<T extends ScenarioInput | ScenarioWithId>(s
   } as T;
 }
 
+function normalizeScenarioCommission<T extends ScenarioInput | ScenarioWithId>(scenario: T): T {
+  const commissionRateRaw = Number((scenario as ScenarioInput | ScenarioWithId).commission_rate);
+  const commissionRate = Number.isFinite(commissionRateRaw) && commissionRateRaw > 0 ? commissionRateRaw : 0;
+  const commissionBasis = (scenario as ScenarioInput | ScenarioWithId).commission_applies_to === "gross_obligation"
+    ? "gross_obligation"
+    : "base_rent";
+  return {
+    ...scenario,
+    commission_rate: commissionRate,
+    commission_applies_to: commissionBasis,
+  } as T;
+}
+
 function normalizeScenarioEconomics<T extends ScenarioInput | ScenarioWithId>(scenario: T): T {
   return syncTiFields(
-    normalizeScenarioParkingTax(normalizeScenarioDiscountRate(scenario))
+    normalizeScenarioCommission(
+      normalizeScenarioParkingTax(normalizeScenarioDiscountRate(scenario))
+    )
   ) as T;
 }
 
@@ -1025,6 +1040,39 @@ export default function Home() {
     [isProduction, runComputeForScenario, scenarios, updateScenario]
   );
 
+  const updateScenarioCommissionRate = useCallback(
+    (scenarioId: string, commissionRate: number) => {
+      const current = scenarios.find((s) => s.id === scenarioId);
+      if (!current) return;
+      const nextRate = Math.max(0, Number(commissionRate) || 0);
+      const updatedScenario = normalizeScenarioEconomics({
+        ...current,
+        commission_rate: nextRate,
+      });
+      updateScenario(updatedScenario);
+      if (isProduction) {
+        void runComputeForScenario(updatedScenario);
+      }
+    },
+    [isProduction, runComputeForScenario, scenarios, updateScenario]
+  );
+
+  const updateScenarioCommissionBasis = useCallback(
+    (scenarioId: string, commissionBasis: "base_rent" | "gross_obligation") => {
+      const current = scenarios.find((s) => s.id === scenarioId);
+      if (!current) return;
+      const updatedScenario = normalizeScenarioEconomics({
+        ...current,
+        commission_applies_to: commissionBasis === "gross_obligation" ? "gross_obligation" : "base_rent",
+      });
+      updateScenario(updatedScenario);
+      if (isProduction) {
+        void runComputeForScenario(updatedScenario);
+      }
+    },
+    [isProduction, runComputeForScenario, scenarios, updateScenario]
+  );
+
   const renameScenario = useCallback((id: string, newName: string) => {
     setScenarios((prev) =>
       prev.map((s) => (s.id === id ? { ...s, name: newName.trim() || s.name } : s))
@@ -1376,6 +1424,7 @@ export default function Home() {
         if (isProduction && scenarios.every((s) => canonicalComputeCache[s.id])) {
           const items = scenarios.map((s) => {
             const res = canonicalComputeCache[s.id]!;
+            const sourceEngine = runMonthlyEngine(scenarioToCanonical(s), Number(s.discount_rate_annual ?? globalDiscountRate) || globalDiscountRate);
             const scenarioName = getPremisesDisplayName({
               building_name: res.metrics.building_name,
               suite: res.metrics.suite,
@@ -1390,6 +1439,9 @@ export default function Home() {
               sourceRsf: Math.max(0, Number(s.rsf) || 0),
               sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
               sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
+              sourceCommissionRate: Math.max(0, Number(s.commission_rate) || 0),
+              sourceCommissionAppliesTo: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
+              sourceCommissionAmount: Math.max(0, Number(sourceEngine.metrics.commissionAmount) || 0),
               sourceIsRemainingObligation: Boolean(s.is_remaining_obligation),
             };
           });
@@ -1408,6 +1460,7 @@ export default function Home() {
           if (isProduction && scenarios.every((s) => canonicalComputeCache[s.id])) {
             const items = scenarios.map((s) => {
               const res = canonicalComputeCache[s.id]!;
+              const sourceEngine = runMonthlyEngine(scenarioToCanonical(s), Number(s.discount_rate_annual ?? globalDiscountRate) || globalDiscountRate);
               const scenarioName = getPremisesDisplayName({
                 building_name: res.metrics.building_name,
                 suite: res.metrics.suite,
@@ -1422,6 +1475,9 @@ export default function Home() {
                 sourceRsf: Math.max(0, Number(s.rsf) || 0),
                 sourceTiBudgetTotal: effectiveTiBudgetTotal(s),
                 sourceTiAllowancePsf: effectiveTiAllowancePsf(s),
+                sourceCommissionRate: Math.max(0, Number(s.commission_rate) || 0),
+                sourceCommissionAppliesTo: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
+                sourceCommissionAmount: Math.max(0, Number(sourceEngine.metrics.commissionAmount) || 0),
                 sourceIsRemainingObligation: Boolean(s.is_remaining_obligation),
               };
             });
@@ -1896,6 +1952,8 @@ export default function Home() {
                   equalized={equalizedUi}
                   scenariosById={scenariosById}
                   onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
+                  onUpdateCommissionRate={updateScenarioCommissionRate}
+                  onUpdateCommissionBasis={updateScenarioCommissionBasis}
                 />
                 <Charts data={chartData} />
               </>

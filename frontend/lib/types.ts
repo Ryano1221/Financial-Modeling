@@ -2,6 +2,7 @@
 
 export type OpexMode = "nnn" | "base_year" | "full_service";
 export type TiSourceOfTruth = "psf" | "total";
+export type CommissionAppliesTo = "base_rent" | "gross_obligation";
 
 export interface RentStep {
   start: number;
@@ -86,6 +87,8 @@ export interface ScenarioInput {
   opex_by_calendar_year?: Record<string, number>;
   opex_growth: number;
   discount_rate_annual: number;
+  commission_rate?: number;
+  commission_applies_to?: CommissionAppliesTo;
   parking_spaces?: number;
   parking_cost_monthly_per_space?: number;
   parking_sales_tax_rate?: number;
@@ -122,6 +125,8 @@ export interface RenewalInput {
   base_opex_psf_yr: number;
   base_year_opex_psf_yr: number;
   opex_growth: number;
+  commission_rate?: number;
+  commission_applies_to?: CommissionAppliesTo;
   parking_spaces?: number;
   parking_cost_monthly_per_space?: number;
   parking_sales_tax_rate?: number;
@@ -143,6 +148,8 @@ export interface RelocationInput {
   downtime_months?: number;
   overlap_months?: number;
   broker_fee?: number;
+  commission_rate?: number;
+  commission_applies_to?: CommissionAppliesTo;
   parking_spaces?: number;
   parking_cost_monthly_per_space?: number;
   parking_sales_tax_rate?: number;
@@ -348,6 +355,8 @@ export interface BackendCanonicalLease {
   free_rent_periods?: Array<{ start_month: number; end_month: number; scope?: FreeRentAbatementType }>;
   parking_abatement_periods?: Array<{ start_month: number; end_month: number }>;
   discount_rate_annual: number;
+  commission_rate?: number;
+  commission_applies_to?: CommissionAppliesTo;
   rent_schedule: BackendRentScheduleStep[];
   phase_in_schedule?: BackendPhaseInStep[];
   opex_psf_year_1?: number;

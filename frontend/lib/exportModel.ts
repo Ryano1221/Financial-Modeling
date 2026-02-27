@@ -38,6 +38,9 @@ export const SUMMARY_MATRIX_ROW_LABELS = [
   "TI budget",
   "TI allowance ($/SF)",
   "TI out of pocket",
+  "Commission %",
+  "Commission basis",
+  "Commission",
   "Total obligation",
   "NPV cost",
   "Avg cost/year",
@@ -93,6 +96,9 @@ interface WorkbookScenario {
   tiBudget: number;
   tiAllowance: number;
   tiOutOfPocket: number;
+  commissionRate: number;
+  commissionAppliesTo: "base_rent" | "gross_obligation";
+  commissionAmount: number;
   totalObligation: number;
   npvCost: number;
   avgCostYear: number;
@@ -866,6 +872,11 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
           ? tiAllowanceTotal / result.metrics.rsf
           : 0,
       tiOutOfPocket: Math.max(0, scenario.tiSchedule.outOfPocket ?? 0),
+      commissionRate: Math.max(0, Number(result.metrics.commissionPercent ?? 0)) / 100,
+      commissionAppliesTo: (String(result.metrics.commissionBasis || "").toLowerCase().includes("gross")
+        ? "gross_obligation"
+        : "base_rent"),
+      commissionAmount: Math.max(0, Number(result.metrics.commissionAmount) || 0),
       totalObligation: totalObligationForExport,
       npvCost: result.metrics.npvAtDiscount,
       avgCostYear: result.metrics.avgAllInCostPerYear,
@@ -886,6 +897,9 @@ function buildScenariosFromCanonicalResponses(
     sourceRsf?: number;
     sourceTiBudgetTotal?: number;
     sourceTiAllowancePsf?: number;
+    sourceCommissionRate?: number;
+    sourceCommissionAppliesTo?: "base_rent" | "gross_obligation";
+    sourceCommissionAmount?: number;
     sourceIsRemainingObligation?: boolean;
   }[]
 ): WorkbookScenario[] {
@@ -969,6 +983,9 @@ function buildScenariosFromCanonicalResponses(
       tiBudget: tiBudgetTotal,
       tiAllowance: tiAllowancePsf || (resolvedRsf > 0 ? tiAllowanceTotal / resolvedRsf : 0),
       tiOutOfPocket: 0,
+      commissionRate: Math.max(0, Number(item.sourceCommissionRate) || 0),
+      commissionAppliesTo: item.sourceCommissionAppliesTo === "gross_obligation" ? "gross_obligation" : "base_rent",
+      commissionAmount: Math.max(0, Number(item.sourceCommissionAmount) || 0),
       totalObligation: totalObligationForExport,
       npvCost: m.npv_cost ?? 0,
       avgCostYear: safeDiv(m.total_obligation_nominal ?? 0, Math.max(1, (m.term_months ?? 1) / 12)),
@@ -1354,6 +1371,14 @@ function createSummarySheet(
     { type: "metric", label: "TI budget", format: "currency0", getter: (s) => s.tiBudget },
     { type: "metric", label: "TI allowance ($/SF)", format: "currency2", getter: (s) => s.tiAllowance },
     { type: "metric", label: "TI out of pocket", format: "currency0", getter: (s) => s.tiOutOfPocket },
+    { type: "metric", label: "Commission %", format: "percent", getter: (s) => s.commissionRate },
+    {
+      type: "metric",
+      label: "Commission basis",
+      format: "text",
+      getter: (s) => (s.commissionAppliesTo === "gross_obligation" ? "Gross obligation (OpEx not escalated)" : "Total base rent"),
+    },
+    { type: "metric", label: "Commission", format: "currency0", getter: (s) => s.commissionAmount },
     { type: "section", label: "SUMMARY METRICS" },
     {
       type: "metric",
@@ -2379,6 +2404,9 @@ export async function buildBrokerWorkbookFromCanonicalResponses(
     sourceRsf?: number;
     sourceTiBudgetTotal?: number;
     sourceTiAllowancePsf?: number;
+    sourceCommissionRate?: number;
+    sourceCommissionAppliesTo?: "base_rent" | "gross_obligation";
+    sourceCommissionAmount?: number;
     sourceIsRemainingObligation?: boolean;
   }[],
   meta?: WorkbookBrandingMeta
