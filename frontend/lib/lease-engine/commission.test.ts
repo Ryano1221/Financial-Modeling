@@ -74,4 +74,29 @@ describe("commission calculations", () => {
     expect(result.metrics.commissionAmount).toBeCloseTo(68000, 6);
     expect(result.metrics.commissionBasis).toBe("Gross obligation (OpEx not escalated)");
   });
+
+  it("computes NER as average base rate minus TI allowance, abatement, and commission (annualized $/SF)", () => {
+    const scenario = makeScenario({
+      rsf: 10000,
+      expiration: "2026-12-31",
+      rent_steps: [{ start: 0, end: 11, rate_psf_yr: 24 }],
+      base_opex_psf_yr: 10,
+      opex_growth: 0.03,
+      ti_allowance_psf: 2,
+      ti_budget_total: 0,
+      abatement_periods: [{ start_month: 0, end_month: 0, abatement_type: "base" }],
+      free_rent_months: 1,
+      commission_rate: 0.06,
+      commission_applies_to: "gross_obligation",
+    });
+    const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.08);
+
+    // Avg base rent = 24.00
+    // TI allowance annualized = 2.00
+    // Abatement annualized (1 month at $2/SF/month) = 2.00
+    // Commission annualized uses commission base from modeled cash flow stream:
+    // 6% * (base 220,000 + opex 100,000) / 10,000 = 1.92
+    // NER = 24 - 2 - 2 - 1.92 = 18.08
+    expect(result.metrics.netEffectiveRatePsfYr).toBeCloseTo(18.08, 6);
+  });
 });

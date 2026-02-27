@@ -45,8 +45,8 @@ const defaultScenarioInput: ScenarioInput = {
   base_year_opex_psf_yr: 10,
   opex_growth: 0.03,
   discount_rate_annual: 0.08,
-  commission_rate: 0,
-  commission_applies_to: "base_rent",
+  commission_rate: 0.06,
+  commission_applies_to: "gross_obligation",
   parking_spaces: 0,
   parking_cost_monthly_per_space: 0,
   parking_sales_tax_rate: 0.0825,
@@ -1216,6 +1216,9 @@ export function ScenarioForm({
             <option value="gross_obligation">Gross obligation (OpEx not escalated)</option>
           </select>
         </label>
+        <div className="block sm:col-span-2 xl:col-span-3 rounded-xl border border-slate-300/20 bg-slate-900/30 px-3 py-2 text-xs text-slate-300">
+          Commission defaults to 6% on gross obligation (with OpEx held flat for commission base) unless you override it.
+        </div>
         <label className="block">
           <span className="text-sm text-slate-300">Parking spaces</span>
           <input

@@ -24,6 +24,16 @@ function toNumber(value: unknown, fallback: number = 0): number {
   return fallback;
 }
 
+function normalizeCommissionRate(value: unknown, fallback = 0.06): number {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizeCommissionBasis(value: unknown): "base_rent" | "gross_obligation" {
+  return String(value || "").trim().toLowerCase() === "base_rent" ? "base_rent" : "gross_obligation";
+}
+
 function monthDiff(comm: string, expInclusive: string): number {
   const [cy, cm, cd] = comm.split("-").map(Number);
   const [ey, em, ed] = expInclusive.split("-").map(Number);
@@ -303,8 +313,8 @@ export function scenarioInputToBackendCanonical(
     free_rent_periods: effectiveAbatementPeriods,
     parking_abatement_periods: normalizedParkingAbatementPeriods,
     discount_rate_annual: s.discount_rate_annual ?? 0.08,
-    commission_rate: Math.max(0, Number(s.commission_rate) || 0),
-    commission_applies_to: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
+    commission_rate: normalizeCommissionRate(s.commission_rate, 0.06),
+    commission_applies_to: normalizeCommissionBasis(s.commission_applies_to),
     rent_schedule: (s.rent_steps ?? []).map((step) => ({
       start_month: step.start,
       end_month: step.end,
@@ -435,8 +445,8 @@ export function backendCanonicalToScenarioInput(
     base_year_opex_psf_yr: c.expense_stop_psf ?? c.opex_psf_year_1 ?? 0,
     opex_growth: c.opex_growth_rate ?? 0,
     discount_rate_annual: c.discount_rate_annual ?? 0.08,
-    commission_rate: Math.max(0, Number(c.commission_rate) || 0),
-    commission_applies_to: c.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
+    commission_rate: normalizeCommissionRate(c.commission_rate, 0.06),
+    commission_applies_to: normalizeCommissionBasis(c.commission_applies_to),
     parking_spaces: c.parking_count ?? 0,
     parking_cost_monthly_per_space: c.parking_rate_monthly ?? 0,
     parking_sales_tax_rate: c.parking_sales_tax_rate ?? 0.0825,
@@ -582,10 +592,10 @@ export function canonicalResponseToEngineResult(
       return null;
     }
   })();
-  const sourceCommissionRate = Math.max(0, Number(scenarioSource?.commission_rate) || 0);
-  const sourceCommissionBasis = scenarioSource?.commission_applies_to === "gross_obligation"
-    ? "gross_obligation"
-    : "base_rent";
+  const sourceCommissionRate = normalizeCommissionRate(scenarioSource?.commission_rate, 0.06);
+  const sourceCommissionBasis = scenarioSource?.commission_applies_to === "base_rent"
+    ? "base_rent"
+    : "gross_obligation";
   const fallbackCommissionBase = sourceCommissionBasis === "gross_obligation"
     ? Math.max(0, toNumber(m.base_rent_total, 0) + toNumber(m.opex_total, 0))
     : Math.max(0, toNumber(m.base_rent_total, 0));
@@ -659,6 +669,17 @@ export function canonicalResponseToEngineResult(
     }
     return Math.max(0, toNumber(m.avg_all_in_cost_psf_year, 0));
   })();
+  const netEffectiveRatePsfYr = sourceEngineResult
+    ? toNumber(sourceEngineResult.metrics.netEffectiveRatePsfYr, 0)
+    : (() => {
+        const metricRsf = Math.max(0, toNumber(m.rsf, 0));
+        const termYears = termMonths > 0 ? termMonths / 12 : 0;
+        if (metricRsf <= 0 || termYears <= 0) return 0;
+        const abatementPsfAnnualized = effectiveAbatementAmount / termYears / metricRsf;
+        const tiAllowancePsfAnnualized = tiAllowanceTotal / termYears / metricRsf;
+        const commissionPsfAnnualized = commissionAmount / termYears / metricRsf;
+        return effectiveBaseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
+      })();
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",
     suiteName: getSuiteOrFloorDisplay(m.suite, m.floor),
@@ -699,6 +720,7 @@ export function canonicalResponseToEngineResult(
     commissionPercent,
     commissionBasis: commissionBasisLabel,
     commissionAmount,
+    netEffectiveRatePsfYr,
     discountRateUsed: m.discount_rate_annual ?? 0.08,
     totalObligation: totalObligationEffective,
     equalizedAvgCostPsfYr: m.equalized_avg_cost_psf_year ?? 0,

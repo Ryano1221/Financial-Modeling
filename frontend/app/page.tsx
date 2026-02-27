@@ -370,11 +370,16 @@ function normalizeScenarioParkingTax<T extends ScenarioInput | ScenarioWithId>(s
 }
 
 function normalizeScenarioCommission<T extends ScenarioInput | ScenarioWithId>(scenario: T): T {
-  const commissionRateRaw = Number((scenario as ScenarioInput | ScenarioWithId).commission_rate);
-  const commissionRate = Number.isFinite(commissionRateRaw) && commissionRateRaw > 0 ? commissionRateRaw : 0;
-  const commissionBasis = (scenario as ScenarioInput | ScenarioWithId).commission_applies_to === "gross_obligation"
-    ? "gross_obligation"
-    : "base_rent";
+  const input = scenario as ScenarioInput | ScenarioWithId;
+  const rawRate = (input.commission_rate as unknown);
+  const parsedRate = Number(rawRate);
+  const commissionRate =
+    rawRate === undefined || rawRate === null || String(rawRate).trim() === ""
+      ? 0.06
+      : (Number.isFinite(parsedRate) && parsedRate >= 0 ? parsedRate : 0.06);
+  const commissionBasis = input.commission_applies_to === "base_rent"
+    ? "base_rent"
+    : "gross_obligation";
   return {
     ...scenario,
     commission_rate: commissionRate,

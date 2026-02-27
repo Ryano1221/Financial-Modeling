@@ -41,6 +41,7 @@ export const SUMMARY_MATRIX_ROW_LABELS = [
   "Commission %",
   "Commission basis",
   "Commission",
+  "NER (Net Effective Rate)",
   "Total obligation",
   "NPV cost",
   "Avg cost/year",
@@ -99,6 +100,7 @@ interface WorkbookScenario {
   commissionRate: number;
   commissionAppliesTo: "base_rent" | "gross_obligation";
   commissionAmount: number;
+  netEffectiveRatePsfYear: number;
   totalObligation: number;
   npvCost: number;
   avgCostYear: number;
@@ -877,6 +879,7 @@ function buildScenariosFromCanonical(scenarios: LeaseScenarioCanonical[], result
         ? "gross_obligation"
         : "base_rent"),
       commissionAmount: Math.max(0, Number(result.metrics.commissionAmount) || 0),
+      netEffectiveRatePsfYear: Number(result.metrics.netEffectiveRatePsfYr ?? 0),
       totalObligation: totalObligationForExport,
       npvCost: result.metrics.npvAtDiscount,
       avgCostYear: result.metrics.avgAllInCostPerYear,
@@ -958,6 +961,12 @@ function buildScenariosFromCanonicalResponses(
       ...(item.response.assumptions ?? []),
       ...(item.response.warnings ?? []),
     ].filter(Boolean).join(". ");
+    const termYears = termMonths > 0 ? termMonths / 12 : 0;
+    const baseRentPsfYr = resolvedRsf > 0 && termYears > 0 ? (m.base_rent_total ?? 0) / termYears / resolvedRsf : 0;
+    const tiAllowancePsfAnnualized = resolvedRsf > 0 && termYears > 0 ? tiAllowanceTotal / termYears / resolvedRsf : 0;
+    const abatementPsfAnnualized = resolvedRsf > 0 && termYears > 0 ? (m.free_rent_value_total ?? 0) / termYears / resolvedRsf : 0;
+    const commissionPsfAnnualized = resolvedRsf > 0 && termYears > 0 ? (Math.max(0, Number(item.sourceCommissionAmount) || 0) / termYears / resolvedRsf) : 0;
+    const netEffectiveRatePsfYear = baseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
     return {
       id: `canonical-${idx + 1}`,
       name: normalizeText(item.scenarioName, `Scenario ${idx + 1}`),
@@ -986,6 +995,7 @@ function buildScenariosFromCanonicalResponses(
       commissionRate: Math.max(0, Number(item.sourceCommissionRate) || 0),
       commissionAppliesTo: item.sourceCommissionAppliesTo === "gross_obligation" ? "gross_obligation" : "base_rent",
       commissionAmount: Math.max(0, Number(item.sourceCommissionAmount) || 0),
+      netEffectiveRatePsfYear,
       totalObligation: totalObligationForExport,
       npvCost: m.npv_cost ?? 0,
       avgCostYear: safeDiv(m.total_obligation_nominal ?? 0, Math.max(1, (m.term_months ?? 1) / 12)),
@@ -1379,6 +1389,7 @@ function createSummarySheet(
       getter: (s) => (s.commissionAppliesTo === "gross_obligation" ? "Gross obligation (OpEx not escalated)" : "Total base rent"),
     },
     { type: "metric", label: "Commission", format: "currency0", getter: (s) => s.commissionAmount },
+    { type: "metric", label: "NER (Net Effective Rate)", format: "currency2", getter: (s) => s.netEffectiveRatePsfYear },
     { type: "section", label: "SUMMARY METRICS" },
     {
       type: "metric",

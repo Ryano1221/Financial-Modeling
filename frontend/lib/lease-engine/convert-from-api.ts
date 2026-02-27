@@ -94,8 +94,13 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
     isRemainingObligation: Boolean(s.is_remaining_obligation),
     documentTypeDetected: (s.document_type_detected ?? "").trim() || undefined,
     discountRateAnnual: s.discount_rate_annual,
-    commissionRate: Math.max(0, Number(s.commission_rate) || 0),
-    commissionAppliesTo: s.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent",
+    commissionRate: (() => {
+      const raw = s.commission_rate;
+      if (raw === undefined || raw === null || String(raw).trim() === "") return 0.06;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0.06;
+    })(),
+    commissionAppliesTo: s.commission_applies_to === "base_rent" ? "base_rent" : "gross_obligation",
     partyAndPremises: {
       premisesName,
       premisesLabel: buildingName,

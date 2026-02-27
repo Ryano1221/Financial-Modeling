@@ -210,6 +210,8 @@ describe("exportModel institutional workbook", () => {
           expect(value).toHaveProperty("formula");
         }
       });
+      const nerRow = findRowByFirstCell(summary, "NER (Net Effective Rate)");
+      expect(nerRow).not.toBeNull();
       if (discountRateAssumptionRow != null) expect(summary.pageSetup.printArea).toBe(`A1:E${discountRateAssumptionRow}`);
       expect(summary.pageSetup.horizontalCentered).toBe(true);
 

@@ -91,6 +91,7 @@ export interface OptionMetrics {
   commissionPercent: number;
   commissionBasis: string;
   commissionAmount: number;
+  netEffectiveRatePsfYr: number;
   discountRateUsed: number;
   totalObligation: number;
   equalizedAvgCostPsfYr: number;
@@ -123,6 +124,13 @@ function commissionBasisLabel(value: "base_rent" | "gross_obligation"): string {
   return value === "gross_obligation"
     ? "Gross obligation (OpEx not escalated)"
     : "Total base rent";
+}
+
+function normalizeCommissionRateDecimal(raw: unknown): number {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  const asDecimal = parsed > 1 ? parsed / 100 : parsed;
+  return Math.min(1, Math.max(0, asDecimal));
 }
 
 function preCommencementDiscountMonths(commencementDate: string): number {
@@ -653,7 +661,7 @@ export function runMonthlyEngine(
   const parkingCostPerSpotMonthly = parkingCostPerSpotMonthlyPreTax * (1 + parkingTaxPct);
   const grossRentNominal = baseRent.reduce((a, b) => a + b, 0) + opex.reduce((a, b) => a + b, 0);
   const baseRentNominal = baseRent.reduce((a, b) => a + b, 0);
-  const commissionRate = Math.max(0, Number(scenario.commissionRate) || 0);
+  const commissionRate = normalizeCommissionRateDecimal(scenario.commissionRate);
   const commissionBasis = normalizeCommissionBasis(scenario.commissionAppliesTo);
   const opexNoEscalation = monthlyOpex(
     termMonths,
@@ -682,6 +690,17 @@ export function runMonthlyEngine(
   const commissionAmount = commissionRate > 0 ? commissionBase * commissionRate : 0;
   const parkingNominal = parking.reduce((a, b) => a + b, 0);
   const parkingCostMonthly = parkingNominal / Math.max(1, termMonths);
+  const tiAllowancePsfAnnualized = years > 0 && avgRsfTerm > 0
+    ? tiAllowanceTotal / years / avgRsfTerm
+    : 0;
+  const abatementPsfAnnualized = years > 0 && avgRsfTerm > 0
+    ? abatementAmount / years / avgRsfTerm
+    : 0;
+  const commissionPsfAnnualized = years > 0 && avgRsfTerm > 0
+    ? commissionAmount / years / avgRsfTerm
+    : 0;
+  const netEffectiveRatePsfYr =
+    avgBaseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
   const metrics: OptionMetrics = {
     buildingName,
     suiteName,
@@ -716,6 +735,7 @@ export function runMonthlyEngine(
     commissionPercent: commissionRate * 100,
     commissionBasis: commissionBasisLabel(commissionBasis),
     commissionAmount,
+    netEffectiveRatePsfYr,
     discountRateUsed: discountRate,
     totalObligation,
     equalizedAvgCostPsfYr: equalizedAvgPsfYr,
