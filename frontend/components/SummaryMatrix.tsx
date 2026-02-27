@@ -14,8 +14,6 @@ interface SummaryMatrixProps {
   equalized?: EqualizedComparisonResult;
   scenariosById?: Record<string, ScenarioWithId>;
   onUpdateTiBudgetPsf?: (scenarioId: string, value: number) => void;
-  onUpdateCommissionRate?: (scenarioId: string, value: number) => void;
-  onUpdateCommissionBasis?: (scenarioId: string, value: "base_rent" | "gross_obligation") => void;
 }
 
 export function SummaryMatrix({
@@ -23,11 +21,8 @@ export function SummaryMatrix({
   equalized,
   scenariosById,
   onUpdateTiBudgetPsf,
-  onUpdateCommissionRate,
-  onUpdateCommissionBasis,
 }: SummaryMatrixProps) {
   const [tiBudgetDrafts, setTiBudgetDrafts] = useState<Record<string, string>>({});
-  const [commissionRateDrafts, setCommissionRateDrafts] = useState<Record<string, string>>({});
   if (results.length === 0) return null;
 
   const matrixMetricKeys = METRIC_LABELS.filter(
@@ -73,27 +68,6 @@ export function SummaryMatrix({
     const parsed = Number(draft.replace(/,/g, ""));
     if (!Number.isFinite(parsed)) return;
     onUpdateTiBudgetPsf(scenarioId, Math.max(0, parsed));
-  };
-
-  const getCommissionRateFromScenario = (scenarioId: string): number => {
-    const scenario = scenariosById?.[scenarioId];
-    if (!scenario) return 0;
-    const raw = Math.max(0, Number(scenario.commission_rate) || 0);
-    return raw <= 1 ? round2(raw * 100) : round2(raw);
-  };
-
-  const commitCommissionRateEdit = (scenarioId: string) => {
-    const draft = (commissionRateDrafts[scenarioId] ?? "").trim();
-    setCommissionRateDrafts((prev) => {
-      const next = { ...prev };
-      delete next[scenarioId];
-      return next;
-    });
-    if (!onUpdateCommissionRate || draft.length === 0) return;
-    const parsed = Number(draft.replace(/,/g, ""));
-    if (!Number.isFinite(parsed)) return;
-    const asDecimal = parsed > 1 ? parsed / 100 : parsed;
-    onUpdateCommissionRate(scenarioId, Math.max(0, asDecimal));
   };
 
   const getNotes = (formatted: string) =>
@@ -285,66 +259,6 @@ export function SummaryMatrix({
     );
   };
 
-  const renderCommissionRateCell = (scenarioId: string) => {
-    const scenario = scenariosById?.[scenarioId];
-    const currentRate = getCommissionRateFromScenario(scenarioId);
-    const draft = commissionRateDrafts[scenarioId];
-    const value = draft ?? String(currentRate);
-    const disabled = !scenario || !onUpdateCommissionRate;
-    return (
-      <input
-        type="text"
-        value={value}
-        disabled={disabled}
-        inputMode="decimal"
-        autoComplete="off"
-        onChange={(e) =>
-          setCommissionRateDrafts((prev) => ({
-            ...prev,
-            [scenarioId]: e.target.value,
-          }))
-        }
-        onBlur={() => commitCommissionRateEdit(scenarioId)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.currentTarget.blur();
-          } else if (e.key === "Escape") {
-            setCommissionRateDrafts((prev) => {
-              const next = { ...prev };
-              delete next[scenarioId];
-              return next;
-            });
-          }
-        }}
-        className="input-premium inline-block w-28 min-h-0 py-1 px-2 text-right text-xs sm:text-sm"
-        aria-label="Commission rate percent"
-      />
-    );
-  };
-
-  const renderCommissionBasisCell = (scenarioId: string) => {
-    const scenario = scenariosById?.[scenarioId];
-    const disabled = !scenario || !onUpdateCommissionBasis;
-    const value = scenario?.commission_applies_to === "gross_obligation" ? "gross_obligation" : "base_rent";
-    return (
-      <select
-        value={value}
-        disabled={disabled}
-        onChange={(e) =>
-          onUpdateCommissionBasis?.(
-            scenarioId,
-            e.target.value === "gross_obligation" ? "gross_obligation" : "base_rent"
-          )
-        }
-        className="input-premium inline-block w-60 min-h-0 py-1 px-2 text-xs sm:text-sm"
-        aria-label="Commission basis"
-      >
-        <option value="base_rent">Total base rent</option>
-        <option value="gross_obligation">Gross obligation (OpEx not escalated)</option>
-      </select>
-    );
-  };
-
   const overarchingNotes = buildOverarchingAssumptionNotes(
     results.map((r) => Number(r.metrics.discountRateUsed))
   );
@@ -386,10 +300,6 @@ export function SummaryMatrix({
                         )
                       ) : key === "tiBudget" ? (
                         renderTiBudgetCell(r.scenarioId)
-                      ) : key === "commissionPercent" ? (
-                        renderCommissionRateCell(r.scenarioId)
-                      ) : key === "commissionBasis" ? (
-                        renderCommissionBasisCell(r.scenarioId)
                       ) : (
                         formatted
                       )}
@@ -446,10 +356,6 @@ export function SummaryMatrix({
                         )
                       ) : key === "tiBudget" ? (
                         renderTiBudgetCell(r.scenarioId)
-                      ) : key === "commissionPercent" ? (
-                        renderCommissionRateCell(r.scenarioId)
-                      ) : key === "commissionBasis" ? (
-                        renderCommissionBasisCell(r.scenarioId)
                       ) : (
                         formatted
                       )}

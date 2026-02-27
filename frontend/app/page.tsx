@@ -1962,8 +1962,6 @@ export default function Home() {
                   equalized={equalizedUi}
                   scenariosById={scenariosById}
                   onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
-                  onUpdateCommissionRate={updateScenarioCommissionRate}
-                  onUpdateCommissionBasis={updateScenarioCommissionBasis}
                 />
                 <Charts data={chartData} />
               </>
