@@ -1,5 +1,9 @@
 import { formatPercent } from "@/lib/format";
 
+interface OverarchingAssumptionOptions {
+  includeCommissionNote?: boolean;
+}
+
 function normalizeDiscountRates(discountRates: number[]): number[] {
   return discountRates.filter((rate) => Number.isFinite(rate) && rate >= 0);
 }
@@ -20,14 +24,20 @@ function buildDiscountRateAssumption(discountRates: number[]): string {
   return "Scenario-specific discount rates are used.";
 }
 
-export function buildOverarchingAssumptionNotes(discountRates: number[]): string[] {
-  return [
+export function buildOverarchingAssumptionNotes(
+  discountRates: number[],
+  options?: OverarchingAssumptionOptions
+): string[] {
+  const notes: string[] = [
     "Gross Rental Rates include all standard operating expenses.",
     "Tenant Improvement Costs shown are assumptions based on the below high-level estimates.",
     "TI out of Pocket is the difference between estimated tenant buildout costs and tenant allowance.",
     "Total Estimated Obligation includes full service rental costs, buildout costs, and parking.",
-    "Landlord's Net Effective Return includes total net rent less concession and lease commission.",
     "Numbers are pre-tax dollars and do not take into account depreciation for upfront costs (parking includes sales tax if applicable).",
-    buildDiscountRateAssumption(discountRates),
   ];
+  if (options?.includeCommissionNote ?? true) {
+    notes.push("Landlord's Net Effective Return includes total net rent less concession and lease commission.");
+  }
+  notes.push(buildDiscountRateAssumption(discountRates));
+  return notes;
 }

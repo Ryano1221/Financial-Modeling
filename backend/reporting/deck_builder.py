@@ -1977,7 +1977,6 @@ def _comparison_overarching_notes(entries: list[dict[str, Any]]) -> list[str]:
         "Tenant Improvement Costs shown are assumptions based on the below high-level estimates.",
         "TI out of Pocket is the difference between estimated tenant buildout costs and tenant allowance.",
         "Total Estimated Obligation includes full service rental costs, buildout costs, and parking.",
-        "Landlord's Net Effective Return includes total net rent less concession and lease commission.",
         "Numbers are pre-tax dollars and do not take into account depreciation for upfront costs (parking includes sales tax if applicable).",
         _comparison_discount_rate_note(entries),
     ]

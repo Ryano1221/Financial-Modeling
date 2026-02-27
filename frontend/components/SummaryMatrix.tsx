@@ -78,7 +78,8 @@ export function SummaryMatrix({
   const getCommissionRateFromScenario = (scenarioId: string): number => {
     const scenario = scenariosById?.[scenarioId];
     if (!scenario) return 0;
-    return Math.max(0, Number(scenario.commission_rate) || 0);
+    const raw = Math.max(0, Number(scenario.commission_rate) || 0);
+    return raw <= 1 ? round2(raw * 100) : round2(raw);
   };
 
   const commitCommissionRateEdit = (scenarioId: string) => {
@@ -91,7 +92,8 @@ export function SummaryMatrix({
     if (!onUpdateCommissionRate || draft.length === 0) return;
     const parsed = Number(draft.replace(/,/g, ""));
     if (!Number.isFinite(parsed)) return;
-    onUpdateCommissionRate(scenarioId, Math.max(0, parsed));
+    const asDecimal = parsed > 1 ? parsed / 100 : parsed;
+    onUpdateCommissionRate(scenarioId, Math.max(0, asDecimal));
   };
 
   const getNotes = (formatted: string) =>
@@ -315,7 +317,7 @@ export function SummaryMatrix({
           }
         }}
         className="input-premium inline-block w-28 min-h-0 py-1 px-2 text-right text-xs sm:text-sm"
-        aria-label="Commission rate as decimal"
+        aria-label="Commission rate percent"
       />
     );
   };
