@@ -220,3 +220,57 @@ def test_regex_prefill_ignores_timeline_dates_and_parses_ordinal_and_through_dat
     assert prefill.get("expiration") == "2033-08-30"
     assert prefill.get("term_months") in {63, 64}
     assert prefill.get("name") == "Aspen Lake 2"
+
+
+def test_regex_prefill_parses_annual_anniversary_increase_phrase() -> None:
+    text = (
+        "Premises: Suite 400 consisting of 4,949 RSF.\n"
+        "Lease Commencement: December 1, 2026.\n"
+        "Lease Term: One hundred twenty-seven (127) months.\n"
+        "Base Rent: $33.00 per RSF NNN with 3% increases on the annual anniversary of the Lease Commencement.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 33.0}
+    assert steps[1]["rate_psf_yr"] == 33.99
+    assert steps[-1]["end"] == 126
+
+
+def test_regex_prefill_parses_label_value_escalation_with_percent_parenthetical() -> None:
+    text = (
+        "Premises: Suite 230 consisting of 3,947 RSF.\n"
+        "Lease Commencement: May 1, 2027.\n"
+        "Lease Expiration: April 30, 2032.\n"
+        "Base Rent | $42.00/SF\n"
+        "Annual Base Rent Escalation (%) | 3.00%\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 42.0}
+    assert steps[1]["rate_psf_yr"] == 43.26
+
+
+def test_regex_prefill_prefers_parking_ratio_derived_count_over_small_inline_count() -> None:
+    text = (
+        "Premises: Suite 400 consisting of 4,949 RSF.\n"
+        "Parking ratio per 1,000 RSF: 4.0\n"
+        "Parking: on a must-take basis, four (4) parking spaces at $100 per month.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("parking_ratio_per_1000_rsf") == 4.0
+    assert prefill.get("parking_spaces") == 20
+    assert prefill.get("parking_cost_monthly_per_space") == 100.0
+
+
+def test_regex_prefill_free_rent_ignores_renewal_notice_months() -> None:
+    text = (
+        "TERM AND FREE RENT: One hundred twenty-seven (127) months, with seven (7) months base free rent.\n"
+        "RENEWAL RIGHT: Tenant shall provide written notice no earlier than twelve (12) months nor later than nine (9) months prior to lease expiration.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("term_months") == 127
+    assert prefill.get("free_rent_months") == 7

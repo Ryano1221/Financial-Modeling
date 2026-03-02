@@ -3017,15 +3017,16 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
     candidates: list[tuple[int, float, int]] = []
     patterns: list[tuple[str, int, int]] = [
         (
-            r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
-            r"(?:increase|increases|escalation|escalations|escalator)\b",
+            r"(?i)\b(\d+(?:\.\d+)?)%\s+"
+            r"(?:(?:annual(?:ly)?\s+(?:(?:base\s+)?rent(?:al)?(?:\s+rate)?\s+)?)?(?:increase|increases|escalation|escalations|escalator)\b"
+            r"|(?:increase|increases|escalation|escalations|escalator)\b[^\n]{0,60}\bannual(?:ly| anniversary)?\b)",
             1,
             4,
         ),
         (
             r"(?i)\bannual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
             r"(?:increase|increases|escalation|escalations|escalator)\b"
-            r"(?:\s*[:|=]\s*|[^\n%]{0,120}?)(\d+(?:\.\d+)?)\s*%",
+            r"(?:\s*[:|=]\s*|[^\n]{0,140}?)(\d+(?:\.\d+)?)\s*%",
             1,
             4,
         ),
@@ -3035,6 +3036,13 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
             r"(\d+(?:\.\d+)?)\s*%\s*(?:per\s+year|annually|annual(?:ly)?)?",
             1,
             5,
+        ),
+        (
+            r"(?i)\b(?:base\s+rent(?:al)?(?:\s+rate)?|rent(?:al)?\s+rate)\b[^\n]{0,180}?"
+            r"(\d+(?:\.\d+)?)\s*%\s*(?:increase(?:s|d)?|escalat(?:e|ed|ion|ions)|escalator)\b"
+            r"[^\n]{0,80}\bannual(?:ly| anniversary)?\b",
+            1,
+            6,
         ),
     ]
     for pattern, group_index, base_score in patterns:
@@ -6661,15 +6669,19 @@ def _normalize_impl(
             if hinted_parking_rate > 0:
                 updates["parking_rate_monthly"] = hinted_parking_rate
             hinted_parking_count = _coerce_int_token(extracted_hints.get("parking_count"), 0)
+            effective_rsf = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0)
+            inferred_count = 0
+            if hinted_parking_ratio > 0 and effective_rsf > 0:
+                inferred_count = int(round((hinted_parking_ratio * effective_rsf) / 1000.0))
             if hinted_parking_count > 0:
-                updates["parking_count"] = hinted_parking_count
+                if inferred_count > 0 and hinted_parking_count < int(round(inferred_count * 0.6)):
+                    updates["parking_count"] = inferred_count
+                else:
+                    updates["parking_count"] = hinted_parking_count
             elif hinted_parking_ratio > 0:
                 existing_count = _coerce_int_token(updates.get("parking_count", canonical.parking_count), 0)
-                effective_rsf = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0)
-                if existing_count <= 0 and effective_rsf > 0:
-                    inferred_count = int(round((hinted_parking_ratio * effective_rsf) / 1000.0))
-                    if inferred_count > 0:
-                        updates["parking_count"] = inferred_count
+                if existing_count <= 0 and inferred_count > 0:
+                    updates["parking_count"] = inferred_count
 
             target_term_months = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0
             if target_term_months > 0 and canonical.rent_schedule:

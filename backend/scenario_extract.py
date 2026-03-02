@@ -393,17 +393,32 @@ def extract_text_from_docx(file: BinaryIO) -> str:
                     continue
             return image_chunks
 
-        # OCR embedded DOCX images only when rent economics look incomplete.
+        # OCR embedded DOCX images only when key economics look incomplete.
         current_text = "\n\n".join(parts)
+        current_low = current_text.lower()
         has_base_rent_amount = bool(
             re.search(
                 r"(?is)\b(?:base\s+(?:annual\s+net\s+)?rental?\s+rate|base\s+rent)\b[^\n]{0,140}\$\s*[\d,]+(?:\.\d+)?",
                 current_text,
             )
         )
+        has_parking_language = "parking" in current_low
+        has_structured_parking_data = bool(
+            re.search(
+                r"(?i)\b(?:parking\s+ratio|#\s*reserved\s+(?:paid\s+)?spaces?|#\s*unreserved\s+(?:paid\s+)?spaces?|total\s*#?\s*paid\s+spaces)\b"
+                r"|(?:\d+(?:\.\d+)?)\s*(?:/|per)\s*1,?000\s*(?:rsf|sf)\b",
+                current_text,
+            )
+        )
+        has_explicit_escalation = bool(
+            re.search(
+                r"(?i)\b(?:annual\s+base\s+rent\s+escalation|annual\s+rental\s+increases?|base\s+rent\b[^\n]{0,140}\d+(?:\.\d+)?%\s*(?:increase|escalat))\b",
+                current_text,
+            )
+        )
         should_ocr_images = bool(
             re.search(r"(?i)\b(as\s+shown\s+on\s+the\s+attached\s+schedule|attached\s+schedule|rent\s+schedule)\b", current_text)
-        ) or not has_base_rent_amount
+        ) or not has_base_rent_amount or (has_parking_language and not has_structured_parking_data) or not has_explicit_escalation
         if should_ocr_images:
             parts.extend(_extract_docx_image_ocr_chunks(raw_bytes))
 
@@ -725,18 +740,24 @@ _RE_ANNUAL_ESCALATION = re.compile(
     r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+escalat(?:ion|ions)\b[^\n]{0,80}\bstarting\s+in\s+month\s*(\d{1,3})\b"
 )
 _RE_ANNUAL_ESCALATION_GENERIC = re.compile(
-    r"(?i)\b(\d+(?:\.\d+)?)%\s+annual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
-    r"(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+    r"(?i)\b(\d+(?:\.\d+)?)%\s+"
+    r"(?:(?:annual(?:ly)?\s+(?:(?:base\s+)?rent(?:al)?(?:\s+rate)?\s+)?)?(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+    r"|(?:increase(?:s)?|escalat(?:ion|ions)|escalator)\b[^\n]{0,60}\bannual(?:ly| anniversary)?\b)"
 )
 _RE_ANNUAL_ESCALATION_LABEL_VALUE = re.compile(
     r"(?i)\bannual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
     r"(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
-    r"(?:\s*[:|=]\s*|[^\n%]{0,120}?)(\d+(?:\.\d+)?)\s*%"
+    r"(?:\s*[:|=]\s*|[^\n]{0,140}?)(\d+(?:\.\d+)?)\s*%"
 )
 _RE_BASE_RENT_INCREASE_PERCENT_AFTER = re.compile(
     r"(?i)\b(?:base\s+rent(?:al)?(?:\s+rate)?|rent(?:al)?\s+rate)\b[^\n]{0,120}?"
     r"\b(?:increase(?:s|d)?|escalat(?:e|ed|ion|ions)|escalator)\b[^\n%]{0,80}?"
     r"(\d+(?:\.\d+)?)\s*%\s*(?:per\s+year|annually|annual(?:ly)?)?"
+)
+_RE_BASE_RENT_PERCENT_INCREASE_ANNUAL_LATER = re.compile(
+    r"(?i)\b(?:base\s+rent(?:al)?(?:\s+rate)?|rent(?:al)?\s+rate)\b[^\n]{0,180}?"
+    r"(\d+(?:\.\d+)?)\s*%\s*(?:increase(?:s|d)?|escalat(?:e|ed|ion|ions)|escalator)\b"
+    r"[^\n]{0,80}\bannual(?:ly| anniversary)?\b"
 )
 
 
@@ -748,6 +769,7 @@ def _extract_annual_rent_escalation_pct(text: str) -> float | None:
         (_RE_ANNUAL_ESCALATION_GENERIC, 1, 4),
         (_RE_ANNUAL_ESCALATION_LABEL_VALUE, 1, 4),
         (_RE_BASE_RENT_INCREASE_PERCENT_AFTER, 1, 5),
+        (_RE_BASE_RENT_PERCENT_INCREASE_ANNUAL_LATER, 1, 6),
     )
     for pattern, group_index, base_score in patterns:
         for match in pattern.finditer(text):
@@ -1574,13 +1596,40 @@ def _regex_prefill(text: str) -> dict:
             ti_allowance_psf = float(ti_allowance_total) / float(rsf_for_ti)
     if ti_allowance_psf is not None:
         prefill["ti_allowance_psf"] = float(round(ti_allowance_psf, 4))
-    # Free rent months
-    m = _RE_FREE_RENT.search(text)
-    if m:
-        try:
-            prefill["free_rent_months"] = int(m.group(1))
-        except (ValueError, IndexError):
-            pass
+    # Free rent months (line-aware; avoid renewal notice month counts).
+    free_rent_candidates: list[tuple[int, int, int]] = []
+    for line_idx, raw_line in enumerate([ln.strip() for ln in text.splitlines() if ln.strip()]):
+        line = raw_line.lower()
+        if not any(tok in line for tok in ("free rent", "abatement", "abated")):
+            continue
+        if any(tok in line for tok in ("renewal", "option", "notice", "no earlier than", "no later than", "prior to")):
+            continue
+        for m in re.finditer(
+            r"(?i)\b(?:with\s+)?(?:the\s+first\s+)?(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b",
+            raw_line,
+        ):
+            count = _coerce_int_token(m.group(1), 0) or _coerce_int_token(m.group(2), 0) or 0
+            if count <= 0:
+                continue
+            score = 4
+            if "term and free rent" in line:
+                score += 4
+            if "base free rent" in line:
+                score += 2
+            if count >= 60:
+                score -= 6
+            free_rent_candidates.append((score, line_idx, int(count)))
+        m = _RE_FREE_RENT.search(raw_line)
+        if m:
+            count = _coerce_int_token(m.group(1), 0) or 0
+            if count > 0:
+                score = 2
+                if "term and free rent" in line:
+                    score += 4
+                free_rent_candidates.append((score, line_idx, int(count)))
+    if free_rent_candidates:
+        free_rent_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
+        prefill["free_rent_months"] = int(free_rent_candidates[0][2])
     # Base opex $/sf
     m = _RE_BASE_OPEX.search(text)
     if m:
@@ -1750,6 +1799,23 @@ def _regex_prefill(text: str) -> dict:
         prefill["name"] = f"Suite {suite}"
 
     # Parking economics used by deterministic fallback when AI is unavailable.
+    parking_ratio_patterns = [
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:/|per)\s*1,?000\s*(?:rsf|sf|square\s*feet|spaces?)\b",
+        r"(?i)\bparking\s+ratio\b[^.\n]{0,80}\b(\d+(?:\.\d+)?)\s*(?:/|per|:)\s*1,?000\b",
+        r"(?i)\bparking\s+ratio\s*(?:/|per)?\s*1,?000\s*(?:rsf|sf|square\s*feet)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
+    ]
+    best_parking_ratio: float | None = None
+    for pat in parking_ratio_patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        ratio = _coerce_float_token(m.group(1), 0.0) or 0.0
+        if 0.1 <= ratio <= 30:
+            best_parking_ratio = float(ratio)
+            break
+    if best_parking_ratio is not None:
+        prefill["parking_ratio_per_1000_rsf"] = float(best_parking_ratio)
+
     parking_count_patterns = [
         r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
         r"(?i)\b(\d{1,4})\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
@@ -1763,6 +1829,28 @@ def _regex_prefill(text: str) -> dict:
         if count and 1 <= count <= 10000:
             prefill["parking_spaces"] = int(count)
             break
+    reserved_count_match = re.search(r"(?i)\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
+    unreserved_count_match = re.search(r"(?i)\b#?\s*unreserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
+    total_paid_spaces_match = re.search(r"(?i)\btotal\s*#?\s*paid\s+spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
+    reserved_count = _coerce_int_token(reserved_count_match.group(1), 0) if reserved_count_match else 0
+    unreserved_count = _coerce_int_token(unreserved_count_match.group(1), 0) if unreserved_count_match else 0
+    if reserved_count or unreserved_count:
+        prefill["parking_spaces"] = max(0, int(reserved_count or 0)) + max(0, int(unreserved_count or 0))
+    elif total_paid_spaces_match:
+        total_paid_spaces = _coerce_int_token(total_paid_spaces_match.group(1), 0) or 0
+        if total_paid_spaces > 0:
+            prefill["parking_spaces"] = int(total_paid_spaces)
+
+    ratio = _coerce_float_token(prefill.get("parking_ratio_per_1000_rsf"), 0.0) or 0.0
+    rsf_val = _coerce_float_token(prefill.get("rsf"), 0.0) or 0.0
+    if ratio > 0 and rsf_val > 0:
+        derived_from_ratio = int(round((ratio * rsf_val) / 1000.0))
+        existing_spaces = _coerce_int_token(prefill.get("parking_spaces"), 0) or 0
+        if derived_from_ratio > 0 and (
+            existing_spaces <= 0
+            or derived_from_ratio >= int(round(existing_spaces * 1.5))
+        ):
+            prefill["parking_spaces"] = int(derived_from_ratio)
 
     parking_rate_patterns = [
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\s*(?:per|\/)\s*month\b",
