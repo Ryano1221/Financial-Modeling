@@ -6670,15 +6670,18 @@ def _normalize_impl(
                 updates["parking_rate_monthly"] = hinted_parking_rate
             hinted_parking_count = _coerce_int_token(extracted_hints.get("parking_count"), 0)
             effective_rsf = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0)
+            ratio_for_count = hinted_parking_ratio
+            if ratio_for_count <= 0:
+                ratio_for_count = _coerce_float_token(updates.get("parking_ratio", canonical.parking_ratio), 0.0)
             inferred_count = 0
-            if hinted_parking_ratio > 0 and effective_rsf > 0:
-                inferred_count = int(round((hinted_parking_ratio * effective_rsf) / 1000.0))
+            if ratio_for_count > 0 and effective_rsf > 0:
+                inferred_count = int(round((ratio_for_count * effective_rsf) / 1000.0))
             if hinted_parking_count > 0:
                 if inferred_count > 0 and hinted_parking_count < int(round(inferred_count * 0.6)):
                     updates["parking_count"] = inferred_count
                 else:
                     updates["parking_count"] = hinted_parking_count
-            elif hinted_parking_ratio > 0:
+            elif ratio_for_count > 0:
                 existing_count = _coerce_int_token(updates.get("parking_count", canonical.parking_count), 0)
                 if existing_count <= 0 and inferred_count > 0:
                     updates["parking_count"] = inferred_count
