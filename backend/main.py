@@ -2666,8 +2666,6 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         "advance notice",
         "month-to-month",
         "holdover",
-        "abatement",
-        "free rent",
         "prior to",
     )
 
@@ -3924,6 +3922,10 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "parking_ratio": None,
         "parking_count": None,
         "parking_rate_monthly": None,
+        "parking_reserved_count": None,
+        "parking_unreserved_count": None,
+        "parking_reserved_rate_monthly": None,
+        "parking_unreserved_rate_monthly": None,
         "opex_psf_year_1": None,
         "opex_source_year": None,
         "opex_by_calendar_year": {},
@@ -4332,7 +4334,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         text,
     ) or re.search(r"(?i)\bmonths?\b[^\n]{0,80}\bof\s+gross\s+rent\b[^\n]{0,80}\babated\b", text):
         hints["free_rent_scope"] = "gross"
-    elif re.search(r"(?i)\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement)\b", text) or re.search(
+    elif re.search(r"(?i)\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement|base\s+free\s+rent)\b", text) or re.search(
         r"(?i)\bmonths?\b[^\n]{0,80}\bof\s+base\s+rent(?:\s+only)?\b[^\n]{0,80}\babated\b",
         text,
     ) or re.search(r"(?i)\b(?:annual\s+)?base\s+rent\b[^\n]{0,80}\b(?:shall\s+be\s+)?abated\b", text):
@@ -4354,18 +4356,39 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["free_rent_start_month"] = start_1 - 1
             hints["free_rent_end_month"] = end_1 - 1
     else:
-        free_count_match = re.search(
-            r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,90}\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b",
-            text,
-        )
-        if not free_count_match:
-            free_count_match = re.search(
-                r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b[^\n]{0,90}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b",
-                text,
-            )
+        free_count_candidates: list[tuple[int, int]] = []
+        # Parse line-by-line to avoid grabbing term month counts from "TERM AND FREE RENT" clauses.
+        for line in [ln.strip() for ln in text.splitlines() if ln.strip()]:
+            low_line = line.lower()
+            if "free rent" not in low_line and "abatement" not in low_line and "abated" not in low_line:
+                continue
+            # Strong, label-aware captures.
+            for pattern, score in (
+                (r"(?i)\brent\s+abatement\s*\(months?\)\s*[:\-]?\s*(\d{1,3})\b", 20),
+                (r"(?i)\bfree\s+rent\s*\(months?\)\s*[:\-]?\s*(\d{1,3})\b", 20),
+                (r"(?i)\bwith\s+(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\s+(?:base\s+)?free\s+rent\b", 18),
+                (r"(?i)\b(?:base\s+)?free\s+rent\b[^\n]{0,40}\b(?:for\s+)?(?:the\s+first\s+)?(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b", 17),
+                (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:base\s+)?free\s+rent\b", 15),
+                (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:rent\s+abatement|abatement|abated)\b", 13),
+                (r"(?i)\b(?:rent\s+abatement|abatement|abated)\b[^\n]{0,70}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b", 12),
+            ):
+                for match in re.finditer(pattern, line):
+                    count = _coerce_int_token(match.group(1), 0) or _coerce_int_token(match.group(2), 0) or 0
+                    if count <= 0:
+                        continue
+                    local_score = score
+                    if "term and free rent" in low_line:
+                        local_score += 2
+                    if "base free rent" in low_line:
+                        local_score += 2
+                    if count >= 60:
+                        local_score -= 6
+                    free_count_candidates.append((local_score, count))
+
         free_count = 0
-        if free_count_match:
-            free_count = _coerce_int_token(free_count_match.group(1), 0) or _coerce_int_token(free_count_match.group(2), 0) or 0
+        if free_count_candidates:
+            free_count_candidates.sort(key=lambda row: (-row[0], row[1]))
+            free_count = int(free_count_candidates[0][1])
         if free_count <= 0:
             free_word_match = re.search(
                 r"(?i)\b(?:the\s+)?first\s+([a-z\-]+)\s+months?\b[^\n]{0,120}\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,80}\b(?:abated|abatement|free)\b",
@@ -4383,6 +4406,25 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["free_rent_end_month"] = max(0, int(free_count) - 1)
             if hints["free_rent_scope"] is None and ("gross" in lower_text):
                 hints["free_rent_scope"] = "gross"
+            elif hints["free_rent_scope"] is None and "base free rent" in lower_text:
+                hints["free_rent_scope"] = "base"
+
+    # Guardrail: reject accidental full-term abatement unless explicitly stated.
+    hinted_term = _coerce_int_token(hints.get("term_months"), 0) or 0
+    free_start = _coerce_int_token(hints.get("free_rent_start_month"), None)
+    free_end = _coerce_int_token(hints.get("free_rent_end_month"), None)
+    if hinted_term > 0 and free_start is not None and free_end is not None:
+        free_months = max(0, free_end - free_start + 1)
+        if free_months >= hinted_term:
+            explicit_full_term = bool(
+                re.search(
+                    r"(?i)\b(?:entire(?:ty)?\s+of\s+the\s+term|for\s+the\s+full\s+term|throughout\s+the\s+term)\b[^\n]{0,120}\b(?:free|abated|abatement|at\s+no\s+cost)\b",
+                    text,
+                )
+            )
+            if not explicit_full_term:
+                hints["free_rent_start_month"] = None
+                hints["free_rent_end_month"] = None
 
     option_free_months = _coerce_int_token(option_hints.get("free_rent_months"), 0) or 0
     if option_free_months > 0:
@@ -4720,6 +4762,35 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["parking_count"] = count
             break
 
+    # Reserved / unreserved parking detail (from proposals with separate parking input rows).
+    reserved_count_match = re.search(r"(?i)\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
+    unreserved_count_match = re.search(r"(?i)\b#?\s*unreserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
+    if reserved_count_match:
+        reserved_count = _coerce_int_token(reserved_count_match.group(1), 0) or 0
+        if reserved_count >= 0:
+            hints["parking_reserved_count"] = int(reserved_count)
+    if unreserved_count_match:
+        unreserved_count = _coerce_int_token(unreserved_count_match.group(1), 0) or 0
+        if unreserved_count >= 0:
+            hints["parking_unreserved_count"] = int(unreserved_count)
+
+    reserved_rate_match = re.search(
+        r"(?im)^\s*reserved\b[^\n]{0,100}\b(?:cost\s+per\s+space|per\s+space|per\s+month|monthly\s+cost)\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,2})?)",
+        text,
+    )
+    unreserved_rate_match = re.search(
+        r"(?im)^\s*unreserved\b[^\n]{0,100}\b(?:cost\s+per\s+space|per\s+space|per\s+month|monthly\s+cost)\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,2})?)",
+        text,
+    )
+    if reserved_rate_match:
+        reserved_rate = _coerce_float_token(reserved_rate_match.group(1), 0.0) or 0.0
+        if reserved_rate >= 0:
+            hints["parking_reserved_rate_monthly"] = float(reserved_rate)
+    if unreserved_rate_match:
+        unreserved_rate = _coerce_float_token(unreserved_rate_match.group(1), 0.0) or 0.0
+        if unreserved_rate >= 0:
+            hints["parking_unreserved_rate_monthly"] = float(unreserved_rate)
+
     parking_rate_patterns = [
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+)?(?:space|stall)\s*(?:per|\/)\s*month\b",
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+)?(?:permit)\s*(?:per|\/)\s*month\b",
@@ -4752,6 +4823,27 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         parking_rate_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
         if parking_rate_candidates[0][0] > -4:
             hints["parking_rate_monthly"] = parking_rate_candidates[0][2]
+
+    # Consolidate parking totals if reserved/unreserved values exist.
+    reserved_count = _coerce_int_token(hints.get("parking_reserved_count"), None)
+    unreserved_count = _coerce_int_token(hints.get("parking_unreserved_count"), None)
+    reserved_rate = _coerce_float_token(hints.get("parking_reserved_rate_monthly"), None)
+    unreserved_rate = _coerce_float_token(hints.get("parking_unreserved_rate_monthly"), None)
+    if reserved_count is not None or unreserved_count is not None:
+        total_spaces = max(0, int(reserved_count or 0)) + max(0, int(unreserved_count or 0))
+        if total_spaces > 0:
+            hints["parking_count"] = int(total_spaces)
+        # If both rates exist, compute weighted average; otherwise prefer non-zero unreserved then reserved.
+        if total_spaces > 0 and (reserved_rate is not None or unreserved_rate is not None):
+            weighted_total = (float(reserved_rate or 0.0) * max(0, int(reserved_count or 0))) + (
+                float(unreserved_rate or 0.0) * max(0, int(unreserved_count or 0))
+            )
+            if weighted_total > 0:
+                hints["parking_rate_monthly"] = float(weighted_total / float(total_spaces))
+            elif unreserved_rate is not None and float(unreserved_rate) >= 0:
+                hints["parking_rate_monthly"] = float(unreserved_rate)
+            elif reserved_rate is not None and float(reserved_rate) >= 0:
+                hints["parking_rate_monthly"] = float(reserved_rate)
 
     hinted_opex, hinted_opex_year = _extract_opex_psf_from_text(text)
     opex_by_year = _extract_opex_by_calendar_year_from_text(text)
@@ -5035,7 +5127,7 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
         return _condense_note_text(summary, max_chars=max_chars, max_sentences=1)
 
     # Parking
-    if "parking" in low or "permit" in low:
+    if "parking" in low or "permit" in low or "reserved paid spaces" in low or "unreserved paid spaces" in low:
         parts: list[str] = []
         ratio_match = re.search(
             r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?|spaces?|stalls?)?\s*(?:per|/)\s*1,?000\s*(?:rsf|sf|square feet)?\b",
@@ -5043,8 +5135,58 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
         )
         if ratio_match:
             parts.append(f"{ratio_match.group(1)}/1,000 RSF")
-        if "must take and pay" in low:
+        if re.search(r"(?i)\bmust[-\s]*take\b[^\n]{0,40}\bmust[-\s]*pay\b", cleaned):
             parts.append("must-take-and-pay")
+        total_spaces_match = re.search(r"(?i)\btotal\s+#?\s*paid\s+spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", cleaned)
+        reserved_count_match = re.search(r"(?i)\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", cleaned)
+        unreserved_count_match = re.search(r"(?i)\b#?\s*unreserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", cleaned)
+        generic_count_match = re.search(
+            r"(?i)\b(?:[a-z\-]+\s*\((\d{1,3})\)|(\d{1,3}))\s+parking\s+spaces?\b",
+            cleaned,
+        )
+        reserved_rate_match = re.search(
+            r"(?i)\breserved\b[^\n]{0,100}\b(?:cost\s+per\s+space|per\s+space|per\s+month|monthly\s+cost)\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,2})?)",
+            cleaned,
+        )
+        unreserved_rate_match = re.search(
+            r"(?i)\bunreserved\b[^\n]{0,100}\b(?:cost\s+per\s+space|per\s+space|per\s+month|monthly\s+cost)\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,2})?)",
+            cleaned,
+        )
+        generic_rate_match = re.search(
+            r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|/)\s*(?:space|stall|permit|month)\b",
+            cleaned,
+        )
+        total_spaces = _coerce_int_token(total_spaces_match.group(1), None) if total_spaces_match else None
+        reserved_spaces = _coerce_int_token(reserved_count_match.group(1), None) if reserved_count_match else None
+        unreserved_spaces = _coerce_int_token(unreserved_count_match.group(1), None) if unreserved_count_match else None
+        generic_spaces = (
+            _coerce_int_token(generic_count_match.group(1), None) or _coerce_int_token(generic_count_match.group(2), None)
+            if generic_count_match
+            else None
+        )
+        if total_spaces is None and (reserved_spaces is not None or unreserved_spaces is not None):
+            total_spaces = max(0, int(reserved_spaces or 0)) + max(0, int(unreserved_spaces or 0))
+        if total_spaces is None and generic_spaces is not None:
+            total_spaces = generic_spaces
+        if reserved_spaces is not None or unreserved_spaces is not None:
+            parts.append(
+                f"reserved {int(reserved_spaces or 0)}, unreserved {int(unreserved_spaces or 0)}"
+            )
+        if total_spaces is not None:
+            parts.append(f"total {int(total_spaces)} spaces")
+        reserved_rate = _coerce_float_token(reserved_rate_match.group(1), None) if reserved_rate_match else None
+        unreserved_rate = _coerce_float_token(unreserved_rate_match.group(1), None) if unreserved_rate_match else None
+        generic_rate = _coerce_float_token(generic_rate_match.group(1), None) if generic_rate_match else None
+        if reserved_rate is not None or unreserved_rate is not None:
+            rate_bits: list[str] = []
+            if reserved_rate is not None:
+                rate_bits.append(f"reserved ${float(reserved_rate):,.0f}/mo")
+            if unreserved_rate is not None:
+                rate_bits.append(f"unreserved ${float(unreserved_rate):,.0f}/mo")
+            if rate_bits:
+                parts.append(", ".join(rate_bits))
+        elif generic_rate is not None and generic_rate >= 0:
+            parts.append(f"${float(generic_rate):,.0f}/mo per space")
         convert_match = re.search(r"(?i)\bup to\s*(\d{1,3})\s*%[^.]{0,140}\breserved\b", cleaned)
         if convert_match:
             parts.append(f"up to {convert_match.group(1)}% convertible to reserved")
@@ -5254,6 +5396,14 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
             ],
         ),
         (
+            "Parking allocation",
+            [
+                re.compile(r"\b#?\s*reserved\s+(?:paid\s+)?spaces?\b", re.I),
+                re.compile(r"\b#?\s*unreserved\s+(?:paid\s+)?spaces?\b", re.I),
+                re.compile(r"\btotal\s+#?\s*paid\s+spaces?\b", re.I),
+            ],
+        ),
+        (
             "OpEx exclusions",
             [
                 re.compile(
@@ -5308,7 +5458,9 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
         if not match_chunk:
             continue
         snippet = _condense_note_line(match_chunk, max_chars=320)
-        if re.match(rf"(?i)^{re.escape(label)}\s*:", snippet):
+        if re.match(rf"(?i)^{re.escape(label)}\s*:", snippet) or (
+            label.lower().startswith("parking") and re.match(r"(?i)^parking\s*:", snippet)
+        ):
             note = snippet
         else:
             note = f"{label}: {snippet}"

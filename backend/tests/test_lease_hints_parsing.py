@@ -826,3 +826,42 @@ def test_extract_hints_al1_primary_lease_term_prefers_150_month_term_over_rent_c
     assert str(hints["commencement_date"]) == "2028-05-01"
     assert str(hints["expiration_date"]) == "2040-10-31"
     assert hints["term_months"] == 150
+
+
+def test_extract_hints_term_and_free_rent_clause_uses_free_months_not_term_months() -> None:
+    text = (
+        "COMMENCEMENT: December 1, 2026.\n"
+        "TERM AND FREE RENT: One hundred twenty-seven (127) months, with seven (7) months base free rent.\n"
+        "BASE RENT: $33.00 per RSF NNN.\n"
+    )
+    hints = main._extract_lease_hints(text, "tffa-proposal.docx", "test-rid")
+    assert hints["term_months"] == 127
+    assert hints["free_rent_scope"] == "base"
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 6
+
+
+def test_extract_hints_parses_reserved_unreserved_parking_counts_and_rates() -> None:
+    text = (
+        "PARKING INPUTS\n"
+        "# Reserved Paid Spaces 0\n"
+        "# Unreserved Paid Spaces 20\n"
+        "Reserved - Cost per Space $0.00\n"
+        "Unreserved - Cost per Space $100.00\n"
+    )
+    hints = main._extract_lease_hints(text, "parking-table.docx", "test-rid")
+    assert hints["parking_reserved_count"] == 0
+    assert hints["parking_unreserved_count"] == 20
+    assert hints["parking_count"] == 20
+    assert hints["parking_unreserved_rate_monthly"] == 100.0
+    assert hints["parking_rate_monthly"] == 100.0
+
+
+def test_summarize_note_clause_parking_includes_space_counts_and_rate() -> None:
+    line = (
+        "PARKING: Tenant shall contract for, on a must-take, must-pay basis, four (4) parking spaces "
+        "at the current rate of $100 per month."
+    )
+    summary = main._summarize_note_clause(line, max_chars=160)
+    assert "total 4 spaces" in summary
+    assert "$100/mo per space" in summary
