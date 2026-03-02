@@ -13,7 +13,10 @@ import {
   normalizeTiSourceOfTruth,
   syncTiFields,
 } from "@/lib/ti";
-import { inferRentEscalationPercentFromSteps } from "@/lib/rent-escalation";
+import {
+  inferDisplayedRentEscalationPercentFromSteps,
+  initialBaseRentPsfYrFromSteps,
+} from "@/lib/rent-escalation";
 
 function toNumber(value: unknown, fallback: number = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -556,7 +559,7 @@ export function canonicalResponseToEngineResult(
   const parkingRateMonthly = Math.max(0, toNumber(normalized?.parking_rate_monthly, 0));
   const parkingSalesTaxRate = Math.max(0, toNumber(normalized?.parking_sales_tax_rate, 0.0825));
   const normalizedEscalationPercent =
-    inferRentEscalationPercentFromSteps(
+    inferDisplayedRentEscalationPercentFromSteps(
       (normalized?.rent_schedule ?? []).map((step) => ({
         start: step.start_month,
         end: step.end_month,
@@ -565,7 +568,7 @@ export function canonicalResponseToEngineResult(
     ) * 100;
   const sourceEscalationPercent =
     scenarioSource?.rent_steps && scenarioSource.rent_steps.length > 0
-      ? inferRentEscalationPercentFromSteps(
+      ? inferDisplayedRentEscalationPercentFromSteps(
           scenarioSource.rent_steps.map((step) => ({
             start: step.start,
             end: step.end,
@@ -621,6 +624,34 @@ export function canonicalResponseToEngineResult(
   const backendAbatementAmount = Math.max(0, toNumber(m.free_rent_value_total, 0));
   const effectiveAbatementAmount =
     sourceAbatementAmount != null ? sourceAbatementAmount : backendAbatementAmount;
+  const sourceInitialBaseRentPsfYrFromSteps =
+    scenarioSource?.rent_steps && scenarioSource.rent_steps.length > 0
+      ? initialBaseRentPsfYrFromSteps(
+          scenarioSource.rent_steps.map((step) => ({
+            start: step.start,
+            end: step.end,
+            rate_psf_yr: step.rate_psf_yr,
+          }))
+        )
+      : null;
+  const normalizedInitialBaseRentPsfYrFromSteps =
+    normalized?.rent_schedule && normalized.rent_schedule.length > 0
+      ? initialBaseRentPsfYrFromSteps(
+          normalized.rent_schedule.map((step) => ({
+            start: step.start_month,
+            end: step.end_month,
+            rate_psf_yr: step.rent_psf_annual,
+          }))
+        )
+      : null;
+  const effectiveBaseRentPsfYr =
+    (sourceInitialBaseRentPsfYrFromSteps != null && sourceInitialBaseRentPsfYrFromSteps > 0)
+      ? sourceInitialBaseRentPsfYrFromSteps
+      : (
+        (normalizedInitialBaseRentPsfYrFromSteps != null && normalizedInitialBaseRentPsfYrFromSteps > 0)
+          ? normalizedInitialBaseRentPsfYrFromSteps
+          : Math.max(0, toNumber(m.base_rent_avg_psf_year, 0))
+      );
   const sourceAverageBaseRentPsfYrFromSteps =
     scenarioSource?.rent_steps && scenarioSource.rent_steps.length > 0
       ? weightedAverageBaseRentPsfYr(
@@ -643,7 +674,7 @@ export function canonicalResponseToEngineResult(
           termMonths
         )
       : null;
-  const effectiveBaseRentPsfYr =
+  const effectiveAverageBaseRentPsfYr =
     sourceAverageBaseRentPsfYrFromSteps ??
     normalizedAverageBaseRentPsfYrFromSteps ??
     sourceAverageBaseRentPsfYrFromEngine ??
@@ -678,8 +709,12 @@ export function canonicalResponseToEngineResult(
     const abatementPsfAnnualized = effectiveAbatementAmount / termYears / metricRsf;
     const tiAllowancePsfAnnualized = tiAllowanceTotal / termYears / metricRsf;
     const commissionPsfAnnualized = commissionAmount / termYears / metricRsf;
-    const rawNer = effectiveBaseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
-    return Math.min(effectiveBaseRentPsfYr, rawNer);
+    const rawNer =
+      effectiveAverageBaseRentPsfYr -
+      tiAllowancePsfAnnualized -
+      abatementPsfAnnualized -
+      commissionPsfAnnualized;
+    return Math.min(effectiveAverageBaseRentPsfYr, rawNer);
   })();
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",

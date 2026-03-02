@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { inferRentEscalationPercentFromSteps } from "@/lib/rent-escalation";
+import {
+  inferDisplayedRentEscalationPercentFromSteps,
+  inferRentEscalationPercentFromSteps,
+  initialBaseRentPsfYrFromSteps,
+} from "@/lib/rent-escalation";
 
 describe("inferRentEscalationPercentFromSteps", () => {
   it("infers annual escalation from near-yearly transitions", () => {
@@ -30,3 +34,24 @@ describe("inferRentEscalationPercentFromSteps", () => {
   });
 });
 
+describe("initialBaseRentPsfYrFromSteps", () => {
+  it("returns first non-zero step rate", () => {
+    const rate = initialBaseRentPsfYrFromSteps([
+      { start: 0, end: 11, rate_psf_yr: 33 },
+      { start: 12, end: 23, rate_psf_yr: 33.99 },
+    ]);
+    expect(rate).toBeCloseTo(33, 6);
+  });
+});
+
+describe("inferDisplayedRentEscalationPercentFromSteps", () => {
+  it("prefers early annual transitions for display", () => {
+    const pct = inferDisplayedRentEscalationPercentFromSteps([
+      { start: 0, end: 11, rate_psf_yr: 33.0 },
+      { start: 12, end: 23, rate_psf_yr: 33.99 }, // 3.00%
+      { start: 24, end: 35, rate_psf_yr: 34.99 }, // ~2.94%
+      { start: 36, end: 47, rate_psf_yr: 40.0 }, // outlier later jump
+    ]);
+    expect(pct).toBeCloseTo(0.03, 2);
+  });
+});

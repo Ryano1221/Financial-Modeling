@@ -54,15 +54,8 @@ function median(values: number[]): number {
   return sorted[mid];
 }
 
-/**
- * Return annual rent escalation as a decimal (e.g. 0.03 = 3.00%).
- * Robust for both explicit annual % escalations and fixed-dollar step schedules.
- */
-export function inferRentEscalationPercentFromSteps(steps: RentStepLike[] | undefined): number {
-  const normalized = normalizeSteps(steps);
-  if (normalized.length < 2) return 0;
-  const transitions: Array<{ monthDelta: number; stepPct: number; annualPct: number }> = [];
-
+function buildTransitions(normalized: NormalizedStep[]): Array<{ start: number; monthDelta: number; stepPct: number; annualPct: number }> {
+  const transitions: Array<{ start: number; monthDelta: number; stepPct: number; annualPct: number }> = [];
   for (let i = 0; i < normalized.length - 1; i += 1) {
     const current = normalized[i];
     const next = normalized[i + 1];
@@ -73,8 +66,50 @@ export function inferRentEscalationPercentFromSteps(steps: RentStepLike[] | unde
     const stepPct = stepChangeRate(current.rate, next.rate);
     const annualPct = annualizedRate(current.rate, next.rate, monthDelta);
     if (!Number.isFinite(stepPct) || !Number.isFinite(annualPct)) continue;
-    transitions.push({ monthDelta, stepPct, annualPct });
+    transitions.push({ start: current.start, monthDelta, stepPct, annualPct });
   }
+  return transitions;
+}
+
+/**
+ * Return the first contractual base rent $/SF/YR from steps.
+ */
+export function initialBaseRentPsfYrFromSteps(steps: RentStepLike[] | undefined): number {
+  const normalized = normalizeSteps(steps);
+  return normalized.length > 0 ? normalized[0].rate : 0;
+}
+
+/**
+ * Prefer early annual transitions for display so long-tail odd rows do not skew headline escalation.
+ * Returns decimal (e.g. 0.03 = 3%).
+ */
+export function inferDisplayedRentEscalationPercentFromSteps(steps: RentStepLike[] | undefined): number {
+  const normalized = normalizeSteps(steps);
+  if (normalized.length < 2) return 0;
+  const transitions = buildTransitions(normalized);
+  if (transitions.length === 0) return 0;
+  const nearAnnual = transitions.filter((transition) => transition.monthDelta >= 6 && transition.monthDelta <= 18);
+  if (nearAnnual.length > 0) {
+    const earlyAnnual = nearAnnual
+      .sort((a, b) => a.start - b.start)
+      .slice(0, 4)
+      .map((transition) => transition.annualPct);
+    if (earlyAnnual.length > 0) {
+      const value = median(earlyAnnual);
+      return Number.isFinite(value) ? value : 0;
+    }
+  }
+  return inferRentEscalationPercentFromSteps(steps);
+}
+
+/**
+ * Return annual rent escalation as a decimal (e.g. 0.03 = 3.00%).
+ * Robust for both explicit annual % escalations and fixed-dollar step schedules.
+ */
+export function inferRentEscalationPercentFromSteps(steps: RentStepLike[] | undefined): number {
+  const normalized = normalizeSteps(steps);
+  if (normalized.length < 2) return 0;
+  const transitions = buildTransitions(normalized);
 
   if (transitions.length === 0) return 0;
 

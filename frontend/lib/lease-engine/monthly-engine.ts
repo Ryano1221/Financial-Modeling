@@ -9,6 +9,10 @@ import type {
   RentAbatement,
   ParkingSlotCanonical,
 } from "./canonical-schema";
+import {
+  inferDisplayedRentEscalationPercentFromSteps,
+  initialBaseRentPsfYrFromSteps,
+} from "@/lib/rent-escalation";
 
 const DEFAULT_DISCOUNT_RATE = 0.08;
 const NPV_DISCOUNT_LOOKBACK_MONTHS = 16;
@@ -646,6 +650,13 @@ export function runMonthlyEngine(
     avgRsfTerm > 0 && years > 0
       ? contractualBaseRentTotal / years / avgRsfTerm
       : (scenario.rentSchedule.steps[0]?.ratePsfYr ?? 0);
+  const displayedBaseRentPsfYr = (() => {
+    const initial = initialBaseRentPsfYrFromSteps(scenario.rentSchedule.steps);
+    if (initial > 0) return initial;
+    return avgBaseRentPsfYr;
+  })();
+  const displayedEscalationPercent =
+    inferDisplayedRentEscalationPercentFromSteps(scenario.rentSchedule.steps) * 100;
 
   const buildingName = (scenario.partyAndPremises.premisesLabel ?? "").trim();
   const suiteName = (scenario.partyAndPremises.floorsOrSuite ?? "").trim();
@@ -711,8 +722,8 @@ export function runMonthlyEngine(
     termMonths,
     commencementDate: comm,
     expirationDate: scenario.datesAndTerm.expirationDate,
-    baseRentPsfYr: avgBaseRentPsfYr,
-    escalationPercent: scenario.rentSchedule.annualEscalationPercent * 100,
+    baseRentPsfYr: displayedBaseRentPsfYr,
+    escalationPercent: displayedEscalationPercent,
     abatementAmount,
     abatementType: formatAbatementType(normalizedAbatements),
     abatementAppliedWhen: formatAbatementAppliedWhen(normalizedAbatements),

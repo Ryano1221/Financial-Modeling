@@ -188,6 +188,37 @@ describe("canonicalResponseToEngineResult", () => {
     expect(result.metrics.avgCostPsfYr).toBeCloseTo(21.6, 6);
   });
 
+  it("uses initial base rent for Base Rent metric while keeping escalation from rent steps", () => {
+    const sourceScenario = makeScenario({
+      commencement: "2026-01-01",
+      expiration: "2030-12-31",
+      rent_steps: [
+        { start: 0, end: 11, rate_psf_yr: 33.0 },
+        { start: 12, end: 23, rate_psf_yr: 33.99 },
+        { start: 24, end: 35, rate_psf_yr: 35.01 },
+      ],
+    });
+    const response = makeCanonicalResponse();
+    response.metrics.term_months = 60;
+    response.metrics.base_rent_avg_psf_year = 38.19;
+    response.normalized_canonical_lease.term_months = 60;
+    response.normalized_canonical_lease.rent_schedule = [
+      { start_month: 0, end_month: 11, rent_psf_annual: 33.0 },
+      { start_month: 12, end_month: 23, rent_psf_annual: 33.99 },
+      { start_month: 24, end_month: 35, rent_psf_annual: 35.01 },
+      { start_month: 36, end_month: 59, rent_psf_annual: 36.06 },
+    ];
+
+    const result = canonicalResponseToEngineResult(
+      response,
+      sourceScenario.id,
+      sourceScenario.name,
+      sourceScenario
+    );
+    expect(result.metrics.baseRentPsfYr).toBeCloseTo(33.0, 6);
+    expect(result.metrics.escalationPercent).toBeCloseTo(3.0, 1);
+  });
+
   it("sets TI out of pocket to zero when TI budget and allowance are equal", () => {
     const sourceScenario = makeScenario({
       rsf: 205072,
