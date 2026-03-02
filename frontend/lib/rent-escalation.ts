@@ -20,7 +20,7 @@ type NormalizedStep = {
 
 function normalizeSteps(steps: RentStepLike[] | undefined): NormalizedStep[] {
   if (!steps || steps.length === 0) return [];
-  return steps
+  const normalized = steps
     .map((s) => {
       const start = Math.max(0, Math.floor(toNumber(s.start ?? s.startMonth)));
       const endRaw = Math.floor(toNumber(s.end ?? s.endMonth));
@@ -30,6 +30,22 @@ function normalizeSteps(steps: RentStepLike[] | undefined): NormalizedStep[] {
     })
     .filter((s) => s.rate > 0)
     .sort((a, b) => a.start - b.start);
+  if (normalized.length <= 1) return normalized;
+  const merged: NormalizedStep[] = [];
+  for (const step of normalized) {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...step });
+      continue;
+    }
+    const sameRate = Math.abs(last.rate - step.rate) < 1e-6;
+    if (sameRate && step.start <= last.end + 1) {
+      last.end = Math.max(last.end, step.end);
+      continue;
+    }
+    merged.push({ ...step });
+  }
+  return merged;
 }
 
 function annualizedRate(firstRate: number, nextRate: number, monthDelta: number): number {

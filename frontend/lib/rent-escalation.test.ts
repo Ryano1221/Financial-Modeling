@@ -54,4 +54,17 @@ describe("inferDisplayedRentEscalationPercentFromSteps", () => {
     ]);
     expect(pct).toBeCloseTo(0.03, 2);
   });
+
+  it("ignores boundary-split duplicate rate rows when inferring escalation", () => {
+    const pct = inferDisplayedRentEscalationPercentFromSteps([
+      { start: 0, end: 0, rate_psf_yr: 33.0 },
+      { start: 1, end: 6, rate_psf_yr: 33.0 },
+      { start: 7, end: 11, rate_psf_yr: 33.0 },
+      { start: 12, end: 12, rate_psf_yr: 33.99 },
+      { start: 13, end: 23, rate_psf_yr: 33.99 },
+      { start: 24, end: 24, rate_psf_yr: 35.0097 },
+      { start: 25, end: 35, rate_psf_yr: 35.0097 },
+    ]);
+    expect(pct).toBeCloseTo(0.03, 3);
+  });
 });
