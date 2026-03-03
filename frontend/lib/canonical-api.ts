@@ -714,7 +714,7 @@ export function canonicalResponseToEngineResult(
       tiAllowancePsfAnnualized -
       abatementPsfAnnualized -
       commissionPsfAnnualized;
-    return Math.min(effectiveAverageBaseRentPsfYr, rawNer);
+    return Math.max(0, Math.min(effectiveAverageBaseRentPsfYr, rawNer));
   })();
   const metrics: OptionMetrics = {
     buildingName: m.building_name ?? "",

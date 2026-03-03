@@ -188,6 +188,21 @@ describe("canonicalResponseToEngineResult", () => {
     expect(result.metrics.avgCostPsfYr).toBeCloseTo(21.6, 6);
   });
 
+  it("floors NER at zero when backend concessions exceed average base rent", () => {
+    const response = makeCanonicalResponse();
+    response.metrics.rsf = 10000;
+    response.metrics.term_months = 12;
+    response.metrics.base_rent_avg_psf_year = 12;
+    response.metrics.base_rent_total = 120000;
+    response.metrics.opex_total = 0;
+    response.metrics.free_rent_value_total = 500000;
+    response.metrics.total_obligation_nominal = 0;
+
+    const result = canonicalResponseToEngineResult(response, "scenario-1", "Scenario 1");
+    expect(result.metrics.netEffectiveRatePsfYr).toBe(0);
+    expect(result.metrics.netEffectiveRatePsfYr).toBeLessThanOrEqual(result.metrics.baseRentPsfYr);
+  });
+
   it("uses initial base rent for Base Rent metric while keeping escalation from rent steps", () => {
     const sourceScenario = makeScenario({
       commencement: "2026-01-01",

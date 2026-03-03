@@ -110,4 +110,20 @@ describe("commission calculations", () => {
     expect(result.metrics.netEffectiveRatePsfYr).toBeCloseTo(18.08, 6);
     expect(result.metrics.netEffectiveRatePsfYr).toBeLessThanOrEqual(result.metrics.baseRentPsfYr);
   });
+
+  it("floors NER at zero when concessions exceed average base rent", () => {
+    const scenario = makeScenario({
+      rsf: 10000,
+      expiration: "2026-12-31",
+      rent_steps: [{ start: 0, end: 11, rate_psf_yr: 12 }],
+      ti_allowance_psf: 25,
+      ti_budget_total: 0,
+      commission_rate: 0.06,
+      commission_applies_to: "gross_obligation",
+    });
+    const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.08);
+
+    expect(result.metrics.netEffectiveRatePsfYr).toBe(0);
+    expect(result.metrics.netEffectiveRatePsfYr).toBeLessThanOrEqual(result.metrics.baseRentPsfYr);
+  });
 });

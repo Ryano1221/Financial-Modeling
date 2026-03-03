@@ -713,7 +713,7 @@ export function runMonthlyEngine(
     : 0;
   const rawNetEffectiveRatePsfYr =
     avgBaseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
-  const netEffectiveRatePsfYr = Math.min(avgBaseRentPsfYr, rawNetEffectiveRatePsfYr);
+  const netEffectiveRatePsfYr = Math.max(0, Math.min(avgBaseRentPsfYr, rawNetEffectiveRatePsfYr));
   const metrics: OptionMetrics = {
     buildingName,
     suiteName,
