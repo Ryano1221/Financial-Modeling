@@ -7174,6 +7174,10 @@ def _normalize_impl(
             opex_source_year = _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
             commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
             commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0
+            effective_opex_growth = _coerce_float_token(
+                updates.get("opex_growth_rate"),
+                _coerce_float_token(extracted_hints.get("opex_growth_rate"), _coerce_float_token(canonical.opex_growth_rate, 0.0)),
+            ) or 0.0
             if hinted_opex_by_year and commencement_year >= 1900:
                 if commencement_year in hinted_opex_by_year:
                     year_rate = float(hinted_opex_by_year[commencement_year])
@@ -7187,9 +7191,22 @@ def _normalize_impl(
                         updates["opex_psf_year_1"] = year_rate
                         updates["expense_stop_psf"] = year_rate
                         if prior_year < commencement_year:
-                            extra_note_lines.append(
-                                f"OpEx table provided through {prior_year}; using ${year_rate:,.2f}/SF as the starting OpEx."
-                            )
+                            years_forward = max(1, commencement_year - prior_year)
+                            if effective_opex_growth > 0 and year_rate > 0:
+                                modeled_rate = float(year_rate) * ((1.0 + float(effective_opex_growth)) ** years_forward)
+                                modeled_rate = float(round(modeled_rate, 4))
+                                delta_rate = max(0.0, modeled_rate - float(year_rate))
+                                uplift_pct = max(0.0, ((modeled_rate / float(year_rate)) - 1.0) * 100.0)
+                                extra_note_lines.append(
+                                    f"OpEx quoted at ${float(year_rate):,.2f}/SF in {prior_year}; "
+                                    f"escalated {float(effective_opex_growth) * 100.0:.2f}% for {years_forward} "
+                                    f"year{'s' if years_forward != 1 else ''} (+${delta_rate:,.2f}, +{uplift_pct:.2f}%) "
+                                    f"to ${modeled_rate:,.2f}/SF used for {commencement_year}."
+                                )
+                            else:
+                                extra_note_lines.append(
+                                    f"OpEx table provided through {prior_year}; using ${year_rate:,.2f}/SF as the starting OpEx."
+                                )
             hinted_ti_allowance = _coerce_float_token(extracted_hints.get("ti_allowance_psf"), 0.0) or 0.0
             if hinted_ti_allowance <= 0:
                 hinted_ti_allowance_total = _coerce_float_token(extracted_hints.get("ti_allowance_total"), 0.0) or 0.0

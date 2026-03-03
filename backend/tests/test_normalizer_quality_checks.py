@@ -226,6 +226,8 @@ def test_normalize_impl_keeps_source_year_opex_when_commencement_year_missing_fr
 
     assert canonical.opex_psf_year_1 == 26.02
     assert canonical.expense_stop_psf == 26.02
+    assert "OpEx quoted at $26.02/SF in 2026; escalated 3.00% for 1 year" in (canonical.notes or "")
+    assert "$26.80/SF used for 2027." in (canonical.notes or "")
 
 
 def test_normalize_impl_prefers_ratio_derived_parking_count_over_small_inline_count(monkeypatch) -> None:
