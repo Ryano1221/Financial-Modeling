@@ -695,9 +695,11 @@ export function runMonthlyEngine(
     }
   }
   const opexNoEscalationNominal = opexNoEscalation.reduce((a, b) => a + b, 0);
+  const commissionOpexGrowthFactor =
+    1 + Math.max(0, Number(scenario.expenseSchedule.annualEscalationPercent) || 0);
   const commissionBase =
     commissionBasis === "gross_obligation"
-      ? (baseRentNominal + opexNoEscalationNominal)
+      ? (baseRentNominal + (opexNoEscalationNominal * commissionOpexGrowthFactor))
       : baseRentNominal;
   const commissionAmount = commissionRate > 0 ? commissionBase * commissionRate : 0;
   const parkingNominal = parking.reduce((a, b) => a + b, 0);

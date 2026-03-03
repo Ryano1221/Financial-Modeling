@@ -59,7 +59,7 @@ describe("commission calculations", () => {
     expect(result.metrics.commissionAmount).toBeCloseTo(12000, 6);
   });
 
-  it("calculates gross-obligation commission using non-escalated opex", () => {
+  it("calculates gross-obligation commission using one-step opex growth uplift", () => {
     const scenario = makeScenario({
       expiration: "2027-12-31",
       rent_steps: [{ start: 0, end: 23, rate_psf_yr: 24 }],
@@ -70,8 +70,9 @@ describe("commission calculations", () => {
     });
     const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.08);
 
-    // Base rent total: 480,000; flat OpEx total: 200,000; commission @10% => 68,000.
-    expect(result.metrics.commissionAmount).toBeCloseTo(68000, 6);
+    // Base rent total: 480,000; OpEx base 200,000 with one-step 3% uplift => 206,000.
+    // Commission @10% => 68,600.
+    expect(result.metrics.commissionAmount).toBeCloseTo(68600, 6);
     expect(result.metrics.commissionBasis).toBe("Gross obligation");
   });
 
@@ -104,10 +105,10 @@ describe("commission calculations", () => {
     // Avg base rent = 24.00
     // TI allowance annualized = 2.00
     // Abatement annualized (1 month at $2/SF/month) = 2.00
-    // Commission annualized uses commission base from modeled cash flow stream:
-    // 6% * (base 220,000 + opex 100,000) / 10,000 = 1.92
-    // NER = 24 - 2 - 2 - 1.92 = 18.08
-    expect(result.metrics.netEffectiveRatePsfYr).toBeCloseTo(18.08, 6);
+    // Commission annualized uses gross base with one-step opex uplift:
+    // 6% * (base 220,000 + opex 100,000 * 1.03) / 10,000 = 1.938
+    // NER = 24 - 2 - 2 - 1.938 = 18.062
+    expect(result.metrics.netEffectiveRatePsfYr).toBeCloseTo(18.062, 6);
     expect(result.metrics.netEffectiveRatePsfYr).toBeLessThanOrEqual(result.metrics.baseRentPsfYr);
   });
 
