@@ -226,3 +226,77 @@ def test_normalize_impl_keeps_source_year_opex_when_commencement_year_missing_fr
 
     assert canonical.opex_psf_year_1 == 26.02
     assert canonical.expense_stop_psf == 26.02
+
+
+def test_normalize_impl_prefers_ratio_derived_parking_count_over_small_inline_count(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main,
+        "extract_text_from_word",
+        lambda _buf, _name: (
+            "Premises: Suite 400 consisting of 4,949 RSF. Parking ratio per 1,000 RSF: 4.0. "
+            "Parking: on a must-take basis, four (4) parking spaces at $100 per month.",
+            "docx",
+        ),
+    )
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "sublease")
+    monkeypatch.setattr(
+        main,
+        "_extract_lease_hints",
+        lambda _text, _filename, _rid: {
+            "building_name": "1300 Guadalupe",
+            "suite": "400",
+            "rsf": 4949.0,
+            "commencement_date": date(2026, 12, 1),
+            "expiration_date": date(2037, 6, 30),
+            "term_months": 127,
+            "parking_ratio": 4.0,
+            "parking_count": 4,
+            "parking_rate_monthly": 100.0,
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="1300 Guadalupe Suite 400",
+                rsf=4949.0,
+                commencement=date(2026, 12, 1),
+                expiration=date(2037, 6, 30),
+                rent_steps=[RentStep(start=0, end=126, rate_psf_yr=33.0)],
+                free_rent_months=7,
+                ti_allowance_psf=10.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=13.81,
+                base_year_opex_psf_yr=13.81,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+                parking_spaces=4,
+                parking_cost_monthly_per_space=100.0,
+            ),
+            confidence={"parking_count": 0.6, "parking_ratio": 0.8},
+            warnings=[],
+            source="docx",
+            text_length=240,
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="tffa-proposal.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+    canonical = result.canonical_lease
+
+    assert canonical.parking_ratio == 4.0
+    assert canonical.parking_count == 20
+    assert canonical.parking_rate_monthly == 100.0

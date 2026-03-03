@@ -4856,6 +4856,42 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             elif reserved_rate is not None and float(reserved_rate) >= 0:
                 hints["parking_rate_monthly"] = float(reserved_rate)
 
+    # Backfill parking hints from deterministic prefill extraction and reconcile
+    # count from ratio when inline "must-take" counts are materially lower.
+    prefill_parking_ratio = _coerce_float_token(
+        prefill_hints.get("parking_ratio_per_1000_rsf", prefill_hints.get("parking_ratio")),
+        0.0,
+    ) or 0.0
+    prefill_parking_count = _coerce_int_token(prefill_hints.get("parking_spaces"), 0) or 0
+    prefill_parking_rate = _coerce_float_token(
+        prefill_hints.get("parking_cost_monthly_per_space", prefill_hints.get("parking_rate_monthly")),
+        0.0,
+    ) or 0.0
+
+    existing_ratio = _coerce_float_token(hints.get("parking_ratio"), 0.0) or 0.0
+    if prefill_parking_ratio > 0 and existing_ratio <= 0:
+        hints["parking_ratio"] = float(prefill_parking_ratio)
+
+    existing_rate = _coerce_float_token(hints.get("parking_rate_monthly"), 0.0) or 0.0
+    if prefill_parking_rate > 0 and existing_rate <= 0:
+        hints["parking_rate_monthly"] = float(prefill_parking_rate)
+
+    existing_count = _coerce_int_token(hints.get("parking_count"), 0) or 0
+    if prefill_parking_count > 0 and (
+        existing_count <= 0 or prefill_parking_count >= int(round(existing_count * 1.5))
+    ):
+        hints["parking_count"] = int(prefill_parking_count)
+
+    effective_ratio = _coerce_float_token(hints.get("parking_ratio"), 0.0) or 0.0
+    effective_rsf = _coerce_float_token(hints.get("rsf"), 0.0) or 0.0
+    if effective_ratio > 0 and effective_rsf > 0:
+        derived_count = int(round((effective_ratio * effective_rsf) / 1000.0))
+        current_count = _coerce_int_token(hints.get("parking_count"), 0) or 0
+        if derived_count > 0 and (
+            current_count <= 0 or derived_count >= int(round(current_count * 1.5))
+        ):
+            hints["parking_count"] = int(derived_count)
+
     hinted_opex, hinted_opex_year = _extract_opex_psf_from_text(text)
     opex_by_year = _extract_opex_by_calendar_year_from_text(text)
     if opex_by_year:
@@ -6680,13 +6716,15 @@ def _normalize_impl(
             if ratio_for_count > 0 and effective_rsf > 0:
                 inferred_count = int(round((ratio_for_count * effective_rsf) / 1000.0))
             if hinted_parking_count > 0:
-                if inferred_count > 0 and hinted_parking_count < int(round(inferred_count * 0.6)):
+                if inferred_count > 0 and inferred_count >= int(round(hinted_parking_count * 1.5)):
                     updates["parking_count"] = inferred_count
                 else:
                     updates["parking_count"] = hinted_parking_count
             elif ratio_for_count > 0:
                 existing_count = _coerce_int_token(updates.get("parking_count", canonical.parking_count), 0)
-                if existing_count <= 0 and inferred_count > 0:
+                if inferred_count > 0 and (
+                    existing_count <= 0 or inferred_count >= int(round(existing_count * 1.5))
+                ):
                     updates["parking_count"] = inferred_count
 
             target_term_months = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0

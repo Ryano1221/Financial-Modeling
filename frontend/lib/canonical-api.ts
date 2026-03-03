@@ -741,6 +741,7 @@ export function canonicalResponseToEngineResult(
     parkingCostPerSpotMonthlyPreTax: parkingRateMonthly,
     parkingCostPerSpotMonthly: parkingRateMonthly * (1 + parkingSalesTaxRate),
     parkingSalesTaxPercent: parkingSalesTaxRate,
+    parkingSpaces: parkingCount,
     parkingCostMonthly,
     parkingCostAnnual,
     tiBudget: tiBudgetPsf,

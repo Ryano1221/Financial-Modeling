@@ -80,6 +80,7 @@ export interface OptionMetrics {
   parkingCostPerSpotMonthlyPreTax: number;
   parkingCostPerSpotMonthly: number;
   parkingSalesTaxPercent: number;
+  parkingSpaces: number;
   parkingCostMonthly: number;
   parkingCostAnnual: number;
   tiBudget: number;
@@ -732,6 +733,7 @@ export function runMonthlyEngine(
     parkingCostPerSpotMonthlyPreTax,
     parkingCostPerSpotMonthly,
     parkingSalesTaxPercent: parkingTaxPct,
+    parkingSpaces: totalParkingSlots,
     parkingCostMonthly,
     parkingCostAnnual: years > 0 ? (parkingNominal / years) : parkingNominal,
     tiBudget: rsf > 0 ? scenario.tiSchedule.budgetTotal / rsf : 0,

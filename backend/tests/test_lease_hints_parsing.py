@@ -271,6 +271,18 @@ def test_extract_hints_parses_parking_ratio_label_with_trailing_value() -> None:
     assert hints["parking_rate_monthly"] == 100.0
 
 
+def test_extract_hints_prefers_ratio_derived_parking_count_over_small_inline_count() -> None:
+    text = (
+        "Premises: Suite 400 consisting of 4,949 RSF.\n"
+        "Parking ratio per 1,000 RSF: 4.0\n"
+        "Parking: on a must-take basis, four (4) parking spaces at $100 per month.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints["parking_ratio"] == 4.0
+    assert hints["parking_count"] == 20
+    assert hints["parking_rate_monthly"] == 100.0
+
+
 def test_extract_hints_parses_rentable_sf_ope_and_written_parking_count() -> None:
     text = (
         "Area: 4,308 Rentable SF. "
