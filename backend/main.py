@@ -3198,6 +3198,151 @@ def _extract_free_rent_months_from_option_block(block: str) -> int | None:
     return None
 
 
+def _normalize_free_rent_scope_token(value: object, default: str = "base") -> str:
+    raw = str(value or "").strip().lower()
+    if raw == "gross":
+        return "gross"
+    return "base" if default != "gross" else "gross"
+
+
+def _normalize_option_free_rent_periods(
+    periods: object,
+    *,
+    term_months: int = 0,
+) -> list[dict]:
+    if not isinstance(periods, list):
+        return []
+    normalized: list[dict] = []
+    seen: set[tuple[int, int, str]] = set()
+    term_cap = max(0, int(term_months))
+    for period in periods:
+        if not isinstance(period, dict):
+            continue
+        start_month = _coerce_int_token(period.get("start_month"), None)
+        end_month = _coerce_int_token(period.get("end_month"), start_month)
+        if start_month is None or end_month is None:
+            continue
+        start_i = max(0, int(start_month))
+        end_i = max(start_i, int(end_month))
+        if term_cap > 0:
+            max_end = max(0, term_cap - 1)
+            if start_i > max_end:
+                continue
+            end_i = min(end_i, max_end)
+        scope = _normalize_free_rent_scope_token(period.get("scope"), default="base")
+        key = (start_i, end_i, scope)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append({"start_month": start_i, "end_month": end_i, "scope": scope})
+    normalized.sort(key=lambda row: (int(row["start_month"]), int(row["end_month"]), str(row["scope"])))
+    return normalized
+
+
+def _count_unique_months_from_periods(periods: object, *, term_months: int = 0) -> int:
+    normalized = _normalize_option_free_rent_periods(periods, term_months=term_months)
+    if not normalized:
+        return 0
+    covered: set[int] = set()
+    term_cap = max(0, int(term_months))
+    for period in normalized:
+        start_i = int(period["start_month"])
+        end_i = int(period["end_month"])
+        if term_cap > 0:
+            if start_i >= term_cap:
+                continue
+            end_i = min(end_i, term_cap - 1)
+        for month_idx in range(start_i, end_i + 1):
+            covered.add(month_idx)
+    return len(covered)
+
+
+def _extract_option_abatement_periods_from_block(block: str, *, term_months_hint: int = 0) -> list[dict]:
+    if not block:
+        return []
+    cleaned = " ".join((block or "").split())
+    if not cleaned:
+        return []
+    term_cap = max(0, int(term_months_hint))
+    periods: list[dict] = []
+
+    def add_period(start_month: int, month_count: int, scope: str) -> None:
+        count = max(0, int(month_count))
+        if count <= 0:
+            return
+        start_i = max(0, int(start_month))
+        end_i = max(start_i, start_i + count - 1)
+        if term_cap > 0:
+            max_end = max(0, term_cap - 1)
+            if start_i > max_end:
+                return
+            end_i = min(end_i, max_end)
+        periods.append(
+            {
+                "start_month": start_i,
+                "end_month": end_i,
+                "scope": _normalize_free_rent_scope_token(scope, default="base"),
+            }
+        )
+
+    # Beginning-of-term concessions often appear in one sentence and should be applied sequentially.
+    front_cursor = 0
+    front_block = re.split(r"(?i)\ban\s+additional\b", cleaned, maxsplit=1)[0]
+    front_pattern = re.compile(
+        r"(?i)([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s*(?:of\s+)?"
+        r"(gross|base)\s+(?:rent\s+)?(?:free\s+rent|abatement)\b"
+    )
+    for m in front_pattern.finditer(front_block):
+        digit_val = _coerce_int_token(m.group(2), 0) or 0
+        word_val = _word_token_to_int(m.group(1)) or 0
+        count = max(digit_val, word_val)
+        if count <= 0:
+            continue
+        add_period(front_cursor, count, m.group(3))
+        front_cursor += count
+
+    # Additional abatements can be allocated into specific lease-year windows.
+    additional_pattern = re.compile(
+        r"(?is)\ban\s+additional\s+([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s*(?:of\s+)?"
+        r"(gross|base)\s+(?:rent\s+)?(?:free\s+rent|abatement)\b"
+    )
+    for m in additional_pattern.finditer(cleaned):
+        digit_val = _coerce_int_token(m.group(2), 0) or 0
+        word_val = _word_token_to_int(m.group(1)) or 0
+        count_total = max(digit_val, word_val)
+        if count_total <= 0:
+            continue
+        scope = _normalize_free_rent_scope_token(m.group(3), default="base")
+        tail = cleaned[m.end():]
+        boundary = re.search(
+            r"(?is)\ban\s+additional\b|\boption\s*(?:one|1|a|two|2|b)\b|\bbase\s+rent(?:al)?(?:\s+rate)?\s*:",
+            tail,
+        )
+        alloc_text = tail[:boundary.start()] if boundary else tail[:420]
+        allocated = 0
+        for alloc in re.finditer(
+            r"(?i)([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+in\s+the\s+beginning\s+of\s+(?:lease\s+)?year\s+(\d{1,2})\b",
+            alloc_text,
+        ):
+            local = alloc_text[alloc.start(): min(len(alloc_text), alloc.end() + 80)].lower()
+            if "before lease expiration" in local:
+                continue
+            alloc_digit = _coerce_int_token(alloc.group(2), 0) or 0
+            alloc_word = _word_token_to_int(alloc.group(1)) or 0
+            alloc_count = max(alloc_digit, alloc_word)
+            lease_year = _coerce_int_token(alloc.group(3), 0) or 0
+            if alloc_count <= 0 or lease_year <= 0:
+                continue
+            start_i = max(0, (lease_year - 1) * 12)
+            add_period(start_i, alloc_count, scope)
+            allocated += alloc_count
+        if allocated <= 0:
+            add_period(front_cursor, count_total, scope)
+            front_cursor += count_total
+
+    return _normalize_option_free_rent_periods(periods, term_months=term_cap)
+
+
 def _extract_annual_rent_escalation_pct(block: str) -> float | None:
     if not block:
         return None
@@ -3297,39 +3442,44 @@ def _extract_option_counter_terms(text: str) -> dict:
         if month_candidates:
             strong_term_candidates = [m for m in month_candidates if m >= 24]
             data["term_months"] = max(strong_term_candidates or month_candidates)
-
-        initial_free_match = re.search(
-            r"(?i)\b(?:with\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+base\s+free\s+rent\b",
-            block,
-        )
-        additional_free_match = re.search(
-            r"(?i)\badditional\s+([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+of\s+base\s+rent\s+abatement\b",
-            block,
-        )
-        initial_free = 0
-        additional_free = 0
-        if initial_free_match:
-            initial_free = max(
-                _coerce_int_token(initial_free_match.group(2), 0) or 0,
-                _word_token_to_int(initial_free_match.group(1)) or 0,
+        term_hint = _coerce_int_token(data.get("term_months"), 0) or 0
+        parsed_periods = _extract_option_abatement_periods_from_block(block, term_months_hint=term_hint)
+        if parsed_periods:
+            merged_periods = _normalize_option_free_rent_periods(
+                list(data.get("free_rent_periods") or []) + parsed_periods,
+                term_months=term_hint,
             )
-        if additional_free_match:
-            additional_free = max(
-                _coerce_int_token(additional_free_match.group(2), 0) or 0,
-                _word_token_to_int(additional_free_match.group(1)) or 0,
-            )
-        total_free = max(0, initial_free + additional_free)
-        if total_free > 0:
-            data["free_rent_months"] = total_free
+            data["free_rent_periods"] = merged_periods
+            data["free_rent_months"] = _count_unique_months_from_periods(merged_periods, term_months=term_hint)
+            scope_set = {str(p.get("scope") or "base") for p in merged_periods if isinstance(p, dict)}
+            data["free_rent_scope"] = "gross" if scope_set == {"gross"} else "base"
+        else:
+            fallback_months = _extract_free_rent_months_from_option_block(block)
+            if fallback_months is not None:
+                existing_months = _coerce_int_token(data.get("free_rent_months"), 0) or 0
+                data["free_rent_months"] = max(existing_months, max(0, int(fallback_months)))
 
     for raw_label, block in _extract_option_blocks(abatement_section):
         key = _normalize_option_key(raw_label)
         if not key:
             continue
         data = option_data.setdefault(key, {"option_key": key, "option_label": _option_display_label(key)})
+        term_hint = _coerce_int_token(data.get("term_months"), 0) or 0
+        parsed_periods = _extract_option_abatement_periods_from_block(block, term_months_hint=term_hint)
+        if parsed_periods:
+            merged_periods = _normalize_option_free_rent_periods(
+                list(data.get("free_rent_periods") or []) + parsed_periods,
+                term_months=term_hint,
+            )
+            data["free_rent_periods"] = merged_periods
+            data["free_rent_months"] = _count_unique_months_from_periods(merged_periods, term_months=term_hint)
+            scope_set = {str(p.get("scope") or "base") for p in merged_periods if isinstance(p, dict)}
+            data["free_rent_scope"] = "gross" if scope_set == {"gross"} else "base"
         free_months = _extract_free_rent_months_from_option_block(block)
         if free_months is not None:
-            data["free_rent_months"] = max(0, int(free_months))
+            fallback_months = max(0, int(free_months))
+            existing_months = _coerce_int_token(data.get("free_rent_months"), 0) or 0
+            data["free_rent_months"] = max(existing_months, fallback_months)
 
     for raw_label, block in _extract_option_blocks(base_section):
         key = _normalize_option_key(raw_label)
@@ -3361,10 +3511,29 @@ def _extract_option_counter_terms(text: str) -> dict:
             "option_key": key,
             "option_label": str(raw.get("option_label") or _option_display_label(key)),
             "term_months": term_months,
-            "free_rent_months": free_rent_months,
             "base_rate_psf_yr": base_rate_psf_yr,
             "escalation_pct": escalation_pct,
         }
+        option_free_periods = _normalize_option_free_rent_periods(raw.get("free_rent_periods"), term_months=term_months)
+        if not option_free_periods and free_rent_months > 0:
+            option_scope = _normalize_free_rent_scope_token(raw.get("free_rent_scope"), default="base")
+            option_free_periods = _normalize_option_free_rent_periods(
+                [
+                    {
+                        "start_month": 0,
+                        "end_month": max(0, free_rent_months - 1),
+                        "scope": option_scope,
+                    }
+                ],
+                term_months=term_months,
+            )
+        if option_free_periods:
+            free_rent_months = _count_unique_months_from_periods(option_free_periods, term_months=term_months)
+        option_scope_set = {str(p.get("scope") or "base") for p in option_free_periods if isinstance(p, dict)}
+        option_free_scope = "gross" if option_scope_set == {"gross"} else "base"
+        option_entry["free_rent_months"] = free_rent_months
+        option_entry["free_rent_scope"] = option_free_scope
+        option_entry["free_rent_periods"] = option_free_periods
         rent_schedule = _build_option_rent_schedule(
             term_months=term_months,
             base_rate_psf_yr=base_rate_psf_yr,
@@ -3385,6 +3554,11 @@ def _extract_option_counter_terms(text: str) -> dict:
         "selected_option": preferred_key,
         "term_months": _coerce_int_token(preferred.get("term_months"), 0) or 0,
         "free_rent_months": _coerce_int_token(preferred.get("free_rent_months"), 0) or 0,
+        "free_rent_scope": _normalize_free_rent_scope_token(preferred.get("free_rent_scope"), default="base"),
+        "free_rent_periods": _normalize_option_free_rent_periods(
+            preferred.get("free_rent_periods"),
+            term_months=_coerce_int_token(preferred.get("term_months"), 0) or 0,
+        ),
         "base_rate_psf_yr": _coerce_float_token(preferred.get("base_rate_psf_yr"), 0.0) or 0.0,
         "escalation_pct": _coerce_float_token(preferred.get("escalation_pct"), escalation_pct_default) or escalation_pct_default,
         "options": options,
@@ -3464,9 +3638,23 @@ def _build_canonical_option_variants(
         if term_months <= 0:
             continue
         free_rent_months = max(0, _coerce_int_token(raw.get("free_rent_months"), 0) or 0)
-        free_rent_scope = str(raw.get("free_rent_scope") or canonical.free_rent_scope or "base").strip().lower()
-        if free_rent_scope not in {"base", "gross"}:
-            free_rent_scope = "base"
+        free_rent_scope = _normalize_free_rent_scope_token(raw.get("free_rent_scope"), default=str(canonical.free_rent_scope or "base"))
+        option_free_periods = _normalize_option_free_rent_periods(raw.get("free_rent_periods"), term_months=term_months)
+        if option_free_periods:
+            free_rent_months = _count_unique_months_from_periods(option_free_periods, term_months=term_months)
+            scope_set = {str(p.get("scope") or "base") for p in option_free_periods if isinstance(p, dict)}
+            free_rent_scope = "gross" if scope_set == {"gross"} else "base"
+        elif free_rent_months > 0:
+            option_free_periods = _normalize_option_free_rent_periods(
+                [
+                    {
+                        "start_month": 0,
+                        "end_month": max(0, int(free_rent_months) - 1),
+                        "scope": free_rent_scope,
+                    }
+                ],
+                term_months=term_months,
+            )
         expiration_date = canonical.expiration_date
         try:
             expiration_date = _expiration_from_term_months(canonical.commencement_date, int(term_months))
@@ -3526,11 +3714,14 @@ def _build_canonical_option_variants(
             "expiration_date": expiration_date,
             "free_rent_months": int(free_rent_months),
             "free_rent_scope": free_rent_scope,
-            "free_rent_periods": (
-                [FreeRentPeriod(start_month=0, end_month=max(0, int(free_rent_months) - 1), scope=free_rent_scope)]
-                if free_rent_months > 0
-                else []
-            ),
+            "free_rent_periods": [
+                FreeRentPeriod(
+                    start_month=int(period["start_month"]),
+                    end_month=int(period["end_month"]),
+                    scope=_normalize_free_rent_scope_token(period.get("scope"), default=free_rent_scope),
+                )
+                for period in option_free_periods
+            ],
         }
         if rent_schedule:
             updates["rent_schedule"] = rent_schedule
@@ -4131,6 +4322,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         "free_rent_scope": None,
         "free_rent_start_month": None,
         "free_rent_end_month": None,
+        "free_rent_periods": [],
         "parking_abatement_periods": [],
         "phase_in_schedule": [],
         "rent_schedule": [],
@@ -4629,11 +4821,33 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 hints["free_rent_start_month"] = None
                 hints["free_rent_end_month"] = None
 
+    option_free_periods = _normalize_option_free_rent_periods(
+        option_hints.get("free_rent_periods"),
+        term_months=_coerce_int_token(hints.get("term_months"), 0) or 0,
+    )
     option_free_months = _coerce_int_token(option_hints.get("free_rent_months"), 0) or 0
-    if option_free_months > 0:
-        hints["free_rent_scope"] = "base"
+    if option_free_periods:
+        hints["free_rent_periods"] = option_free_periods
+        scope_set = {str(p.get("scope") or "base") for p in option_free_periods if isinstance(p, dict)}
+        hints["free_rent_scope"] = "gross" if scope_set == {"gross"} else "base"
+        starts = [int(p.get("start_month", 0)) for p in option_free_periods if isinstance(p, dict)]
+        ends = [int(p.get("end_month", 0)) for p in option_free_periods if isinstance(p, dict)]
+        hints["free_rent_start_month"] = min(starts) if starts else None
+        hints["free_rent_end_month"] = max(ends) if ends else None
+    elif option_free_months > 0:
+        hints["free_rent_scope"] = _normalize_free_rent_scope_token(option_hints.get("free_rent_scope"), default="base")
         hints["free_rent_start_month"] = 0
         hints["free_rent_end_month"] = max(0, option_free_months - 1)
+        hints["free_rent_periods"] = _normalize_option_free_rent_periods(
+            [
+                {
+                    "start_month": 0,
+                    "end_month": max(0, option_free_months - 1),
+                    "scope": hints["free_rent_scope"],
+                }
+            ],
+            term_months=_coerce_int_token(hints.get("term_months"), 0) or 0,
+        )
     elif has_multiple_option_variants:
         # In multi-option proposals, generic abatement language may belong to a different option.
         # Use the selected option's explicit abatement (including zero free rent) as source of truth.
@@ -4803,6 +5017,28 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         if variant_term <= 0:
             continue
         variant_free_months = max(0, _coerce_int_token(raw_variant.get("free_rent_months"), 0) or 0)
+        variant_free_periods = _normalize_option_free_rent_periods(
+            raw_variant.get("free_rent_periods"),
+            term_months=int(variant_term),
+        )
+        if variant_free_periods:
+            variant_free_months = _count_unique_months_from_periods(variant_free_periods, term_months=int(variant_term))
+        variant_scope_set = {str(p.get("scope") or "base") for p in variant_free_periods if isinstance(p, dict)}
+        variant_free_scope = "gross" if variant_scope_set == {"gross"} else "base"
+        if not variant_free_periods and variant_free_months > 0:
+            variant_free_periods = _normalize_option_free_rent_periods(
+                [
+                    {
+                        "start_month": 0,
+                        "end_month": max(0, variant_free_months - 1),
+                        "scope": _normalize_free_rent_scope_token(raw_variant.get("free_rent_scope"), default=variant_free_scope),
+                    }
+                ],
+                term_months=int(variant_term),
+            )
+            if variant_free_periods:
+                variant_scope_set = {str(p.get("scope") or "base") for p in variant_free_periods if isinstance(p, dict)}
+                variant_free_scope = "gross" if variant_scope_set == {"gross"} else "base"
         variant_base_rate = _coerce_float_token(raw_variant.get("base_rate_psf_yr"), 0.0) or 0.0
         variant_escalation_pct = _coerce_float_token(raw_variant.get("escalation_pct"), 0.0) or 0.0
         variant_rent_schedule = raw_variant.get("rent_schedule") if isinstance(raw_variant.get("rent_schedule"), list) else []
@@ -4817,7 +5053,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             "option_label": str(raw_variant.get("option_label") or _option_display_label(option_key)).strip() or _option_display_label(option_key),
             "term_months": int(variant_term),
             "free_rent_months": int(variant_free_months),
-            "free_rent_scope": "base",
+            "free_rent_scope": variant_free_scope,
+            "free_rent_periods": variant_free_periods,
             "base_rate_psf_yr": float(variant_base_rate),
             "escalation_pct": float(variant_escalation_pct),
             "rent_schedule": variant_rent_schedule,
@@ -6747,7 +6984,30 @@ def _normalize_impl(
             hint_free_start = _coerce_int_token(extracted_hints.get("free_rent_start_month"), None)
             hint_free_end = _coerce_int_token(extracted_hints.get("free_rent_end_month"), None)
             term_for_free = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0
-            if hint_free_start is not None and hint_free_end is not None:
+            hint_free_periods_raw = extracted_hints.get("free_rent_periods")
+            normalized_hint_free_periods = _normalize_option_free_rent_periods(
+                hint_free_periods_raw,
+                term_months=term_for_free,
+            )
+            if normalized_hint_free_periods:
+                free_periods = [
+                    FreeRentPeriod(
+                        start_month=int(period["start_month"]),
+                        end_month=int(period["end_month"]),
+                        scope=_normalize_free_rent_scope_token(period.get("scope"), default=hint_free_scope or "base"),
+                    )
+                    for period in normalized_hint_free_periods
+                ]
+                if free_periods:
+                    updates["free_rent_periods"] = free_periods
+                    updates["free_rent_months"] = _count_unique_months_from_periods(
+                        normalized_hint_free_periods,
+                        term_months=term_for_free,
+                    )
+                    scope_set = {str(p.scope or "base").strip().lower() for p in free_periods}
+                    if len(scope_set) == 1:
+                        updates["free_rent_scope"] = "gross" if "gross" in scope_set else "base"
+            elif hint_free_start is not None and hint_free_end is not None:
                 free_start = max(0, int(hint_free_start))
                 free_end = max(free_start, int(hint_free_end))
                 if term_for_free > 0:

@@ -591,6 +591,47 @@ def test_extract_option_counter_terms_supports_option_a_and_b_labels() -> None:
     assert option_hints["options"][1]["base_rate_psf_yr"] == 26.0
 
 
+def test_extract_option_counter_terms_parses_mixed_and_distributed_abatements() -> None:
+    text = (
+        "TERM: Option One: Sixty-five (65) Months with two (2) months base free rent at the beginning of term. "
+        "An additional three (3) months of base rent abatement to be applied during the term, allocated as follows: "
+        "Bonus: One (1) month of Base Free Rent in 2026 before lease expiration. "
+        "Three (3) months in the beginning of lease year 3. "
+        "Option Two: Eighty-seven (87) Months two (2) months of gross free rent and two (2) months of base free rent at the beginning of term. "
+        "An additional three (3) months of base rent abatement to be applied during the term, allocated as follows: "
+        "Bonus: Three (3) months of Base Free Rent in 2026 before lease expiration. "
+        "Two (2) months in the beginning of lease year 3. "
+        "One (1) month in the beginning of lease year 4. "
+        "BASE RENT: Option One: Months 01-12: $21.00 NNN with 3% annual increases. "
+        "Option Two: Months 01-12: $21.00 NNN with 3% annual increases."
+    )
+    option_hints = main._extract_option_counter_terms(text)
+
+    assert option_hints["selected_option"] == "b"
+    assert option_hints["term_months"] == 87
+    assert option_hints["free_rent_months"] == 7
+    assert option_hints["free_rent_periods"] == [
+        {"start_month": 0, "end_month": 1, "scope": "gross"},
+        {"start_month": 2, "end_month": 3, "scope": "base"},
+        {"start_month": 24, "end_month": 25, "scope": "base"},
+        {"start_month": 36, "end_month": 36, "scope": "base"},
+    ]
+
+    options = {str(o["option_key"]): o for o in option_hints["options"]}
+    assert options["a"]["free_rent_months"] == 5
+    assert options["a"]["free_rent_periods"] == [
+        {"start_month": 0, "end_month": 1, "scope": "base"},
+        {"start_month": 24, "end_month": 26, "scope": "base"},
+    ]
+    assert options["b"]["free_rent_months"] == 7
+    assert options["b"]["free_rent_periods"] == [
+        {"start_month": 0, "end_month": 1, "scope": "gross"},
+        {"start_month": 2, "end_month": 3, "scope": "base"},
+        {"start_month": 24, "end_month": 25, "scope": "base"},
+        {"start_month": 36, "end_month": 36, "scope": "base"},
+    ]
+
+
 def test_build_canonical_option_variants_emits_two_scenarios() -> None:
     canonical = main._dict_to_canonical(
         {
@@ -620,6 +661,10 @@ def test_build_canonical_option_variants_emits_two_scenarios() -> None:
                     "term_months": 63,
                     "free_rent_months": 6,
                     "free_rent_scope": "base",
+                    "free_rent_periods": [
+                        {"start_month": 0, "end_month": 1, "scope": "base"},
+                        {"start_month": 24, "end_month": 27, "scope": "base"},
+                    ],
                     "rent_schedule": [{"start_month": 0, "end_month": 62, "rent_psf_annual": 27.0}],
                 },
                 {
@@ -628,6 +673,12 @@ def test_build_canonical_option_variants_emits_two_scenarios() -> None:
                     "term_months": 88,
                     "free_rent_months": 8,
                     "free_rent_scope": "base",
+                    "free_rent_periods": [
+                        {"start_month": 0, "end_month": 1, "scope": "gross"},
+                        {"start_month": 2, "end_month": 3, "scope": "base"},
+                        {"start_month": 24, "end_month": 25, "scope": "base"},
+                        {"start_month": 36, "end_month": 37, "scope": "base"},
+                    ],
                     "rent_schedule": [{"start_month": 0, "end_month": 87, "rent_psf_annual": 26.0}],
                 },
             ]
@@ -638,9 +689,20 @@ def test_build_canonical_option_variants_emits_two_scenarios() -> None:
     assert variants[0].scenario_name.endswith("Option A")
     assert variants[0].term_months == 63
     assert str(variants[0].expiration_date) == "2032-02-29"
+    assert [(p.start_month, p.end_month, p.scope) for p in variants[0].free_rent_periods] == [
+        (0, 1, "base"),
+        (24, 27, "base"),
+    ]
     assert variants[1].scenario_name.endswith("Option B")
     assert variants[1].term_months == 88
     assert str(variants[1].expiration_date) == "2034-03-31"
+    assert variants[1].free_rent_scope == "base"
+    assert [(p.start_month, p.end_month, p.scope) for p in variants[1].free_rent_periods] == [
+        (0, 1, "gross"),
+        (2, 3, "base"),
+        (24, 25, "base"),
+        (36, 37, "base"),
+    ]
 
 
 def test_extract_hints_parses_option_1_2_counter_with_base_rental_rate_and_abatement() -> None:

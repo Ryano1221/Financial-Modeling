@@ -520,3 +520,83 @@ def test_normalize_impl_overrides_bad_ai_values_with_document_hints_for_ksd_coun
     assert canonical.term_months == 90
     assert canonical.ti_allowance_psf == 13.0
     assert canonical.rent_schedule and canonical.rent_schedule[0].rent_psf_annual == 13.5
+
+
+def test_normalize_impl_applies_mixed_and_distributed_option_abatements(monkeypatch) -> None:
+    option_text = (
+        "PREMISES: Medina 2nd Floor - Approximately 14,410 RSF\n"
+        "COMMENCEMENT: May 1, 2027\n"
+        "TERM: Option One: Sixty-five (65) Months with two (2) months base free rent at the beginning of term. "
+        "An additional three (3) months of base rent abatement to be applied during the term, allocated as follows: "
+        "Three (3) months in the beginning of lease year 3. "
+        "Option Two: Eighty-seven (87) Months two (2) months of gross free rent and two (2) months of base free rent at the beginning of term. "
+        "An additional three (3) months of base rent abatement to be applied during the term, allocated as follows: "
+        "Two (2) months in the beginning of lease year 3. One (1) month in the beginning of lease year 4.\n"
+        "BASE RENT: Option One: Months 01-12: $21.00 NNN with 3% annual increases. "
+        "Option Two: Months 01-12: $21.00 NNN with 3% annual increases.\n"
+        "OPERATING EXPENSES: Estimated to be $14.30 per RSF.\n"
+    )
+    monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: (option_text, "docx"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "counter_proposal")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Medina Bldg Floor 2",
+                rsf=14410.0,
+                commencement=date(2027, 5, 1),
+                expiration=date(2034, 7, 31),
+                rent_steps=[RentStep(start=0, end=86, rate_psf_yr=21.0)],
+                free_rent_months=3,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=14.3,
+                base_year_opex_psf_yr=14.3,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"free_rent_months": 0.6},
+            warnings=[],
+            source="docx",
+            text_length=len(option_text),
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(
+        filename="Austin Oaks - Tenant Counter Proposal - Oculus Pathology - 3.3.26.docx",
+        file=BytesIO(b"docx-bytes"),
+    )
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+
+    canonical = result.canonical_lease
+    assert canonical.term_months == 87
+    assert canonical.free_rent_months == 7
+    assert [(p.start_month, p.end_month, p.scope) for p in canonical.free_rent_periods] == [
+        (0, 1, "gross"),
+        (2, 3, "base"),
+        (24, 25, "base"),
+        (36, 36, "base"),
+    ]
+
+    assert len(result.option_variants) == 2
+    option_b = next(v for v in result.option_variants if v.scenario_name.endswith("Option B"))
+    assert option_b.free_rent_months == 7
+    assert [(p.start_month, p.end_month, p.scope) for p in option_b.free_rent_periods] == [
+        (0, 1, "gross"),
+        (2, 3, "base"),
+        (24, 25, "base"),
+        (36, 36, "base"),
+    ]
