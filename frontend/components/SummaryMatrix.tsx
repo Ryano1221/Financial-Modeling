@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 import { METRIC_LABELS, METRIC_DISPLAY_NAMES, formatMetricValue } from "@/lib/lease-engine/excel-export";
 import type { EqualizedComparisonResult } from "@/lib/equalized";
-import { formatCurrency, formatCurrencyPerSF, formatDateISO, formatPercent } from "@/lib/format";
+import { formatCurrency, formatCurrencyPerSF, formatDateISO, formatPercent, formatNumber } from "@/lib/format";
 import type { ScenarioWithId } from "@/lib/types";
 import { effectiveTiBudgetTotal, round2 } from "@/lib/ti";
 import { buildOverarchingAssumptionNotes } from "@/lib/global-assumptions";
