@@ -230,7 +230,10 @@ function extractClauses(notes: string): ClauseHit[] {
     .map((p) => p.trim())
     .filter(Boolean);
   const hits: ClauseHit[] = [];
+  const genericParking = /\bparking\s*:\s*parking terms included\b/i;
+  const genericExpense = /\bexpense caps?\/exclusions or audit rights included\b/i;
   for (const part of parts) {
+    if (genericParking.test(part) || genericExpense.test(part)) continue;
     for (const pattern of CLAUSE_PATTERNS) {
       if (pattern.regex.test(part)) {
         hits.push({ category: pattern.category, detail: part });

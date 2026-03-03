@@ -70,11 +70,28 @@ export function SummaryMatrix({
     onUpdateTiBudgetPsf(scenarioId, Math.max(0, parsed));
   };
 
-  const getNotes = (formatted: string) =>
-    formatted
+  const getNotes = (formatted: string, metrics: OptionMetrics) => {
+    const genericParking = /\bparking\s*:\s*parking terms included\b/i;
+    const genericExpense = /\bexpense caps?\s*\/\s*exclusions\s*:\s*expense caps\/exclusions or audit rights included\.?\b/i;
+    const base = formatted
       .split(/\n+/)
       .map((line) => line.replace(/^\s*•\s*/, "").trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((line) => !genericExpense.test(line))
+      .filter((line) => !genericParking.test(line));
+
+    const hasParkingDetail = base.some((line) => /\bparking\s*:/i.test(line) && /\bspaces?\b/i.test(line) && /1,?000\s*rsf/i.test(line));
+    if (!hasParkingDetail) {
+      const spaces = Math.max(0, Number(metrics.parkingSpaces) || 0);
+      const rsf = Math.max(0, Number(metrics.rsf) || 0);
+      if (spaces > 0 && rsf > 0) {
+        const ratio = (spaces * 1000) / rsf;
+        const ratioToken = ratio.toFixed(2).replace(/\.?0+$/g, "");
+        base.push(`Parking: total ${formatNumber(spaces)} spaces at ${ratioToken}/1,000 RSF`);
+      }
+    }
+    return base;
+  };
 
   const getMatrixCellValue = (
     metricKey: keyof OptionMetrics,
@@ -281,7 +298,7 @@ export function SummaryMatrix({
                 const value = (r.metrics as OptionMetrics)[key];
                 const formatted = getMatrixCellValue(key, r.scenarioId, value);
                 const notesCell = key === "notes";
-                const noteBullets = notesCell ? getNotes(formatted) : [];
+                const noteBullets = notesCell ? getNotes(formatted, r.metrics as OptionMetrics) : [];
                 return (
                   <div key={`matrix-mobile-${r.scenarioId}-${key}`} className="pt-1 border-t border-slate-300/10 first:border-0 first:pt-0">
                     <dt className="text-slate-400 mb-1">{getMetricLabel(key)}</dt>
@@ -336,7 +353,7 @@ export function SummaryMatrix({
                   const formatted = getMatrixCellValue(key, r.scenarioId, value);
                   const notesCell = key === "notes";
                   const leftAlignCell = notesCell || key === "commissionBasis";
-                  const noteBullets = notesCell ? getNotes(formatted) : [];
+                  const noteBullets = notesCell ? getNotes(formatted, r.metrics as OptionMetrics) : [];
                   return (
                     <td
                       key={r.scenarioId}
