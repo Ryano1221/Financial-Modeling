@@ -1709,6 +1709,27 @@ def _normalize_suite_candidate(raw: str) -> str:
     return ""
 
 
+def _normalize_suite_value(raw: str) -> str:
+    value = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not value:
+        return ""
+    if "," in value or "/" in value or "&" in value or " and " in value.lower():
+        parts = re.split(r"(?i)\s*(?:,|/|&|\band\b)\s*", value)
+        normalized_parts: list[str] = []
+        seen: set[str] = set()
+        for part in parts:
+            token = _normalize_suite_candidate(part)
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            normalized_parts.append(token)
+        if len(normalized_parts) >= 2:
+            return ",".join(normalized_parts[:6])
+        if normalized_parts:
+            return normalized_parts[0]
+    return _normalize_suite_candidate(value)
+
+
 def _normalize_floor_candidate(raw: str) -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:-")
     if not v:
@@ -1862,6 +1883,59 @@ def _iter_text_segments(lines: list[str], max_lines: int = 260) -> list[str]:
 def _extract_suite_from_text(text: str) -> str:
     if not text:
         return ""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+    # Prefer explicit multi-suite expressions such as "Suite 100, 200, and 300".
+    multi_suite_candidates: list[tuple[int, int, str]] = []
+    for idx, line in enumerate(lines[:320]):
+        low = line.lower()
+        if "suite" not in low:
+            continue
+        if any(tok in low for tok in ("attn:", "attention:", "address for notices", "dear ", "re:")) and "premises" not in low:
+            continue
+        after_suite = line[line.lower().find("suite"):]
+        numbers = [
+            m.group(1)
+            for m in re.finditer(r"(?i)\bsuite\s*[:#-]?\s*(\d{2,4})(?!\d)", line)
+        ]
+        if len(numbers) < 2:
+            suite_list_match = re.search(
+                r"(?i)\bsuite\s*[:#-]?\s*((?:\d{2,4}\s*(?:,|and|&)\s*)+\d{2,4})",
+                after_suite,
+            )
+            if suite_list_match:
+                numbers = re.findall(r"\b(\d{2,4})\b", suite_list_match.group(1))
+        if len(numbers) < 2:
+            compact_match = re.search(r"(?i)\bsuite\s*[:#-]?\s*(\d{6,12})\b", after_suite)
+            if compact_match:
+                compact = compact_match.group(1)
+                if len(compact) % 3 == 0:
+                    chunks = [compact[i: i + 3] for i in range(0, len(compact), 3)]
+                    if len(chunks) >= 2:
+                        numbers = chunks
+        normalized_nums: list[str] = []
+        seen_nums: set[str] = set()
+        for token in numbers:
+            cleaned = str(int(token)) if token.isdigit() else token
+            if cleaned in seen_nums:
+                continue
+            seen_nums.add(cleaned)
+            normalized_nums.append(cleaned)
+        if len(normalized_nums) < 2:
+            continue
+        candidate = ",".join(normalized_nums[:6])
+        score = 12
+        if any(tok in low for tok in ("premises", "renewal", "expansion", "expo", "suite 100,200", "suite 100, 200")):
+            score += 4
+        if "total premises" in low:
+            score += 3
+        if any(tok in low for tok in ("located", "consisting of", "approximately")):
+            score += 2
+        multi_suite_candidates.append((score, idx, candidate))
+    if multi_suite_candidates:
+        multi_suite_candidates.sort(key=lambda row: (-row[0], row[1], -len(row[2])))
+        return multi_suite_candidates[0][2]
+
     suite_patterns = [
         r"(?i)\b(?:suite|ste\.?|unit)\b\s*[:#-]?\s*(?:no\.?|#)?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
         r"(?i)\bspace\b\s*(?:no\.?|#)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
@@ -1871,7 +1945,6 @@ def _extract_suite_from_text(text: str) -> str:
         r"(?i)\bat\s+suite\s+([A-Za-z0-9][A-Za-z0-9\- ]{0,24})",
         r"(?i)\bfloor\s+([A-Za-z0-9][A-Za-z0-9\-]{0,8})\s+suite\s+([A-Za-z0-9][A-Za-z0-9\-]{0,14})",
     ]
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     segments = _iter_text_segments(lines, max_lines=260)
     candidates: list[tuple[int, int, str]] = []
     for idx, ln in enumerate(segments):
@@ -2145,6 +2218,12 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
     if not lines:
         return ""
     segments = _iter_text_segments(lines, max_lines=280)
+    suite_hint_tokens = [
+        _normalize_suite_candidate(token)
+        for token in re.split(r"(?i)\s*(?:,|/|&|\band\b)\s*", suite_hint or "")
+        if _normalize_suite_candidate(token)
+    ]
+    suite_hint_primary = suite_hint_tokens[0] if suite_hint_tokens else _normalize_suite_candidate(suite_hint)
 
     street_suffix = r"(?:Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|Lane|Ln\.?|Way|Plaza|Parkway|Pkwy\.?|Expressway|Expy\.?|Highway|Hwy\.?|Circle|Cir\.?|Trail|Trl\.?)"
     core_addr = rf"(\d{{1,6}}\s+[A-Za-z0-9\.\- ]{{2,100}}\b{street_suffix}\b(?:\s*,?\s*(?:Suite|Ste\.?|Unit|Floor)\s*[A-Za-z0-9\-]+)?(?:,\s*[A-Za-z0-9 .'-]{{2,50}}){{0,3}})"
@@ -2179,8 +2258,8 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
             c_low = candidate.lower()
             if any(k in c_low for k in ("rsf", "cam", "reconciliation", "rent", "rate", "month", "year")):
                 score -= 3
-            if suite_hint:
-                if re.search(rf"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*{re.escape(suite_hint)}\b", candidate):
+            if suite_hint_primary:
+                if re.search(rf"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*{re.escape(suite_hint_primary)}\b", candidate):
                     score += 2
                 elif re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*[A-Za-z0-9\-]+\b", candidate):
                     score -= 3
@@ -2733,6 +2812,50 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         return any(token in context for token in disqualifying_tokens)
 
     month_candidates: list[tuple[int, int, int]] = []
+
+    # Handle split-line term blocks:
+    #   RENEWAL TERM:
+    #   Ninety(90) months
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    term_label_pat = re.compile(
+        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|renewal\s+term|initial\s+term|term)\b"
+    )
+    for idx, line in enumerate(lines[:1400]):
+        line_low = line.lower()
+        if not term_label_pat.search(line):
+            continue
+        if any(tok in line_low for tok in ("option to extend", "option term", "renewal option", "holdover")):
+            continue
+        for lookahead in range(0, 4):
+            if idx + lookahead >= len(lines):
+                break
+            probe = lines[idx + lookahead]
+            probe_low = probe.lower()
+            if any(tok in probe_low for tok in disqualifying_tokens):
+                continue
+            month_match = re.search(
+                r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
+                probe,
+            )
+            if month_match:
+                months = _coerce_int_token(month_match.group(1), 0)
+                if 1 <= months <= 600:
+                    score = 14 - lookahead
+                    if "renewal term" in line_low:
+                        score += 2
+                    if "primary lease term" in line_low:
+                        score += 3
+                    month_candidates.append((score, idx, int(months)))
+                    break
+            year_match = re.search(r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\b", probe)
+            if year_match:
+                years = _coerce_int_token(year_match.group(1), 0)
+                if 1 <= years <= 50:
+                    score = 12 - lookahead
+                    if "renewal term" in line_low:
+                        score += 2
+                    month_candidates.append((score, idx, int(years * 12)))
+                    break
 
     # Handle explicit "150 month term" style language first.
     explicit_month_term_patterns = [
@@ -4028,18 +4151,21 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|sf|s\.?f\.?)\b",
     ]
     rsf_candidates: list[dict] = []
-    strong_total_match = re.search(
+    strong_total_patterns = [
         r"(?i)\bamended\s+to\s+reflect\s+a\s+total\s+of\s+(\d{1,3}(?:,\d{3})+|\d{3,7})\s+rentable\s+square\s+feet\b",
-        text,
-    )
-    if strong_total_match:
-        value = _parse_number_token(strong_total_match.group(1))
-        if value is not None and 100 <= value <= 2_000_000:
+        r"(?i)\btotal\s+premises\b[^.\n]{0,40}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rentable\s+square\s+feet|square\s*feet|rsf|sf)\b",
+        r"(?i)\btotal\s+(?:rentable\s+square\s+feet|rsf)\b[^.\n]{0,20}[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})\b",
+    ]
+    for total_pat in strong_total_patterns:
+        for strong_total_match in re.finditer(total_pat, text):
+            value = _parse_number_token(strong_total_match.group(1))
+            if value is None or not (100 <= value <= 2_000_000):
+                continue
             rsf_candidates.append(
                 {
                     "value": value,
-                    "snippet": "amended to reflect a total of rentable square feet",
-                    "score": 20,
+                    "snippet": "strong total premises/rsf expression",
+                    "score": 24,
                     "start": strong_total_match.start(),
                 }
             )
@@ -4108,12 +4234,17 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if value <= 1500 and re.search(r"(?i)\b(?:per|ratio|density|occup|person|people|work\s*station)\b", low):
                 score -= 6
             if suite_hint:
+                suite_hint_values = {
+                    _normalize_suite_candidate(token)
+                    for token in re.split(r"[\s,;/&]+", str(suite_hint))
+                    if _normalize_suite_candidate(token)
+                }
                 suite_match = re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*#?\s*([A-Za-z0-9\-]+)\b", snippet)
                 if suite_match:
                     cand_suite = _normalize_suite_candidate(suite_match.group(1))
-                    if cand_suite and cand_suite != suite_hint:
+                    if cand_suite and suite_hint_values and cand_suite not in suite_hint_values:
                         score -= 8
-                    elif cand_suite and cand_suite == suite_hint:
+                    elif cand_suite and suite_hint_values and cand_suite in suite_hint_values:
                         score += 3
 
             rsf_candidates.append(
@@ -6660,7 +6791,7 @@ def _normalize_impl(
                 suite_val = ""
             if not suite_val and not force_suite_blank:
                 suite_val = _extract_suite_from_text(str(canonical.premises_name or ""))
-            suite_val = _normalize_suite_candidate(suite_val)
+            suite_val = _normalize_suite_value(suite_val)
             floor_val = _normalize_floor_candidate(floor_hint_val or str(canonical.floor or "").strip())
             if floor_val and (floor_hint_val or not (canonical.floor or "").strip() or not suite_val):
                 updates["floor"] = floor_val

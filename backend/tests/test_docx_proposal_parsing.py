@@ -308,3 +308,25 @@ def test_regex_prefill_ignores_holdover_months_and_prefers_primary_term() -> Non
     prefill = _regex_prefill(text)
     assert prefill.get("term_months") == 39
     assert prefill.get("expiration") == "2029-07-31"
+
+
+def test_regex_prefill_handles_split_line_term_dates_and_ti_psf_without_false_ti_total() -> None:
+    text = (
+        "LL January 21, 2026\n"
+        "COMMENCEMENT:\n"
+        "September 1, 2026\n"
+        "RENEWAL TERM:\n"
+        "Ninety(90) months\n"
+        "RENEWAL BASE RENT:\n"
+        "$13.50NNN with 3.50% annual increases\n"
+        "TENANT IMPROVEMENT ALLOWANCE:\n"
+        "Landlord shall provide the Tenant a Tenant Improvement allowance equal to $1300 PSF for improvements.\n"
+        "Tenant may have the ability to amortize an additional $7.00 PSF at 9% interest over the term of the lease.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("commencement") == "2026-09-01"
+    assert prefill.get("term_months") == 90
+    assert prefill.get("expiration") == "2034-02-28"
+    assert prefill.get("rate_psf_yr") == 13.5
+    assert prefill.get("ti_allowance_psf") == 13.0
+    assert prefill.get("ti_allowance_total") is None

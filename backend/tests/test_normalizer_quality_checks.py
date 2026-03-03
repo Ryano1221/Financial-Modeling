@@ -450,3 +450,73 @@ def test_normalize_impl_keeps_inline_parking_count_when_ratio_missing(monkeypatc
     assert round(float(canonical.parking_ratio), 4) == round((4 * 1000.0) / 4949.0, 4)
     assert canonical.parking_count == 4
     assert canonical.parking_rate_monthly == 100.0
+
+
+def test_normalize_impl_overrides_bad_ai_values_with_document_hints_for_ksd_counter(monkeypatch) -> None:
+    ksd_text = (
+        "PREMISES: Renewal Suite 100: Approximately 64,800 SF Expansion Suite 200: Approximately 43,200 SF "
+        "Second Expansion Suite 300: Approximately 21,600 SF Total Premises: 129,600 SF\n"
+        "Expo 11 - Suite 100,200, and 300\n"
+        "RENEWAL TERM:\n"
+        "Ninety(90) months\n"
+        "COMMENCEMENT:\n"
+        "September 1, 2026\n"
+        "RENEWAL BASE RENT:\n"
+        "$13.50NNN with 3.50% annual increases\n"
+        "OPERATING EXPENSES:\n"
+        "Estimated to be $5.79/sf for 2025.\n"
+        "TENANT IMPROVEMENT ALLOWANCE:\n"
+        "Landlord shall provide the Tenant a Tenant Improvement allowance equal to $1300 PSF for improvements.\n"
+        "Tenant may have the ability to amortize an additional $7.00 PSF at 9% interest over the term of the lease.\n"
+        "LL January 21, 2026\n"
+    )
+    monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: (ksd_text, "docx"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "counter_proposal")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="6231 E Stassney Ln Suite 100",
+                rsf=43200.0,
+                commencement=date(2026, 9, 1),
+                expiration=date(2026, 1, 21),
+                rent_steps=[RentStep(start=0, end=89, rate_psf_yr=5.79)],
+                free_rent_months=6,
+                ti_allowance_psf=0.02,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=5.79,
+                base_year_opex_psf_yr=5.79,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"rsf": 0.35, "expiration": 0.35, "rate_psf_yr": 0.35},
+            warnings=[],
+            source="docx",
+            text_length=len(ksd_text),
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="KSD - LL Counter 1-21-26.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+    canonical = result.canonical_lease
+
+    assert canonical.suite == "100,200,300"
+    assert canonical.rsf == 129600.0
+    assert canonical.commencement_date == date(2026, 9, 1)
+    assert canonical.expiration_date == date(2034, 2, 28)
+    assert canonical.term_months == 90
+    assert canonical.ti_allowance_psf == 13.0
+    assert canonical.rent_schedule and canonical.rent_schedule[0].rent_psf_annual == 13.5

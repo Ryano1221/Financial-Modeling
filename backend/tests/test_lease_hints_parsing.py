@@ -891,6 +891,36 @@ def test_extract_hints_prefers_counter_month_term_over_holdover_or_request_term(
     assert hints["ti_allowance_psf"] == 20.0
 
 
+def test_extract_hints_ksd_counter_prefers_total_premises_and_multisuite_terms() -> None:
+    text = (
+        "PREMISES: Renewal Suite 100: Approximately 64,800 SF Expansion Suite 200: Approximately 43,200 SF "
+        "Second Expansion Suite 300: Approximately 21,600 SF Total Premises: 129,600 SF\n"
+        "Expo 11 - Suite 100,200, and 300\n"
+        "RENEWAL TERM:\n"
+        "Ninety(90) months\n"
+        "COMMENCEMENT:\n"
+        "September 1, 2026\n"
+        "RENEWAL BASE RENT:\n"
+        "$13.50NNN with 3.50% annual increases\n"
+        "OPERATING EXPENSES:\n"
+        "Estimated to be $5.79/sf for 2025.\n"
+        "TENANT IMPROVEMENT ALLOWANCE:\n"
+        "Landlord shall provide the Tenant a Tenant Improvement allowance equal to $1300 PSF for improvements.\n"
+        "Tenant may have the ability to amortize an additional $7.00 PSF at 9% interest over the term of the lease.\n"
+        "LL January 21, 2026\n"
+    )
+    hints = main._extract_lease_hints(text, "KSD - LL Counter 1-21-26.docx", "test-rid")
+    assert hints["suite"] == "100,200,300"
+    assert hints["rsf"] == 129600.0
+    assert str(hints["commencement_date"]) == "2026-09-01"
+    assert hints["term_months"] == 90
+    assert str(hints["expiration_date"]) == "2034-02-28"
+    assert hints["ti_allowance_psf"] == 13.0
+    rent_schedule = hints.get("rent_schedule")
+    assert isinstance(rent_schedule, list) and rent_schedule
+    assert rent_schedule[0]["rent_psf_annual"] == 13.5
+
+
 def test_extract_hints_term_and_free_rent_clause_uses_free_months_not_term_months() -> None:
     text = (
         "COMMENCEMENT: December 1, 2026.\n"
