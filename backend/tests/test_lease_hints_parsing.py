@@ -632,6 +632,44 @@ def test_extract_option_counter_terms_parses_mixed_and_distributed_abatements() 
     ]
 
 
+def test_extract_option_counter_terms_handles_word_year_allocations() -> None:
+    text = (
+        "TERM: Option A: Seventy-two (72) Months two (2) months of gross free rent and one (1) month of base free rent at the beginning of term. "
+        "An additional four (4) months of base rent abatement to be applied during the term, allocated as follows: "
+        "Two (2) months in the beginning of lease year three. "
+        "Two (2) months in the beginning of year four. "
+        "BASE RENT: Option A: Months 01-12: $31.00 NNN with 3.0% annual increases."
+    )
+    option_hints = main._extract_option_counter_terms(text)
+
+    assert option_hints["term_months"] == 72
+    assert option_hints["free_rent_months"] == 7
+    assert option_hints["free_rent_periods"] == [
+        {"start_month": 0, "end_month": 1, "scope": "gross"},
+        {"start_month": 2, "end_month": 2, "scope": "base"},
+        {"start_month": 24, "end_month": 25, "scope": "base"},
+        {"start_month": 36, "end_month": 37, "scope": "base"},
+    ]
+
+
+def test_extract_option_counter_terms_handles_explicit_month_range_allocations() -> None:
+    text = (
+        "TERM: Option B: Eighty-four (84) months one (1) month of base free rent at the beginning of term. "
+        "An additional three (3) months of gross rent abatement to be applied during the term, allocated as follows: "
+        "Months 25-26 and month 37. "
+        "BASE RENT: Option B: Months 01-12: $29.00 NNN with 2.5% annual increases."
+    )
+    option_hints = main._extract_option_counter_terms(text)
+
+    assert option_hints["term_months"] == 84
+    assert option_hints["free_rent_months"] == 4
+    assert option_hints["free_rent_periods"] == [
+        {"start_month": 0, "end_month": 0, "scope": "base"},
+        {"start_month": 24, "end_month": 25, "scope": "gross"},
+        {"start_month": 36, "end_month": 36, "scope": "gross"},
+    ]
+
+
 def test_build_canonical_option_variants_emits_two_scenarios() -> None:
     canonical = main._dict_to_canonical(
         {

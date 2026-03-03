@@ -3321,7 +3321,7 @@ def _extract_option_abatement_periods_from_block(block: str, *, term_months_hint
         alloc_text = tail[:boundary.start()] if boundary else tail[:420]
         allocated = 0
         for alloc in re.finditer(
-            r"(?i)([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+in\s+the\s+beginning\s+of\s+(?:lease\s+)?year\s+(\d{1,2})\b",
+            r"(?i)([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+in\s+the\s+beginning\s+of\s+(?:lease\s+)?year\s+(\d{1,2}|[a-z]+(?:-[a-z]+)?)\b",
             alloc_text,
         ):
             local = alloc_text[alloc.start(): min(len(alloc_text), alloc.end() + 80)].lower()
@@ -3330,12 +3330,31 @@ def _extract_option_abatement_periods_from_block(block: str, *, term_months_hint
             alloc_digit = _coerce_int_token(alloc.group(2), 0) or 0
             alloc_word = _word_token_to_int(alloc.group(1)) or 0
             alloc_count = max(alloc_digit, alloc_word)
-            lease_year = _coerce_int_token(alloc.group(3), 0) or 0
+            lease_year = _coerce_int_token(alloc.group(3), 0) or _word_token_to_int(alloc.group(3)) or 0
             if alloc_count <= 0 or lease_year <= 0:
                 continue
             start_i = max(0, (lease_year - 1) * 12)
             add_period(start_i, alloc_count, scope)
             allocated += alloc_count
+        for alloc in re.finditer(
+            r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b",
+            alloc_text,
+        ):
+            start_month_1 = _coerce_int_token(alloc.group(1), 0) or 0
+            end_month_1 = _coerce_int_token(alloc.group(2), 0) or 0
+            if start_month_1 <= 0 or end_month_1 < start_month_1:
+                continue
+            start_i = max(0, start_month_1 - 1)
+            count = max(0, end_month_1 - start_month_1 + 1)
+            add_period(start_i, count, scope)
+            allocated += count
+        for alloc in re.finditer(r"(?i)\bmonth\s*(\d{1,3})\b", alloc_text):
+            month_1 = _coerce_int_token(alloc.group(1), 0) or 0
+            if month_1 <= 0:
+                continue
+            start_i = max(0, month_1 - 1)
+            add_period(start_i, 1, scope)
+            allocated += 1
         if allocated <= 0:
             add_period(front_cursor, count_total, scope)
             front_cursor += count_total
