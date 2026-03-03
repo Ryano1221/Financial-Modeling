@@ -574,6 +574,7 @@ export default function Home() {
   const [clientLogoUploading, setClientLogoUploading] = useState(false);
   const [clientLogoError, setClientLogoError] = useState<string | null>(null);
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
+  const computeRequestEpochRef = useRef<Record<string, number>>({});
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
@@ -673,6 +674,8 @@ export default function Home() {
     const missing = scenarios.filter((s) => !canonicalComputeCache[s.id]);
     if (missing.length === 0) return;
     missing.forEach((s) => {
+      const epoch = (computeRequestEpochRef.current[s.id] ?? 0) + 1;
+      computeRequestEpochRef.current[s.id] = epoch;
       const canonical = scenarioInputToBackendCanonical(s, s.id, s.name);
       fetchComputeCanonical(s.id, canonical)
         .then((res) => {
@@ -680,7 +683,9 @@ export default function Home() {
           return res.json() as Promise<CanonicalComputeResponse>;
         })
         .then((data) => {
-          if (data) setCanonicalComputeCache((prev) => ({ ...prev, [s.id]: data }));
+          if (!data) return;
+          if ((computeRequestEpochRef.current[s.id] ?? 0) !== epoch) return;
+          setCanonicalComputeCache((prev) => ({ ...prev, [s.id]: data }));
         })
         .catch(() => {});
     });
@@ -805,11 +810,14 @@ export default function Home() {
 
   const runComputeForScenario = useCallback(
     async (scenario: ScenarioWithId) => {
+      const epoch = (computeRequestEpochRef.current[scenario.id] ?? 0) + 1;
+      computeRequestEpochRef.current[scenario.id] = epoch;
       const canonical = scenarioInputToBackendCanonical(scenario, scenario.id, scenario.name);
       try {
         const res = await fetchComputeCanonical(scenario.id, canonical);
         if (!res.ok) return;
         const data = (await res.json()) as CanonicalComputeResponse;
+        if ((computeRequestEpochRef.current[scenario.id] ?? 0) !== epoch) return;
         setCanonicalComputeCache((prev) => ({ ...prev, [scenario.id]: data }));
         setResults((prev) => ({
           ...prev,
@@ -976,9 +984,16 @@ export default function Home() {
   }, [selectedScenario]);
 
   const deleteScenario = useCallback((id: string) => {
+    delete computeRequestEpochRef.current[id];
     setScenarios((prev) => prev.filter((s) => s.id !== id));
     setSelectedId((current) => (current === id ? null : current));
     setResults((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setCanonicalComputeCache((prev) => {
+      if (!(id in prev)) return prev;
       const next = { ...prev };
       delete next[id];
       return next;
@@ -1007,6 +1022,7 @@ export default function Home() {
 
   const updateScenario = useCallback((updated: ScenarioWithId) => {
     const normalized = normalizeScenarioEconomics(updated);
+    computeRequestEpochRef.current[normalized.id] = (computeRequestEpochRef.current[normalized.id] ?? 0) + 1;
     setScenarios((prev) =>
       prev.map((s) => (s.id === normalized.id ? normalized : s))
     );
