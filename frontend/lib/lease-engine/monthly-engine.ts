@@ -675,29 +675,9 @@ export function runMonthlyEngine(
   const baseRentNominal = baseRent.reduce((a, b) => a + b, 0);
   const commissionRate = normalizeCommissionRateDecimal(scenario.commissionRate);
   const commissionBasis = normalizeCommissionBasis(scenario.commissionAppliesTo);
-  const opexNoEscalation = monthlyOpex(
-    termMonths,
-    scenario.expenseSchedule.baseOpexPsfYr,
-    scenario.expenseSchedule.baseYearOpexPsfYr,
-    0,
-    scenario.expenseSchedule.leaseType,
-    effectiveRsf,
-    comm
-  );
-  for (const abatement of normalizedAbatements) {
-    if (abatement.appliesTo !== "gross") continue;
-    for (let m = abatement.start; m <= abatement.end; m += 1) {
-      if (abatement.type === "full") {
-        opexNoEscalation[m] = 0;
-      } else {
-        opexNoEscalation[m] = opexNoEscalation[m] * (1 - abatement.partialRate);
-      }
-    }
-  }
-  const opexNoEscalationNominal = opexNoEscalation.reduce((a, b) => a + b, 0);
   const commissionBase =
     commissionBasis === "gross_obligation"
-      ? (baseRentNominal + opexNoEscalationNominal)
+      ? grossRentNominal
       : baseRentNominal;
   const commissionAmount = commissionRate > 0 ? commissionBase * commissionRate : 0;
   const parkingNominal = parking.reduce((a, b) => a + b, 0);

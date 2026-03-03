@@ -59,7 +59,7 @@ describe("commission calculations", () => {
     expect(result.metrics.commissionAmount).toBeCloseTo(12000, 6);
   });
 
-  it("calculates gross-obligation commission using non-escalated opex", () => {
+  it("calculates gross-obligation commission using modeled gross rent stream", () => {
     const scenario = makeScenario({
       expiration: "2027-12-31",
       rent_steps: [{ start: 0, end: 23, rate_psf_yr: 24 }],
@@ -70,8 +70,9 @@ describe("commission calculations", () => {
     });
     const result = runMonthlyEngine(scenarioToCanonical(scenario), 0.08);
 
-    // Base rent total: 480,000; flat OpEx total: 200,000; commission @10% => 68,000.
-    expect(result.metrics.commissionAmount).toBeCloseTo(68000, 6);
+    // Base rent total: 480,000; modeled OpEx total (with 3% step-up in year 2): 203,000.
+    // Commission @10% => 68,300.
+    expect(result.metrics.commissionAmount).toBeCloseTo(68300, 6);
     expect(result.metrics.commissionBasis).toBe("Gross obligation");
   });
 
