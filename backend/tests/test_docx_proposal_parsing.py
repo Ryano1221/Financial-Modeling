@@ -172,6 +172,16 @@ def test_regex_prefill_does_not_treat_test_fit_or_opex_as_ti_allowance() -> None
     assert prefill.get("ti_allowance_psf") is None
 
 
+def test_regex_prefill_prefers_counter_ti_allowance_and_supports_square_foot_unit() -> None:
+    text = (
+        "Tenant Improvements | Landlord to provide Tenant with a Tenant Improvement Allowance of $18.00 per square foot.\n"
+        "Landlord shall provide Tenant an allowance not to exceed $20.00 per RSF from the Premises as-is condition.\n"
+        "Landlord shall provide tenant an allowance up to $0.15/per RSF for a test-fit and one (1) revision.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") == 20.0
+
+
 def test_regex_prefill_parses_ti_allowance_from_tenant_improvements_clause() -> None:
     text = (
         "Tenant Improvements: Premises is part of Landlord's spec suite program.\n"
@@ -285,3 +295,16 @@ def test_regex_prefill_free_rent_ignores_renewal_notice_months() -> None:
     prefill = _regex_prefill(text)
     assert prefill.get("term_months") == 127
     assert prefill.get("free_rent_months") == 7
+
+
+def test_regex_prefill_ignores_holdover_months_and_prefers_primary_term() -> None:
+    text = (
+        "Lease Commencement Date | May 1, 2026.\n"
+        "Lease Term | Three (3) years.\n"
+        "Landlord Proposes a Thirty-Nine (39) month Lease Term.\n"
+        "Holdover | In the event that Tenant possesses the Premises beyond the expiration of the Lease Term "
+        "for the first three (3) months of such holdover, the Base Rent shall be one hundred twenty five percent (125%).\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("term_months") == 39
+    assert prefill.get("expiration") == "2029-07-31"

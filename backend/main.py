@@ -2715,21 +2715,36 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         "month-to-month",
         "holdover",
         "prior to",
+        "no earlier than",
+        "no later than",
     )
+
+    def _match_context(match: re.Match[str]) -> str:
+        start = match.start()
+        end = match.end()
+        line_start = text.rfind("\n", 0, start) + 1
+        line_end = text.find("\n", end)
+        if line_end == -1:
+            line_end = len(text)
+        return text[line_start:line_end].lower()
+
+    def _is_disqualified(match: re.Match[str]) -> bool:
+        context = _match_context(match)
+        return any(token in context for token in disqualifying_tokens)
 
     month_candidates: list[tuple[int, int, int]] = []
 
     # Handle explicit "150 month term" style language first.
     explicit_month_term_patterns = [
         r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+term\b",
-        r"(?i)\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+term\b",
+        r"(?i)\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+(?:lease\s+|sublease\s+|initial\s+)?term\b",
         r"(?i)\bterm\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
     ]
     for pat in explicit_month_term_patterns:
         for m in re.finditer(pat, text):
-            context = (m.group(0) or "").lower()
-            if any(k in context for k in disqualifying_tokens):
+            if _is_disqualified(m):
                 continue
+            context = (m.group(0) or "").lower()
             months = _coerce_int_token(m.group(1), 0)
             if not (1 <= months <= 600):
                 continue
@@ -2747,13 +2762,13 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     # Handle "12 years + 6 months" expressions in term clauses.
     composite_term_patterns = [
         r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b",
-        r"(?i)\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\bterm\b",
+        r"(?i)\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\b(?:lease\s+|sublease\s+|initial\s+)?term\b",
     ]
     for pat in composite_term_patterns:
         for m in re.finditer(pat, text):
-            context = (m.group(0) or "").lower()
-            if any(k in context for k in disqualifying_tokens):
+            if _is_disqualified(m):
                 continue
+            context = (m.group(0) or "").lower()
             years = _coerce_int_token(m.group(1), 0)
             extra_months = _coerce_int_token(m.group(2), 0)
             if not (0 <= extra_months <= 11 and 1 <= years <= 50):
@@ -2774,9 +2789,9 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     ]
     for pat in term_month_patterns:
         for m in re.finditer(pat, text):
-            context = (m.group(0) or "").lower()
-            if any(k in context for k in disqualifying_tokens):
+            if _is_disqualified(m):
                 continue
+            context = (m.group(0) or "").lower()
             months = _coerce_int_token(m.group(1), 0)
             if not (1 <= months <= 600):
                 continue
@@ -2802,12 +2817,13 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         r"(?i)\b(?:leased\s+premises\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\s*[:\-]\s*[^.\n]{0,140}?\b(\d{1,2})\s*years?\b",
         r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,140}?\((\d{1,2})\)\s*years?\b",
         r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,140}?\b(\d{1,2})\s*years?\b",
+        r"(?i)\b\(?(\d{1,2})\)?\s*years?\s+(?:lease\s+|sublease\s+|initial\s+)?term\b",
     ]
     for pat in term_year_patterns:
         for m in re.finditer(pat, text):
-            context = (m.group(0) or "").lower()
-            if any(k in context for k in disqualifying_tokens):
+            if _is_disqualified(m):
                 continue
+            context = (m.group(0) or "").lower()
             years = _coerce_int_token(m.group(1), 0)
             if not (1 <= years <= 50):
                 continue

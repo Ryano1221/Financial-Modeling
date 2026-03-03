@@ -660,10 +660,10 @@ def _prepare_text_for_llm(text: str) -> tuple[str, list[str]]:
 
 
 # ---- Regex pre-extraction ----
-_SF_UNIT_PATTERN = r"(?:r\.?s\.?f\.?|s\.?f\.?|rsf|sf|psf|sq\.?\s*ft\.?|square\s*feet?)"
+_SF_UNIT_PATTERN = r"(?:r\.?s\.?f\.?|s\.?f\.?|rsf|sf|psf|sq\.?\s*ft\.?|square\s*(?:feet?|foot))"
 _RE_RSF = re.compile(
-    r"\b(?:r\.?s\.?f\.?|rsf|rentable\s+(?:square\s+feet?|s\.?f\.?|sf)|square\s*feet?|sq\.?\s*ft\.?)\b[ \t:]*[\d,]+\.?\d*|"
-    rf"[\d,]+\.?\d*[ \t]*(?:{_SF_UNIT_PATTERN}|rentable\s+(?:square\s+feet?|s\.?f\.?|sf))\b",
+    r"\b(?:r\.?s\.?f\.?|rsf|rentable\s+(?:square\s+(?:feet?|foot)|s\.?f\.?|sf)|square\s*(?:feet?|foot)|sq\.?\s*ft\.?)\b[ \t:]*[\d,]+\.?\d*|"
+    rf"[\d,]+\.?\d*[ \t]*(?:{_SF_UNIT_PATTERN}|rentable\s+(?:square\s+(?:feet?|foot)|s\.?f\.?|sf))\b",
     re.I,
 )
 _RE_NUM = re.compile(r"[\d,]+\.?\d*")
@@ -939,37 +939,95 @@ def _expiration_from_term_months(commencement: date, term_months: int) -> date:
 def _extract_term_months_from_text(text: str) -> int | None:
     if not text:
         return None
+    disqualifying_tokens = (
+        "extension",
+        "renewal",
+        "option",
+        "additional",
+        "holdover",
+        "month-to-month",
+        "prior to",
+        "no earlier than",
+        "no later than",
+    )
+
+    def _match_context(match: re.Match[str]) -> str:
+        start = match.start()
+        end = match.end()
+        line_start = text.rfind("\n", 0, start) + 1
+        line_end = text.find("\n", end)
+        if line_end == -1:
+            line_end = len(text)
+        return text[line_start:line_end].lower()
+
+    def _is_disqualified(match: re.Match[str]) -> bool:
+        context = _match_context(match)
+        return any(token in context for token in disqualifying_tokens)
+
+    candidates: list[tuple[int, int, int]] = []
+
     month_patterns = [
-        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,120}?\((\d{1,3})\)\s*months?\b",
-        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,120}?\b(\d{1,3})\s*months?\b",
+        (r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b", 9),
+        (r"(?i)\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+(?:lease\s+|sublease\s+|initial\s+)?term\b", 11),
+        (r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,160}?\((\d{1,3})\)\s*months?\b", 7),
+        (r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,160}?\b(\d{1,3})\s*months?\b", 6),
     ]
-    for pat in month_patterns:
-        for m in re.finditer(pat, text):
-            try:
-                months = int(m.group(1))
-            except (TypeError, ValueError):
+    for pattern, base_score in month_patterns:
+        for match in re.finditer(pattern, text):
+            if _is_disqualified(match):
                 continue
-            context = (m.group(0) or "").lower()
-            if any(k in context for k in ("renewal", "option", "extension", "additional")):
+            months = _coerce_int_token(match.group(1), 0)
+            if not (1 <= months <= 600):
                 continue
-            if 1 <= months <= 600:
-                return months
+            snippet = (match.group(0) or "").lower()
+            score = base_score
+            if "primary lease term" in snippet:
+                score += 4
+            elif re.search(r"(?i)\b(?:lease\s+term|sublease\s+term|initial\s+term)\b", snippet):
+                score += 2
+            if re.search(r"(?i)\bmonth\s+lease\s+term\b|\bmonths?\s+(?:lease\s+|sublease\s+|initial\s+)?term\b", snippet):
+                score += 2
+            if months >= 24:
+                score += 1
+            candidates.append((score, match.start(), int(months)))
+
+    composite_patterns = [
+        (r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b", 11),
+        (r"(?i)\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\b(?:lease\s+|sublease\s+|initial\s+)?term\b", 12),
+    ]
+    for pattern, base_score in composite_patterns:
+        for match in re.finditer(pattern, text):
+            if _is_disqualified(match):
+                continue
+            years = _coerce_int_token(match.group(1), 0)
+            months = _coerce_int_token(match.group(2), 0)
+            if not (1 <= years <= 50 and 0 <= months <= 11):
+                continue
+            total_months = years * 12 + months
+            candidates.append((base_score, match.start(), int(total_months)))
 
     year_patterns = [
-        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,140}?\((\d{1,2})\)\s*years?\b",
-        r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,140}?\b(\d{1,2})\s*years?\b",
+        (r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,2})\)?\s*years?\b", 7),
+        (r"(?i)\b\(?(\d{1,2})\)?\s*years?\s+(?:lease\s+|sublease\s+|initial\s+)?term\b", 9),
+        (r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,160}?\((\d{1,2})\)\s*years?\b", 6),
+        (r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,160}?\b(\d{1,2})\s*years?\b", 5),
     ]
-    for pat in year_patterns:
-        for m in re.finditer(pat, text):
-            try:
-                years = int(m.group(1))
-            except (TypeError, ValueError):
+    for pattern, base_score in year_patterns:
+        for match in re.finditer(pattern, text):
+            if _is_disqualified(match):
                 continue
-            context = (m.group(0) or "").lower()
-            if any(k in context for k in ("renewal", "option", "extension", "additional")):
+            years = _coerce_int_token(match.group(1), 0)
+            if not (1 <= years <= 50):
                 continue
-            if 1 <= years <= 50:
-                return years * 12
+            snippet = (match.group(0) or "").lower()
+            score = base_score
+            if "primary lease term" in snippet:
+                score += 3
+            candidates.append((score, match.start(), int(years * 12)))
+
+    if candidates:
+        candidates.sort(key=lambda row: (-row[0], -row[1], -row[2]))
+        return candidates[0][2]
     return None
 
 
@@ -1538,10 +1596,10 @@ def _regex_prefill(text: str) -> dict:
         low_window = window.lower()
         if "e.g" in low_window or "example" in low_window:
             continue
-        if "outside of the tenant improvement allowance" in low_window or "test-fit" in low_window or "test fit" in low_window:
+        if "outside of the tenant improvement allowance" in line_low or "test-fit" in line_low or "test fit" in line_low:
             continue
         for amount_match in _RE_PSF_AMOUNT.finditer(window):
-            local = window[max(0, amount_match.start() - 64): min(len(window), amount_match.end() + 64)]
+            local = window[max(0, amount_match.start() - 80): min(len(window), amount_match.end() + 36)]
             local_low = local.lower()
             if not re.search(r"(?i)\b(?:allowance|tenant improvements?|tia|ti)\b", local):
                 continue
@@ -1572,6 +1630,10 @@ def _regex_prefill(text: str) -> dict:
                 score -= 10
             if "outside of the tenant improvement allowance" in local_low or "test-fit" in local_low or "test fit" in local_low:
                 score -= 8
+            if "not to exceed" in local_low:
+                score += 8
+            if re.search(r"(?i)\blandlord\s+shall\s+provide\b", local):
+                score += 2
             ti_psf_candidates.append((score, value, idx))
         for total_match in re.finditer(r"\$\s*([\d,]+(?:\.\d+)?)", window):
             try:
@@ -1599,7 +1661,7 @@ def _regex_prefill(text: str) -> dict:
                 score += 1
             ti_total_candidates.append((score, float(total_value), idx))
     if ti_psf_candidates:
-        ti_psf_candidates.sort(key=lambda row: (-row[0], row[2], -row[1]))
+        ti_psf_candidates.sort(key=lambda row: (-row[0], -row[2], -row[1]))
         if ti_psf_candidates[0][0] > -2:
             ti_allowance_psf = ti_psf_candidates[0][1]
     if ti_allowance_psf is None:
@@ -1614,7 +1676,7 @@ def _regex_prefill(text: str) -> dict:
                 except ValueError:
                     pass
     if ti_total_candidates:
-        ti_total_candidates.sort(key=lambda row: (-row[0], row[2], -row[1]))
+        ti_total_candidates.sort(key=lambda row: (-row[0], -row[2], -row[1]))
         if ti_total_candidates[0][0] > -2:
             ti_allowance_total = ti_total_candidates[0][1]
     if ti_allowance_total is None:
@@ -1633,7 +1695,7 @@ def _regex_prefill(text: str) -> dict:
                 score -= 5
             total_candidates.append((score, float(value), m.start()))
         if total_candidates:
-            total_candidates.sort(key=lambda row: (-row[0], row[2], -row[1]))
+            total_candidates.sort(key=lambda row: (-row[0], -row[2], -row[1]))
             if total_candidates[0][0] > -2:
                 ti_allowance_total = total_candidates[0][1]
     if ti_allowance_total is not None:

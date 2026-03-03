@@ -874,6 +874,23 @@ def test_extract_hints_al1_primary_lease_term_prefers_150_month_term_over_rent_c
     assert hints["term_months"] == 150
 
 
+def test_extract_hints_prefers_counter_month_term_over_holdover_or_request_term() -> None:
+    text = (
+        "Premises: Suite 130 consisting of 3,827 RSF.\n"
+        "Lease Commencement Date | May 1, 2026.\n"
+        "Lease Term | Three (3) years.\n"
+        "Landlord Proposes a Thirty-Nine (39) month Lease Term.\n"
+        "Holdover | In the event that Tenant possesses the Premises beyond the expiration of the Lease Term "
+        "for the first three (3) months of such holdover, the Base Rent shall be one hundred twenty five percent (125%).\n"
+        "Tenant Improvements | Landlord to provide Tenant with a Tenant Improvement Allowance of $18.00 per square foot.\n"
+        "Landlord shall provide Tenant an allowance not to exceed $20.00 per RSF from the Premises as-is condition.\n"
+    )
+    hints = main._extract_lease_hints(text, "grinnell-counter.docx", "test-rid")
+    assert hints["term_months"] == 39
+    assert str(hints["expiration_date"]) == "2029-07-31"
+    assert hints["ti_allowance_psf"] == 20.0
+
+
 def test_extract_hints_term_and_free_rent_clause_uses_free_months_not_term_months() -> None:
     text = (
         "COMMENCEMENT: December 1, 2026.\n"
