@@ -21,10 +21,12 @@ describe("notes formatting", () => {
   it("extracts concise parking summary details", () => {
     const raw =
       "Parking: Parking charges: PARKING: Parking is available in a structured, secured above grade pedestal garage. " +
+      "Tenant shall be provided 14 parking spaces. " +
       "Tenant shall be provided parking on a must take and pay basis at a ratio of 2.7 permits per 1,000 RSF. " +
       "Tenant shall have the right to convert up to 10% of Tenant parking permits to reserved stalls.";
 
     const formatted = formatMetricValue("notes", raw);
+    expect(formatted).toContain("total 14 spaces");
     expect(formatted).toContain("Parking: 2.7/1,000 RSF");
     expect(formatted).toContain("must-take-and-pay");
     expect(formatted).toContain("up to 10% convertible to reserved");
@@ -58,7 +60,7 @@ describe("notes formatting", () => {
     expect(formatted).toContain("Renewal / extension: 1 (One) renewal option for 4 (Four) years at FMV");
   });
 
-  it("drops placeholder USE notes and classifies ratio/expense-cap fragments", () => {
+  it("drops placeholder and generic parking/expense fragments", () => {
     const raw = [
       "Renewal / extension: 1 (One) renewal option for 3 (Three) years",
       "General: 4.1/1,000 RSF.",
@@ -72,10 +74,10 @@ describe("notes formatting", () => {
     const formatted = formatMetricValue("notes", raw);
 
     expect(formatted).toContain("Renewal / extension: 1 (One) renewal option for 3 (Three) years");
-    expect(formatted).toContain("Parking: 4.1/1,000 RSF.");
-    expect(formatted).toContain("Expense caps / exclusions: Expense caps/exclusions or audit rights included.");
     expect(formatted).toContain("Operating expenses: OpEx table provided through 2026");
     expect(formatted).toContain("Operating expenses: using $19.35/SF as the starting OpEx.");
+    expect(formatted).not.toContain("Parking:");
+    expect(formatted).not.toContain("Expense caps / exclusions:");
     expect(formatted).not.toContain("General: USE");
   });
 });

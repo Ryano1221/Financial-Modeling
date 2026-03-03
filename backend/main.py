@@ -5240,9 +5240,7 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
             r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?|spaces?|stalls?)?\s*(?:per|/)\s*1,?000\s*(?:rsf|sf|square feet)?\b",
             cleaned,
         )
-        if ratio_match:
-            parts.append(f"{ratio_match.group(1)}/1,000 RSF")
-        if re.search(r"(?i)\bmust[-\s]*take\b[^\n]{0,40}\bmust[-\s]*pay\b", cleaned):
+        if re.search(r"(?i)\bmust[-\s]*take(?:[^\n]{0,24}\b(?:and|&)\s*pay|[^\n]{0,40}\bmust[-\s]*pay)\b", cleaned):
             parts.append("must-take-and-pay")
         total_spaces_match = re.search(r"(?i)\btotal\s+#?\s*paid\s+spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", cleaned)
         reserved_count_match = re.search(r"(?i)\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", cleaned)
@@ -5275,12 +5273,21 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
             total_spaces = max(0, int(reserved_spaces or 0)) + max(0, int(unreserved_spaces or 0))
         if total_spaces is None and generic_spaces is not None:
             total_spaces = generic_spaces
+        ratio_value = _coerce_float_token(ratio_match.group(1), None) if ratio_match else None
+        if (ratio_value is None or ratio_value <= 0) and total_spaces is not None and total_spaces > 0:
+            rsf_match = re.search(r"(?i)\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|rentable\s+square\s+feet|sf)\b", cleaned)
+            rsf_for_ratio = _coerce_float_token(rsf_match.group(1), 0.0) if rsf_match else 0.0
+            if rsf_for_ratio and rsf_for_ratio > 0:
+                ratio_value = (float(total_spaces) * 1000.0) / float(rsf_for_ratio)
+        if ratio_value is None or ratio_value <= 0 or total_spaces is None or total_spaces <= 0:
+            return ""
+        ratio_token = f"{float(ratio_value):.2f}".rstrip("0").rstrip(".")
+        parts.insert(0, f"{ratio_token}/1,000 RSF")
+        parts.insert(0, f"total {int(total_spaces)} spaces")
         if reserved_spaces is not None or unreserved_spaces is not None:
             parts.append(
                 f"reserved {int(reserved_spaces or 0)}, unreserved {int(unreserved_spaces or 0)}"
             )
-        if total_spaces is not None:
-            parts.append(f"total {int(total_spaces)} spaces")
         reserved_rate = _coerce_float_token(reserved_rate_match.group(1), None) if reserved_rate_match else None
         unreserved_rate = _coerce_float_token(unreserved_rate_match.group(1), None) if unreserved_rate_match else None
         generic_rate = _coerce_float_token(generic_rate_match.group(1), None) if generic_rate_match else None
@@ -5297,8 +5304,6 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
         convert_match = re.search(r"(?i)\bup to\s*(\d{1,3})\s*%[^.]{0,140}\breserved\b", cleaned)
         if convert_match:
             parts.append(f"up to {convert_match.group(1)}% convertible to reserved")
-        if not parts:
-            return _condense_note_text("Parking terms included.", max_chars=max_chars, max_sentences=1)
         return _condense_note_text(f"Parking: {', '.join(parts)}.", max_chars=max_chars, max_sentences=1)
 
     # Expense caps / audit / exclusions
@@ -5312,7 +5317,15 @@ def _summarize_note_clause(text: str, max_chars: int = 190) -> str:
             if mgmt_cap:
                 bits.append(f"{mgmt_cap.group(1)}% management-fee cap")
             return _condense_note_text("; ".join(bits) + ".", max_chars=max_chars, max_sentences=1)
-        return _condense_note_text("Expense caps/exclusions or audit rights included.", max_chars=max_chars, max_sentences=1)
+        exclusion_match = re.search(
+            r"(?i)\b(?:exclude|excluding|excluded|shall\s+not\s+include)\b([^.;]{4,180})",
+            cleaned,
+        )
+        if exclusion_match:
+            detail = re.sub(r"\s+", " ", exclusion_match.group(1)).strip(" ,;:.")
+            if detail:
+                return _condense_note_text(f"OpEx exclusions: {detail}.", max_chars=max_chars, max_sentences=1)
+        return ""
 
     return _condense_note_text(cleaned, max_chars=max_chars, max_sentences=1)
 
@@ -6793,6 +6806,16 @@ def _normalize_impl(
                 updates["parking_ratio"] = aligned_parking_ratio
             if aligned_parking_count > 0:
                 updates["parking_count"] = aligned_parking_count
+            effective_parking_rate = _coerce_float_token(
+                updates.get("parking_rate_monthly", canonical.parking_rate_monthly),
+                0.0,
+            ) or 0.0
+            if aligned_parking_count > 0 and aligned_parking_ratio > 0:
+                ratio_token = f"{float(aligned_parking_ratio):.2f}".rstrip("0").rstrip(".")
+                parking_note = f"Parking: total {int(aligned_parking_count)} spaces at {ratio_token}/1,000 RSF"
+                if effective_parking_rate > 0:
+                    parking_note += f", ${float(effective_parking_rate):,.0f}/mo per space"
+                extra_note_lines.append(parking_note + ".")
 
             target_term_months = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0
             if target_term_months > 0 and canonical.rent_schedule:

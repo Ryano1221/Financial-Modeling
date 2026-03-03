@@ -326,6 +326,10 @@ function condenseNoteFragment(fragment: string, maxChars = 185): string {
   const cleaned = stripNotePrefixNoise(fragment);
   if (!cleaned) return "";
   const low = cleaned.toLowerCase();
+  if (/\bexpense caps?\/?exclusions?\s+or\s+audit rights included\b/i.test(cleaned)) return "";
+  const hasRatioToken = /\b\d+(?:\.\d+)?\s*(?:permits?|spaces?|stalls?)?\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square feet)?\b/i.test(cleaned);
+  const hasSpaceCountToken = /\b(?:total\s+#?\s*paid\s+spaces?|#?\s*reserved\s+(?:paid\s+)?spaces?|#?\s*unreserved\s+(?:paid\s+)?spaces?|(?:[a-z\-]+\s*\(\d{1,3}\)|\d{1,3})\s+parking\s+spaces?)\b/i.test(cleaned);
+  if (hasRatioToken && !hasSpaceCountToken && !/\bparking|\bpermit/.test(low)) return "";
   if (/\bassign|\bsublet|\bsublease/.test(low)) {
     const bits: string[] = [];
     bits.push(low.includes("may not assign") || low.includes("without the prior written consent") ? "requires landlord consent" : "assignment/sublease rights included");
@@ -339,15 +343,41 @@ function condenseNoteFragment(fragment: string, maxChars = 185): string {
     return `Renewal option for ${term}${low.includes("fair market") || low.includes("fmv") ? " at FMV" : ""}`;
   }
   if (/\bparking|\bpermit/.test(low)) {
-    const ratio = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:permits?|spaces?|stalls?)?\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf)?\b/i);
+    const ratio = cleaned.match(/\b(\d+(?:\.\d+)?)\s*(?:permits?|spaces?|stalls?)?\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square feet)?\b/i);
+    const totalSpacesMatch = cleaned.match(/\btotal\s+#?\s*paid\s+spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)\b/i);
+    const reservedCountMatch = cleaned.match(/\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)\b/i);
+    const unreservedCountMatch = cleaned.match(/\b#?\s*unreserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)\b/i);
+    const genericCountMatch = cleaned.match(/\b(?:[a-z\-]+\s*\((\d{1,3})\)|(\d{1,3}))\s+parking\s+spaces?\b/i);
+    const reservedCount = reservedCountMatch ? Number(reservedCountMatch[1]) : null;
+    const unreservedCount = unreservedCountMatch ? Number(unreservedCountMatch[1]) : null;
+    let totalSpaces = totalSpacesMatch ? Number(totalSpacesMatch[1]) : null;
+    if (totalSpaces == null && (reservedCount != null || unreservedCount != null)) {
+      totalSpaces = Math.max(0, Number(reservedCount ?? 0)) + Math.max(0, Number(unreservedCount ?? 0));
+    }
+    if (totalSpaces == null && genericCountMatch) {
+      totalSpaces = Number(genericCountMatch[1] || genericCountMatch[2] || 0);
+    }
+    let ratioValue = ratio ? Number(ratio[1]) : null;
+    if ((ratioValue == null || ratioValue <= 0) && totalSpaces != null && totalSpaces > 0) {
+      const rsfMatch = cleaned.match(/\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|rentable\s+square\s+feet|sf)\b/i);
+      const rsfValue = rsfMatch ? Number(rsfMatch[1].replace(/,/g, "")) : 0;
+      if (rsfValue > 0) ratioValue = (totalSpaces * 1000) / rsfValue;
+    }
     const convertMatch = cleaned.match(/\bup to\s*(\d{1,3})\s*%[^.]{0,140}\breserved\b/i);
+    const ratioToken = ratioValue != null && ratioValue > 0 ? ratioValue.toFixed(2).replace(/\.?0+$/g, "") : "";
     const parts = [
-      ratio ? `${ratio[1]}/1,000 RSF` : "",
-      low.includes("must take and pay") ? "must-take-and-pay" : "",
+      totalSpaces != null && totalSpaces > 0 ? `total ${Math.trunc(totalSpaces)} spaces` : "",
+      ratioToken ? `${ratioToken}/1,000 RSF` : "",
+      /\bmust[-\s]*take(?:[^\n]{0,24}\b(?:and|&)\s*pay|[^\n]{0,40}\bmust[-\s]*pay)\b/i.test(cleaned)
+        ? "must-take-and-pay"
+        : "",
+      reservedCount != null || unreservedCount != null
+        ? `reserved ${Math.trunc(Number(reservedCount ?? 0))}, unreserved ${Math.trunc(Number(unreservedCount ?? 0))}`
+        : "",
       convertMatch ? `up to ${convertMatch[1]}% convertible to reserved` : "",
     ].filter(Boolean);
-    if (parts.length > 0) return `Parking: ${parts.join(", ")}`;
-    return "Parking terms included";
+    if (parts.length === 0) return "";
+    return parts.join(", ");
   }
   if (cleaned.length <= maxChars) return cleaned;
   const firstSentence = cleaned.split(/(?<=[.!?;:])\s+/).map((part) => part.trim()).find(Boolean);

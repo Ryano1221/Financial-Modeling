@@ -903,11 +903,24 @@ def test_extract_hints_parses_reserved_unreserved_parking_counts_and_rates() -> 
     assert hints["parking_rate_monthly"] == 100.0
 
 
-def test_summarize_note_clause_parking_includes_space_counts_and_rate() -> None:
+def test_summarize_note_clause_parking_includes_space_count_ratio_and_rate() -> None:
     line = (
-        "PARKING: Tenant shall contract for, on a must-take, must-pay basis, four (4) parking spaces "
+        "Premises: Suite 400 consisting of 4,949 RSF. PARKING: Tenant shall contract for, on a must-take, must-pay basis, four (4) parking spaces "
         "at the current rate of $100 per month."
     )
-    summary = main._summarize_note_clause(line, max_chars=160)
+    summary = main._summarize_note_clause(line, max_chars=220)
     assert "total 4 spaces" in summary
+    assert "0.81/1,000 RSF" in summary
     assert "$100/mo per space" in summary
+
+
+def test_summarize_note_clause_parking_without_space_and_ratio_returns_empty() -> None:
+    line = "Parking terms included in lease economics."
+    summary = main._summarize_note_clause(line, max_chars=160)
+    assert summary == ""
+
+
+def test_summarize_note_clause_expense_caps_generic_placeholder_returns_empty() -> None:
+    line = "Expense caps/exclusions or audit rights included."
+    summary = main._summarize_note_clause(line, max_chars=160)
+    assert summary == ""
