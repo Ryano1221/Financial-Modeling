@@ -993,7 +993,7 @@ function buildScenariosFromCanonicalResponses(
     const abatementPsfAnnualized = resolvedRsf > 0 && termYears > 0 ? (m.free_rent_value_total ?? 0) / termYears / resolvedRsf : 0;
     const commissionPsfAnnualized = resolvedRsf > 0 && termYears > 0 ? (Math.max(0, Number(item.sourceCommissionAmount) || 0) / termYears / resolvedRsf) : 0;
     const rawNetEffectiveRatePsfYear = baseRentPsfYr - tiAllowancePsfAnnualized - abatementPsfAnnualized - commissionPsfAnnualized;
-    const netEffectiveRatePsfYear = Math.min(baseRentPsfYr, rawNetEffectiveRatePsfYear);
+    const netEffectiveRatePsfYear = Math.max(0, Math.min(baseRentPsfYr, rawNetEffectiveRatePsfYear));
     return {
       id: `canonical-${idx + 1}`,
       name: normalizeText(item.scenarioName, `Scenario ${idx + 1}`),
