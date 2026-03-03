@@ -1297,6 +1297,54 @@ def _coerce_float_token(value: object, default: Optional[float] = 0.0) -> Option
         return float(default) if default is not None else None
 
 
+def _parking_count_from_ratio_per_1000(parking_ratio: object, rsf: object) -> int:
+    ratio_val = max(0.0, _coerce_float_token(parking_ratio, 0.0) or 0.0)
+    rsf_val = max(0.0, _coerce_float_token(rsf, 0.0) or 0.0)
+    if ratio_val <= 0 or rsf_val <= 0:
+        return 0
+    return max(0, int(round((ratio_val * rsf_val) / 1000.0)))
+
+
+def _parking_ratio_per_1000_from_count(parking_count: object, rsf: object) -> float:
+    count_val = max(0, _coerce_int_token(parking_count, 0) or 0)
+    rsf_val = max(0.0, _coerce_float_token(rsf, 0.0) or 0.0)
+    if count_val <= 0 or rsf_val <= 0:
+        return 0.0
+    return float((float(count_val) * 1000.0) / rsf_val)
+
+
+def _reconcile_parking_ratio_and_count(
+    *,
+    parking_ratio: object,
+    parking_count: object,
+    rsf: object,
+    prefer: str = "ratio",
+) -> tuple[float, int]:
+    ratio_val = max(0.0, _coerce_float_token(parking_ratio, 0.0) or 0.0)
+    count_val = max(0, _coerce_int_token(parking_count, 0) or 0)
+    rsf_val = max(0.0, _coerce_float_token(rsf, 0.0) or 0.0)
+    if rsf_val <= 0:
+        return float(ratio_val), int(count_val)
+
+    derived_count = _parking_count_from_ratio_per_1000(ratio_val, rsf_val) if ratio_val > 0 else 0
+    derived_ratio = _parking_ratio_per_1000_from_count(count_val, rsf_val) if count_val > 0 else 0.0
+    prefer_source = "count" if str(prefer or "").strip().lower() == "count" else "ratio"
+
+    if ratio_val > 0 and count_val <= 0 and derived_count > 0:
+        count_val = derived_count
+    elif count_val > 0 and ratio_val <= 0 and derived_ratio > 0:
+        ratio_val = derived_ratio
+    elif ratio_val > 0 and count_val > 0 and derived_count > 0:
+        # Allow one-space rounding drift; otherwise force ratio/count to agree.
+        if abs(derived_count - count_val) > 1:
+            if prefer_source == "count" and derived_ratio > 0:
+                ratio_val = derived_ratio
+            elif prefer_source == "ratio":
+                count_val = derived_count
+
+    return float(ratio_val), int(count_val)
+
+
 def _window_to_month_bounds(
     start_value: object,
     end_value: object,
@@ -4723,6 +4771,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         hints["lease_type"] = "NNN"
 
     # Parking ratio and economics
+    parking_ratio_evidence = False
+    parking_count_evidence = False
     parking_ratio_patterns = [
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
@@ -4757,6 +4807,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         parking_ratio_candidates.sort(key=lambda row: (-row[0], -row[1], row[2]))
         if parking_ratio_candidates[0][0] > 0:
             hints["parking_ratio"] = parking_ratio_candidates[0][2]
+            parking_ratio_evidence = True
 
     parking_count_patterns = [
         r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
@@ -4771,6 +4822,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         count = _coerce_int_token(m.group(1), 0)
         if 1 <= count <= 10000:
             hints["parking_count"] = count
+            parking_count_evidence = True
             break
 
     # Reserved / unreserved parking detail (from proposals with separate parking input rows).
@@ -4780,10 +4832,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         reserved_count = _coerce_int_token(reserved_count_match.group(1), 0) or 0
         if reserved_count >= 0:
             hints["parking_reserved_count"] = int(reserved_count)
+            parking_count_evidence = True
     if unreserved_count_match:
         unreserved_count = _coerce_int_token(unreserved_count_match.group(1), 0) or 0
         if unreserved_count >= 0:
             hints["parking_unreserved_count"] = int(unreserved_count)
+            parking_count_evidence = True
 
     reserved_rate_match = re.search(
         r"(?im)^\s*reserved\b[^\n]{0,100}\b(?:cost\s+per\s+space|per\s+space|per\s+month|monthly\s+cost)\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,2})?)",
@@ -4844,6 +4898,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         total_spaces = max(0, int(reserved_count or 0)) + max(0, int(unreserved_count or 0))
         if total_spaces > 0:
             hints["parking_count"] = int(total_spaces)
+            parking_count_evidence = True
         # If both rates exist, compute weighted average; otherwise prefer non-zero unreserved then reserved.
         if total_spaces > 0 and (reserved_rate is not None or unreserved_rate is not None):
             weighted_total = (float(reserved_rate or 0.0) * max(0, int(reserved_count or 0))) + (
@@ -4871,6 +4926,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     existing_ratio = _coerce_float_token(hints.get("parking_ratio"), 0.0) or 0.0
     if prefill_parking_ratio > 0 and existing_ratio <= 0:
         hints["parking_ratio"] = float(prefill_parking_ratio)
+        parking_ratio_evidence = True
 
     existing_rate = _coerce_float_token(hints.get("parking_rate_monthly"), 0.0) or 0.0
     if prefill_parking_rate > 0 and existing_rate <= 0:
@@ -4881,16 +4937,20 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         existing_count <= 0 or prefill_parking_count >= int(round(existing_count * 1.5))
     ):
         hints["parking_count"] = int(prefill_parking_count)
+        parking_count_evidence = True
 
-    effective_ratio = _coerce_float_token(hints.get("parking_ratio"), 0.0) or 0.0
-    effective_rsf = _coerce_float_token(hints.get("rsf"), 0.0) or 0.0
-    if effective_ratio > 0 and effective_rsf > 0:
-        derived_count = int(round((effective_ratio * effective_rsf) / 1000.0))
-        current_count = _coerce_int_token(hints.get("parking_count"), 0) or 0
-        if derived_count > 0 and (
-            current_count <= 0 or derived_count >= int(round(current_count * 1.5))
-        ):
-            hints["parking_count"] = int(derived_count)
+    rsf_score_for_parking = int(hints.get("_rsf_score", -999) or -999)
+    rsf_for_parking_alignment = hints.get("rsf") if rsf_score_for_parking >= -8 else None
+    aligned_parking_ratio, aligned_parking_count = _reconcile_parking_ratio_and_count(
+        parking_ratio=hints.get("parking_ratio"),
+        parking_count=hints.get("parking_count"),
+        rsf=rsf_for_parking_alignment,
+        prefer="count" if parking_count_evidence and not parking_ratio_evidence else "ratio",
+    )
+    if aligned_parking_ratio > 0:
+        hints["parking_ratio"] = float(aligned_parking_ratio)
+    if aligned_parking_count > 0:
+        hints["parking_count"] = int(aligned_parking_count)
 
     hinted_opex, hinted_opex_year = _extract_opex_psf_from_text(text)
     opex_by_year = _extract_opex_by_calendar_year_from_text(text)
@@ -6702,30 +6762,37 @@ def _normalize_impl(
                 updates["ti_source_of_truth"] = "psf"
 
             hinted_parking_ratio = _coerce_float_token(extracted_hints.get("parking_ratio"), 0.0)
+            hinted_parking_count = _coerce_int_token(extracted_hints.get("parking_count"), 0)
+            ratio_evidence = bool(hinted_parking_ratio and hinted_parking_ratio > 0)
+            count_evidence = bool(hinted_parking_count and hinted_parking_count > 0)
             if hinted_parking_ratio > 0:
                 updates["parking_ratio"] = hinted_parking_ratio
             hinted_parking_rate = _coerce_float_token(extracted_hints.get("parking_rate_monthly"), 0.0)
             if hinted_parking_rate > 0:
                 updates["parking_rate_monthly"] = hinted_parking_rate
-            hinted_parking_count = _coerce_int_token(extracted_hints.get("parking_count"), 0)
-            effective_rsf = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0)
-            ratio_for_count = hinted_parking_ratio
-            if ratio_for_count <= 0:
-                ratio_for_count = _coerce_float_token(updates.get("parking_ratio", canonical.parking_ratio), 0.0)
-            inferred_count = 0
-            if ratio_for_count > 0 and effective_rsf > 0:
-                inferred_count = int(round((ratio_for_count * effective_rsf) / 1000.0))
             if hinted_parking_count > 0:
-                if inferred_count > 0 and inferred_count >= int(round(hinted_parking_count * 1.5)):
-                    updates["parking_count"] = inferred_count
-                else:
-                    updates["parking_count"] = hinted_parking_count
-            elif ratio_for_count > 0:
-                existing_count = _coerce_int_token(updates.get("parking_count", canonical.parking_count), 0)
-                if inferred_count > 0 and (
-                    existing_count <= 0 or inferred_count >= int(round(existing_count * 1.5))
-                ):
-                    updates["parking_count"] = inferred_count
+                updates["parking_count"] = hinted_parking_count
+
+            effective_rsf = _coerce_float_token(updates.get("rsf", canonical.rsf), 0.0)
+            parking_rsf_score = hinted_rsf_score if extracted_hints.get("_rsf_score") is not None else 0
+            rsf_for_parking_alignment = (
+                effective_rsf if parking_rsf_score >= -8 or rsf_conf >= 0.75 else 0.0
+            )
+            current_ratio = _coerce_float_token(updates.get("parking_ratio", canonical.parking_ratio), 0.0)
+            current_count = _coerce_int_token(updates.get("parking_count", canonical.parking_count), 0)
+            prefer_source = "count" if count_evidence and not ratio_evidence else "ratio"
+            if not ratio_evidence and not count_evidence and (current_count or 0) > 0 and (current_ratio or 0.0) <= 0:
+                prefer_source = "count"
+            aligned_parking_ratio, aligned_parking_count = _reconcile_parking_ratio_and_count(
+                parking_ratio=current_ratio,
+                parking_count=current_count,
+                rsf=rsf_for_parking_alignment,
+                prefer=prefer_source,
+            )
+            if aligned_parking_ratio > 0:
+                updates["parking_ratio"] = aligned_parking_ratio
+            if aligned_parking_count > 0:
+                updates["parking_count"] = aligned_parking_count
 
             target_term_months = _coerce_int_token(updates.get("term_months"), _coerce_int_token(canonical.term_months, 0)) or 0
             if target_term_months > 0 and canonical.rent_schedule:

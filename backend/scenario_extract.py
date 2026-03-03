@@ -867,6 +867,53 @@ def _coerce_float_token(value: Any, default: float | None = None) -> float | Non
     return default
 
 
+def _parking_count_from_ratio_per_1000(parking_ratio: Any, rsf: Any) -> int:
+    ratio_val = max(0.0, _coerce_float_token(parking_ratio, 0.0) or 0.0)
+    rsf_val = max(0.0, _coerce_float_token(rsf, 0.0) or 0.0)
+    if ratio_val <= 0 or rsf_val <= 0:
+        return 0
+    return max(0, int(round((ratio_val * rsf_val) / 1000.0)))
+
+
+def _parking_ratio_per_1000_from_count(parking_count: Any, rsf: Any) -> float:
+    count_val = max(0, _coerce_int_token(parking_count, 0) or 0)
+    rsf_val = max(0.0, _coerce_float_token(rsf, 0.0) or 0.0)
+    if count_val <= 0 or rsf_val <= 0:
+        return 0.0
+    return float((float(count_val) * 1000.0) / rsf_val)
+
+
+def _reconcile_parking_ratio_and_count(
+    *,
+    parking_ratio: Any,
+    parking_count: Any,
+    rsf: Any,
+    prefer: str = "ratio",
+) -> tuple[float, int]:
+    ratio_val = max(0.0, _coerce_float_token(parking_ratio, 0.0) or 0.0)
+    count_val = max(0, _coerce_int_token(parking_count, 0) or 0)
+    rsf_val = max(0.0, _coerce_float_token(rsf, 0.0) or 0.0)
+    if rsf_val <= 0:
+        return float(ratio_val), int(count_val)
+
+    derived_count = _parking_count_from_ratio_per_1000(ratio_val, rsf_val) if ratio_val > 0 else 0
+    derived_ratio = _parking_ratio_per_1000_from_count(count_val, rsf_val) if count_val > 0 else 0.0
+    prefer_source = "count" if str(prefer or "").strip().lower() == "count" else "ratio"
+
+    if ratio_val > 0 and count_val <= 0 and derived_count > 0:
+        count_val = derived_count
+    elif count_val > 0 and ratio_val <= 0 and derived_ratio > 0:
+        ratio_val = derived_ratio
+    elif ratio_val > 0 and count_val > 0 and derived_count > 0:
+        if abs(derived_count - count_val) > 1:
+            if prefer_source == "count" and derived_ratio > 0:
+                ratio_val = derived_ratio
+            elif prefer_source == "ratio":
+                count_val = derived_count
+
+    return float(ratio_val), int(count_val)
+
+
 def _term_month_count(commencement: date, expiration: date) -> int:
     """
     Return lease term as month count.
@@ -1369,6 +1416,7 @@ def _regex_prefill(text: str) -> dict:
             rsf_best = candidate
     if rsf_best is not None:
         prefill["rsf"] = rsf_best[2]
+        prefill["_rsf_score"] = int(rsf_best[0])
     # Dates: prefer labeled commencement/expiration first, then generic first-two date fallback.
     comm = None
     exp = None
@@ -1799,6 +1847,8 @@ def _regex_prefill(text: str) -> dict:
         prefill["name"] = f"Suite {suite}"
 
     # Parking economics used by deterministic fallback when AI is unavailable.
+    parking_ratio_evidence = False
+    parking_count_evidence = False
     parking_ratio_patterns = [
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:/|per)\s*1,?000\s*(?:rsf|sf|square\s*feet|spaces?)\b",
         r"(?i)\bparking\s+ratio\b[^.\n]{0,80}\b(\d+(?:\.\d+)?)\s*(?:/|per|:)\s*1,?000\b",
@@ -1815,6 +1865,7 @@ def _regex_prefill(text: str) -> dict:
             break
     if best_parking_ratio is not None:
         prefill["parking_ratio_per_1000_rsf"] = float(best_parking_ratio)
+        parking_ratio_evidence = True
 
     parking_count_patterns = [
         r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
@@ -1828,6 +1879,7 @@ def _regex_prefill(text: str) -> dict:
         count = _coerce_int_token(m.group(1), 0)
         if count and 1 <= count <= 10000:
             prefill["parking_spaces"] = int(count)
+            parking_count_evidence = True
             break
     reserved_count_match = re.search(r"(?i)\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
     unreserved_count_match = re.search(r"(?i)\b#?\s*unreserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
@@ -1836,21 +1888,25 @@ def _regex_prefill(text: str) -> dict:
     unreserved_count = _coerce_int_token(unreserved_count_match.group(1), 0) if unreserved_count_match else 0
     if reserved_count or unreserved_count:
         prefill["parking_spaces"] = max(0, int(reserved_count or 0)) + max(0, int(unreserved_count or 0))
+        parking_count_evidence = True
     elif total_paid_spaces_match:
         total_paid_spaces = _coerce_int_token(total_paid_spaces_match.group(1), 0) or 0
         if total_paid_spaces > 0:
             prefill["parking_spaces"] = int(total_paid_spaces)
+            parking_count_evidence = True
 
-    ratio = _coerce_float_token(prefill.get("parking_ratio_per_1000_rsf"), 0.0) or 0.0
-    rsf_val = _coerce_float_token(prefill.get("rsf"), 0.0) or 0.0
-    if ratio > 0 and rsf_val > 0:
-        derived_from_ratio = int(round((ratio * rsf_val) / 1000.0))
-        existing_spaces = _coerce_int_token(prefill.get("parking_spaces"), 0) or 0
-        if derived_from_ratio > 0 and (
-            existing_spaces <= 0
-            or derived_from_ratio >= int(round(existing_spaces * 1.5))
-        ):
-            prefill["parking_spaces"] = int(derived_from_ratio)
+    rsf_score_for_parking = int(_coerce_int_token(prefill.get("_rsf_score"), -999) or -999)
+    rsf_for_parking_alignment = prefill.get("rsf") if rsf_score_for_parking >= -8 else None
+    aligned_ratio, aligned_count = _reconcile_parking_ratio_and_count(
+        parking_ratio=prefill.get("parking_ratio_per_1000_rsf"),
+        parking_count=prefill.get("parking_spaces"),
+        rsf=rsf_for_parking_alignment,
+        prefer="count" if parking_count_evidence and not parking_ratio_evidence else "ratio",
+    )
+    if aligned_ratio > 0:
+        prefill["parking_ratio_per_1000_rsf"] = float(aligned_ratio)
+    if aligned_count > 0:
+        prefill["parking_spaces"] = int(aligned_count)
 
     parking_rate_patterns = [
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\s*(?:per|\/)\s*month\b",

@@ -271,6 +271,18 @@ def test_extract_hints_parses_parking_ratio_label_with_trailing_value() -> None:
     assert hints["parking_rate_monthly"] == 100.0
 
 
+def test_extract_hints_derives_parking_count_from_ratio_when_count_missing() -> None:
+    text = (
+        "Premises: Suite 250 consisting of 5,000 RSF.\n"
+        "Parking ratio per 1,000 RSF: 3.2.\n"
+        "Parking rate is $95 per space per month.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints["parking_ratio"] == 3.2
+    assert hints["parking_count"] == 16
+    assert hints["parking_rate_monthly"] == 95.0
+
+
 def test_extract_hints_prefers_ratio_derived_parking_count_over_small_inline_count() -> None:
     text = (
         "Premises: Suite 400 consisting of 4,949 RSF.\n"
@@ -292,7 +304,7 @@ def test_extract_hints_keeps_inline_parking_count_when_ratio_not_present() -> No
     hints = main._extract_lease_hints(text, "tffa-proposal.docx", "test-rid")
     assert hints["parking_count"] == 4
     assert hints["parking_rate_monthly"] == 100.0
-    assert hints["parking_ratio"] is None
+    assert round(float(hints["parking_ratio"]), 4) == round((4 * 1000.0) / 4949.0, 4)
 
 
 def test_extract_hints_parses_rentable_sf_ope_and_written_parking_count() -> None:

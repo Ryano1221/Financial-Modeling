@@ -302,6 +302,81 @@ def test_normalize_impl_prefers_ratio_derived_parking_count_over_small_inline_co
     assert canonical.parking_rate_monthly == 100.0
 
 
+def test_normalize_impl_derives_parking_count_when_only_ratio_present(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main,
+        "extract_text_from_word",
+        lambda _buf, _name: (
+            "Premises: Suite 250 consisting of 5,000 RSF. "
+            "Parking ratio per 1,000 RSF: 3.2. "
+            "Parking is charged at $95 per space per month.",
+            "docx",
+        ),
+    )
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "sublease")
+    monkeypatch.setattr(
+        main,
+        "_extract_lease_hints",
+        lambda _text, _filename, _rid: {
+            "building_name": "Northpoint",
+            "suite": "250",
+            "rsf": 5000.0,
+            "commencement_date": date(2027, 1, 1),
+            "expiration_date": date(2031, 12, 31),
+            "term_months": 60,
+            "parking_ratio": 3.2,
+            "parking_count": None,
+            "parking_rate_monthly": 95.0,
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Northpoint Suite 250",
+                rsf=5000.0,
+                commencement=date(2027, 1, 1),
+                expiration=date(2031, 12, 31),
+                rent_steps=[RentStep(start=0, end=59, rate_psf_yr=40.0)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=14.0,
+                base_year_opex_psf_yr=14.0,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+                parking_spaces=0,
+                parking_cost_monthly_per_space=95.0,
+            ),
+            confidence={"parking_ratio": 0.85},
+            warnings=[],
+            source="docx",
+            text_length=180,
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="proposal.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+    canonical = result.canonical_lease
+
+    assert canonical.parking_ratio == 3.2
+    assert canonical.parking_count == 16
+    assert canonical.parking_rate_monthly == 95.0
+
+
 def test_normalize_impl_keeps_inline_parking_count_when_ratio_missing(monkeypatch) -> None:
     monkeypatch.setattr(
         main,
@@ -372,6 +447,6 @@ def test_normalize_impl_keeps_inline_parking_count_when_ratio_missing(monkeypatc
     result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
     canonical = result.canonical_lease
 
-    assert canonical.parking_ratio == 0.0
+    assert round(float(canonical.parking_ratio), 4) == round((4 * 1000.0) / 4949.0, 4)
     assert canonical.parking_count == 4
     assert canonical.parking_rate_monthly == 100.0

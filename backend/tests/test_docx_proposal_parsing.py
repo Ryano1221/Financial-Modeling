@@ -266,6 +266,17 @@ def test_regex_prefill_prefers_parking_ratio_derived_count_over_small_inline_cou
     assert prefill.get("parking_cost_monthly_per_space") == 100.0
 
 
+def test_regex_prefill_derives_parking_ratio_from_count_when_ratio_missing() -> None:
+    text = (
+        "Premises: Suite 400 consisting of 4,949 RSF.\n"
+        "Parking: on a must-take, must-pay basis, four (4) parking spaces at $100 per month.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("parking_spaces") == 4
+    assert round(float(prefill.get("parking_ratio_per_1000_rsf")), 4) == round((4 * 1000.0) / 4949.0, 4)
+    assert prefill.get("parking_cost_monthly_per_space") == 100.0
+
+
 def test_regex_prefill_free_rent_ignores_renewal_notice_months() -> None:
     text = (
         "TERM AND FREE RENT: One hundred twenty-seven (127) months, with seven (7) months base free rent.\n"
