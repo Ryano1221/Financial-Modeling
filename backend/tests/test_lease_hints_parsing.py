@@ -283,6 +283,18 @@ def test_extract_hints_prefers_ratio_derived_parking_count_over_small_inline_cou
     assert hints["parking_rate_monthly"] == 100.0
 
 
+def test_extract_hints_keeps_inline_parking_count_when_ratio_not_present() -> None:
+    text = (
+        "Premises: Suite 400 consisting of 4,949 RSF.\n"
+        "Parking: on a must-take, must-pay basis, four (4) parking spaces at the current rate of $100 per month.\n"
+        "Brokerage: Landlord will pay a market 4.0% commission per separate agreement.\n"
+    )
+    hints = main._extract_lease_hints(text, "tffa-proposal.docx", "test-rid")
+    assert hints["parking_count"] == 4
+    assert hints["parking_rate_monthly"] == 100.0
+    assert hints["parking_ratio"] is None
+
+
 def test_extract_hints_parses_rentable_sf_ope_and_written_parking_count() -> None:
     text = (
         "Area: 4,308 Rentable SF. "
