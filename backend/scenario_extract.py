@@ -704,11 +704,11 @@ _RE_BASE_OPEX = re.compile(
     re.I,
 )
 _RE_BASE_RENT = re.compile(
-    r"\b(?:base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b[^\n$]{0,40}\$?\s*([\d,]+\.?\d*)",
+    r"\b(?:lease\s+rate|base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b[^\n$]{0,40}\$?\s*([\d,]+\.?\d*)",
     re.I,
 )
 _RE_BASE_RENT_FLEX = re.compile(
-    rf"(?is)\b(?:initial\s+)?(?:base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b.{{0,240}}?\$\s*([\d,]+(?:\.\d{{1,4}})?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
+    rf"(?is)\b(?:initial\s+)?(?:lease\s+rate|base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b.{{0,240}}?\$\s*([\d,]+(?:\.\d{{1,4}})?)\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
 )
 _RE_YEAR_RATE_INLINE = re.compile(
     r"(?i)\b(?:lease\s*)?years?\s*(\d{1,2})(?:\s*(?:-|to|through|thru|–|—)\s*(\d{1,2}))?"
@@ -759,6 +759,11 @@ _RE_BASE_RENT_PERCENT_INCREASE_ANNUAL_LATER = re.compile(
     r"(\d+(?:\.\d+)?)\s*%\s*(?:increase(?:s|d)?|escalat(?:e|ed|ion|ions)|escalator)\b"
     r"[^\n]{0,80}\bannual(?:ly| anniversary)?\b"
 )
+_RE_ANNUAL_ESCALATION_PERCENT_IN_PARENS = re.compile(
+    r"(?i)\(\s*(\d+(?:\.\d+)?)%\s*\)\s*"
+    r"(?:(?:annual(?:ly)?\s+)?(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+    r"|annual(?:ly)?\s+(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b)"
+)
 
 
 def _extract_annual_rent_escalation_pct(text: str) -> float | None:
@@ -766,6 +771,7 @@ def _extract_annual_rent_escalation_pct(text: str) -> float | None:
         return None
     candidates: list[tuple[int, float, int]] = []
     patterns = (
+        (_RE_ANNUAL_ESCALATION_PERCENT_IN_PARENS, 1, 5),
         (_RE_ANNUAL_ESCALATION_GENERIC, 1, 4),
         (_RE_ANNUAL_ESCALATION_LABEL_VALUE, 1, 4),
         (_RE_BASE_RENT_INCREASE_PERCENT_AFTER, 1, 5),
@@ -1851,7 +1857,7 @@ def _regex_prefill(text: str) -> dict:
     # Split-line/base-rent label fallback with strong priority.
     lines_for_rent = [ln.strip() for ln in text.splitlines() if ln.strip()]
     rent_label_pat = re.compile(
-        r"(?i)\b(?:renewal\s+base\s+rent|initial\s+base\s+rent|base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b"
+        r"(?i)\b(?:lease\s+rate|renewal\s+base\s+rent|initial\s+base\s+rent|base\s+rent|basic\s+rent|rental\s+rate|annual\s+rent)\b"
     )
     for idx, ln in enumerate(lines_for_rent[:1400]):
         if not rent_label_pat.search(ln):
@@ -1894,7 +1900,7 @@ def _regex_prefill(text: str) -> dict:
             score = 0
             if any(tok in seg for tok in ("/rsf", "/sf", "/psf", "per rsf", "per sf", "psf")):
                 score += 5
-            if "basic rent" in seg:
+            if "basic rent" in seg or "lease rate" in seg:
                 score += 5
             if "initial base rent" in seg:
                 score += 4
@@ -1906,7 +1912,7 @@ def _regex_prefill(text: str) -> dict:
                 score -= 8
             if any(tok in amount_local for tok in ("operating expense", "opex", "cam", "base year")):
                 score -= 10
-            if "operating expenses" in seg and "renewal base rent" not in seg and "base rent:" not in seg:
+            if "operating expenses" in seg and "renewal base rent" not in seg and "base rent:" not in seg and "lease rate" not in seg:
                 continue
             if "in addition to base rent" in seg:
                 continue

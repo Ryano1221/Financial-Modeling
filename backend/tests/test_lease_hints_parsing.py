@@ -69,6 +69,30 @@ def test_extract_hints_foster_style_letter_prefers_building_name_over_boilerplat
     assert hints["term_months"] == 63
 
 
+def test_extract_hints_re_office_space_strips_city_from_building_name_and_seeds_rent_schedule() -> None:
+    text = (
+        "RE: Tenant Counter Proposal for Office Space at Domain Place in Austin, Texas\n"
+        "Premises: Portion of suite 500 for a total of approximately 4,165 rentable square feet.\n"
+        "Commencement Date: October 1, 2026\n"
+        "Lease Term: Seventy-eight (78) months\n"
+        "Lease Rate: $44.50 per square foot per year NNN with three percent (2.75%) annual escalations beginning month 19.\n"
+        "Operating Expenses: estimated to be $23.08 per square foot for 2026.\n"
+    )
+    hints = main._extract_lease_hints(text, "PFM - Domain Place LL Counter 3.4.26.docx", "test-rid")
+
+    assert hints["building_name"] == "Domain Place"
+    assert hints["suite"] == "500"
+    assert hints["rsf"] == 4165.0
+    assert hints["term_months"] == 78
+    assert str(hints["commencement_date"]) == "2026-10-01"
+    assert str(hints["expiration_date"]) == "2033-03-31"
+    schedule = hints.get("rent_schedule")
+    assert isinstance(schedule, list)
+    assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 44.5}
+    assert schedule[1]["rent_psf_annual"] == 45.7238
+    assert schedule[-1]["end_month"] == 77
+
+
 def test_extract_hints_prefers_premises_suite_over_notice_addresses() -> None:
     text = (
         "Description of Premises:\n"

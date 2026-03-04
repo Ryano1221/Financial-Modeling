@@ -136,6 +136,25 @@ def test_regex_prefill_parses_annual_rental_increases_with_percent_after_phrase(
     assert steps[-1]["end"] == 59
 
 
+def test_regex_prefill_parses_lease_rate_label_without_base_rent_phrase() -> None:
+    text = (
+        "Premises: Portion of Suite 500 totaling approximately 4,165 rentable square feet.\n"
+        "Commencement Date: October 1, 2026.\n"
+        "Lease Term: Seventy-eight (78) months.\n"
+        "Lease Rate: $44.50 per square foot per year NNN with three percent (2.75%) annual escalations beginning month 19.\n"
+        "Operating Expenses: Estimated to be $23.08 per square foot for 2026.\n"
+    )
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("rate_psf_yr") == 44.5
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 44.5}
+    assert steps[1]["rate_psf_yr"] == 45.7238
+    assert steps[-1]["end"] == 77
+
+
 def test_extract_lease_hints_builds_escalated_schedule_from_annual_rental_increases_phrase() -> None:
     text = (
         "Building: Lamar Central\n"

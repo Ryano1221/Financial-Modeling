@@ -2390,9 +2390,9 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
     patterns: list[tuple[re.Pattern[str], int]] = [
         (re.compile(r"(?i)^\s*building\s*:\s*\|\s*([^|\n,;]{2,120})"), 16),
         (re.compile(r"(?i)^\s*building\s*:\s*([^|\n,;]{2,120})"), 15),
-        (re.compile(r"(?i)\blease\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80}?)(?:\s+under\b|[.,;:\n]|$)"), 12),
-        (re.compile(r"(?i)\bfor\s+office\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
-        (re.compile(r"(?i)\bas\s+a\s+tenant\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{2,80}?)(?:[.,;:\n]|$)"), 11),
+        (re.compile(rf"(?i)\blease\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' .\-/]{{2,80}}?)(?:\s+in\s+[A-Za-z][A-Za-z .'-]{{1,40}}(?:,\s*{state_token})?)?(?:\s+under\b|[.,;:\n]|$)"), 12),
+        (re.compile(rf"(?i)\bfor\s+office\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{{2,80}}?)(?:\s+in\s+[A-Za-z][A-Za-z .'-]{{1,40}}(?:,\s*{state_token})?)?(?:[.,;:\n]|$)"), 11),
+        (re.compile(rf"(?i)\bas\s+a\s+tenant\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{{2,80}}?)(?:\s+in\s+[A-Za-z][A-Za-z .'-]{{1,40}}(?:,\s*{state_token})?)?(?:[.,;:\n]|$)"), 11),
         (re.compile(r"(?i)\bre:\s*[^\n]{0,220}[–-]\s*([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80})"), 11),
         (re.compile(r'(?i)^\s*re:\s*[^\n]{0,220}\(\s*["“]([A-Za-z0-9][A-Za-z0-9&\' .\-/]{1,40})["”]\s*\)'), 12),
         (re.compile(r"(?i)^\s*project\s*[:\-]\s*([A-Za-z0-9][A-Za-z0-9&' .\-/]{2,80})"), 11),
@@ -3367,6 +3367,13 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
         return None
     candidates: list[tuple[int, float, int]] = []
     patterns: list[tuple[str, int, int]] = [
+        (
+            r"(?i)\(\s*(\d+(?:\.\d+)?)%\s*\)\s*"
+            r"(?:(?:annual(?:ly)?\s+)?(?:increase|increases|escalation|escalations|escalator)\b"
+            r"|annual(?:ly)?\s+(?:increase|increases|escalation|escalations|escalator)\b)",
+            1,
+            5,
+        ),
         (
             r"(?i)\b(\d+(?:\.\d+)?)%\s+"
             r"(?:(?:annual(?:ly)?\s+(?:(?:base\s+)?rent(?:al)?(?:\s+rate)?\s+)?)?(?:increase|increases|escalation|escalations|escalator)\b"
@@ -5002,7 +5009,11 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if isinstance(s, dict)
         ]
         current_rate_max = max(current_rates) if current_rates else 0.0
-        if current_rates and len(set(current_rates)) <= 1 and current_rate_max <= 10.0:
+        should_seed_base_rate = (
+            not current
+            or (current_rates and len(set(current_rates)) <= 1 and current_rate_max <= 10.0)
+        )
+        if should_seed_base_rate:
             term_hint = _coerce_int_token(hints.get("term_months"), 0) or 0
             if term_hint > 0:
                 hints["rent_schedule"] = [
