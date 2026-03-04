@@ -88,8 +88,9 @@ def test_extract_hints_re_office_space_strips_city_from_building_name_and_seeds_
     assert str(hints["expiration_date"]) == "2033-03-31"
     schedule = hints.get("rent_schedule")
     assert isinstance(schedule, list)
-    assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 44.5}
-    assert schedule[1]["rent_psf_annual"] == 45.7238
+    assert schedule[0] == {"start_month": 0, "end_month": 17, "rent_psf_annual": 44.5}
+    assert schedule[1] == {"start_month": 18, "end_month": 29, "rent_psf_annual": 45.72}
+    assert schedule[-1]["rent_psf_annual"] == 50.96
     assert schedule[-1]["end_month"] == 77
 
 

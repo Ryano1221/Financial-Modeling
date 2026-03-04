@@ -737,7 +737,10 @@ _RE_MONTH_RANGE_RATE = re.compile(
     r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:per|/)\s*(?:rsf|sf|psf)\b[^\n]{0,120}\bfor\s+months?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b"
 )
 _RE_ANNUAL_ESCALATION = re.compile(
-    r"(?i)\b(\d+(?:\.\d+)?)%\s+annual\s+escalat(?:ion|ions)\b[^\n]{0,80}\bstarting\s+in\s+month\s*(\d{1,3})\b"
+    r"(?i)\b(\d+(?:\.\d+)?)%\s*"
+    r"(?:(?:annual(?:ly)?\s+)?(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+    r"|annual(?:ly)?\s+(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b)"
+    r"[^\n]{0,120}\b(?:starting|beginning|commencing)\s*(?:in\s*)?month\s*(\d{1,3})\b"
 )
 _RE_ANNUAL_ESCALATION_GENERIC = re.compile(
     r"(?i)\b(\d+(?:\.\d+)?)%\s+"
@@ -763,6 +766,12 @@ _RE_ANNUAL_ESCALATION_PERCENT_IN_PARENS = re.compile(
     r"(?i)\(\s*(\d+(?:\.\d+)?)%\s*\)\s*"
     r"(?:(?:annual(?:ly)?\s+)?(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
     r"|annual(?:ly)?\s+(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b)"
+)
+_RE_ANNUAL_ESCALATION_START_IN_PARENS = re.compile(
+    r"(?i)\(\s*(\d+(?:\.\d+)?)%\s*\)\s*"
+    r"(?:(?:annual(?:ly)?\s+)?(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+    r"|annual(?:ly)?\s+(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b)"
+    r"[^\n]{0,120}\b(?:starting|beginning|commencing)\s*(?:in\s*)?month\s*(\d{1,3})\b"
 )
 
 
@@ -796,6 +805,33 @@ def _extract_annual_rent_escalation_pct(text: str) -> float | None:
     if best_score <= 0:
         return None
     return best_pct
+
+
+def _extract_annual_rent_escalation_start_month(text: str) -> int | None:
+    if not text:
+        return None
+    candidates: list[tuple[int, int, int]] = []
+    patterns = (
+        (_RE_ANNUAL_ESCALATION_START_IN_PARENS, 1, 2, 7),
+        (_RE_ANNUAL_ESCALATION, 1, 2, 6),
+    )
+    for pattern, pct_group, month_group, base_score in patterns:
+        for match in pattern.finditer(text):
+            pct = _coerce_float_token(match.group(pct_group), None)
+            month = _coerce_int_token(match.group(month_group), None)
+            if pct is None or pct <= 0 or pct > 25:
+                continue
+            if month is None or month <= 0 or month > 600:
+                continue
+            score = base_score
+            seg = (match.group(0) or "").lower()
+            if "base rent" in seg or "rental rate" in seg or "lease rate" in seg:
+                score += 2
+            candidates.append((score, int(month), match.start()))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda row: (-row[0], row[2], row[1]))
+    return int(candidates[0][1])
 
 
 def _parse_text_date_token(s: str) -> str | None:
@@ -1378,7 +1414,7 @@ def _extract_month_phrase_rent_steps(text: str, term_month_count: int) -> list[d
         {
             "start": first_start - 1,
             "end": first_end - 1,
-            "rate_psf_yr": round(float(rate), 4),
+            "rate_psf_yr": round(float(rate), 2),
         }
     )
 
@@ -1389,7 +1425,7 @@ def _extract_month_phrase_rent_steps(text: str, term_month_count: int) -> list[d
                 {
                     "start": first_end,
                     "end": term - 1,
-                    "rate_psf_yr": round(float(rate), 4),
+                    "rate_psf_yr": round(float(rate), 2),
                 }
             )
         return _repair_and_extend_month_steps(steps, term_month_count=term)
@@ -1408,7 +1444,7 @@ def _extract_month_phrase_rent_steps(text: str, term_month_count: int) -> list[d
             {
                 "start": current_start_1 - 1,
                 "end": current_end_1 - 1,
-                "rate_psf_yr": round(current_rate, 4),
+                "rate_psf_yr": round(current_rate, 2),
             }
         )
         current_start_1 += 12
@@ -1988,9 +2024,11 @@ def _regex_prefill(text: str) -> dict:
             prefill["_rent_steps_source"] = "month_phrase_regex"
             prefill["rate_psf_yr"] = float(month_phrase_steps[0].get("rate_psf_yr", prefill.get("rate_psf_yr", 0.0)))
 
-    # If only base rate + annual escalation language exists, synthesize yearly steps.
+    # If only base rate + annual escalation language exists, synthesize month-index steps.
+    # Respect explicit escalation start months (e.g., "escalations beginning month 19").
     if "rent_steps" not in prefill and "rate_psf_yr" in prefill:
         esc_rate = _extract_annual_rent_escalation_pct(text)
+        esc_start_month_1 = _extract_annual_rent_escalation_start_month(text)
         inferred_term = _coerce_int_token(prefill.get("term_months"), None)
         if inferred_term is None and comm and exp:
             inferred_term = _term_month_count(_safe_date(comm), _safe_date(exp))
@@ -2004,19 +2042,40 @@ def _regex_prefill(text: str) -> dict:
             base_rate = float(prefill["rate_psf_yr"])
             term = int(inferred_term)
             synth_steps: list[dict[str, float | int]] = []
-            start = 0
-            year_idx = 0
-            while start < term:
-                end = min(term - 1, start + 11)
+            start_month_1 = max(1, int(esc_start_month_1 or 13))
+            if start_month_1 > term:
                 synth_steps.append(
                     {
-                        "start": start,
-                        "end": end,
-                        "rate_psf_yr": round(base_rate * ((1.0 + annual) ** year_idx), 4),
+                        "start": 0,
+                        "end": term - 1,
+                        "rate_psf_yr": round(base_rate, 2),
                     }
                 )
-                start = end + 1
-                year_idx += 1
+            else:
+                # Pre-escalation base period.
+                if start_month_1 > 1:
+                    synth_steps.append(
+                        {
+                            "start": 0,
+                            "end": max(0, start_month_1 - 2),
+                            "rate_psf_yr": round(base_rate, 2),
+                        }
+                    )
+                # Escalated periods roll every 12 months from the explicit start month.
+                current_start_1 = start_month_1
+                escalation_idx = 1
+                while current_start_1 <= term:
+                    current_end_1 = min(term, current_start_1 + 11)
+                    current_rate = base_rate * ((1.0 + annual) ** escalation_idx)
+                    synth_steps.append(
+                        {
+                            "start": current_start_1 - 1,
+                            "end": current_end_1 - 1,
+                            "rate_psf_yr": round(current_rate, 2),
+                        }
+                    )
+                    current_start_1 += 12
+                    escalation_idx += 1
             if synth_steps:
                 prefill["rent_steps"] = synth_steps
                 prefill["_rent_steps_basis"] = "month_index"

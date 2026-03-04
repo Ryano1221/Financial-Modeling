@@ -208,6 +208,14 @@ def _annual_opex_psf_for_calendar_year(
     calendar_year: int,
     commencement_year: int,
 ) -> float:
+    def _stepwise_grow(rate: float, growth_rate: float, years_forward: int) -> float:
+        out = round(float(rate), 2)
+        if growth_rate <= 0 or years_forward <= 0:
+            return out
+        for _ in range(int(years_forward)):
+            out = round(out * (1.0 + float(growth_rate)), 2)
+        return out
+
     # If explicit year table exists, prefer it over growth math.
     explicit = getattr(lease, "opex_by_calendar_year", {}) or {}
     if explicit:
@@ -222,7 +230,7 @@ def _annual_opex_psf_for_calendar_year(
                 normalized[year_k] = val
         if normalized:
             if calendar_year in normalized:
-                return float(normalized[calendar_year])
+                return round(float(normalized[calendar_year]), 2)
             floor_years = [y for y in normalized if y <= calendar_year]
             if floor_years:
                 floor_year = max(floor_years)
@@ -231,16 +239,16 @@ def _annual_opex_psf_for_calendar_year(
                 # When a table gives only prior-year values and escalation is provided,
                 # grow forward from the most recent explicit year.
                 if growth > 0 and calendar_year > floor_year:
-                    return floor_value * ((1.0 + growth) ** (calendar_year - floor_year))
-                return floor_value
-            return float(normalized[min(normalized.keys())])
+                    return _stepwise_grow(floor_value, growth, int(calendar_year - floor_year))
+                return round(floor_value, 2)
+            return round(float(normalized[min(normalized.keys())]), 2)
 
     base = float(lease.opex_psf_year_1 or 0.0)
     growth = float(lease.opex_growth_rate or 0.0)
     if growth <= 0:
-        return base
+        return round(base, 2)
     year_delta = max(0, int(calendar_year) - int(commencement_year))
-    return base * ((1.0 + growth) ** year_delta)
+    return _stepwise_grow(base, growth, year_delta)
 
 
 def _charge_opex_psf_for_month(

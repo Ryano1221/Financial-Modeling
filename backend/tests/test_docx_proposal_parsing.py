@@ -150,8 +150,9 @@ def test_regex_prefill_parses_lease_rate_label_without_base_rent_phrase() -> Non
     assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
     steps = prefill.get("rent_steps")
     assert isinstance(steps, list)
-    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 44.5}
-    assert steps[1]["rate_psf_yr"] == 45.7238
+    assert steps[0] == {"start": 0, "end": 17, "rate_psf_yr": 44.5}
+    assert steps[1] == {"start": 18, "end": 29, "rate_psf_yr": 45.72}
+    assert steps[-1]["rate_psf_yr"] == 50.96
     assert steps[-1]["end"] == 77
 
 
