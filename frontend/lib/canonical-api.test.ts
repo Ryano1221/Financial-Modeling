@@ -253,6 +253,102 @@ describe("canonicalResponseToEngineResult", () => {
     expect(result.metrics.grossTiOutOfPocket).toBe(0);
   });
 
+  it("preserves backend obligation totals when TI budget and allowance are already reflected in monthly rows", () => {
+    const sourceScenario = makeScenario({
+      rsf: 4165,
+      commencement: "2026-10-01",
+      expiration: "2033-03-31",
+      rent_steps: [
+        { start: 0, end: 17, rate_psf_yr: 44.5 },
+        { start: 18, end: 29, rate_psf_yr: 45.72 },
+        { start: 30, end: 41, rate_psf_yr: 46.98 },
+        { start: 42, end: 53, rate_psf_yr: 48.27 },
+        { start: 54, end: 65, rate_psf_yr: 49.6 },
+        { start: 66, end: 77, rate_psf_yr: 50.96 },
+      ],
+      free_rent_months: 6,
+      free_rent_start_month: 0,
+      free_rent_end_month: 5,
+      free_rent_abatement_type: "base",
+      abatement_periods: [{ start_month: 0, end_month: 5, abatement_type: "base" }],
+      base_opex_psf_yr: 23.08,
+      opex_growth: 0.03,
+      ti_allowance_psf: 50,
+      ti_budget_total: 366520,
+      ti_source_of_truth: "psf",
+    });
+
+    const response = makeCanonicalResponse();
+    response.normalized_canonical_lease.rsf = 4165;
+    response.normalized_canonical_lease.term_months = 78;
+    response.normalized_canonical_lease.commencement_date = "2026-10-01";
+    response.normalized_canonical_lease.expiration_date = "2033-03-31";
+    response.normalized_canonical_lease.free_rent_months = 6;
+    response.normalized_canonical_lease.free_rent_scope = "base";
+    response.normalized_canonical_lease.free_rent_periods = [{ start_month: 0, end_month: 5, scope: "base" }];
+    response.normalized_canonical_lease.rent_schedule = [
+      { start_month: 0, end_month: 17, rent_psf_annual: 44.5 },
+      { start_month: 18, end_month: 29, rent_psf_annual: 45.72 },
+      { start_month: 30, end_month: 41, rent_psf_annual: 46.98 },
+      { start_month: 42, end_month: 53, rent_psf_annual: 48.27 },
+      { start_month: 54, end_month: 65, rent_psf_annual: 49.6 },
+      { start_month: 66, end_month: 77, rent_psf_annual: 50.96 },
+    ];
+    response.normalized_canonical_lease.opex_psf_year_1 = 23.08;
+    response.normalized_canonical_lease.opex_growth_rate = 0.03;
+    response.normalized_canonical_lease.ti_allowance_psf = 50;
+    response.normalized_canonical_lease.ti_budget_total = 366520;
+
+    response.metrics.rsf = 4165;
+    response.metrics.term_months = 78;
+    response.metrics.commencement_date = "2026-10-01";
+    response.metrics.expiration_date = "2033-03-31";
+    response.metrics.base_rent_total = 1191314.95;
+    response.metrics.opex_total = 693868.18;
+    response.metrics.free_rent_value_total = 92671.25;
+    response.metrics.total_obligation_nominal = 2043453.12;
+    response.metrics.avg_all_in_cost_psf_year = 75.48;
+    response.monthly_rows = [
+      {
+        month_index: 0,
+        date: "2026-10-01",
+        base_rent: 0,
+        opex: 8010.6833333333325,
+        parking: 0,
+        ti_amort: 0,
+        concessions: -208250,
+        total_cost: 166280.68333333332,
+        cumulative_cost: 166280.68333333332,
+        discounted_value: 165099.88,
+      },
+      {
+        month_index: 1,
+        date: "2026-11-01",
+        base_rent: 0,
+        opex: 0,
+        parking: 0,
+        ti_amort: 0,
+        concessions: 0,
+        total_cost: 1877172.4366666654,
+        cumulative_cost: 2043453.12,
+        discounted_value: 0,
+      },
+    ];
+
+    const result = canonicalResponseToEngineResult(
+      response,
+      sourceScenario.id,
+      sourceScenario.name,
+      sourceScenario
+    );
+
+    expect(result.metrics.tiOutOfPocket).toBeCloseTo(158270, 2);
+    expect(result.metrics.grossTiOutOfPocket).toBeCloseTo(158270, 2);
+    expect(result.metrics.avgGrossRentPerYear).toBeCloseTo(290028.17, 2);
+    expect(result.metrics.avgAllInCostPerYear).toBeCloseTo(314377.40, 2);
+    expect(result.metrics.totalObligation).toBeCloseTo(2043453.12, 2);
+  });
+
 });
 
 describe("backendCanonicalToScenarioInput", () => {
