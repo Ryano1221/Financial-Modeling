@@ -896,7 +896,7 @@ export function AnalyticsWorkbench({
                       radius={[2, 2, 0, 0]}
                     />
                   ))}
-                  {results.map((result) => (
+                  {results.map((result, scenarioIndex) => (
                     <Bar
                       key={`annual-labels-${result.scenarioId}`}
                       dataKey={`${result.scenarioId}__label`}
@@ -913,6 +913,7 @@ export function AnalyticsWorkbench({
                           const { x, y, width, value, index: groupIndexRaw } = props;
                           const numeric = toNumber(value);
                           if (numeric === 0) return null;
+                          const seriesColor = ANNUAL_BAR_COLORS[scenarioIndex % ANNUAL_BAR_COLORS.length];
                           const text = formatCompactCurrency(numeric);
                           const labelWidth = Math.max(42, Math.round(text.length * 6.6) + 8);
                           const labelHeight = 16;
@@ -942,14 +943,22 @@ export function AnalyticsWorkbench({
                           const leaderY2 = rectY + labelHeight;
                           return (
                             <g>
+                              <circle
+                                cx={centerX}
+                                cy={leaderY1}
+                                r={2.5}
+                                fill={seriesColor}
+                                stroke="#020617"
+                                strokeWidth={1}
+                              />
                               <line
                                 x1={centerX}
                                 y1={leaderY1}
                                 x2={centerX}
                                 y2={leaderY2}
-                                stroke="#475569"
-                                strokeWidth={1}
-                                strokeDasharray="2 2"
+                                stroke={seriesColor}
+                                strokeWidth={1.25}
+                                strokeOpacity={0.95}
                               />
                               <rect
                                 x={rectX}
@@ -958,8 +967,8 @@ export function AnalyticsWorkbench({
                                 height={labelHeight}
                                 rx={4}
                                 fill="#020617"
-                                stroke="#334155"
-                                strokeWidth={1}
+                                stroke={seriesColor}
+                                strokeWidth={1.1}
                               />
                               <text
                                 x={centerX}
