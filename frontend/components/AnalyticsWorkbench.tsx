@@ -807,7 +807,7 @@ export function AnalyticsWorkbench({
             </div>
             <div className="h-[340px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={annualCombinedRows} margin={{ top: 28, right: 8, left: 8, bottom: 8 }}>
+                <BarChart data={annualCombinedRows} margin={{ top: 72, right: 8, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#33415566" />
                   <XAxis dataKey="label" tick={{ fill: "#cbd5e1", fontSize: 12 }} tickMargin={8} />
                   <YAxis
@@ -841,7 +841,9 @@ export function AnalyticsWorkbench({
                           const labelHeight = 16;
                           const centerX = x + width / 2;
                           const rectX = centerX - labelWidth / 2;
-                          const rectY = Math.max(2, y - 20);
+                          // Stagger label rows by scenario index to prevent overlap in grouped bars.
+                          const stackOffset = index * 18;
+                          const rectY = Math.max(4 + stackOffset, y - 20 - stackOffset);
                           return (
                             <g>
                               <rect
