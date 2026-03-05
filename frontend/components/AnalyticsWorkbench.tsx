@@ -403,7 +403,7 @@ function DualMetricComboChart({
             </Bar>
             <Line
               yAxisId="right"
-              type="monotone"
+              type="linear"
               dataKey="lineValue"
               name={lineMetric.label}
               stroke="#f59e0b"
