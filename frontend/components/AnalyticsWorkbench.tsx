@@ -523,8 +523,9 @@ export function AnalyticsWorkbench({
     }
     return max;
   }, [annualCombinedRows, results]);
-  const annualLabelLaneHeight = 20;
-  const annualChartTopMargin = 24 + (results.length * annualLabelLaneHeight);
+  const annualChartTopMargin = 72;
+  const annualLabelLiftStep = 18;
+  const annualPlacedLabelRects = new Map<number, Array<{ x1: number; x2: number; y1: number; y2: number }>>();
 
   if (results.length === 0) return null;
 
@@ -835,7 +836,7 @@ export function AnalyticsWorkbench({
                         dataKey={result.scenarioId}
                         position="top"
                         content={(props: any) => {
-                          const { x, y, width, value } = props;
+                          const { x, y, width, value, index: groupIndexRaw } = props;
                           const numeric = toNumber(value);
                           if (numeric === 0) return null;
                           const text = formatCompactCurrency(numeric);
@@ -843,9 +844,26 @@ export function AnalyticsWorkbench({
                           const labelHeight = 16;
                           const centerX = x + width / 2;
                           const rectX = centerX - labelWidth / 2;
-                          // Fixed per-scenario lanes prevent overlap even when bar heights are similar.
-                          const laneY = 6 + (index * annualLabelLaneHeight);
-                          const rectY = laneY;
+                          const groupIndex = Math.max(0, Math.floor(toNumber(groupIndexRaw)));
+                          const placedRects = annualPlacedLabelRects.get(groupIndex) ?? [];
+                          let rectY = y - 20;
+                          const overlaps = (yPos: number) => {
+                            const x1 = rectX;
+                            const x2 = rectX + labelWidth;
+                            const y1 = yPos;
+                            const y2 = yPos + labelHeight;
+                            return placedRects.some((r) => !(x2 < r.x1 || x1 > r.x2 || y2 < r.y1 || y1 > r.y2));
+                          };
+                          while (overlaps(rectY)) {
+                            rectY -= annualLabelLiftStep;
+                          }
+                          placedRects.push({
+                            x1: rectX,
+                            x2: rectX + labelWidth,
+                            y1: rectY,
+                            y2: rectY + labelHeight,
+                          });
+                          annualPlacedLabelRects.set(groupIndex, placedRects);
                           const leaderY1 = y - 2;
                           const leaderY2 = rectY + labelHeight;
                           return (
