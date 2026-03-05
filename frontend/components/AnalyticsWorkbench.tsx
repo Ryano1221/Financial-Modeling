@@ -413,14 +413,17 @@ function DualMetricComboChart({
               label={(props: any) => {
                 const { x, y, value, viewBox } = props;
                 const text = lineMetric.format(toNumber(value));
+                const chartXRaw = Number(viewBox?.x);
                 const chartWidthRaw = Number(viewBox?.width);
+                const chartX = Number.isFinite(chartXRaw) ? chartXRaw : 0;
                 const chartWidth = Number.isFinite(chartWidthRaw) ? chartWidthRaw : 1000;
                 const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
-                const useLeftAnchor = x > chartWidth - labelWidth - 24;
-                const labelX = useLeftAnchor ? x - 8 : x + 8;
-                const anchor = useLeftAnchor ? "end" : "start";
+                const centeredRectX = x - labelWidth / 2;
+                const minRectX = chartX + 4;
+                const maxRectX = chartX + chartWidth - labelWidth - 4;
+                const rectX = Math.max(minRectX, Math.min(maxRectX, centeredRectX));
+                const textX = rectX + labelWidth / 2;
                 const labelY = y < 20 ? y + 16 : y - 8;
-                const rectX = useLeftAnchor ? labelX - labelWidth : labelX;
                 const rectY = labelY - 12;
                 return (
                   <g>
@@ -435,9 +438,9 @@ function DualMetricComboChart({
                       strokeWidth={1}
                     />
                     <text
-                      x={labelX}
+                      x={textX}
                       y={labelY + 1}
-                      textAnchor={anchor}
+                      textAnchor="middle"
                       fill="#fde68a"
                       fontSize={11}
                       fontWeight={600}
