@@ -419,6 +419,17 @@ export function AnalyticsWorkbench({
             <p className="text-xs text-slate-400 mb-3">
               All scenarios are plotted together by {annualMode === "lease_year" ? "lease year" : "calendar year"}.
             </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3">
+              {results.map((result, index) => (
+                <div key={`annual-legend-${result.scenarioId}`} className="inline-flex items-center gap-2 text-xs text-slate-300">
+                  <span
+                    className="inline-block h-2.5 w-2.5"
+                    style={{ backgroundColor: ANNUAL_BAR_COLORS[index % ANNUAL_BAR_COLORS.length] }}
+                  />
+                  <span>{result.scenarioName}</span>
+                </div>
+              ))}
+            </div>
             <div className="h-[340px] w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={annualCombinedRows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
