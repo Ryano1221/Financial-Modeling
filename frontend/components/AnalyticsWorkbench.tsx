@@ -555,7 +555,9 @@ export function AnalyticsWorkbench({
       const rows = annualRowsByScenario[result.scenarioId] || [];
       for (const row of rows) {
         const existing = byKey.get(row.key) ?? { key: row.key, label: row.label };
-        existing[result.scenarioId] = toNumber(row[annualSeriesKey]);
+        const value = toNumber(row[annualSeriesKey]);
+        existing[result.scenarioId] = value;
+        existing[`${result.scenarioId}__label`] = value;
         byKey.set(row.key, existing);
       }
     }
@@ -564,6 +566,10 @@ export function AnalyticsWorkbench({
       for (const result of results) {
         if (typeof row[result.scenarioId] !== "number") {
           row[result.scenarioId] = 0;
+        }
+        const labelKey = `${result.scenarioId}__label`;
+        if (typeof row[labelKey] !== "number") {
+          row[labelKey] = 0;
         }
       }
     }
@@ -888,9 +894,20 @@ export function AnalyticsWorkbench({
                       name={result.scenarioName}
                       fill={ANNUAL_BAR_COLORS[index % ANNUAL_BAR_COLORS.length]}
                       radius={[2, 2, 0, 0]}
+                    />
+                  ))}
+                  {results.map((result) => (
+                    <Bar
+                      key={`annual-labels-${result.scenarioId}`}
+                      dataKey={`${result.scenarioId}__label`}
+                      name={`${result.scenarioName} (labels)`}
+                      fill="transparent"
+                      stroke="transparent"
+                      legendType="none"
+                      isAnimationActive={false}
                     >
                       <LabelList
-                        dataKey={result.scenarioId}
+                        dataKey={`${result.scenarioId}__label`}
                         position="top"
                         content={(props: any) => {
                           const { x, y, width, value, index: groupIndexRaw } = props;
