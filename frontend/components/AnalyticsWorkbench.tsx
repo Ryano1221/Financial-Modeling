@@ -94,7 +94,7 @@ const ANNUAL_BAR_COLORS = ["#22d3ee", "#34d399", "#f59e0b", "#f472b6", "#60a5fa"
 
 const ANNUAL_SERIES_OPTIONS: AnnualSeriesSpec[] = [
   { key: "total", label: "Total" },
-  { key: "discounted", label: "Discounted" },
+  { key: "discounted", label: "Discounted (Present Value)" },
   { key: "baseRent", label: "Base Rent" },
   { key: "opex", label: "OpEx" },
   { key: "parking", label: "Parking" },
@@ -775,6 +775,11 @@ export function AnalyticsWorkbench({
               ? "Lease Year rolls up every 12 months from lease commencement."
               : "Calendar Year rolls up by Jan-Dec year from monthly cash flows."}
           </p>
+          {annualSeriesKey === "discounted" ? (
+            <p className="text-xs text-cyan-200/90">
+              Discounted (Present Value) means each period&apos;s cash flow is converted to present-day dollars at the option&apos;s discount rate (default 8.0% unless overridden).
+            </p>
+          ) : null}
 
           <div className="border border-slate-300/20 bg-slate-950/50 p-3 sm:p-4">
             <h3 className="text-sm font-semibold text-slate-100 mb-1">
