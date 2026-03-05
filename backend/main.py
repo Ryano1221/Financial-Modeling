@@ -7871,6 +7871,7 @@ def create_report(req: CreateReportRequest, request: Request) -> CreateReportRes
     data = {
         "scenarios": [{"scenario": e.scenario, "result": e.result.model_dump()} for e in req.scenarios],
         "branding": branding,
+        "custom_charts": [chart.model_dump() for chart in req.custom_charts],
         "owner_user_id": user_id,
     }
     report_id = save_report(data)
@@ -8367,6 +8368,7 @@ def build_report_deck_pdf_endpoint(req: CreateReportRequest) -> Response:
     data = {
         "scenarios": [{"scenario": entry.scenario, "result": entry.result.model_dump()} for entry in req.scenarios],
         "branding": req.branding.model_dump(exclude_none=True) if req.branding else {},
+        "custom_charts": [chart.model_dump() for chart in req.custom_charts],
     }
     branding = data.get("branding") if isinstance(data.get("branding"), dict) else {}
     org_id = str(branding.get("org_id") or branding.get("orgId") or "public")

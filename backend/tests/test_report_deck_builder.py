@@ -126,6 +126,46 @@ def test_cost_visuals_and_abstracts_paginate_for_large_sets():
     assert html.count("Lease Abstract Highlights") >= 3
 
 
+def test_custom_chart_visuals_render_in_deck_when_provided():
+    payload = {
+        "scenarios": [
+            _entry("Scenario A", 7000, 34.0, doc_type="proposal"),
+            _entry("Scenario B", 7100, 36.0, doc_type="proposal"),
+        ],
+        "custom_charts": [
+            {
+                "title": "Two-Metric Comparison",
+                "bar_metric_label": "Avg Cost/SF/YR",
+                "line_metric_label": "NPV @ Discount Rate",
+                "sort_direction": "desc",
+                "points": [
+                    {
+                        "scenario_name": "Scenario A",
+                        "bar_value": 35.12,
+                        "line_value": 1025000,
+                        "bar_value_display": "$35.12 / SF",
+                        "line_value_display": "$1,025,000",
+                    },
+                    {
+                        "scenario_name": "Scenario B",
+                        "bar_value": 36.45,
+                        "line_value": 1118000,
+                        "bar_value_display": "$36.45 / SF",
+                        "line_value_display": "$1,118,000",
+                    },
+                ],
+            }
+        ],
+        "branding": {"client_name": "Portfolio Client"},
+    }
+    html = build_report_deck_html(payload)
+    assert "Custom visuals" in html
+    assert "User-configured chart from Custom Charts in the app." in html
+    assert "Avg Cost/SF/YR" in html
+    assert "NPV @ Discount Rate" in html
+    assert "$1,118,000" in html
+
+
 def test_resolve_theme_defaults_to_thecremodel():
     theme = resolve_theme({})
     assert theme.brand_name == "theCREmodel"

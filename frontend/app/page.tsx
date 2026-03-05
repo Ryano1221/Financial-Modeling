@@ -30,6 +30,7 @@ import type {
   ReportMeta,
   ScenarioInput,
   BackendCanonicalLease,
+  CustomChartExportConfig,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
@@ -550,6 +551,7 @@ export default function Home() {
   const [globalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [exportExcelError, setExportExcelError] = useState<string | null>(null);
+  const [customChartsForExport, setCustomChartsForExport] = useState<CustomChartExportConfig[]>([]);
   const [reportMeta, setReportMeta] = useState<{
     prepared_for: string;
     prepared_by: string;
@@ -1309,6 +1311,7 @@ export default function Home() {
           client_logo_asset_bytes: clientLogoBase64 || undefined,
           confidentiality_line: meta.confidential ? "Confidential" : "",
         },
+        custom_charts: customChartsForExport,
       };
       try {
         const res = await fetchApiProxy("/reports", {
@@ -1386,7 +1389,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, defaultPreparedByFromAuth, equalizedForExport, authSession]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, defaultPreparedByFromAuth, equalizedForExport, authSession, customChartsForExport]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1440,6 +1443,7 @@ export default function Home() {
         submarket: (reportMeta.submarket ?? "").trim() || undefined,
         brokerageLogoDataUrl: brokerageLogoForExcel,
         clientLogoDataUrl: clientLogoForExcel,
+        customCharts: customChartsForExport,
       };
       let buffer: ArrayBuffer | null = null;
       let usedFallback = false;
@@ -1531,7 +1535,7 @@ export default function Home() {
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl, customChartsForExport]);
 
   const engineResults = useMemo(() => {
     const included = includedScenarios;
@@ -1983,6 +1987,7 @@ export default function Home() {
                 <AnalyticsWorkbench
                   results={engineResults}
                   canonicalByScenarioId={canonicalComputeCache}
+                  onCustomChartsChange={setCustomChartsForExport}
                 />
               </>
             )}

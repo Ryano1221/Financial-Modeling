@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
-import type { CanonicalComputeResponse } from "@/lib/types";
+import type { CanonicalComputeResponse, CustomChartExportConfig } from "@/lib/types";
 import { formatCurrency, formatCurrencyPerSF, formatNumber, formatPercent } from "@/lib/format";
 import {
   Bar,
@@ -453,9 +453,11 @@ function DualMetricComboChart({
 export function AnalyticsWorkbench({
   results,
   canonicalByScenarioId,
+  onCustomChartsChange,
 }: {
   results: EngineResult[];
   canonicalByScenarioId?: Record<string, CanonicalComputeResponse>;
+  onCustomChartsChange?: (charts: CustomChartExportConfig[]) => void;
 }) {
   const [activeTab, setActiveTab] = useState<TabKey>("charts");
   const [annualMode, setAnnualMode] = useState<AnnualMode>("lease_year");
@@ -478,6 +480,61 @@ export function AnalyticsWorkbench({
     for (const metric of METRIC_OPTIONS) out[metric.key] = metric;
     return out;
   }, []);
+
+  const customChartsForExport = useMemo<CustomChartExportConfig[]>(() => {
+    const buildChart = (
+      title: string,
+      barMetricKey: keyof OptionMetrics,
+      lineMetricKey: keyof OptionMetrics,
+      direction: SortDirection
+    ): CustomChartExportConfig => {
+      const barMetric = metricsByKey[barMetricKey];
+      const lineMetric = metricsByKey[lineMetricKey];
+      const sorted = [...results].sort((a, b) => {
+        const av = toNumber((a.metrics as OptionMetrics)[barMetricKey]);
+        const bv = toNumber((b.metrics as OptionMetrics)[barMetricKey]);
+        return direction === "asc" ? av - bv : bv - av;
+      });
+      return {
+        title,
+        bar_metric_key: String(barMetric.key),
+        bar_metric_label: barMetric.label,
+        line_metric_key: String(lineMetric.key),
+        line_metric_label: lineMetric.label,
+        sort_direction: direction,
+        points: sorted.map((row) => {
+          const barValue = toNumber((row.metrics as OptionMetrics)[barMetricKey]);
+          const lineValue = toNumber((row.metrics as OptionMetrics)[lineMetricKey]);
+          return {
+            scenario_name: row.scenarioName,
+            bar_value: barValue,
+            line_value: lineValue,
+            bar_value_display: barMetric.format(barValue),
+            line_value_display: lineMetric.format(lineValue),
+          };
+        }),
+      };
+    };
+
+    const out: CustomChartExportConfig[] = [];
+    out.push(buildChart("Two-Metric Comparison", activeMetricKey, secondaryMetricKey, sortDirection));
+    for (let idx = 0; idx < savedCharts.length; idx += 1) {
+      const chart = savedCharts[idx];
+      out.push(
+        buildChart(
+          `Two-Metric Comparison #${idx + 2}`,
+          chart.barMetricKey,
+          chart.lineMetricKey,
+          chart.sortDirection
+        )
+      );
+    }
+    return out;
+  }, [metricsByKey, results, activeMetricKey, secondaryMetricKey, sortDirection, savedCharts]);
+
+  useEffect(() => {
+    onCustomChartsChange?.(customChartsForExport);
+  }, [onCustomChartsChange, customChartsForExport]);
   const selectedAnnualSeries = useMemo(
     () => ANNUAL_SERIES_OPTIONS.find((series) => series.key === annualSeriesKey) ?? ANNUAL_SERIES_OPTIONS[0],
     [annualSeriesKey]

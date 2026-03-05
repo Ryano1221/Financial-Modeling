@@ -4,6 +4,7 @@ import type { EngineResult } from "@/lib/lease-engine/monthly-engine";
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse } from "@/lib/types";
+import type { CustomChartExportConfig } from "@/lib/types";
 import { EXCEL_THEME } from "@/lib/excel-style-constants";
 import { CRE_DEFAULT_LOGO_DATA_URL } from "@/lib/default-brokerage-logo-data-url";
 import { buildOverarchingAssumptionNotes } from "@/lib/global-assumptions";
@@ -14,6 +15,7 @@ const SHEET_NAMES = {
   summary: "Summary Comparison",
   equalized: "Equalized Metrics",
   monthlyGrossMatrix: "Monthly Gross Cash Flow Matrix",
+  customCharts: "Custom Charts",
   notes: "Notes",
 } as const;
 
@@ -54,6 +56,7 @@ export interface WorkbookBrandingMeta {
   submarket?: string;
   brokerageLogoDataUrl?: string | null;
   clientLogoDataUrl?: string | null;
+  customCharts?: CustomChartExportConfig[];
 }
 
 interface WorkbookMonthlyRow {
@@ -2391,6 +2394,92 @@ function createNotesSheet(
   applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: totalCols, repeatRow: headerRow });
 }
 
+function createCustomChartsSheet(
+  workbook: ExcelJS.Workbook,
+  usedSheetNames: Set<string>,
+  customCharts: CustomChartExportConfig[] | undefined
+): void {
+  const charts = Array.isArray(customCharts) ? customCharts.filter((chart) => chart?.points?.length) : [];
+  if (charts.length === 0) return;
+
+  const sheet = workbook.addWorksheet(
+    makeUniqueSheetName(SHEET_NAMES.customCharts, SHEET_NAMES.customCharts, usedSheetNames)
+  );
+  sheet.properties.defaultRowHeight = 20;
+  sheet.getColumn(1).width = 34;
+  sheet.getColumn(2).width = 19;
+  sheet.getColumn(3).width = 18;
+  sheet.getColumn(4).width = 19;
+  sheet.getColumn(5).width = 18;
+
+  let row = 1;
+  sheet.mergeCells(`A${row}:E${row}`);
+  const title = sheet.getCell(`A${row}`);
+  title.value = "Custom Charts Export";
+  title.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.titleSize, bold: true, color: { argb: COLORS.text } };
+  title.alignment = { horizontal: "left", vertical: "middle" };
+  title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  row += 2;
+
+  for (let i = 0; i < charts.length; i += 1) {
+    const chart = charts[i];
+    const chartTitle = normalizeText(chart.title, `Two-Metric Comparison #${i + 1}`);
+    const barLabel = normalizeText(chart.bar_metric_label, "Bar metric");
+    const lineLabel = normalizeText(chart.line_metric_label, "Line metric");
+    const sortDir = chart.sort_direction === "asc" ? "Lowest first" : "Highest first";
+
+    sheet.mergeCells(`A${row}:E${row}`);
+    const section = sheet.getCell(`A${row}`);
+    section.value = chartTitle;
+    section.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.sectionSize, bold: true, color: { argb: COLORS.text } };
+    section.alignment = { horizontal: "left", vertical: "middle" };
+    section.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+    row += 1;
+
+    sheet.mergeCells(`A${row}:E${row}`);
+    const metaCell = sheet.getCell(`A${row}`);
+    metaCell.value = `Bar: ${barLabel} | Line: ${lineLabel} | Sort: ${sortDir}`;
+    metaCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.secondaryText } };
+    metaCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    row += 1;
+
+    const headerRow = row;
+    const headers = ["Scenario", `${barLabel} (raw)`, `${barLabel} (display)`, `${lineLabel} (raw)`, `${lineLabel} (display)`];
+    for (let c = 1; c <= headers.length; c += 1) {
+      const cell = sheet.getCell(headerRow, c);
+      cell.value = headers[c - 1];
+      cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, bold: true, color: { argb: COLORS.text } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+      cell.alignment = { horizontal: "left", vertical: "middle" };
+      cell.border = BORDER_THIN;
+    }
+    row += 1;
+
+    for (const point of chart.points) {
+      sheet.getCell(row, 1).value = normalizeText(point.scenario_name);
+      sheet.getCell(row, 2).value = Number(point.bar_value) || 0;
+      sheet.getCell(row, 3).value = normalizeText(point.bar_value_display, "");
+      sheet.getCell(row, 4).value = Number(point.line_value) || 0;
+      sheet.getCell(row, 5).value = normalizeText(point.line_value_display, "");
+      applyCellFormat(sheet.getCell(row, 1), "text");
+      applyCellFormat(sheet.getCell(row, 2), "currency2");
+      applyCellFormat(sheet.getCell(row, 3), "text");
+      applyCellFormat(sheet.getCell(row, 4), "currency2");
+      applyCellFormat(sheet.getCell(row, 5), "text");
+      for (let c = 1; c <= 5; c += 1) {
+        sheet.getCell(row, c).border = BORDER_THIN;
+      }
+      row += 1;
+    }
+
+    row += 1;
+  }
+
+  const endRow = Math.max(2, row - 1);
+  autoAdjustRowHeights(sheet, 1, endRow);
+  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: 5, repeatRow: 1 });
+}
+
 async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: WorkbookBrandingMeta): Promise<ExcelJS.Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "The CRE Model";
@@ -2405,10 +2494,12 @@ async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: Workb
     submarket: normalizeText(meta?.submarket, ""),
     brokerageLogoDataUrl: meta?.brokerageLogoDataUrl ?? null,
     clientLogoDataUrl: meta?.clientLogoDataUrl ?? null,
+    customCharts: Array.isArray(meta?.customCharts) ? meta?.customCharts : [],
   };
 
   createCoverSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createSummarySheet(workbook, usedSheetNames, scenarios, safeMeta);
+  createCustomChartsSheet(workbook, usedSheetNames, safeMeta.customCharts);
   createNotesSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createEqualizedSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createMonthlyGrossMatrixSheet(workbook, usedSheetNames, scenarios, safeMeta);

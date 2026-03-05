@@ -441,6 +441,49 @@ def _extract_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _extract_custom_charts(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = data.get("custom_charts")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        points_raw = item.get("points")
+        if not isinstance(points_raw, list):
+            continue
+        points: list[dict[str, Any]] = []
+        for p in points_raw:
+            if not isinstance(p, dict):
+                continue
+            scenario_name = str(p.get("scenario_name") or "").strip()
+            if not scenario_name:
+                continue
+            bar_value = _safe_float(p.get("bar_value"), 0.0)
+            line_value = _safe_float(p.get("line_value"), 0.0)
+            points.append(
+                {
+                    "scenario_name": scenario_name,
+                    "bar_value": bar_value,
+                    "line_value": line_value,
+                    "bar_value_display": str(p.get("bar_value_display") or "").strip() or _fmt_currency(bar_value, 2),
+                    "line_value_display": str(p.get("line_value_display") or "").strip() or _fmt_currency(line_value, 2),
+                }
+            )
+        if not points:
+            continue
+        out.append(
+            {
+                "title": str(item.get("title") or f"Two-Metric Comparison #{idx + 1}").strip() or f"Two-Metric Comparison #{idx + 1}",
+                "bar_metric_label": str(item.get("bar_metric_label") or "Bar metric").strip() or "Bar metric",
+                "line_metric_label": str(item.get("line_metric_label") or "Line metric").strip() or "Line metric",
+                "sort_direction": "asc" if str(item.get("sort_direction") or "").lower() == "asc" else "desc",
+                "points": points,
+            }
+        )
+    return out
+
+
 def _build_page_shell(
     *,
     body_html: str,
@@ -2380,6 +2423,80 @@ def _cost_visuals_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> 
     return pages
 
 
+def _custom_visuals_page(chart: dict[str, Any]) -> str:
+    points = chart.get("points") if isinstance(chart.get("points"), list) else []
+    bar_rows: list[tuple[str, float, str]] = []
+    line_rows: list[tuple[str, float, str]] = []
+    table_rows: list[str] = []
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        scenario_name = str(point.get("scenario_name") or "").strip()
+        if not scenario_name:
+            continue
+        bar_value = _safe_float(point.get("bar_value"), 0.0)
+        line_value = _safe_float(point.get("line_value"), 0.0)
+        bar_display = str(point.get("bar_value_display") or "").strip() or _fmt_currency(bar_value, 2)
+        line_display = str(point.get("line_value_display") or "").strip() or _fmt_currency(line_value, 2)
+        bar_rows.append((scenario_name, bar_value, bar_display))
+        line_rows.append((scenario_name, line_value, line_display))
+        table_rows.append(
+            f"<tr><td>{_esc(scenario_name)}</td><td>{_esc(bar_display)}</td><td>{_esc(line_display)}</td></tr>"
+        )
+
+    title = str(chart.get("title") or "Two-Metric Comparison").strip() or "Two-Metric Comparison"
+    bar_metric_label = str(chart.get("bar_metric_label") or "Bar metric").strip() or "Bar metric"
+    line_metric_label = str(chart.get("line_metric_label") or "Line metric").strip() or "Line metric"
+    sort_text = "Lowest first" if str(chart.get("sort_direction") or "").lower() == "asc" else "Highest first"
+
+    return f"""
+    {SectionTitle("Custom visuals", title, "User-configured chart from Custom Charts in the app.")}
+    {KpiTilesRow([
+      ("Bar metric", bar_metric_label),
+      ("Line metric", line_metric_label),
+      ("Sort direction", sort_text),
+    ])}
+    <div class="chart-grid">
+      {ChartBlock(bar_metric_label, bar_rows)}
+      {ChartBlock(line_metric_label, line_rows)}
+    </div>
+    <article class="panel">
+      <h3>Metric values by scenario</h3>
+      <table class="detail-table annualized-table">
+        <thead>
+          <tr>
+            <th>Scenario</th>
+            <th>{_esc(bar_metric_label)}</th>
+            <th>{_esc(line_metric_label)}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {''.join(table_rows) if table_rows else '<tr><td colspan="3">No data</td></tr>'}
+        </tbody>
+      </table>
+    </article>
+    """
+
+
+def _custom_visuals_pages(data: dict[str, Any], plan: DeckRenderPlan) -> list[DeckPage]:
+    custom_charts = _extract_custom_charts(data)
+    if not custom_charts:
+        return []
+    pages: list[DeckPage] = []
+    orientation = "landscape"
+    for idx, chart in enumerate(custom_charts):
+        pages.append(
+            DeckPage(
+                body_html=_custom_visuals_page(chart),
+                section_label=f"Custom visuals {idx + 1}",
+                include_frame=True,
+                kind="cost_visuals",
+                orientation=orientation,
+            )
+        )
+    return pages
+
+
 def _executive_summary_page(
     entries: list[dict[str, Any]],
     *,
@@ -3215,6 +3332,7 @@ def _build_report_deck_payloads(
     page_payloads.extend(_monthly_gross_pages(entries, active_plan))
     page_payloads.extend(_notes_pages(entries, active_plan))
     page_payloads.extend(_cost_visuals_pages(entries, active_plan))
+    page_payloads.extend(_custom_visuals_pages(data, active_plan))
     page_payloads.extend(_lease_abstract_pages(entries, active_plan))
     for entry in entries:
         page_payloads.extend(ScenarioDetailSections(entry, active_plan))

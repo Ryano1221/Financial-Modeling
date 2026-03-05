@@ -224,6 +224,24 @@ export interface ReportBranding {
   report_title?: string;
 }
 
+export interface CustomChartExportPoint {
+  scenario_name: string;
+  bar_value: number;
+  line_value: number;
+  bar_value_display?: string;
+  line_value_display?: string;
+}
+
+export interface CustomChartExportConfig {
+  title: string;
+  bar_metric_key: string;
+  bar_metric_label: string;
+  line_metric_key: string;
+  line_metric_label: string;
+  sort_direction: "asc" | "desc";
+  points: CustomChartExportPoint[];
+}
+
 export interface OrganizationBrandingResponse {
   organization_id: string;
   has_logo: boolean;
@@ -284,6 +302,7 @@ export interface ReportRequest {
 export interface ReportData {
   scenarios: { scenario: ScenarioInput; result: CashflowResult }[];
   branding: ReportBranding;
+  custom_charts?: CustomChartExportConfig[];
 }
 
 /** How extraction was produced: text-only, forced OCR, or auto-triggered OCR */
