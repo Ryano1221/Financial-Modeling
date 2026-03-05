@@ -554,7 +554,10 @@ export function AnalyticsWorkbench({
             </button>
           </div>
 
-          <CombinedMetricChart metric={selectedMetric} rows={results} sortDirection={sortDirection} />
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <CombinedMetricChart metric={selectedMetric} rows={results} sortDirection={sortDirection} />
+            <CombinedMetricChart metric={selectedSecondaryMetric} rows={results} sortDirection={sortDirection} />
+          </div>
           <DualMetricComboChart
             barMetric={selectedMetric}
             lineMetric={selectedSecondaryMetric}
@@ -649,6 +652,10 @@ export function AnalyticsWorkbench({
                       sortDirection={chart.sortDirection}
                       title={`Two-Metric Comparison #${idx + 2}`}
                     />
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-4">
+                      <CombinedMetricChart metric={barMetric} rows={results} sortDirection={chart.sortDirection} />
+                      <CombinedMetricChart metric={lineMetric} rows={results} sortDirection={chart.sortDirection} />
+                    </div>
                   </div>
                 );
               })}
