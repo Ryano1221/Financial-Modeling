@@ -56,12 +56,7 @@ const METRIC_OPTIONS: MetricSpec[] = [
   { key: "parkingSalesTaxPercent", label: "Parking Sales Tax %", format: (value) => formatPercent(value) },
 ];
 
-const DEFAULT_METRIC_KEYS: Array<keyof OptionMetrics> = [
-  "avgCostPsfYr",
-  "npvAtDiscount",
-  "avgAllInCostPerYear",
-  "totalObligation",
-];
+const DEFAULT_METRIC_KEY: keyof OptionMetrics = "avgCostPsfYr";
 
 const BAR_COLORS = [
   "from-cyan-400 to-blue-500",
@@ -80,6 +75,10 @@ function clampPercent(value: number): number {
 function toNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function roundCurrency(value: number): number {
+  return Math.round(toNumber(value) * 100) / 100;
 }
 
 function monthlyPointsForScenario(
@@ -115,9 +114,31 @@ function monthlyPointsForScenario(
 function annualAggregate(points: MonthlyPoint[], mode: AnnualMode): AnnualAggregateRow[] {
   const byKey = new Map<number, AnnualAggregateRow>();
 
+  if (mode === "lease_year") {
+    const month0 = points.find((point) => point.monthIndex === 0);
+    const month0Unallocated = month0
+      ? month0.total - (month0.baseRent + month0.opex + month0.parking + month0.tiConcessions)
+      : 0;
+    const year0TiNet = roundCurrency((month0?.tiConcessions || 0) + month0Unallocated);
+    byKey.set(0, {
+      key: 0,
+      label: "Lease Year 0 (PLC)",
+      baseRent: 0,
+      opex: 0,
+      parking: 0,
+      // Explicitly isolate TI budget less TI allowance/credits in Year 0.
+      tiConcessions: year0TiNet,
+      total: year0TiNet,
+      discounted: year0TiNet,
+    });
+  }
+
   for (const point of points) {
+    if (mode === "lease_year" && point.monthIndex === 0) {
+      continue
+    }
     const key = mode === "lease_year"
-      ? Math.floor(point.monthIndex / 12) + 1
+      ? Math.floor((point.monthIndex - 1) / 12) + 1
       : (() => {
           const year = Number(String(point.date || "").slice(0, 4));
           return Number.isFinite(year) ? year : 0;
@@ -146,16 +167,14 @@ function annualAggregate(points: MonthlyPoint[], mode: AnnualMode): AnnualAggreg
   return Array.from(byKey.values()).sort((a, b) => a.key - b.key);
 }
 
-function MetricChartCard({
+function CombinedMetricChart({
   metric,
   rows,
   sortDirection,
-  colorClass,
 }: {
   metric: MetricSpec;
   rows: EngineResult[];
   sortDirection: SortDirection;
-  colorClass: string;
 }) {
   const sorted = [...rows].sort((a, b) => {
     const av = toNumber((a.metrics as OptionMetrics)[metric.key]);
@@ -168,9 +187,10 @@ function MetricChartCard({
     <div className="surface-card p-4 sm:p-5">
       <h3 className="text-base font-semibold text-slate-100 mb-4 tracking-tight">{metric.label}</h3>
       <div className="space-y-3">
-        {sorted.map((row) => {
+        {sorted.map((row, index) => {
           const value = toNumber((row.metrics as OptionMetrics)[metric.key]);
           const widthPct = clampPercent((value / maxValue) * 100);
+          const colorClass = BAR_COLORS[index % BAR_COLORS.length];
           return (
             <div key={`${metric.key}-${row.scenarioId}`} className="space-y-1.5">
               <div className="flex items-center justify-between gap-3">
@@ -203,11 +223,11 @@ export function AnalyticsWorkbench({
   const [activeTab, setActiveTab] = useState<TabKey>("charts");
   const [annualMode, setAnnualMode] = useState<AnnualMode>("lease_year");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [selectedMetricKeys, setSelectedMetricKeys] = useState<Array<keyof OptionMetrics>>(DEFAULT_METRIC_KEYS);
+  const [activeMetricKey, setActiveMetricKey] = useState<keyof OptionMetrics>(DEFAULT_METRIC_KEY);
 
-  const selectedMetrics = useMemo(
-    () => METRIC_OPTIONS.filter((metric) => selectedMetricKeys.includes(metric.key)),
-    [selectedMetricKeys]
+  const selectedMetric = useMemo(
+    () => METRIC_OPTIONS.find((metric) => metric.key === activeMetricKey) ?? METRIC_OPTIONS[0],
+    [activeMetricKey]
   );
 
   const annualRowsByScenario = useMemo(() => {
@@ -248,7 +268,26 @@ export function AnalyticsWorkbench({
 
       {activeTab === "charts" ? (
         <div className="mt-5 space-y-5">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-xs text-slate-400">Comparison metric</span>
+              <select
+                value={activeMetricKey}
+                onChange={(e) => {
+                  const next = e.target.value as keyof OptionMetrics;
+                  if (METRIC_OPTIONS.some((metric) => metric.key === next)) {
+                    setActiveMetricKey(next);
+                  }
+                }}
+                className="input-premium mt-1"
+              >
+                {METRIC_OPTIONS.map((metric) => (
+                  <option key={metric.key} value={metric.key}>
+                    {metric.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="block">
               <span className="text-xs text-slate-400">Sort scenarios by selected metric</span>
               <select
@@ -260,47 +299,9 @@ export function AnalyticsWorkbench({
                 <option value="asc">Lowest first</option>
               </select>
             </label>
-            <div className="lg:col-span-2">
-              <span className="text-xs text-slate-400">Metrics to chart (from comparison summary)</span>
-              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 text-xs">
-                {METRIC_OPTIONS.map((metric) => {
-                  const checked = selectedMetricKeys.includes(metric.key);
-                  return (
-                    <label key={metric.key} className="flex items-center gap-2 border border-slate-300/15 bg-slate-900/35 px-2 py-1.5">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => {
-                          const nextChecked = e.target.checked;
-                          setSelectedMetricKeys((prev) => {
-                            if (nextChecked) {
-                              if (prev.includes(metric.key)) return prev;
-                              return [...prev, metric.key];
-                            }
-                            if (prev.length <= 1) return prev;
-                            return prev.filter((k) => k !== metric.key);
-                          });
-                        }}
-                      />
-                      <span className="text-slate-200">{metric.label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-            {selectedMetrics.map((metric, index) => (
-              <MetricChartCard
-                key={metric.key}
-                metric={metric}
-                rows={results}
-                sortDirection={sortDirection}
-                colorClass={BAR_COLORS[index % BAR_COLORS.length]}
-              />
-            ))}
-          </div>
+          <CombinedMetricChart metric={selectedMetric} rows={results} sortDirection={sortDirection} />
         </div>
       ) : (
         <div className="mt-5 space-y-4">
@@ -343,7 +344,9 @@ export function AnalyticsWorkbench({
                           <th className="text-right py-2 px-2">Base Rent</th>
                           <th className="text-right py-2 px-2">OpEx</th>
                           <th className="text-right py-2 px-2">Parking</th>
-                          <th className="text-right py-2 px-2">TI / Concessions</th>
+                          <th className="text-right py-2 px-2">
+                            {annualMode === "lease_year" ? "TI Net (Budget-Allowance)" : "TI / Concessions"}
+                          </th>
                           <th className="text-right py-2 px-2">Total</th>
                           <th className="text-right py-2 pl-2">Discounted</th>
                         </tr>
@@ -372,4 +375,3 @@ export function AnalyticsWorkbench({
     </div>
   );
 }
-
