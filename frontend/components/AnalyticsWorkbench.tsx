@@ -521,6 +521,17 @@ export function AnalyticsWorkbench({
     return ordered;
   }, [annualRowsByScenario, results, annualSeriesKey]);
 
+  const annualChartMaxValue = useMemo(() => {
+    let max = 0;
+    for (const row of annualCombinedRows) {
+      for (const result of results) {
+        const value = toNumber(row[result.scenarioId]);
+        if (value > max) max = value;
+      }
+    }
+    return max;
+  }, [annualCombinedRows, results]);
+
   if (results.length === 0) return null;
 
   return (
@@ -804,13 +815,14 @@ export function AnalyticsWorkbench({
             </div>
             <div className="h-[340px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={annualCombinedRows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+                <BarChart data={annualCombinedRows} margin={{ top: 28, right: 8, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#33415566" />
                   <XAxis dataKey="label" tick={{ fill: "#cbd5e1", fontSize: 12 }} tickMargin={8} />
                   <YAxis
                     tick={{ fill: "#cbd5e1", fontSize: 12 }}
                     tickFormatter={(value) => formatCompactCurrency(toNumber(value))}
                     width={72}
+                    domain={[0, annualChartMaxValue > 0 ? annualChartMaxValue * 1.15 : 1]}
                   />
                   <Tooltip
                     contentStyle={{ backgroundColor: "#020617", border: "1px solid #334155", color: "#e2e8f0" }}
@@ -824,7 +836,47 @@ export function AnalyticsWorkbench({
                       name={result.scenarioName}
                       fill={ANNUAL_BAR_COLORS[index % ANNUAL_BAR_COLORS.length]}
                       radius={[2, 2, 0, 0]}
-                    />
+                    >
+                      <LabelList
+                        dataKey={result.scenarioId}
+                        position="top"
+                        content={(props: any) => {
+                          const { x, y, width, value } = props;
+                          const numeric = toNumber(value);
+                          if (numeric === 0) return null;
+                          const text = formatCompactCurrency(numeric);
+                          const labelWidth = Math.max(42, Math.round(text.length * 6.6) + 8);
+                          const labelHeight = 16;
+                          const centerX = x + width / 2;
+                          const rectX = centerX - labelWidth / 2;
+                          const rectY = Math.max(2, y - 20);
+                          return (
+                            <g>
+                              <rect
+                                x={rectX}
+                                y={rectY}
+                                width={labelWidth}
+                                height={labelHeight}
+                                rx={4}
+                                fill="#020617"
+                                stroke="#334155"
+                                strokeWidth={1}
+                              />
+                              <text
+                                x={centerX}
+                                y={rectY + 11}
+                                textAnchor="middle"
+                                fill="#f8fafc"
+                                fontSize={10}
+                                fontWeight={600}
+                              >
+                                {text}
+                              </text>
+                            </g>
+                          );
+                        }}
+                      />
+                    </Bar>
                   ))}
                 </BarChart>
               </ResponsiveContainer>
