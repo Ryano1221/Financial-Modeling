@@ -301,6 +301,10 @@ function DualMetricComboChart({
     barValue: toNumber((row.metrics as OptionMetrics)[barMetric.key]),
     lineValue: toNumber((row.metrics as OptionMetrics)[lineMetric.key]),
   }));
+  const maxBarValue = Math.max(0, ...chartData.map((row) => toNumber(row.barValue)));
+  const maxLineValue = Math.max(0, ...chartData.map((row) => toNumber(row.lineValue)));
+  const leftAxisMax = maxBarValue > 0 ? maxBarValue * 1.15 : 1;
+  const rightAxisMax = maxLineValue > 0 ? maxLineValue * 1.15 : 1;
 
   return (
     <div className="surface-card p-4 sm:p-5">
@@ -318,7 +322,7 @@ function DualMetricComboChart({
       </div>
       <div className="h-[360px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 16 }}>
+          <ComposedChart data={chartData} margin={{ top: 24, right: 8, left: 8, bottom: 16 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#33415566" />
             <XAxis
               dataKey="scenarioName"
@@ -333,6 +337,7 @@ function DualMetricComboChart({
               tick={{ fill: "#cbd5e1", fontSize: 12 }}
               tickFormatter={(value) => formatAxisValue(barMetric, toNumber(value))}
               width={80}
+              domain={[0, leftAxisMax]}
             />
             <YAxis
               yAxisId="right"
@@ -340,6 +345,7 @@ function DualMetricComboChart({
               tick={{ fill: "#cbd5e1", fontSize: 12 }}
               tickFormatter={(value) => formatAxisValue(lineMetric, toNumber(value))}
               width={80}
+              domain={[0, rightAxisMax]}
             />
             <Tooltip
               contentStyle={{ backgroundColor: "#020617", border: "1px solid #334155", color: "#e2e8f0" }}
@@ -360,8 +366,39 @@ function DualMetricComboChart({
               <LabelList
                 dataKey="barValue"
                 position="top"
-                formatter={(value: number) => barMetric.format(toNumber(value))}
-                style={{ fill: "#dbeafe", fontSize: 11 }}
+                content={(props: any) => {
+                  const { x, y, width, value } = props;
+                  const text = barMetric.format(toNumber(value));
+                  const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
+                  const labelHeight = 18;
+                  const centerX = x + width / 2;
+                  const rectX = centerX - labelWidth / 2;
+                  const rectY = Math.max(2, y - 22);
+                  return (
+                    <g>
+                      <rect
+                        x={rectX}
+                        y={rectY}
+                        width={labelWidth}
+                        height={labelHeight}
+                        rx={4}
+                        fill="#020617"
+                        stroke="#334155"
+                        strokeWidth={1}
+                      />
+                      <text
+                        x={centerX}
+                        y={rectY + 13}
+                        textAnchor="middle"
+                        fill="#f8fafc"
+                        fontSize={11}
+                        fontWeight={600}
+                      >
+                        {text}
+                      </text>
+                    </g>
+                  );
+                }}
               />
             </Bar>
             <Line
@@ -374,11 +411,40 @@ function DualMetricComboChart({
               dot={{ r: 3, fill: "#f59e0b" }}
               activeDot={{ r: 5 }}
               label={(props: any) => {
-                const { x, y, value } = props;
+                const { x, y, value, viewBox } = props;
+                const text = lineMetric.format(toNumber(value));
+                const chartWidthRaw = Number(viewBox?.width);
+                const chartWidth = Number.isFinite(chartWidthRaw) ? chartWidthRaw : 1000;
+                const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
+                const useLeftAnchor = x > chartWidth - labelWidth - 24;
+                const labelX = useLeftAnchor ? x - 8 : x + 8;
+                const anchor = useLeftAnchor ? "end" : "start";
+                const labelY = y < 20 ? y + 16 : y - 8;
+                const rectX = useLeftAnchor ? labelX - labelWidth : labelX;
+                const rectY = labelY - 12;
                 return (
-                  <text x={x + 8} y={y - 6} fill="#fde68a" fontSize={11}>
-                    {lineMetric.format(toNumber(value))}
-                  </text>
+                  <g>
+                    <rect
+                      x={rectX}
+                      y={rectY}
+                      width={labelWidth}
+                      height={18}
+                      rx={4}
+                      fill="#020617"
+                      stroke="#7c2d12"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={labelX}
+                      y={labelY + 1}
+                      textAnchor={anchor}
+                      fill="#fde68a"
+                      fontSize={11}
+                      fontWeight={600}
+                    >
+                      {text}
+                    </text>
+                  </g>
                 );
               }}
             />
