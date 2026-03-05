@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
-import { Charts, type ChartRow } from "@/components/Charts";
+import type { ChartRow } from "@/components/Charts";
 import { getApiUrl, fetchApiProxy, getAuthHeaders, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
@@ -34,6 +34,7 @@ import type {
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
 import { SummaryMatrix } from "@/components/SummaryMatrix";
+import { AnalyticsWorkbench } from "@/components/AnalyticsWorkbench";
 import { formatDateISO } from "@/lib/format";
 import { computeEqualizedComparison, type EqualizedWindowInput } from "@/lib/equalized";
 import {
@@ -1979,7 +1980,10 @@ export default function Home() {
                   scenariosById={scenariosById}
                   onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
                 />
-                <Charts data={chartData} />
+                <AnalyticsWorkbench
+                  results={engineResults}
+                  canonicalByScenarioId={canonicalComputeCache}
+                />
               </>
             )}
               </ResultsActionsCard>
