@@ -9,6 +9,7 @@ import {
   BarChart,
   ComposedChart,
   CartesianGrid,
+  LabelList,
   Line,
   ResponsiveContainer,
   Tooltip,
@@ -20,6 +21,12 @@ type TabKey = "charts" | "annual";
 type AnnualMode = "lease_year" | "calendar_year";
 type SortDirection = "desc" | "asc";
 type AnnualSeriesKey = "baseRent" | "opex" | "parking" | "tiConcessions" | "total" | "discounted";
+type CustomChartConfig = {
+  id: number;
+  barMetricKey: keyof OptionMetrics;
+  lineMetricKey: keyof OptionMetrics;
+  sortDirection: SortDirection;
+};
 
 type MetricSpec = {
   key: keyof OptionMetrics;
@@ -275,11 +282,13 @@ function DualMetricComboChart({
   lineMetric,
   rows,
   sortDirection,
+  title = "Two-Metric Comparison",
 }: {
   barMetric: MetricSpec;
   lineMetric: MetricSpec;
   rows: EngineResult[];
   sortDirection: SortDirection;
+  title?: string;
 }) {
   const sorted = [...rows].sort((a, b) => {
     const av = toNumber((a.metrics as OptionMetrics)[barMetric.key]);
@@ -295,7 +304,7 @@ function DualMetricComboChart({
 
   return (
     <div className="surface-card p-4 sm:p-5">
-      <h3 className="text-base font-semibold text-slate-100 mb-1 tracking-tight">Two-Metric Comparison</h3>
+      <h3 className="text-base font-semibold text-slate-100 mb-1 tracking-tight">{title}</h3>
       <p className="text-xs text-slate-400 mb-3">Bar: {barMetric.label} | Line: {lineMetric.label}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3">
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
@@ -347,7 +356,14 @@ function DualMetricComboChart({
               fill="#22d3ee"
               radius={[2, 2, 0, 0]}
               maxBarSize={42}
-            />
+            >
+              <LabelList
+                dataKey="barValue"
+                position="top"
+                formatter={(value: number) => barMetric.format(toNumber(value))}
+                style={{ fill: "#dbeafe", fontSize: 11 }}
+              />
+            </Bar>
             <Line
               yAxisId="right"
               type="monotone"
@@ -357,6 +373,14 @@ function DualMetricComboChart({
               strokeWidth={2}
               dot={{ r: 3, fill: "#f59e0b" }}
               activeDot={{ r: 5 }}
+              label={(props: any) => {
+                const { x, y, value } = props;
+                return (
+                  <text x={x + 8} y={y - 6} fill="#fde68a" fontSize={11}>
+                    {lineMetric.format(toNumber(value))}
+                  </text>
+                );
+              }}
             />
           </ComposedChart>
         </ResponsiveContainer>
@@ -378,6 +402,7 @@ export function AnalyticsWorkbench({
   const [activeMetricKey, setActiveMetricKey] = useState<keyof OptionMetrics>(DEFAULT_METRIC_KEY);
   const [secondaryMetricKey, setSecondaryMetricKey] = useState<keyof OptionMetrics>(DEFAULT_SECONDARY_METRIC_KEY);
   const [annualSeriesKey, setAnnualSeriesKey] = useState<AnnualSeriesKey>("total");
+  const [savedCharts, setSavedCharts] = useState<CustomChartConfig[]>([]);
 
   const selectedMetric = useMemo(
     () => METRIC_OPTIONS.find((metric) => metric.key === activeMetricKey) ?? METRIC_OPTIONS[0],
@@ -387,6 +412,11 @@ export function AnalyticsWorkbench({
     () => METRIC_OPTIONS.find((metric) => metric.key === secondaryMetricKey) ?? METRIC_OPTIONS[0],
     [secondaryMetricKey]
   );
+  const metricsByKey = useMemo(() => {
+    const out: Record<string, MetricSpec> = {};
+    for (const metric of METRIC_OPTIONS) out[metric.key] = metric;
+    return out;
+  }, []);
   const selectedAnnualSeries = useMemo(
     () => ANNUAL_SERIES_OPTIONS.find((series) => series.key === annualSeriesKey) ?? ANNUAL_SERIES_OPTIONS[0],
     [annualSeriesKey]
@@ -451,7 +481,7 @@ export function AnalyticsWorkbench({
 
       {activeTab === "charts" ? (
         <div className="mt-5 space-y-5">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-end">
             <label className="block">
               <span className="text-xs text-slate-400">Bar metric</span>
               <select
@@ -505,6 +535,23 @@ export function AnalyticsWorkbench({
                 <option value="asc">Lowest first</option>
               </select>
             </label>
+            <button
+              type="button"
+              onClick={() => {
+                setSavedCharts((prev) => [
+                  ...prev,
+                  {
+                    id: Date.now() + prev.length,
+                    barMetricKey: activeMetricKey,
+                    lineMetricKey: secondaryMetricKey,
+                    sortDirection,
+                  },
+                ]);
+              }}
+              className="px-3 py-2 text-sm border border-slate-300/20 bg-slate-900/40 text-slate-100 hover:bg-slate-800/60 h-[42px]"
+            >
+              Add Another Chart
+            </button>
           </div>
 
           <CombinedMetricChart metric={selectedMetric} rows={results} sortDirection={sortDirection} />
@@ -513,7 +560,100 @@ export function AnalyticsWorkbench({
             lineMetric={selectedSecondaryMetric}
             rows={results}
             sortDirection={sortDirection}
+            title="Two-Metric Comparison"
           />
+          {savedCharts.length > 0 ? (
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-slate-200">Additional Charts</h3>
+              {savedCharts.map((chart, idx) => {
+                const barMetric = metricsByKey[chart.barMetricKey] ?? selectedMetric;
+                const lineMetric = metricsByKey[chart.lineMetricKey] ?? selectedSecondaryMetric;
+                return (
+                  <div key={`saved-chart-${chart.id}`} className="border border-slate-300/20 bg-slate-950/50 p-3 sm:p-4">
+                    <div className="flex flex-wrap items-end gap-3 justify-between mb-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+                        <label className="block">
+                          <span className="text-xs text-slate-400">Bar metric</span>
+                          <select
+                            value={chart.barMetricKey}
+                            onChange={(e) => {
+                              const next = e.target.value as keyof OptionMetrics;
+                              setSavedCharts((prev) =>
+                                prev.map((item) => {
+                                  if (item.id !== chart.id) return item;
+                                  const nextLine = item.lineMetricKey === next
+                                    ? (METRIC_OPTIONS.find((metric) => metric.key !== next)?.key ?? item.lineMetricKey)
+                                    : item.lineMetricKey;
+                                  return { ...item, barMetricKey: next, lineMetricKey: nextLine };
+                                })
+                              );
+                            }}
+                            className="input-premium mt-1"
+                          >
+                            {METRIC_OPTIONS.map((metric) => (
+                              <option key={metric.key} value={metric.key}>
+                                {metric.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="text-xs text-slate-400">Line metric</span>
+                          <select
+                            value={chart.lineMetricKey}
+                            onChange={(e) => {
+                              const next = e.target.value as keyof OptionMetrics;
+                              if (next === chart.barMetricKey) return;
+                              setSavedCharts((prev) =>
+                                prev.map((item) => (item.id === chart.id ? { ...item, lineMetricKey: next } : item))
+                              );
+                            }}
+                            className="input-premium mt-1"
+                          >
+                            {METRIC_OPTIONS.filter((metric) => metric.key !== chart.barMetricKey).map((metric) => (
+                              <option key={metric.key} value={metric.key}>
+                                {metric.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="text-xs text-slate-400">Sort</span>
+                          <select
+                            value={chart.sortDirection}
+                            onChange={(e) => {
+                              const next = e.target.value === "asc" ? "asc" : "desc";
+                              setSavedCharts((prev) =>
+                                prev.map((item) => (item.id === chart.id ? { ...item, sortDirection: next } : item))
+                              );
+                            }}
+                            className="input-premium mt-1"
+                          >
+                            <option value="desc">Highest first</option>
+                            <option value="asc">Lowest first</option>
+                          </select>
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSavedCharts((prev) => prev.filter((item) => item.id !== chart.id))}
+                        className="px-3 py-2 text-sm border border-rose-400/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20 h-[42px]"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <DualMetricComboChart
+                      barMetric={barMetric}
+                      lineMetric={lineMetric}
+                      rows={results}
+                      sortDirection={chart.sortDirection}
+                      title={`Two-Metric Comparison #${idx + 2}`}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="mt-5 space-y-4">
