@@ -302,6 +302,10 @@ def extract_text_from_docx(file: BinaryIO) -> str:
                     txt = node.text or ""
                     if txt:
                         out.append(txt)
+                elif node.tag in (f"{w_ns}tab", f"{w_ns}br", f"{w_ns}cr") and not current_deleted:
+                    # Preserve structural separators from WordprocessingML so labels/values
+                    # don't collapse into merged tokens like "ImprovementsLandlord".
+                    out.append(" ")
                 for child in list(node):
                     out.extend(collect_text_nodes(child, current_deleted))
                 return out
@@ -686,7 +690,7 @@ _RE_TI = re.compile(
     re.I,
 )
 _RE_TIA_KEYWORD = re.compile(
-    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
+    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b"
 )
 _RE_TI_ALLOWANCE_TOTAL = re.compile(
     r"(?i)\b(?:ti(?:a)?|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
@@ -773,6 +777,21 @@ _RE_ANNUAL_ESCALATION_START_IN_PARENS = re.compile(
     r"|annual(?:ly)?\s+(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b)"
     r"[^\n]{0,120}\b(?:starting|beginning|commencing)\s*(?:in\s*)?month\s*(\d{1,3})\b"
 )
+
+
+def _has_ti_context_token(text: str) -> bool:
+    segment = str(text or "")
+    if not segment:
+        return False
+    if _RE_TIA_KEYWORD.search(segment):
+        return True
+    compact = re.sub(r"[^a-z0-9]+", "", segment.lower())
+    return (
+        "tenantimprovementallowance" in compact
+        or "tenantimprovementsallowance" in compact
+        or "tenantimprovement" in compact
+        or "tenantimprovements" in compact
+    )
 
 
 def _extract_annual_rent_escalation_pct(text: str) -> float | None:
@@ -1691,11 +1710,15 @@ def _regex_prefill(text: str) -> dict:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     for idx, line in enumerate(lines):
         line_low = line.lower()
-        line_has_ti_keyword = bool(_RE_TIA_KEYWORD.search(line))
+        line_has_ti_keyword = _has_ti_context_token(line)
         neighbor_window = " ".join(lines[max(0, idx - 1): idx + 2]).lower()
         line_is_allowance_with_ti_context = (
             "allowance" in line_low
-            and bool(re.search(r"(?i)\b(?:tenant improvements?|ti|leasehold improvements?)\b", neighbor_window))
+            and (
+                _has_ti_context_token(neighbor_window)
+                or "tenant improvement" in neighbor_window
+                or "tenant improvements" in neighbor_window
+            )
         )
         if not line_has_ti_keyword and not line_is_allowance_with_ti_context:
             continue

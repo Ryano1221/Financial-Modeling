@@ -211,6 +211,27 @@ def test_regex_prefill_parses_ti_allowance_from_tenant_improvements_clause() -> 
     assert prefill.get("ti_allowance_psf") == 1.5
 
 
+def test_regex_prefill_parses_ti_allowance_when_heading_and_body_are_merged() -> None:
+    text = (
+        "Premises: Portion of Suite 500, 4,165 RSF.\n"
+        "Tenant ImprovementsLandlord will provide an allowance equal to $50.00 per square foot, inclusive of architectural and engineering fees.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") == 50.0
+
+
+def test_extract_lease_hints_parses_ti_allowance_when_heading_and_body_are_merged() -> None:
+    text = (
+        "Building: Domain Place\n"
+        "Premises: Portion of Suite 500, 4,165 RSF.\n"
+        "Lease Commencement: October 1, 2026.\n"
+        "Lease Expiration: March 31, 2033.\n"
+        "Tenant ImprovementsLandlord will provide an allowance equal to $50.00 per square foot, inclusive of architectural and engineering fees.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints.get("ti_allowance_psf") == 50.0
+
+
 def test_regex_prefill_parses_total_ti_allowance_and_converts_to_psf() -> None:
     text = (
         "Premises: Suite 230 consisting of 3,947 RSF.\n"
