@@ -7,7 +7,9 @@ import { formatCurrency, formatCurrencyPerSF, formatNumber, formatPercent } from
 import {
   Bar,
   BarChart,
+  ComposedChart,
   CartesianGrid,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -72,6 +74,7 @@ const METRIC_OPTIONS: MetricSpec[] = [
 ];
 
 const DEFAULT_METRIC_KEY: keyof OptionMetrics = "avgCostPsfYr";
+const DEFAULT_SECONDARY_METRIC_KEY: keyof OptionMetrics = "npvAtDiscount";
 
 const BAR_COLORS = [
   "from-cyan-400 to-blue-500",
@@ -114,6 +117,25 @@ function formatCompactCurrency(value: number): string {
   if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`;
   return `${sign}$${Math.round(abs)}`;
+}
+
+function formatAxisValue(metric: MetricSpec, value: number): string {
+  const v = toNumber(value);
+  switch (metric.key) {
+    case "parkingSpaces":
+      return formatNumber(Math.round(v));
+    case "parkingSalesTaxPercent":
+      return `${(v * 100).toFixed(1)}%`;
+    case "avgCostPsfYr":
+    case "baseRentPsfYr":
+    case "opexPsfYr":
+    case "netEffectiveRatePsfYr":
+    case "tiBudget":
+    case "tiAllowance":
+      return `$${v.toFixed(1)}`;
+    default:
+      return formatCompactCurrency(v);
+  }
 }
 
 function monthlyPointsForScenario(
@@ -248,6 +270,101 @@ function CombinedMetricChart({
   );
 }
 
+function DualMetricComboChart({
+  barMetric,
+  lineMetric,
+  rows,
+  sortDirection,
+}: {
+  barMetric: MetricSpec;
+  lineMetric: MetricSpec;
+  rows: EngineResult[];
+  sortDirection: SortDirection;
+}) {
+  const sorted = [...rows].sort((a, b) => {
+    const av = toNumber((a.metrics as OptionMetrics)[barMetric.key]);
+    const bv = toNumber((b.metrics as OptionMetrics)[barMetric.key]);
+    return sortDirection === "asc" ? av - bv : bv - av;
+  });
+
+  const chartData = sorted.map((row) => ({
+    scenarioName: row.scenarioName,
+    barValue: toNumber((row.metrics as OptionMetrics)[barMetric.key]),
+    lineValue: toNumber((row.metrics as OptionMetrics)[lineMetric.key]),
+  }));
+
+  return (
+    <div className="surface-card p-4 sm:p-5">
+      <h3 className="text-base font-semibold text-slate-100 mb-1 tracking-tight">Two-Metric Comparison</h3>
+      <p className="text-xs text-slate-400 mb-3">Bar: {barMetric.label} | Line: {lineMetric.label}</p>
+      <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3">
+        <div className="inline-flex items-center gap-2 text-xs text-slate-300">
+          <span className="inline-block h-2.5 w-2.5 bg-cyan-400" />
+          <span>{barMetric.label} (bar)</span>
+        </div>
+        <div className="inline-flex items-center gap-2 text-xs text-slate-300">
+          <span className="inline-block h-[2px] w-3 bg-amber-400" />
+          <span>{lineMetric.label} (line)</span>
+        </div>
+      </div>
+      <div className="h-[360px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 16 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#33415566" />
+            <XAxis
+              dataKey="scenarioName"
+              tick={{ fill: "#cbd5e1", fontSize: 12 }}
+              interval={0}
+              angle={-12}
+              textAnchor="end"
+              height={56}
+            />
+            <YAxis
+              yAxisId="left"
+              tick={{ fill: "#cbd5e1", fontSize: 12 }}
+              tickFormatter={(value) => formatAxisValue(barMetric, toNumber(value))}
+              width={80}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fill: "#cbd5e1", fontSize: 12 }}
+              tickFormatter={(value) => formatAxisValue(lineMetric, toNumber(value))}
+              width={80}
+            />
+            <Tooltip
+              contentStyle={{ backgroundColor: "#020617", border: "1px solid #334155", color: "#e2e8f0" }}
+              labelStyle={{ color: "#e2e8f0", fontWeight: 600 }}
+              formatter={(value: number, name: string) => {
+                if (name === barMetric.label) return [barMetric.format(toNumber(value)), name];
+                return [lineMetric.format(toNumber(value)), name];
+              }}
+            />
+            <Bar
+              yAxisId="left"
+              dataKey="barValue"
+              name={barMetric.label}
+              fill="#22d3ee"
+              radius={[2, 2, 0, 0]}
+              maxBarSize={42}
+            />
+            <Line
+              yAxisId="right"
+              type="monotone"
+              dataKey="lineValue"
+              name={lineMetric.label}
+              stroke="#f59e0b"
+              strokeWidth={2}
+              dot={{ r: 3, fill: "#f59e0b" }}
+              activeDot={{ r: 5 }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 export function AnalyticsWorkbench({
   results,
   canonicalByScenarioId,
@@ -259,11 +376,16 @@ export function AnalyticsWorkbench({
   const [annualMode, setAnnualMode] = useState<AnnualMode>("lease_year");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [activeMetricKey, setActiveMetricKey] = useState<keyof OptionMetrics>(DEFAULT_METRIC_KEY);
+  const [secondaryMetricKey, setSecondaryMetricKey] = useState<keyof OptionMetrics>(DEFAULT_SECONDARY_METRIC_KEY);
   const [annualSeriesKey, setAnnualSeriesKey] = useState<AnnualSeriesKey>("total");
 
   const selectedMetric = useMemo(
     () => METRIC_OPTIONS.find((metric) => metric.key === activeMetricKey) ?? METRIC_OPTIONS[0],
     [activeMetricKey]
+  );
+  const selectedSecondaryMetric = useMemo(
+    () => METRIC_OPTIONS.find((metric) => metric.key === secondaryMetricKey) ?? METRIC_OPTIONS[0],
+    [secondaryMetricKey]
   );
   const selectedAnnualSeries = useMemo(
     () => ANNUAL_SERIES_OPTIONS.find((series) => series.key === annualSeriesKey) ?? ANNUAL_SERIES_OPTIONS[0],
@@ -329,15 +451,19 @@ export function AnalyticsWorkbench({
 
       {activeTab === "charts" ? (
         <div className="mt-5 space-y-5">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <label className="block">
-              <span className="text-xs text-slate-400">Comparison metric</span>
+              <span className="text-xs text-slate-400">Bar metric</span>
               <select
                 value={activeMetricKey}
                 onChange={(e) => {
                   const next = e.target.value as keyof OptionMetrics;
                   if (METRIC_OPTIONS.some((metric) => metric.key === next)) {
                     setActiveMetricKey(next);
+                    if (next === secondaryMetricKey) {
+                      const fallback = METRIC_OPTIONS.find((metric) => metric.key !== next)?.key ?? next;
+                      setSecondaryMetricKey(fallback);
+                    }
                   }
                 }}
                 className="input-premium mt-1"
@@ -350,7 +476,26 @@ export function AnalyticsWorkbench({
               </select>
             </label>
             <label className="block">
-              <span className="text-xs text-slate-400">Sort scenarios by selected metric</span>
+              <span className="text-xs text-slate-400">Line metric</span>
+              <select
+                value={secondaryMetricKey}
+                onChange={(e) => {
+                  const next = e.target.value as keyof OptionMetrics;
+                  if (METRIC_OPTIONS.some((metric) => metric.key === next) && next !== activeMetricKey) {
+                    setSecondaryMetricKey(next);
+                  }
+                }}
+                className="input-premium mt-1"
+              >
+                {METRIC_OPTIONS.filter((metric) => metric.key !== activeMetricKey).map((metric) => (
+                  <option key={metric.key} value={metric.key}>
+                    {metric.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs text-slate-400">Sort scenarios by bar metric</span>
               <select
                 value={sortDirection}
                 onChange={(e) => setSortDirection((e.target.value === "asc" ? "asc" : "desc"))}
@@ -363,6 +508,12 @@ export function AnalyticsWorkbench({
           </div>
 
           <CombinedMetricChart metric={selectedMetric} rows={results} sortDirection={sortDirection} />
+          <DualMetricComboChart
+            barMetric={selectedMetric}
+            lineMetric={selectedSecondaryMetric}
+            rows={results}
+            sortDirection={sortDirection}
+          />
         </div>
       ) : (
         <div className="mt-5 space-y-4">
