@@ -4,10 +4,20 @@ import { useMemo, useState } from "react";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 import type { CanonicalComputeResponse } from "@/lib/types";
 import { formatCurrency, formatCurrencyPerSF, formatNumber, formatPercent } from "@/lib/format";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 type TabKey = "charts" | "annual";
 type AnnualMode = "lease_year" | "calendar_year";
 type SortDirection = "desc" | "asc";
+type AnnualSeriesKey = "baseRent" | "opex" | "parking" | "tiConcessions" | "total" | "discounted";
 
 type MetricSpec = {
   key: keyof OptionMetrics;
@@ -35,6 +45,11 @@ type AnnualAggregateRow = {
   tiConcessions: number;
   total: number;
   discounted: number;
+};
+
+type AnnualSeriesSpec = {
+  key: AnnualSeriesKey;
+  label: string;
 };
 
 const METRIC_OPTIONS: MetricSpec[] = [
@@ -65,6 +80,17 @@ const BAR_COLORS = [
   "from-pink-400 to-rose-500",
 ];
 
+const ANNUAL_BAR_COLORS = ["#22d3ee", "#34d399", "#f59e0b", "#f472b6", "#60a5fa", "#a78bfa"];
+
+const ANNUAL_SERIES_OPTIONS: AnnualSeriesSpec[] = [
+  { key: "total", label: "Total" },
+  { key: "discounted", label: "Discounted" },
+  { key: "baseRent", label: "Base Rent" },
+  { key: "opex", label: "OpEx" },
+  { key: "parking", label: "Parking" },
+  { key: "tiConcessions", label: "TI / Concessions" },
+];
+
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
@@ -79,6 +105,15 @@ function toNumber(value: unknown): number {
 
 function roundCurrency(value: number): number {
   return Math.round(toNumber(value) * 100) / 100;
+}
+
+function formatCompactCurrency(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`;
+  return `${sign}$${Math.round(abs)}`;
 }
 
 function monthlyPointsForScenario(
@@ -224,10 +259,15 @@ export function AnalyticsWorkbench({
   const [annualMode, setAnnualMode] = useState<AnnualMode>("lease_year");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [activeMetricKey, setActiveMetricKey] = useState<keyof OptionMetrics>(DEFAULT_METRIC_KEY);
+  const [annualSeriesKey, setAnnualSeriesKey] = useState<AnnualSeriesKey>("total");
 
   const selectedMetric = useMemo(
     () => METRIC_OPTIONS.find((metric) => metric.key === activeMetricKey) ?? METRIC_OPTIONS[0],
     [activeMetricKey]
+  );
+  const selectedAnnualSeries = useMemo(
+    () => ANNUAL_SERIES_OPTIONS.find((series) => series.key === annualSeriesKey) ?? ANNUAL_SERIES_OPTIONS[0],
+    [annualSeriesKey]
   );
 
   const annualRowsByScenario = useMemo(() => {
@@ -238,6 +278,27 @@ export function AnalyticsWorkbench({
     }
     return out;
   }, [results, canonicalByScenarioId, annualMode]);
+
+  const annualCombinedRows = useMemo(() => {
+    const byKey = new Map<number, Record<string, string | number>>();
+    for (const result of results) {
+      const rows = annualRowsByScenario[result.scenarioId] || [];
+      for (const row of rows) {
+        const existing = byKey.get(row.key) ?? { key: row.key, label: row.label };
+        existing[result.scenarioId] = toNumber(row[annualSeriesKey]);
+        byKey.set(row.key, existing);
+      }
+    }
+    const ordered = Array.from(byKey.values()).sort((a, b) => toNumber(a.key) - toNumber(b.key));
+    for (const row of ordered) {
+      for (const result of results) {
+        if (typeof row[result.scenarioId] !== "number") {
+          row[result.scenarioId] = 0;
+        }
+      }
+    }
+    return ordered;
+  }, [annualRowsByScenario, results, annualSeriesKey]);
 
   if (results.length === 0) return null;
 
@@ -305,24 +366,45 @@ export function AnalyticsWorkbench({
         </div>
       ) : (
         <div className="mt-5 space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-xs text-slate-400">Annual basis:</span>
-            <div className="inline-flex border border-slate-300/20 bg-slate-900/40">
-              <button
-                type="button"
-                onClick={() => setAnnualMode("lease_year")}
-                className={`px-3 py-2 text-xs sm:text-sm ${annualMode === "lease_year" ? "bg-cyan-500/20 text-cyan-100" : "text-slate-300 hover:bg-slate-800/60"}`}
-              >
-                Lease Year
-              </button>
-              <button
-                type="button"
-                onClick={() => setAnnualMode("calendar_year")}
-                className={`px-3 py-2 text-xs sm:text-sm border-l border-slate-300/20 ${annualMode === "calendar_year" ? "bg-cyan-500/20 text-cyan-100" : "text-slate-300 hover:bg-slate-800/60"}`}
-              >
-                Calendar Year
-              </button>
+          <div className="flex flex-wrap items-end gap-3 justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs text-slate-400">Annual basis:</span>
+              <div className="inline-flex border border-slate-300/20 bg-slate-900/40">
+                <button
+                  type="button"
+                  onClick={() => setAnnualMode("lease_year")}
+                  className={`px-3 py-2 text-xs sm:text-sm ${annualMode === "lease_year" ? "bg-cyan-500/20 text-cyan-100" : "text-slate-300 hover:bg-slate-800/60"}`}
+                >
+                  Lease Year
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnnualMode("calendar_year")}
+                  className={`px-3 py-2 text-xs sm:text-sm border-l border-slate-300/20 ${annualMode === "calendar_year" ? "bg-cyan-500/20 text-cyan-100" : "text-slate-300 hover:bg-slate-800/60"}`}
+                >
+                  Calendar Year
+                </button>
+              </div>
             </div>
+            <label className="block min-w-[220px]">
+              <span className="text-xs text-slate-400">Annual comparison metric</span>
+              <select
+                value={annualSeriesKey}
+                onChange={(e) => {
+                  const next = e.target.value as AnnualSeriesKey;
+                  if (ANNUAL_SERIES_OPTIONS.some((series) => series.key === next)) {
+                    setAnnualSeriesKey(next);
+                  }
+                }}
+                className="input-premium mt-1"
+              >
+                {ANNUAL_SERIES_OPTIONS.map((series) => (
+                  <option key={series.key} value={series.key}>
+                    {series.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <p className="text-xs text-slate-400">
             {annualMode === "lease_year"
@@ -330,45 +412,69 @@ export function AnalyticsWorkbench({
               : "Calendar Year rolls up by Jan-Dec year from monthly cash flows."}
           </p>
 
-          <div className="space-y-4">
-            {results.map((result) => {
-              const annualRows = annualRowsByScenario[result.scenarioId] || [];
-              return (
-                <div key={`annual-${result.scenarioId}`} className="border border-slate-300/20 bg-slate-950/50 p-3">
-                  <h3 className="text-sm font-semibold text-slate-100 mb-2">{result.scenarioName}</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[780px] text-xs sm:text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-300/20 text-slate-300">
-                          <th className="text-left py-2 pr-3">{annualMode === "lease_year" ? "Lease Year" : "Calendar Year"}</th>
-                          <th className="text-right py-2 px-2">Base Rent</th>
-                          <th className="text-right py-2 px-2">OpEx</th>
-                          <th className="text-right py-2 px-2">Parking</th>
-                          <th className="text-right py-2 px-2">
-                            {annualMode === "lease_year" ? "TI Net (Budget-Allowance)" : "TI / Concessions"}
-                          </th>
-                          <th className="text-right py-2 px-2">Total</th>
-                          <th className="text-right py-2 pl-2">Discounted</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {annualRows.map((row) => (
-                          <tr key={`${result.scenarioId}-${row.key}`} className="border-b border-slate-300/10 hover:bg-slate-400/10">
-                            <td className="py-2 pr-3 text-slate-200">{row.label}</td>
-                            <td className="py-2 px-2 text-right text-slate-300">{formatCurrency(row.baseRent)}</td>
-                            <td className="py-2 px-2 text-right text-slate-300">{formatCurrency(row.opex)}</td>
-                            <td className="py-2 px-2 text-right text-slate-300">{formatCurrency(row.parking)}</td>
-                            <td className="py-2 px-2 text-right text-slate-300">{formatCurrency(row.tiConcessions)}</td>
-                            <td className="py-2 px-2 text-right text-slate-100">{formatCurrency(row.total)}</td>
-                            <td className="py-2 pl-2 text-right text-slate-300">{formatCurrency(row.discounted)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="border border-slate-300/20 bg-slate-950/50 p-3 sm:p-4">
+            <h3 className="text-sm font-semibold text-slate-100 mb-1">
+              Combined Annual Comparison: {selectedAnnualSeries.label}
+            </h3>
+            <p className="text-xs text-slate-400 mb-3">
+              All scenarios are plotted together by {annualMode === "lease_year" ? "lease year" : "calendar year"}.
+            </p>
+            <div className="h-[340px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={annualCombinedRows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#33415566" />
+                  <XAxis dataKey="label" tick={{ fill: "#cbd5e1", fontSize: 12 }} tickMargin={8} />
+                  <YAxis
+                    tick={{ fill: "#cbd5e1", fontSize: 12 }}
+                    tickFormatter={(value) => formatCompactCurrency(toNumber(value))}
+                    width={72}
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "#020617", border: "1px solid #334155", color: "#e2e8f0" }}
+                    labelStyle={{ color: "#e2e8f0", fontWeight: 600 }}
+                    formatter={(value: number, name: string) => [formatCurrency(toNumber(value)), name]}
+                  />
+                  {results.map((result, index) => (
+                    <Bar
+                      key={`annual-bar-${result.scenarioId}`}
+                      dataKey={result.scenarioId}
+                      name={result.scenarioName}
+                      fill={ANNUAL_BAR_COLORS[index % ANNUAL_BAR_COLORS.length]}
+                      radius={[2, 2, 0, 0]}
+                    />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="border border-slate-300/20 bg-slate-950/50 p-3">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[780px] text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-300/20 text-slate-300">
+                    <th className="text-left py-2 pr-3">{annualMode === "lease_year" ? "Lease Year" : "Calendar Year"}</th>
+                    {results.map((result) => (
+                      <th key={`header-${result.scenarioId}`} className="text-right py-2 px-2">
+                        {result.scenarioName}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {annualCombinedRows.map((row) => (
+                    <tr key={`combined-${String(row.key)}`} className="border-b border-slate-300/10 hover:bg-slate-400/10">
+                      <td className="py-2 pr-3 text-slate-200">{String(row.label)}</td>
+                      {results.map((result) => (
+                        <td key={`cell-${String(row.key)}-${result.scenarioId}`} className="py-2 px-2 text-right text-slate-300">
+                          {formatCurrency(toNumber(row[result.scenarioId]))}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
