@@ -523,6 +523,8 @@ export function AnalyticsWorkbench({
     }
     return max;
   }, [annualCombinedRows, results]);
+  const annualLabelLaneHeight = 20;
+  const annualChartTopMargin = 24 + (results.length * annualLabelLaneHeight);
 
   if (results.length === 0) return null;
 
@@ -805,9 +807,9 @@ export function AnalyticsWorkbench({
                 </div>
               ))}
             </div>
-            <div className="h-[340px] w-full">
+            <div className="h-[360px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={annualCombinedRows} margin={{ top: 72, right: 8, left: 8, bottom: 8 }}>
+                <BarChart data={annualCombinedRows} margin={{ top: annualChartTopMargin, right: 8, left: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#33415566" />
                   <XAxis dataKey="label" tick={{ fill: "#cbd5e1", fontSize: 12 }} tickMargin={8} />
                   <YAxis
@@ -841,11 +843,22 @@ export function AnalyticsWorkbench({
                           const labelHeight = 16;
                           const centerX = x + width / 2;
                           const rectX = centerX - labelWidth / 2;
-                          // Stagger label rows by scenario index to prevent overlap in grouped bars.
-                          const stackOffset = index * 18;
-                          const rectY = Math.max(4 + stackOffset, y - 20 - stackOffset);
+                          // Fixed per-scenario lanes prevent overlap even when bar heights are similar.
+                          const laneY = 6 + (index * annualLabelLaneHeight);
+                          const rectY = laneY;
+                          const leaderY1 = y - 2;
+                          const leaderY2 = rectY + labelHeight;
                           return (
                             <g>
+                              <line
+                                x1={centerX}
+                                y1={leaderY1}
+                                x2={centerX}
+                                y2={leaderY2}
+                                stroke="#475569"
+                                strokeWidth={1}
+                                strokeDasharray="2 2"
+                              />
                               <rect
                                 x={rectX}
                                 y={rectY}
