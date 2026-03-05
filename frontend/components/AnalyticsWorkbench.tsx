@@ -408,25 +408,16 @@ function DualMetricComboChart({
               name={lineMetric.label}
               stroke="#f59e0b"
               strokeWidth={2}
-              dot={{ r: 3, fill: "#f59e0b" }}
-              activeDot={{ r: 5 }}
-              label={(props: any) => {
-                const { x, y, value, viewBox } = props;
+              dot={(props: any) => {
+                const { cx, cy, value } = props;
+                if (!Number.isFinite(cx) || !Number.isFinite(cy)) return <g />;
                 const text = lineMetric.format(toNumber(value));
-                const chartXRaw = Number(viewBox?.x);
-                const chartWidthRaw = Number(viewBox?.width);
-                const chartX = Number.isFinite(chartXRaw) ? chartXRaw : 0;
-                const chartWidth = Number.isFinite(chartWidthRaw) ? chartWidthRaw : 1000;
                 const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
-                const centeredRectX = x - labelWidth / 2;
-                const minRectX = chartX + 4;
-                const maxRectX = chartX + chartWidth - labelWidth - 4;
-                const rectX = Math.max(minRectX, Math.min(maxRectX, centeredRectX));
-                const textX = rectX + labelWidth / 2;
-                const labelY = y < 20 ? y + 16 : y - 8;
-                const rectY = labelY - 12;
+                const rectX = cx - labelWidth / 2;
+                const rectY = cy < 20 ? cy + 4 : cy - 24;
                 return (
                   <g>
+                    <circle cx={cx} cy={cy} r={3} fill="#f59e0b" />
                     <rect
                       x={rectX}
                       y={rectY}
@@ -438,8 +429,8 @@ function DualMetricComboChart({
                       strokeWidth={1}
                     />
                     <text
-                      x={textX}
-                      y={labelY + 1}
+                      x={cx}
+                      y={rectY + 13}
                       textAnchor="middle"
                       fill="#fde68a"
                       fontSize={11}
@@ -450,6 +441,7 @@ function DualMetricComboChart({
                   </g>
                 );
               }}
+              activeDot={{ r: 5 }}
             />
           </ComposedChart>
         </ResponsiveContainer>
