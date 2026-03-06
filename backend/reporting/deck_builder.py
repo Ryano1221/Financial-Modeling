@@ -2337,8 +2337,15 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
         bars.append(
             f'<rect x="{bar_x:.2f}" y="{bar_y:.2f}" width="{bar_w:.2f}" height="{bar_h:.2f}" fill="#111111" />'
         )
+        bar_label = _fmt_currency(year_val)
+        if bar_h >= 18:
+            bar_label_y = bar_y + bar_h - 8
+            bar_label_class = "combo-bar-label"
+        else:
+            bar_label_y = max(top + 10, bar_y - 6)
+            bar_label_class = "combo-bar-label-outside"
         bars.append(
-            f'<text x="{cx:.2f}" y="{top + plot_h - 8:.2f}" text-anchor="middle" class="combo-bar-label">{_esc(_fmt_currency(year_val))}</text>'
+            f'<text x="{cx:.2f}" y="{bar_label_y:.2f}" text-anchor="middle" class="{bar_label_class}">{_esc(bar_label)}</text>'
         )
         py = top + plot_h - ((psf_val / max_psf) * plot_h if max_psf > 0 else 0)
         line_points.append(f"{cx:.2f},{py:.2f}")
@@ -3178,12 +3185,30 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
       fill: #fff;
       font-weight: 700;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #111111;
+      stroke-width: 1.5px;
+      stroke-linejoin: round;
+    }}
+    .combo-bar-label-outside {{
+      font-size: 13px;
+      fill: #111111;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 2px;
+      stroke-linejoin: round;
     }}
     .combo-line-label {{
       font-size: 13px;
       fill: #4b5563;
       font-weight: 700;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 2px;
+      stroke-linejoin: round;
     }}
     .combo-line-label-onbar {{
       font-size: 13px;
