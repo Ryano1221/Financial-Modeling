@@ -2412,13 +2412,13 @@ def CustomMetricComboChart(
     max_bar = _nice_axis_max(max(values_bar) if values_bar else 1.0, steps=5)
     max_line = _nice_axis_max(max(values_line) if values_line else 1.0, steps=5)
 
-    w, h = 1120, 418
-    left, right, top, bottom = 108, 108, 66, 146
+    w, h = 1120, 392
+    left, right, top, bottom = 124, 156, 58, 104
     plot_w = w - left - right
     plot_h = h - top - bottom
     count = max(1, len(points))
     slot = plot_w / count
-    bar_w = min(168, slot * 0.52)
+    bar_w = min(156, slot * 0.50)
 
     left_ticks: list[str] = []
     right_ticks: list[str] = []
@@ -2462,21 +2462,36 @@ def CustomMetricComboChart(
         py = top + plot_h - ((line_val / max_line) * plot_h if max_line > 0 else 0)
         line_points.append(f"{cx:.2f},{py:.2f}")
         line_label = str(point.get("line_value_display") or _fmt_currency(line_val, 2))
+        line_label_x = cx
+        line_label_anchor = "middle"
+        if count > 1:
+            if idx == 0:
+                line_label_x = cx + 8
+                line_label_anchor = "start"
+            elif idx == count - 1:
+                line_label_x = cx - 8
+                line_label_anchor = "end"
+        line_label_y = py - 10
+        if abs(line_label_y - bar_label_y) < 14:
+            line_label_y = py + 16
+        if line_label_y < top + 10:
+            line_label_y = py + 16
+        if line_label_y > top + plot_h - 6:
+            line_label_y = py - 12
+        line_label_on_bar = line_label_y >= (bar_y + 2) and line_label_y <= (bar_y + bar_h - 2)
+        line_label_class = "custom-combo-line-value-onbar" if line_label_on_bar else "custom-combo-line-value"
         line_labels.append(
             f'<circle cx="{cx:.2f}" cy="{py:.2f}" r="4.2" class="custom-combo-dot" />'
-            f'<text x="{cx:.2f}" y="{(py - 10):.2f}" text-anchor="middle" class="custom-combo-line-value">{_esc(line_label)}</text>'
+            f'<text x="{line_label_x:.2f}" y="{line_label_y:.2f}" text-anchor="{line_label_anchor}" class="{line_label_class}">{_esc(line_label)}</text>'
         )
 
         date_label = str(point.get("date_label") or "").strip() or str(point.get("scenario_name") or "Option")
-        date_lines = _split_label_lines(date_label, max_chars=22)
+        label_chars = 20 if count <= 3 else 14
+        date_lines = _split_label_lines(date_label, max_chars=label_chars)
         for lidx, line in enumerate(date_lines[:2]):
             x_labels.append(
-                f'<text x="{cx:.2f}" y="{top + plot_h + 24 + (lidx * 13):.2f}" text-anchor="middle" class="custom-combo-x-label">{_esc(line)}</text>'
+                f'<text x="{cx:.2f}" y="{top + plot_h + 22 + (lidx * 12):.2f}" text-anchor="middle" class="custom-combo-x-label">{_esc(line)}</text>'
             )
-        scenario_label = _truncate_text(str(point.get("scenario_name") or "Option"), 30)
-        x_labels.append(
-            f'<text x="{cx:.2f}" y="{top + plot_h + 56:.2f}" text-anchor="middle" class="custom-combo-x-sub">{_esc(scenario_label)}</text>'
-        )
 
     polyline = (
         f'<polyline points="{" ".join(line_points)}" fill="none" class="custom-combo-line" />'
@@ -2490,25 +2505,33 @@ def CustomMetricComboChart(
     )
 
     legend_center_x = left + (plot_w / 2)
+    char_px = 6.0
+    bar_text_w = max(48.0, len(bar_metric_label) * char_px)
+    line_text_w = max(48.0, len(line_metric_label) * char_px)
+    gap = 30.0
+    bar_item_w = 26.0 + 8.0 + bar_text_w
+    line_item_w = 32.0 + 8.0 + line_text_w
+    legend_total_w = bar_item_w + gap + line_item_w
+    legend_start_x = max(left + 2.0, legend_center_x - (legend_total_w / 2.0))
+    line_item_x = legend_start_x + bar_item_w + gap
     legend = (
-        f'<rect x="{legend_center_x - 190:.2f}" y="18" width="26" height="10" class="custom-combo-bar" />'
-        f'<text x="{legend_center_x - 156:.2f}" y="27" class="custom-combo-legend" text-anchor="start">{_esc(bar_metric_label)}</text>'
-        f'<line x1="{legend_center_x + 18:.2f}" y1="23" x2="{legend_center_x + 44:.2f}" y2="23" class="custom-combo-line" />'
-        f'<circle cx="{legend_center_x + 31:.2f}" cy="23" r="4.2" class="custom-combo-dot" />'
-        f'<text x="{legend_center_x + 54:.2f}" y="27" class="custom-combo-legend" text-anchor="start">{_esc(line_metric_label)}</text>'
+        f'<rect x="{legend_start_x:.2f}" y="18" width="26" height="10" class="custom-combo-bar" />'
+        f'<text x="{legend_start_x + 34:.2f}" y="27" class="custom-combo-legend" text-anchor="start">{_esc(bar_metric_label)}</text>'
+        f'<line x1="{line_item_x:.2f}" y1="23" x2="{line_item_x + 26:.2f}" y2="23" class="custom-combo-line" />'
+        f'<circle cx="{line_item_x + 13:.2f}" cy="23" r="4.2" class="custom-combo-dot" />'
+        f'<text x="{line_item_x + 34:.2f}" y="27" class="custom-combo-legend" text-anchor="start">{_esc(line_metric_label)}</text>'
     )
 
     y_mid = top + (plot_h / 2)
     axis_titles = (
-        f'<text x="{left + (plot_w / 2):.2f}" y="{h - 16:.2f}" text-anchor="middle" class="custom-combo-axis-title">Lease Dates</text>'
-        f'<text x="24" y="{y_mid:.2f}" text-anchor="middle" class="custom-combo-axis-title" transform="rotate(-90 24 {y_mid:.2f})">{_esc(bar_metric_label)}</text>'
-        f'<text x="{w - 24:.2f}" y="{y_mid:.2f}" text-anchor="middle" class="custom-combo-axis-title" transform="rotate(-90 {w - 24:.2f} {y_mid:.2f})">{_esc(line_metric_label)}</text>'
+        f'<text x="{left + (plot_w / 2):.2f}" y="{h - 14:.2f}" text-anchor="middle" class="custom-combo-axis-title">Lease Dates</text>'
+        f'<text x="22" y="{y_mid:.2f}" text-anchor="middle" class="custom-combo-axis-title" transform="rotate(-90 22 {y_mid:.2f})">{_esc(bar_metric_label)}</text>'
+        f'<text x="{w - 18:.2f}" y="{y_mid:.2f}" text-anchor="middle" class="custom-combo-axis-title" transform="rotate(-90 {w - 18:.2f} {y_mid:.2f})">{_esc(line_metric_label)}</text>'
     )
 
     return f"""
     <article class="chart-block custom-combo-chart-block">
       <h3>{_esc(chart_title)}</h3>
-      <p class="axis-note">Bar values and line values are shown directly on the chart for each lease date label.</p>
       <svg viewBox="0 0 {w} {h}" class="custom-combo-chart" role="img" aria-label="{_esc(chart_title)}">
         {legend}
         {axis_lines}
@@ -2592,9 +2615,10 @@ def _custom_visuals_page(chart: dict[str, Any]) -> str:
             f"<tr><td>{_esc(date_label)}</td><td>{_esc(scenario_name)}</td><td>{_esc(bar_display)}</td><td>{_esc(line_display)}</td></tr>"
         )
 
-    title = str(chart.get("title") or "Two-Metric Comparison").strip() or "Two-Metric Comparison"
     bar_metric_label = str(chart.get("bar_metric_label") or "Bar metric").strip() or "Bar metric"
     line_metric_label = str(chart.get("line_metric_label") or "Line metric").strip() or "Line metric"
+    default_title = f"{bar_metric_label} vs {line_metric_label}"
+    title = str(chart.get("title") or default_title).strip() or default_title
     sort_text = "Lowest first" if str(chart.get("sort_direction") or "").lower() == "asc" else "Highest first"
 
     return f"""
@@ -2605,7 +2629,7 @@ def _custom_visuals_page(chart: dict[str, Any]) -> str:
       ("Sort direction", sort_text),
     ])}
     {CustomMetricComboChart(points, chart_title=title, bar_metric_label=bar_metric_label, line_metric_label=line_metric_label)}
-    <article class="panel">
+    <article class="panel custom-data-panel">
       <h3>Metric values by scenario</h3>
       <table class="detail-table annualized-table">
         <thead>
@@ -2871,6 +2895,22 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
     .pdf-page[data-kind="cost_visuals"] .page-content::before,
     .pdf-page[data-kind="custom_visuals"] .page-content::before {{
       display: none;
+    }}
+    .pdf-page[data-kind="custom_visuals"] .kpi-grid {{
+      grid-template-columns: repeat(3, 1fr);
+      margin: 0 0 2.5mm 0;
+      gap: 1.8mm;
+    }}
+    .pdf-page[data-kind="custom_visuals"] .kpi-tile {{
+      min-height: 14mm;
+      padding: 2mm;
+    }}
+    .pdf-page[data-kind="custom_visuals"] .kpi-label {{
+      margin: 0 0 0.8mm 0;
+      font-size: 7px;
+    }}
+    .pdf-page[data-kind="custom_visuals"] .kpi-value {{
+      font-size: 10px;
     }}
     .page-content-inner {{
       width: 100%;
@@ -3161,11 +3201,11 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
     }}
     .custom-combo-chart-block {{
-      padding: 3.2mm;
+      padding: 2.6mm;
     }}
     .custom-combo-chart {{
       width: 100%;
-      height: 90mm;
+      height: 74mm;
       border: 1px solid #111;
       background: #ffffff;
       display: block;
@@ -3206,21 +3246,43 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
       fill: #111;
       font-weight: 700;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 2px;
+      stroke-linejoin: round;
     }}
     .custom-combo-bar-value-onbar {{
       font-size: 11px;
       fill: #ffffff;
       font-weight: 700;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #111111;
+      stroke-width: 1.4px;
+      stroke-linejoin: round;
     }}
     .custom-combo-line-value {{
       font-size: 11px;
       fill: #334155;
       font-weight: 700;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 2px;
+      stroke-linejoin: round;
+    }}
+    .custom-combo-line-value-onbar {{
+      font-size: 11px;
+      fill: #ffffff;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      paint-order: stroke;
+      stroke: #111111;
+      stroke-width: 1.4px;
+      stroke-linejoin: round;
     }}
     .custom-combo-x-label {{
-      font-size: 11px;
+      font-size: 10px;
       fill: #111;
       font-weight: 600;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
@@ -3246,6 +3308,12 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
     .annualized-table,
     .monthly-table {{
       margin-top: 1mm;
+    }}
+    .custom-data-panel {{
+      padding: 2.4mm;
+    }}
+    .custom-data-panel h3 {{
+      margin-bottom: 1.4mm;
     }}
     .notes-summary-card {{
       border: 1px solid #111;
