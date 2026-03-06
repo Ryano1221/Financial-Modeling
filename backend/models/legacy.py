@@ -293,9 +293,28 @@ class ReportScenarioEntry(BaseModel):
     result: "CashflowResult"
 
 
+class CustomChartPoint(BaseModel):
+    scenario_name: str = ""
+    bar_value: float = 0.0
+    line_value: float = 0.0
+    bar_value_display: Optional[str] = None
+    line_value_display: Optional[str] = None
+
+
+class CustomChartConfig(BaseModel):
+    title: str = ""
+    bar_metric_key: str = ""
+    bar_metric_label: str = ""
+    line_metric_key: str = ""
+    line_metric_label: str = ""
+    sort_direction: Literal["asc", "desc"] = "desc"
+    points: List[CustomChartPoint] = Field(default_factory=list)
+
+
 class CreateReportRequest(BaseModel):
     scenarios: List[ReportScenarioEntry]
     branding: Optional[ReportBranding] = None
+    custom_charts: List[CustomChartConfig] = Field(default_factory=list)
 
 
 class CreateReportResponse(BaseModel):

@@ -7812,6 +7812,17 @@ def debug_cashflows(scenario: Scenario) -> dict:
     return {"cashflows": cashflows}
 
 
+def _request_custom_charts(req: CreateReportRequest) -> list[dict]:
+    raw_custom_charts = getattr(req, "custom_charts", None) or []
+    serialized: list[dict] = []
+    for chart in raw_custom_charts:
+        if hasattr(chart, "model_dump"):
+            serialized.append(chart.model_dump())
+        elif isinstance(chart, dict):
+            serialized.append(chart)
+    return serialized
+
+
 @app.post("/reports", response_model=CreateReportResponse)
 def create_report(req: CreateReportRequest, request: Request) -> CreateReportResponse:
     """
@@ -7871,7 +7882,7 @@ def create_report(req: CreateReportRequest, request: Request) -> CreateReportRes
     data = {
         "scenarios": [{"scenario": e.scenario, "result": e.result.model_dump()} for e in req.scenarios],
         "branding": branding,
-        "custom_charts": [chart.model_dump() for chart in req.custom_charts],
+        "custom_charts": _request_custom_charts(req),
         "owner_user_id": user_id,
     }
     report_id = save_report(data)
@@ -8368,13 +8379,17 @@ def build_report_deck_pdf_endpoint(req: CreateReportRequest) -> Response:
     data = {
         "scenarios": [{"scenario": entry.scenario, "result": entry.result.model_dump()} for entry in req.scenarios],
         "branding": req.branding.model_dump(exclude_none=True) if req.branding else {},
-        "custom_charts": [chart.model_dump() for chart in req.custom_charts],
+        "custom_charts": _request_custom_charts(req),
     }
     branding = data.get("branding") if isinstance(data.get("branding"), dict) else {}
     org_id = str(branding.get("org_id") or branding.get("orgId") or "public")
     theme_hash = str(branding.get("theme_hash") or branding.get("themeHash") or _branding_theme_hash(branding))
 
-    cached_deck_pdf = get_cached_report_deck(data, org_id, theme_hash)
+    try:
+        cached_deck_pdf = get_cached_report_deck(data, org_id, theme_hash)
+    except Exception:
+        _LOG.exception("report_deck_cache_read_failed route=/report/deck")
+        cached_deck_pdf = None
     if cached_deck_pdf is not None:
         return Response(
             content=cached_deck_pdf,
@@ -8419,7 +8434,10 @@ def build_report_deck_pdf_endpoint(req: CreateReportRequest) -> Response:
             detail="Deck PDF generation failed. Use /report/preview or /reports/{report_id}/preview to inspect rendered HTML.",
         ) from e
 
-    set_cached_report_deck(data, org_id, theme_hash, pdf_bytes)
+    try:
+        set_cached_report_deck(data, org_id, theme_hash, pdf_bytes)
+    except Exception:
+        _LOG.exception("report_deck_cache_write_failed route=/report/deck")
 
     return Response(
         content=pdf_bytes,
@@ -8447,7 +8465,11 @@ def get_report_pdf(report_id: str, request: Request):
     org_id = str(branding.get("org_id") or branding.get("orgId") or "public")
     theme_hash = str(branding.get("theme_hash") or branding.get("themeHash") or _branding_theme_hash(branding))
 
-    cached_deck_pdf = get_cached_report_deck(data, org_id, theme_hash)
+    try:
+        cached_deck_pdf = get_cached_report_deck(data, org_id, theme_hash)
+    except Exception:
+        _LOG.exception("report_deck_cache_read_failed route=/reports/{report_id}/pdf")
+        cached_deck_pdf = None
     if cached_deck_pdf is not None:
         return Response(
             content=cached_deck_pdf,
@@ -8492,7 +8514,10 @@ def get_report_pdf(report_id: str, request: Request):
             detail="Deck PDF generation failed. Use /reports/{report_id}/preview to inspect rendered HTML.",
         ) from e
 
-    set_cached_report_deck(data, org_id, theme_hash, pdf_bytes)
+    try:
+        set_cached_report_deck(data, org_id, theme_hash, pdf_bytes)
+    except Exception:
+        _LOG.exception("report_deck_cache_write_failed route=/reports/{report_id}/pdf")
 
     return Response(
         content=pdf_bytes,
