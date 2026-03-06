@@ -894,26 +894,16 @@ export function AnalyticsWorkbench({
                       name={result.scenarioName}
                       fill={ANNUAL_BAR_COLORS[index % ANNUAL_BAR_COLORS.length]}
                       radius={[2, 2, 0, 0]}
-                    />
-                  ))}
-                  {results.map((result, scenarioIndex) => (
-                    <Bar
-                      key={`annual-labels-${result.scenarioId}`}
-                      dataKey={`${result.scenarioId}__label`}
-                      name={`${result.scenarioName} (labels)`}
-                      fill="transparent"
-                      stroke="transparent"
-                      legendType="none"
                       isAnimationActive={false}
                     >
                       <LabelList
-                        dataKey={`${result.scenarioId}__label`}
+                        dataKey={result.scenarioId}
                         position="top"
                         content={(props: any) => {
                           const { x, y, width, value, index: groupIndexRaw } = props;
                           const numeric = toNumber(value);
                           if (numeric === 0) return null;
-                          const seriesColor = ANNUAL_BAR_COLORS[scenarioIndex % ANNUAL_BAR_COLORS.length];
+                          const seriesColor = ANNUAL_BAR_COLORS[index % ANNUAL_BAR_COLORS.length];
                           const text = formatCompactCurrency(numeric);
                           const labelWidth = Math.max(42, Math.round(text.length * 6.6) + 8);
                           const labelHeight = 16;
@@ -921,7 +911,7 @@ export function AnalyticsWorkbench({
                           const rectX = centerX - labelWidth / 2;
                           const groupIndex = Math.max(0, Math.floor(toNumber(groupIndexRaw)));
                           const placedRects = annualPlacedLabelRects.get(groupIndex) ?? [];
-                          let rectY = y - 20;
+                          let rectY = y - labelHeight - 6;
                           const overlaps = (yPos: number) => {
                             const x1 = rectX;
                             const x2 = rectX + labelWidth;
