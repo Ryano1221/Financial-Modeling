@@ -1105,6 +1105,23 @@ def test_extract_hints_term_and_free_rent_clause_uses_free_months_not_term_month
     assert hints["free_rent_end_month"] == 6
 
 
+def test_extract_hints_parses_non_contiguous_free_rent_month_list() -> None:
+    text = (
+        "COMMENCEMENT DATE: December 1, 2026.\n"
+        "LEASE TERM: One Hundred Twenty (120) months.\n"
+        "FREE BASE RENT: Landlord shall provide Tenant with abated Base Rent during the following months "
+        "of the Lease Term: 1, 13, 25, 37, 49, 61, 73.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints["free_rent_scope"] == "base"
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 72
+    periods = hints.get("free_rent_periods")
+    assert isinstance(periods, list) and len(periods) == 7
+    start_months = sorted(int(p.get("start_month", -1)) for p in periods if isinstance(p, dict))
+    assert start_months == [0, 12, 24, 36, 48, 60, 72]
+
+
 def test_extract_hints_parses_reserved_unreserved_parking_counts_and_rates() -> None:
     text = (
         "PARKING INPUTS\n"

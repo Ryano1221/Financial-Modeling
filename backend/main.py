@@ -4891,6 +4891,55 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["free_rent_start_month"] = start_1 - 1
             hints["free_rent_end_month"] = end_1 - 1
     else:
+        # Handle non-contiguous abatement month lists, e.g. "months of the Lease Term: 1, 13, 25, ...".
+        free_list_periods: list[dict] = []
+        term_cap = _coerce_int_token(hints.get("term_months"), 0) or 0
+        for line in [ln.strip() for ln in text.splitlines() if ln.strip()]:
+            low_line = line.lower()
+            if "free rent" not in low_line and "abatement" not in low_line and "abated" not in low_line:
+                continue
+            list_match = re.search(
+                r"(?i)\bfollowing\s+months?\b[^:\n]{0,60}[:\-]\s*([0-9,\s]+)\b",
+                line,
+            )
+            if not list_match:
+                list_match = re.search(
+                    r"(?i)\bmonths?\b[^:\n]{0,30}[:\-]\s*([0-9,\s]+)\b",
+                    line,
+                )
+            if not list_match:
+                continue
+            month_vals = sorted(
+                {
+                    int(val)
+                    for val in re.findall(r"\b(\d{1,3})\b", list_match.group(1))
+                    if 1 <= int(val) <= (term_cap if term_cap > 0 else 600)
+                }
+            )
+            if len(month_vals) < 2:
+                continue
+            scope = "gross" if hints.get("free_rent_scope") == "gross" else "base"
+            for month_1 in month_vals:
+                free_list_periods.append(
+                    {
+                        "start_month": int(month_1 - 1),
+                        "end_month": int(month_1 - 1),
+                        "scope": scope,
+                    }
+                )
+        if free_list_periods:
+            normalized_periods = _normalize_option_free_rent_periods(
+                free_list_periods,
+                term_months=term_cap,
+            )
+            if normalized_periods:
+                hints["free_rent_periods"] = normalized_periods
+                starts = [int(p.get("start_month", 0)) for p in normalized_periods if isinstance(p, dict)]
+                ends = [int(p.get("end_month", 0)) for p in normalized_periods if isinstance(p, dict)]
+                if starts and ends:
+                    hints["free_rent_start_month"] = min(starts)
+                    hints["free_rent_end_month"] = max(ends)
+
         free_count_candidates: list[tuple[int, int]] = []
         # Parse line-by-line to avoid grabbing term month counts from "TERM AND FREE RENT" clauses.
         for line in [ln.strip() for ln in text.splitlines() if ln.strip()]:
@@ -4924,7 +4973,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         if free_count_candidates:
             free_count_candidates.sort(key=lambda row: (-row[0], row[1]))
             free_count = int(free_count_candidates[0][1])
-        if free_count <= 0:
+        if free_count <= 0 and not hints.get("free_rent_periods"):
             free_word_match = re.search(
                 r"(?i)\b(?:the\s+)?first\s+([a-z\-]+)\s+months?\b[^\n]{0,120}\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,80}\b(?:abated|abatement|free)\b",
                 text,
@@ -4936,7 +4985,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 )
             if free_word_match:
                 free_count = _word_token_to_int(free_word_match.group(1)) or 0
-        if free_count and free_count > 0:
+        if free_count and free_count > 0 and not hints.get("free_rent_periods"):
             hints["free_rent_start_month"] = 0
             hints["free_rent_end_month"] = max(0, int(free_count) - 1)
             if hints["free_rent_scope"] is None and ("gross" in lower_text):
