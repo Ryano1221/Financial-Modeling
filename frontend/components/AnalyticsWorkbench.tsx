@@ -61,6 +61,13 @@ type AnnualSeriesSpec = {
   label: string;
 };
 
+type LabelRect = {
+  x1: number;
+  x2: number;
+  y1: number;
+  y2: number;
+};
+
 const METRIC_OPTIONS: MetricSpec[] = [
   { key: "avgCostPsfYr", label: "Avg Cost/SF/YR", format: (value) => formatCurrencyPerSF(value) },
   { key: "npvAtDiscount", label: "NPV @ Discount Rate", format: (value) => formatCurrency(value) },
@@ -143,6 +150,55 @@ function formatAxisValue(metric: MetricSpec, value: number): string {
     default:
       return formatCompactCurrency(v);
   }
+}
+
+function rectsOverlap(a: LabelRect, b: LabelRect, padding = 2): boolean {
+  return !(
+    a.x2 + padding < b.x1 ||
+    a.x1 - padding > b.x2 ||
+    a.y2 + padding < b.y1 ||
+    a.y1 - padding > b.y2
+  );
+}
+
+function placeLabelRect({
+  centerX,
+  width,
+  height,
+  anchorY,
+  minY = 2,
+  liftStep = 16,
+  placedRects,
+}: {
+  centerX: number;
+  width: number;
+  height: number;
+  anchorY: number;
+  minY?: number;
+  liftStep?: number;
+  placedRects: LabelRect[];
+}): LabelRect {
+  const xOffsets = [0, -10, 10, -20, 20, -30, 30];
+  const maxLevels = 24;
+  for (let level = 0; level <= maxLevels; level += 1) {
+    const y = Math.max(minY, anchorY - level * liftStep);
+    for (const dx of xOffsets) {
+      const x1 = centerX - width / 2 + dx;
+      const candidate: LabelRect = { x1, x2: x1 + width, y1: y, y2: y + height };
+      if (!placedRects.some((r) => rectsOverlap(candidate, r))) {
+        placedRects.push(candidate);
+        return candidate;
+      }
+    }
+  }
+  const fallback: LabelRect = {
+    x1: centerX - width / 2,
+    x2: centerX + width / 2,
+    y1: minY,
+    y2: minY + height,
+  };
+  placedRects.push(fallback);
+  return fallback;
 }
 
 function monthlyPointsForScenario(
@@ -305,6 +361,7 @@ function DualMetricComboChart({
   const maxLineValue = Math.max(0, ...chartData.map((row) => toNumber(row.lineValue)));
   const leftAxisMax = maxBarValue > 0 ? maxBarValue * 1.15 : 1;
   const rightAxisMax = maxLineValue > 0 ? maxLineValue * 1.15 : 1;
+  const dualPlacedLabelRects: LabelRect[] = [];
 
   return (
     <div className="surface-card p-4 sm:p-5">
@@ -372,8 +429,17 @@ function DualMetricComboChart({
                   const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
                   const labelHeight = 18;
                   const centerX = x + width / 2;
-                  const rectX = centerX - labelWidth / 2;
-                  const rectY = Math.max(2, y - 22);
+                  const placed = placeLabelRect({
+                    centerX,
+                    width: labelWidth,
+                    height: labelHeight,
+                    anchorY: y - 22,
+                    minY: 2,
+                    liftStep: 16,
+                    placedRects: dualPlacedLabelRects,
+                  });
+                  const rectX = placed.x1;
+                  const rectY = placed.y1;
                   return (
                     <g>
                       <rect
@@ -413,8 +479,17 @@ function DualMetricComboChart({
                 if (!Number.isFinite(cx) || !Number.isFinite(cy)) return <g />;
                 const text = lineMetric.format(toNumber(value));
                 const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
-                const rectX = cx - labelWidth / 2;
-                const rectY = cy < 20 ? cy + 4 : cy - 24;
+                const placed = placeLabelRect({
+                  centerX: cx,
+                  width: labelWidth,
+                  height: 18,
+                  anchorY: cy - 26,
+                  minY: 2,
+                  liftStep: 16,
+                  placedRects: dualPlacedLabelRects,
+                });
+                const rectX = placed.x1;
+                const rectY = placed.y1;
                 return (
                   <g>
                     <circle cx={cx} cy={cy} r={3} fill="#f59e0b" />
@@ -588,7 +663,7 @@ export function AnalyticsWorkbench({
   }, [annualCombinedRows, results]);
   const annualChartTopMargin = 72;
   const annualLabelLiftStep = 18;
-  const annualPlacedLabelRects = new Map<number, Array<{ x1: number; x2: number; y1: number; y2: number }>>();
+  const annualPlacedLabelRects: LabelRect[] = [];
 
   if (results.length === 0) return null;
 
@@ -900,7 +975,7 @@ export function AnalyticsWorkbench({
                         dataKey={result.scenarioId}
                         position="top"
                         content={(props: any) => {
-                          const { x, y, width, value, index: groupIndexRaw } = props;
+                          const { x, y, width, value } = props;
                           const numeric = toNumber(value);
                           if (numeric === 0) return null;
                           const seriesColor = ANNUAL_BAR_COLORS[index % ANNUAL_BAR_COLORS.length];
@@ -908,27 +983,17 @@ export function AnalyticsWorkbench({
                           const labelWidth = Math.max(42, Math.round(text.length * 6.6) + 8);
                           const labelHeight = 16;
                           const centerX = x + width / 2;
-                          const rectX = centerX - labelWidth / 2;
-                          const groupIndex = Math.max(0, Math.floor(toNumber(groupIndexRaw)));
-                          const placedRects = annualPlacedLabelRects.get(groupIndex) ?? [];
-                          let rectY = y - labelHeight - 6;
-                          const overlaps = (yPos: number) => {
-                            const x1 = rectX;
-                            const x2 = rectX + labelWidth;
-                            const y1 = yPos;
-                            const y2 = yPos + labelHeight;
-                            return placedRects.some((r) => !(x2 < r.x1 || x1 > r.x2 || y2 < r.y1 || y1 > r.y2));
-                          };
-                          while (overlaps(rectY)) {
-                            rectY -= annualLabelLiftStep;
-                          }
-                          placedRects.push({
-                            x1: rectX,
-                            x2: rectX + labelWidth,
-                            y1: rectY,
-                            y2: rectY + labelHeight,
+                          const placed = placeLabelRect({
+                            centerX,
+                            width: labelWidth,
+                            height: labelHeight,
+                            anchorY: y - labelHeight - 6,
+                            minY: 2,
+                            liftStep: annualLabelLiftStep,
+                            placedRects: annualPlacedLabelRects,
                           });
-                          annualPlacedLabelRects.set(groupIndex, placedRects);
+                          const rectX = placed.x1;
+                          const rectY = placed.y1;
                           const leaderY1 = y - 2;
                           const leaderY2 = rectY + labelHeight;
                           return (
