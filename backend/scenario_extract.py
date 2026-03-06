@@ -2153,37 +2153,59 @@ def _regex_prefill(text: str) -> dict:
     parking_ratio_evidence = False
     parking_count_evidence = False
     parking_ratio_patterns = [
-        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:/|per)\s*1,?000\s*(?:rsf|sf|square\s*feet|spaces?)\b",
-        r"(?i)\bparking\s+ratio\b[^.\n]{0,80}\b(\d+(?:\.\d+)?)\s*(?:/|per|:)\s*1,?000\b",
-        r"(?i)\bparking\s+ratio\s*(?:/|per)?\s*1,?000\s*(?:rsf|sf|square\s*feet)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:parking\s+)?(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf|spaces?)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:/|per)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf|spaces?)\b",
+        r"(?i)\bparking\s+ratio\b[^.\n]{0,100}\b(\d+(?:\.\d+)?)\s*(?:/|per|:)\s*(?:every\s*)?1,?000\b",
+        r"(?i)\bparking\s+ratio\s*(?:/|per)?\s*(?:every\s*)?1,?000\s*(?:rsf|sf|(?:rentable\s+)?square\s*feet)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
     ]
-    best_parking_ratio: float | None = None
+    parking_ratio_candidates: list[tuple[int, int, float]] = []
     for pat in parking_ratio_patterns:
-        m = re.search(pat, text)
-        if not m:
-            continue
-        ratio = _coerce_float_token(m.group(1), 0.0) or 0.0
-        if 0.1 <= ratio <= 30:
-            best_parking_ratio = float(ratio)
-            break
-    if best_parking_ratio is not None:
-        prefill["parking_ratio_per_1000_rsf"] = float(best_parking_ratio)
-        parking_ratio_evidence = True
+        for m in re.finditer(pat, text):
+            ratio = _coerce_float_token(m.group(1), 0.0) or 0.0
+            if not (0.1 <= ratio <= 30):
+                continue
+            local = text[max(0, m.start() - 90): min(len(text), m.end() + 90)].lower()
+            score = 1
+            if any(k in local for k in ("parking", "ratio", "spaces", "garage", "permits")):
+                score += 4
+            if any(k in local for k in ("density", "desk", "workstation", "occupancy")):
+                score -= 6
+            parking_ratio_candidates.append((score, m.start(), float(ratio)))
+    if parking_ratio_candidates:
+        parking_ratio_candidates.sort(key=lambda row: (-row[0], -row[1], row[2]))
+        if parking_ratio_candidates[0][0] > 0:
+            prefill["parking_ratio_per_1000_rsf"] = float(parking_ratio_candidates[0][2])
+            parking_ratio_evidence = True
 
     parking_count_patterns = [
-        r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
-        r"(?i)\b(\d{1,4})\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
-        r"(?i)\b(?:up to\s+)?[a-z][a-z\-]*\s*\((\d{1,4})\)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
+        r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})(?!\.\d)\b",
+        r"(?i)(?<![\d.])(\d{1,4})(?!\.\d)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
+        r"(?i)\b(?:up to\s+)?[a-z][a-z\-]*\s*\((\d{1,4})(?!\.\d)\)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
     ]
+    parking_count_candidates: list[tuple[int, int, int]] = []
     for pat in parking_count_patterns:
-        m = re.search(pat, text)
-        if not m:
-            continue
-        count = _coerce_int_token(m.group(1), 0)
-        if count and 1 <= count <= 10000:
-            prefill["parking_spaces"] = int(count)
+        for m in re.finditer(pat, text):
+            count = _coerce_int_token(m.group(1), 0)
+            if not (count and 1 <= count <= 10000):
+                continue
+            # Ignore decimal tails and ratio fragments such as ".32 parking spaces per every 1,000 ...".
+            if m.start() > 0 and text[m.start() - 1] == ".":
+                continue
+            trailing = text[m.end(): min(len(text), m.end() + 64)].lower()
+            if re.search(r"(?i)\b(?:per|\/)\s*(?:every\s*)?1,?000\b", trailing):
+                continue
+            local = text[max(0, m.start() - 90): min(len(text), m.end() + 110)].lower()
+            score = 1
+            if any(tok in local for tok in ("entitled", "allotted", "total # paid spaces", "total paid spaces", "# reserved", "# unreserved")):
+                score += 4
+            if any(tok in local for tok in ("reserved", "unreserved", "garage", "surface", "covered")):
+                score += 2
+            parking_count_candidates.append((score, m.start(), int(count)))
+    if parking_count_candidates:
+        parking_count_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
+        if parking_count_candidates[0][0] > 0:
+            prefill["parking_spaces"] = int(parking_count_candidates[0][2])
             parking_count_evidence = True
-            break
     reserved_count_match = re.search(r"(?i)\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
     unreserved_count_match = re.search(r"(?i)\b#?\s*unreserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)
     total_paid_spaces_match = re.search(r"(?i)\btotal\s*#?\s*paid\s+spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)

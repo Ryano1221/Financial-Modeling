@@ -5302,15 +5302,15 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     parking_ratio_evidence = False
     parking_count_evidence = False
     parking_ratio_patterns = [
-        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
-        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?)\s*(?:per|\/)\s*1,?000\s*(?:rsf|sf|square\s*feet)\b",
-        r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*1,?000\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:parking\s+)?(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf)\b",
+        r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*(?:every\s*)?1,?000\b",
         r"(?i)\bparking\s+ratio\b[^\n]{0,80}\(\s*per\s*1,?000\s*(?:rsf|sf)\s*\)\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
         r"(?i)\bparking\s+ratio\b[^\n]{0,80}\b1,?000\s*(?:rsf|sf)\b[^\n]{0,16}?[:\-]?\s*(\d+(?:\.\d+)?)\b",
-        r"(?i)\bparking\s+ratio\s*(?:\([^)]*1,?000\s*(?:rsf|sf)[^)]*\))?\s*(?:per|\/)?\s*1,?000\s*(?:rsf|sf)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
+        r"(?i)\bparking\s+ratio\s*(?:\([^)]*1,?000\s*(?:rsf|sf)[^)]*\))?\s*(?:per|\/)?\s*(?:every\s*)?1,?000\s*(?:rsf|sf)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*\/\s*1,?000\s*(?:rsf|sf|parking|spaces?|permits?)\b",
-        r"(?i)\b(?:parking\s+ratio|ratio\s+of)\b[^.\n]{0,80}\b(\d+(?:\.\d+)?)\s*(?:licenses?|spaces?|stalls?|passes?|permits?)\s*(?:per|\/|:)\s*1,?000\s*(?:rsf|sf)\b",
-        r"(?i)\b(?:up\s+to\s+)?(\d+(?:\.\d+)?)\s*(?:per|\/|:)\s*1,?000\s*(?:parking|spaces?|stalls?|passes?|permits?|rsf|sf)\b",
+        r"(?i)\b(?:parking\s+ratio|ratio\s+of)\b[^.\n]{0,80}\b(\d+(?:\.\d+)?)\s*(?:licenses?|spaces?|stalls?|passes?|permits?)\s*(?:per|\/|:)\s*(?:every\s*)?1,?000\s*(?:rsf|sf)\b",
+        r"(?i)\b(?:up\s+to\s+)?(\d+(?:\.\d+)?)\s*(?:per|\/|:)\s*(?:every\s*)?1,?000\s*(?:parking|spaces?|stalls?|passes?|permits?|rsf|sf)\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*:\s*1,?000\s*(?:rsf|sf|parking|spaces?|permits?)\b",
         r"(?i)\b(?:parking|transportation)[^.\n]{0,120}\bratio[^.\n]{0,40}\b(\d+(?:\.\d+)?)\s*:\s*1,?000\b",
     ]
@@ -5338,20 +5338,35 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             parking_ratio_evidence = True
 
     parking_count_patterns = [
-        r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})\b",
-        r"(?i)\b(\d{1,4})\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
-        r"(?i)\bentitled\s+to\s+(\d{1,4})\s+(?:parking\s+)?spaces?\b",
-        r"(?i)\b(?:up to\s+)?[a-z][a-z\-]*\s*\((\d{1,4})\)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
+        r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})(?!\.\d)\b",
+        r"(?i)(?<![\d.])(\d{1,4})(?!\.\d)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
+        r"(?i)\bentitled\s+to\s+(\d{1,4})(?!\.\d)\s+(?:parking\s+)?spaces?\b",
+        r"(?i)\b(?:up to\s+)?[a-z][a-z\-]*\s*\((\d{1,4})(?!\.\d)\)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
     ]
+    parking_count_candidates: list[tuple[int, int, int]] = []
     for pat in parking_count_patterns:
-        m = re.search(pat, text)
-        if not m:
-            continue
-        count = _coerce_int_token(m.group(1), 0)
-        if 1 <= count <= 10000:
-            hints["parking_count"] = count
+        for m in re.finditer(pat, text):
+            count = _coerce_int_token(m.group(1), 0)
+            if not (1 <= count <= 10000):
+                continue
+            # Ignore decimal tails and ratio fragments such as ".32 parking spaces per every 1,000 ...".
+            if m.start() > 0 and text[m.start() - 1] == ".":
+                continue
+            trailing = text[m.end(): min(len(text), m.end() + 64)].lower()
+            if re.search(r"(?i)\b(?:per|\/)\s*(?:every\s*)?1,?000\b", trailing):
+                continue
+            local = text[max(0, m.start() - 90): min(len(text), m.end() + 110)].lower()
+            score = 1
+            if any(tok in local for tok in ("entitled", "allotted", "total # paid spaces", "total paid spaces", "# reserved", "# unreserved")):
+                score += 4
+            if any(tok in local for tok in ("reserved", "unreserved", "garage", "surface", "covered")):
+                score += 2
+            parking_count_candidates.append((score, m.start(), int(count)))
+    if parking_count_candidates:
+        parking_count_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
+        if parking_count_candidates[0][0] > 0:
+            hints["parking_count"] = int(parking_count_candidates[0][2])
             parking_count_evidence = True
-            break
 
     # Reserved / unreserved parking detail (from proposals with separate parking input rows).
     reserved_count_match = re.search(r"(?i)\b#?\s*reserved\s+(?:paid\s+)?spaces?\b\s*[:\-]?\s*(\d{1,4}(?:\.\d+)?)", text)

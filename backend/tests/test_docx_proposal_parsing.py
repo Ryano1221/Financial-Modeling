@@ -328,6 +328,18 @@ def test_regex_prefill_derives_parking_ratio_from_count_when_ratio_missing() -> 
     assert prefill.get("parking_cost_monthly_per_space") == 100.0
 
 
+def test_regex_prefill_parses_parking_ratio_per_every_1000_without_false_decimal_tail_count() -> None:
+    text = (
+        "Premises: Portion of Suite 440 consisting of 3,000 RSF.\n"
+        "PARKING: Tenant's parking ratio shall be 1.32 parking spaces per every 1,000 rentable square feet of Lease space on a reserved basis.\n"
+        "All parking in the building garage shall be $200 per space per month plus applicable sales tax.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("parking_ratio_per_1000_rsf") == 1.32
+    assert prefill.get("parking_spaces") == 4
+    assert prefill.get("parking_cost_monthly_per_space") == 200.0
+
+
 def test_regex_prefill_free_rent_ignores_renewal_notice_months() -> None:
     text = (
         "TERM AND FREE RENT: One hundred twenty-seven (127) months, with seven (7) months base free rent.\n"
