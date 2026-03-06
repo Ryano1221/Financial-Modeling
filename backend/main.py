@@ -3972,6 +3972,147 @@ def _should_override_rsf(
     return False
 
 
+def _normalize_building_rsf_key(label: str) -> str:
+    raw = " ".join(str(label or "").split()).strip().lower()
+    if not raw:
+        return ""
+    building_match = re.search(r"\bbuilding\s*(\d{1,4})\b", raw)
+    if building_match:
+        return f"building {int(building_match.group(1))}"
+    if "amenity" in raw:
+        return "amenity"
+    return ""
+
+
+def _extract_building_rsf_by_identifier(text: str) -> dict[str, float]:
+    if not text:
+        return {}
+    building_map: dict[str, float] = {}
+    line_pattern = re.compile(
+        r"(?im)^\s*(amenity(?:\s+building)?|building\s*\d{1,4})\s*[:|\-]\s*"
+        r"(?:approximately\s*)?(\d{1,3}(?:,\d{3})+|\d{3,7})(?:\.\d+)?\s*"
+        r"(?:rsf|sf|square\s*feet?)\b"
+    )
+    for match in line_pattern.finditer(text):
+        key = _normalize_building_rsf_key(match.group(1))
+        rsf_val = _coerce_float_token(match.group(2), 0.0) or 0.0
+        if not key or rsf_val <= 0:
+            continue
+        building_map[key] = max(float(rsf_val), float(building_map.get(key, 0.0) or 0.0))
+    return building_map
+
+
+def _extract_gross_abatement_building_phase_in_schedule(
+    text: str,
+    *,
+    term_months_hint: Optional[int] = None,
+    total_rsf_hint: Optional[float] = None,
+) -> list[dict]:
+    if not text:
+        return []
+    building_rsf = _extract_building_rsf_by_identifier(text)
+    if len(building_rsf) < 2:
+        return []
+
+    term_months = _coerce_int_token(term_months_hint, 0) or 0
+    if term_months <= 0:
+        return []
+    total_rsf = _coerce_float_token(total_rsf_hint, 0.0) or 0.0
+    if total_rsf <= 0:
+        total_rsf = sum(float(v) for v in building_rsf.values() if float(v) > 0)
+    if total_rsf <= 0:
+        return []
+
+    clause_pattern = re.compile(
+        r"(?is)\bgross\s+rent\b.{0,280}?\babated\b.{0,320}?(?:\.\s|$)"
+    )
+    month_range_pattern = re.compile(
+        r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b"
+    )
+    month_count_pattern = re.compile(
+        r"(?i)\b(?:first\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,3})\)?\s+months?\b"
+    )
+
+    segments: list[tuple[int, int, float]] = []
+    seen_segments: set[tuple[int, int, float]] = set()
+    for clause_match in clause_pattern.finditer(text):
+        clause = " ".join((clause_match.group(0) or "").split())
+        if not clause:
+            continue
+        targeted_keys = {
+            _normalize_building_rsf_key(m.group(0))
+            for m in re.finditer(r"(?i)\b(?:building\s*\d{1,4}|amenity(?:\s+building)?)\b", clause)
+        }
+        targeted_keys = {k for k in targeted_keys if k in building_rsf}
+        if not targeted_keys:
+            continue
+        targeted_rsf = sum(float(building_rsf.get(k, 0.0) or 0.0) for k in targeted_keys)
+        if targeted_rsf <= 0 or targeted_rsf >= (0.98 * total_rsf):
+            continue
+
+        start_month_1: Optional[int] = None
+        end_month_1: Optional[int] = None
+        range_match = month_range_pattern.search(clause)
+        if range_match:
+            start_month_1 = _coerce_int_token(range_match.group(1), None)
+            end_month_1 = _coerce_int_token(range_match.group(2), start_month_1)
+        else:
+            count_match = month_count_pattern.search(clause)
+            if count_match:
+                digit_val = _coerce_int_token(count_match.group(2), 0) or 0
+                word_val = _word_token_to_int(count_match.group(1)) or 0
+                month_count = max(digit_val, word_val)
+                if month_count > 0:
+                    start_month_1 = 1
+                    end_month_1 = month_count
+        if start_month_1 is None or end_month_1 is None:
+            continue
+        if start_month_1 <= 0 or end_month_1 < start_month_1:
+            continue
+
+        start_month_0 = max(0, int(start_month_1) - 1)
+        end_month_0 = min(term_months - 1, int(end_month_1) - 1)
+        if start_month_0 > end_month_0:
+            continue
+        seg_key = (start_month_0, end_month_0, round(float(targeted_rsf), 2))
+        if seg_key in seen_segments:
+            continue
+        seen_segments.add(seg_key)
+        segments.append((start_month_0, end_month_0, float(targeted_rsf)))
+
+    if not segments:
+        return []
+
+    monthly_rsf: list[float] = [float(total_rsf) for _ in range(term_months)]
+    for start_month_0, end_month_0, reduce_rsf in segments:
+        for month_idx in range(start_month_0, end_month_0 + 1):
+            monthly_rsf[month_idx] = max(0.0, float(monthly_rsf[month_idx]) - float(reduce_rsf))
+
+    if len({round(v, 4) for v in monthly_rsf}) < 2:
+        return []
+
+    steps: list[dict] = []
+    current_start = 0
+    current_rsf = float(monthly_rsf[0])
+    for month_idx in range(1, term_months + 1):
+        at_boundary = month_idx == term_months
+        next_rsf = float(monthly_rsf[month_idx]) if month_idx < term_months else current_rsf
+        if at_boundary or abs(next_rsf - current_rsf) > 0.01:
+            steps.append(
+                {
+                    "start_month": int(current_start),
+                    "end_month": int(month_idx - 1),
+                    "rsf": float(round(current_rsf, 2)),
+                }
+            )
+            current_start = month_idx
+            current_rsf = next_rsf
+
+    if len(steps) < 2:
+        return []
+    return steps
+
+
 def _extract_phase_in_schedule(text: str, term_months_hint: Optional[int] = None) -> list[dict]:
     """
     Extract phase-in occupancy rows such as:
@@ -5078,7 +5219,15 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             for start, end in deduped
         ]
 
-    phase_schedule = _extract_phase_in_schedule(text, term_months_hint=_coerce_int_token(hints.get("term_months"), 0))
+    hinted_term_months = _coerce_int_token(hints.get("term_months"), 0)
+    phase_schedule = _extract_phase_in_schedule(text, term_months_hint=hinted_term_months)
+    gross_abatement_phase_schedule = _extract_gross_abatement_building_phase_in_schedule(
+        text,
+        term_months_hint=hinted_term_months,
+        total_rsf_hint=_coerce_float_token(hints.get("rsf"), 0.0),
+    )
+    if not phase_schedule and gross_abatement_phase_schedule:
+        phase_schedule = gross_abatement_phase_schedule
     if phase_schedule:
         hints["phase_in_schedule"] = phase_schedule
         phase_rsf = max(float(step.get("rsf", 0.0) or 0.0) for step in phase_schedule)

@@ -289,6 +289,24 @@ def test_regex_prefill_parses_annual_anniversary_increase_phrase() -> None:
     assert steps[-1]["end"] == 126
 
 
+def test_regex_prefill_overrides_flat_year_table_when_escalation_clause_is_explicit() -> None:
+    text = (
+        "Premises: The Premises will consist of approximately 51,743 RSF located in Buildings 100, 200, 300 and Amenity Building.\n"
+        "Lease Commencement Date: August 1, 2026.\n"
+        "Lease Term: One hundred twenty-eight (128) months.\n"
+        "Base Rent: $47.50 per RSF per year NNN.\n"
+        "Beginning in Month 13 after the Rent Commencement Date, the Base Rental Rate will increase by 3.0% annually.\n"
+        "Lease Year 1 | 8/1/2026 | 7/31/2027 | 47.50\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 47.5}
+    assert steps[1] == {"start": 12, "end": 23, "rate_psf_yr": 48.93}
+    assert steps[-1] == {"start": 120, "end": 127, "rate_psf_yr": 63.84}
+
+
 def test_regex_prefill_parses_label_value_escalation_with_percent_parenthetical() -> None:
     text = (
         "Premises: Suite 230 consisting of 3,947 RSF.\n"

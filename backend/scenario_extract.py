@@ -2022,8 +2022,16 @@ def _regex_prefill(text: str) -> dict:
         inferred_rate = _infer_rate_psf_from_monthly_rent(text, _coerce_float_token(prefill.get("rsf"), None))
         if inferred_rate is not None:
             prefill["rate_psf_yr"] = inferred_rate
+    month_phrase_steps: list[dict[str, float | int]] = []
+    if term_months:
+        month_phrase_steps = _extract_month_phrase_rent_steps(text, term_month_count=int(term_months))
+    if month_phrase_steps:
+        prefill["rent_steps"] = month_phrase_steps
+        prefill["_rent_steps_basis"] = "month_index"
+        prefill["_rent_steps_source"] = "month_phrase_regex"
+        prefill["rate_psf_yr"] = float(month_phrase_steps[0].get("rate_psf_yr", prefill.get("rate_psf_yr", 0.0)))
     year_table_steps = _extract_year_table_rent_steps(text)
-    if year_table_steps:
+    if year_table_steps and "rent_steps" not in prefill:
         inferred_term_from_dates = None
         if comm and exp:
             inferred_term_from_dates = _term_month_count(_safe_date(comm), _safe_date(exp))
@@ -2039,23 +2047,39 @@ def _regex_prefill(text: str) -> dict:
             prefill["_rent_steps_basis"] = "month_index"
             prefill["_rent_steps_source"] = "year_table_regex"
             prefill["rate_psf_yr"] = float(year_table_steps[0].get("rate_psf_yr", prefill.get("rate_psf_yr", 0.0)))
-    elif term_months:
-        month_phrase_steps = _extract_month_phrase_rent_steps(text, term_month_count=int(term_months))
-        if month_phrase_steps:
-            prefill["rent_steps"] = month_phrase_steps
-            prefill["_rent_steps_basis"] = "month_index"
-            prefill["_rent_steps_source"] = "month_phrase_regex"
-            prefill["rate_psf_yr"] = float(month_phrase_steps[0].get("rate_psf_yr", prefill.get("rate_psf_yr", 0.0)))
 
     # If only base rate + annual escalation language exists, synthesize month-index steps.
     # Respect explicit escalation start months (e.g., "escalations beginning month 19").
-    if "rent_steps" not in prefill and "rate_psf_yr" in prefill:
+    if "rate_psf_yr" in prefill:
+        existing_steps = prefill.get("rent_steps") if isinstance(prefill.get("rent_steps"), list) else []
+        existing_source = str(prefill.get("_rent_steps_source") or "").strip().lower()
         esc_rate = _extract_annual_rent_escalation_pct(text)
         esc_start_month_1 = _extract_annual_rent_escalation_start_month(text)
         inferred_term = _coerce_int_token(prefill.get("term_months"), None)
         if inferred_term is None and comm and exp:
             inferred_term = _term_month_count(_safe_date(comm), _safe_date(exp))
+        existing_term = (
+            max((int(step.get("end", 0)) for step in existing_steps if isinstance(step, dict)), default=-1) + 1
+            if existing_steps
+            else 0
+        )
+        existing_rate_count = len(
+            {
+                round(_coerce_float_token(step.get("rate_psf_yr"), 0.0) or 0.0, 4)
+                for step in existing_steps
+                if isinstance(step, dict)
+            }
+        )
+        weak_flat_year_table_steps = (
+            bool(existing_steps)
+            and existing_source == "year_table_regex"
+            and existing_rate_count <= 1
+            and (inferred_term is None or existing_term < int(inferred_term))
+        )
+        should_synthesize = (not existing_steps) or weak_flat_year_table_steps
         if (
+            should_synthesize
+            and
             esc_rate is not None
             and inferred_term is not None
             and inferred_term > 1

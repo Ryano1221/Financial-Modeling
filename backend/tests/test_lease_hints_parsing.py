@@ -1077,6 +1077,38 @@ def test_extract_hints_m42_commencement_clause_prefers_explicit_c_date_and_build
     assert hints["opex_psf_year_1"] == 16.8
 
 
+def test_extract_hints_m42_derives_phase_in_from_building_specific_gross_abatement_and_escalates_rent() -> None:
+    text = (
+        "Premises: The Premises will consist of approximately 51,743 RSF located in Buildings 100, 200,300, and Amenity Building identified in Exhibit A.\n"
+        "Amenity: Approximately 5,178 RSF\n"
+        "Building 100: Approximately 12,978 RSF\n"
+        "Building 200: Approximately 14,260 RSF\n"
+        "Building 300: Approximately 19,327 RSF\n"
+        "Lease Commencement Date: August 1, 2026.\n"
+        "Lease Term: 128 Month Term.\n"
+        "Base Rental Rate: $47.50 per RSF NNN.\n"
+        "Beginning in Month 13 after the Rent Commencement Date, the Base Rental Rate will increase by 3.0% annually.\n"
+        "Rental Abatement: Base Rent will be abated for Months 1-8 of the Lease Term on Building 100, 200, & Amenity Building.\n"
+        "So long as Tenant is not in default, Gross Rent will be abated for Months 1-10 on the Lease Term on Building 300.\n"
+    )
+    hints = main._extract_lease_hints(text, "M42 Gaming Proposal_St Elmo_3.5.26_.docx", "test-rid")
+
+    assert hints["free_rent_scope"] == "base"
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 7
+
+    phase = hints.get("phase_in_schedule")
+    assert isinstance(phase, list) and len(phase) == 2
+    assert phase[0] == {"start_month": 0, "end_month": 9, "rsf": 32416.0}
+    assert phase[1] == {"start_month": 10, "end_month": 127, "rsf": 51743.0}
+
+    rent_schedule = hints.get("rent_schedule")
+    assert isinstance(rent_schedule, list) and rent_schedule
+    assert rent_schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 47.5}
+    assert rent_schedule[1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 48.93}
+    assert rent_schedule[-1] == {"start_month": 120, "end_month": 127, "rent_psf_annual": 63.84}
+
+
 def test_extract_hints_parses_two_digit_term_dates_and_ignores_proposal_header_date() -> None:
     text = (
         "Landlord Proposal March 5, 2026\n"
