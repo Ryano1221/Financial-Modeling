@@ -152,6 +152,31 @@ function formatAxisValue(metric: MetricSpec, value: number): string {
   }
 }
 
+function formatMonthYear(dateIso: unknown): string {
+  const raw = String(dateIso ?? "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return "";
+  const dt = new Date(Date.UTC(year, month - 1, 1));
+  return dt.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+function buildLeaseDateLabel(commencementDate: unknown, expirationDate: unknown): string {
+  const start = formatMonthYear(commencementDate);
+  const end = formatMonthYear(expirationDate);
+  if (start && end) return `${start} - ${end}`;
+  return start || end || "";
+}
+
+function buildComparisonTitle(barMetricLabel: string, lineMetricLabel: string): string {
+  const bar = String(barMetricLabel || "").trim() || "Bar metric";
+  const line = String(lineMetricLabel || "").trim() || "Line metric";
+  if (bar.toLowerCase() === line.toLowerCase()) return `${bar} Comparison`;
+  return `${bar} vs ${line}`;
+}
+
 function rectsOverlap(a: LabelRect, b: LabelRect, padding = 2): boolean {
   return !(
     a.x2 + padding < b.x1 ||
@@ -338,7 +363,7 @@ function DualMetricComboChart({
   lineMetric,
   rows,
   sortDirection,
-  title = "Two-Metric Comparison",
+  title,
 }: {
   barMetric: MetricSpec;
   lineMetric: MetricSpec;
@@ -346,6 +371,7 @@ function DualMetricComboChart({
   sortDirection: SortDirection;
   title?: string;
 }) {
+  const resolvedTitle = title || buildComparisonTitle(barMetric.label, lineMetric.label);
   const sorted = [...rows].sort((a, b) => {
     const av = toNumber((a.metrics as OptionMetrics)[barMetric.key]);
     const bv = toNumber((b.metrics as OptionMetrics)[barMetric.key]);
@@ -365,7 +391,7 @@ function DualMetricComboChart({
 
   return (
     <div className="surface-card p-4 sm:p-5">
-      <h3 className="text-base font-semibold text-slate-100 mb-1 tracking-tight">{title}</h3>
+      <h3 className="text-base font-semibold text-slate-100 mb-1 tracking-tight">{resolvedTitle}</h3>
       <p className="text-xs text-slate-400 mb-3">Bar: {barMetric.label} | Line: {lineMetric.label}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3">
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
@@ -580,24 +606,38 @@ export function AnalyticsWorkbench({
         points: sorted.map((row) => {
           const barValue = toNumber((row.metrics as OptionMetrics)[barMetricKey]);
           const lineValue = toNumber((row.metrics as OptionMetrics)[lineMetricKey]);
+          const commencementDate = String((row.metrics as OptionMetrics).commencementDate || "");
+          const expirationDate = String((row.metrics as OptionMetrics).expirationDate || "");
           return {
             scenario_name: row.scenarioName,
             bar_value: barValue,
             line_value: lineValue,
             bar_value_display: barMetric.format(barValue),
             line_value_display: lineMetric.format(lineValue),
+            commencement_date: commencementDate,
+            expiration_date: expirationDate,
+            date_label: buildLeaseDateLabel(commencementDate, expirationDate),
           };
         }),
       };
     };
 
     const out: CustomChartExportConfig[] = [];
-    out.push(buildChart("Two-Metric Comparison", activeMetricKey, secondaryMetricKey, sortDirection));
+    out.push(
+      buildChart(
+        buildComparisonTitle(selectedMetric.label, selectedSecondaryMetric.label),
+        activeMetricKey,
+        secondaryMetricKey,
+        sortDirection
+      )
+    );
     for (let idx = 0; idx < savedCharts.length; idx += 1) {
       const chart = savedCharts[idx];
+      const barMetric = metricsByKey[chart.barMetricKey] ?? selectedMetric;
+      const lineMetric = metricsByKey[chart.lineMetricKey] ?? selectedSecondaryMetric;
       out.push(
         buildChart(
-          `Two-Metric Comparison #${idx + 2}`,
+          buildComparisonTitle(barMetric.label, lineMetric.label),
           chart.barMetricKey,
           chart.lineMetricKey,
           chart.sortDirection
@@ -605,7 +645,7 @@ export function AnalyticsWorkbench({
       );
     }
     return out;
-  }, [metricsByKey, results, activeMetricKey, secondaryMetricKey, sortDirection, savedCharts]);
+  }, [metricsByKey, results, activeMetricKey, secondaryMetricKey, sortDirection, savedCharts, selectedMetric, selectedSecondaryMetric]);
 
   useEffect(() => {
     onCustomChartsChange?.(customChartsForExport);
@@ -776,7 +816,7 @@ export function AnalyticsWorkbench({
             lineMetric={selectedSecondaryMetric}
             rows={results}
             sortDirection={sortDirection}
-            title="Two-Metric Comparison"
+            title={buildComparisonTitle(selectedMetric.label, selectedSecondaryMetric.label)}
           />
           {savedCharts.length > 0 ? (
             <div className="space-y-4">
@@ -863,7 +903,7 @@ export function AnalyticsWorkbench({
                       lineMetric={lineMetric}
                       rows={results}
                       sortDirection={chart.sortDirection}
-                      title={`Two-Metric Comparison #${idx + 2}`}
+                      title={buildComparisonTitle(barMetric.label, lineMetric.label)}
                     />
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-4">
                       <CombinedMetricChart metric={barMetric} rows={results} sortDirection={chart.sortDirection} />

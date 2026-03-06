@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import {
   SUMMARY_MATRIX_ROW_LABELS,
   TEMPLATE_VERSION,
@@ -395,5 +396,129 @@ describe("exportModel institutional workbook", () => {
     if (equalized && eqRow != null) {
       expect(equalized.getCell(eqRow, 3).value).toBe("—");
     }
+  });
+
+  it("exports native custom chart parts and keeps custom sheet in normal view", async () => {
+    const baseScenario: LeaseScenarioCanonical = {
+      id: "chart-1",
+      name: "Option A",
+      discountRateAnnual: 0.08,
+      partyAndPremises: {
+        premisesName: "500 Market St",
+        premisesLabel: "500 Market",
+        floorsOrSuite: "Suite 100",
+        rentableSqFt: 5000,
+        leaseType: "nnn",
+      },
+      datesAndTerm: {
+        leaseTermMonths: 60,
+        commencementDate: "2026-01-01",
+        expirationDate: "2031-01-01",
+      },
+      rentSchedule: {
+        steps: [{ startMonth: 0, endMonth: 59, ratePsfYr: 30 }],
+        annualEscalationPercent: 0.03,
+      },
+      expenseSchedule: {
+        leaseType: "nnn",
+        baseOpexPsfYr: 10,
+        annualEscalationPercent: 0.03,
+      },
+      parkingSchedule: { slots: [], annualEscalationPercent: 0, salesTaxPercent: 0.0825 },
+      tiSchedule: {
+        budgetTotal: 100000,
+        allowanceFromLandlord: 80000,
+        outOfPocket: 20000,
+        amortizeOop: false,
+      },
+      otherCashFlows: { oneTimeCosts: [], brokerFee: 0, securityDepositMonths: 0 },
+      notes: "",
+    };
+    const scenarios: LeaseScenarioCanonical[] = [
+      baseScenario,
+      {
+        ...baseScenario,
+        id: "chart-2",
+        name: "Option B",
+        partyAndPremises: {
+          ...baseScenario.partyAndPremises,
+          premisesLabel: "500 Market Annex",
+          rentableSqFt: 6200,
+        },
+      },
+    ];
+
+    const buffer = await buildBrokerWorkbook(scenarios, 0.08, {
+      brokerageName: "Anchor Capital",
+      clientName: "Client A",
+      reportDate: "2026-02-22",
+      preparedBy: "Analyst",
+      customCharts: [
+        {
+          title: "Two-Metric Comparison",
+          bar_metric_key: "avgCostPsfYr",
+          bar_metric_label: "Avg Cost/SF/YR",
+          line_metric_key: "npvAtDiscount",
+          line_metric_label: "NPV @ Discount Rate",
+          sort_direction: "desc",
+          points: [
+            {
+              scenario_name: "Option A",
+              bar_value: 31.12,
+              line_value: 2_500_000,
+              bar_value_display: "$31.12 / SF",
+              line_value_display: "$2,500,000",
+              commencement_date: "2026-01-01",
+              expiration_date: "2031-01-01",
+              date_label: "Jan 2026 - Jan 2031",
+            },
+            {
+              scenario_name: "Option B",
+              bar_value: 29.75,
+              line_value: 2_100_000,
+              bar_value_display: "$29.75 / SF",
+              line_value_display: "$2,100,000",
+              commencement_date: "2026-03-01",
+              expiration_date: "2031-03-01",
+              date_label: "Mar 2026 - Mar 2031",
+            },
+          ],
+        },
+      ],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as ArrayBuffer);
+    const customSheet = workbook.getWorksheet("Charts");
+    expect(customSheet).toBeDefined();
+    const customView = customSheet?.views?.[0] as (ExcelJS.WorksheetView & { style?: string }) | undefined;
+    expect(customView?.style).toBeUndefined();
+    expect(findRowByFirstCell(customSheet, "Jan 2026 - Jan 2031")).not.toBeNull();
+
+    const zip = await JSZip.loadAsync(buffer as ArrayBuffer);
+    const chartParts = Object.keys(zip.files).filter((name) => /^xl\/charts\/chart\d+\.xml$/.test(name));
+    expect(chartParts.length).toBeGreaterThan(0);
+
+    const workbookXml = await zip.file("xl/workbook.xml")?.async("string");
+    const sheetRid = (workbookXml || "").match(/<sheet[^>]*name="Charts"[^>]*r:id="([^"]+)"/)?.[1] ?? "";
+    expect(sheetRid).toMatch(/^rId\d+$/);
+    const workbookRelsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("string");
+    const sheetTarget = (workbookRelsXml || "").match(new RegExp(`Id="${sheetRid}"[^>]*Target="([^"]+)"`))?.[1] ?? "";
+    const customSheetPath = `xl/${sheetTarget}`.replace(/^xl\/\//, "xl/");
+    const customSheetXml = await zip.file(customSheetPath)?.async("string");
+    expect(customSheetXml || "").toContain("<drawing r:id=");
+
+    const contentTypes = await zip.file("[Content_Types].xml")?.async("string");
+    expect(contentTypes || "").toContain("drawingml.chart+xml");
+
+    const firstChartXml = await zip.file(chartParts[0])?.async("string");
+    expect(firstChartXml || "").toContain("Two-Metric Comparison");
+    expect(firstChartXml || "").toContain("Avg Cost/SF/YR");
+    expect(firstChartXml || "").toContain("NPV @ Discount Rate");
+    expect(firstChartXml || "").toContain("Lease Dates");
+    expect(firstChartXml || "").toContain("<axPos val=\"b\"/>");
+    expect(firstChartXml || "").not.toContain("<majorGridlines/>");
+    const showValCount = (firstChartXml || "").split("<showVal val=\"1\"/>").length - 1;
+    expect(showValCount).toBeGreaterThanOrEqual(2);
   });
 });

@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import type { LeaseScenarioCanonical } from "@/lib/lease-engine/canonical-schema";
 import type { EngineResult } from "@/lib/lease-engine/monthly-engine";
 import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
@@ -15,7 +16,7 @@ const SHEET_NAMES = {
   summary: "Summary Comparison",
   equalized: "Equalized Metrics",
   monthlyGrossMatrix: "Monthly Gross Cash Flow Matrix",
-  customCharts: "Custom Charts",
+  customCharts: "Charts",
   notes: "Notes",
 } as const;
 
@@ -108,6 +109,28 @@ interface WorkbookScenario {
   notes: string;
   monthZeroGross: number;
   monthlyRows: WorkbookMonthlyRow[];
+}
+
+interface NativeCustomChartSpec {
+  title: string;
+  barLabel: string;
+  lineLabel: string;
+  categoryAxisTitle: string;
+  headerRow: number;
+  firstDataRow: number;
+  lastDataRow: number;
+  categoryCol: number;
+  barValueCol: number;
+  lineValueCol: number;
+  anchorCol: number;
+  anchorRow: number;
+  widthEmu: number;
+  heightEmu: number;
+}
+
+interface CustomChartsSheetResult {
+  sheetName: string;
+  specs: NativeCustomChartSpec[];
 }
 
 interface EqualizedMetrics {
@@ -219,6 +242,19 @@ function toIsoDate(date: Date): string {
   const m = `${date.getUTCMonth() + 1}`.padStart(2, "0");
   const d = `${date.getUTCDate()}`.padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function formatMonthYearLabel(value?: string | null): string {
+  const dt = parseIsoDate(value);
+  if (!dt) return "";
+  return dt.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+function buildChartDateLabel(commencementDate?: string | null, expirationDate?: string | null): string {
+  const start = formatMonthYearLabel(commencementDate);
+  const end = formatMonthYearLabel(expirationDate);
+  if (start && end) return `${start} - ${end}`;
+  return start || end || "";
 }
 
 function formatDateMmDdYyyy(value?: string | null): string {
@@ -581,17 +617,23 @@ function applyPrintSettings(
     fitToHeight?: number;
     horizontalCentered?: boolean;
     paperSize?: number;
+    pageBreakPreview?: boolean;
   }
 ): void {
   // Avoid persisted manual break artifacts from prior template versions.
   (sheet as unknown as { rowBreaks?: unknown[] }).rowBreaks = [];
   (sheet as unknown as { columnBreaks?: unknown[] }).columnBreaks = [];
-  sheet.views = [{
+  const view = {
     ...(sheet.views?.[0] ?? {}),
     showGridLines: false,
-    style: "pageBreakPreview",
     zoomScale: 100,
-  } as ExcelJS.WorksheetView];
+  } as ExcelJS.WorksheetView & { style?: "pageBreakPreview" | "pageLayout" };
+  if (options.pageBreakPreview === false) {
+    delete view.style;
+  } else {
+    view.style = "pageBreakPreview";
+  }
+  sheet.views = [view];
   sheet.pageSetup = {
     ...sheet.pageSetup,
     orientation: options.landscape ? "landscape" : "portrait",
@@ -2398,86 +2440,561 @@ function createCustomChartsSheet(
   workbook: ExcelJS.Workbook,
   usedSheetNames: Set<string>,
   customCharts: CustomChartExportConfig[] | undefined
-): void {
+): CustomChartsSheetResult | null {
   const charts = Array.isArray(customCharts) ? customCharts.filter((chart) => chart?.points?.length) : [];
-  if (charts.length === 0) return;
+  if (charts.length === 0) return null;
 
   const sheet = workbook.addWorksheet(
     makeUniqueSheetName(SHEET_NAMES.customCharts, SHEET_NAMES.customCharts, usedSheetNames)
   );
-  sheet.properties.defaultRowHeight = 20;
-  sheet.getColumn(1).width = 34;
-  sheet.getColumn(2).width = 19;
-  sheet.getColumn(3).width = 18;
-  sheet.getColumn(4).width = 19;
+  const totalCols = 12;
+  sheet.properties.defaultRowHeight = 21;
+  sheet.getColumn(1).width = 21;
+  sheet.getColumn(2).width = 34;
+  sheet.getColumn(3).width = 15;
+  sheet.getColumn(4).width = 15;
   sheet.getColumn(5).width = 18;
+  sheet.getColumn(6).width = 18;
+  sheet.getColumn(7).width = 16;
+  sheet.getColumn(8).width = 16;
+  for (let col = 9; col <= totalCols; col += 1) sheet.getColumn(col).width = 5;
+  const nativeSpecs: NativeCustomChartSpec[] = [];
+  const colDateLabel = 1;
+  const colScenario = 2;
+  const colCommencement = 3;
+  const colExpiration = 4;
+  const colBarRaw = 5;
+  const colLineRaw = 6;
+  const colBarDisplay = 7;
+  const colLineDisplay = 8;
 
   let row = 1;
-  sheet.mergeCells(`A${row}:E${row}`);
+  sheet.mergeCells(`A${row}:${toColumnLetter(totalCols)}${row}`);
   const title = sheet.getCell(`A${row}`);
-  title.value = "Custom Charts Export";
+  title.value = "Charts";
   title.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.titleSize, bold: true, color: { argb: COLORS.text } };
   title.alignment = { horizontal: "left", vertical: "middle" };
   title.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+  sheet.getRow(row).height = 42;
   row += 2;
 
   for (let i = 0; i < charts.length; i += 1) {
     const chart = charts[i];
-    const chartTitle = normalizeText(chart.title, `Two-Metric Comparison #${i + 1}`);
     const barLabel = normalizeText(chart.bar_metric_label, "Bar metric");
     const lineLabel = normalizeText(chart.line_metric_label, "Line metric");
+    const fallbackChartTitle = `${barLabel} vs ${lineLabel}`;
+    const chartTitle = normalizeText(chart.title, fallbackChartTitle);
     const sortDir = chart.sort_direction === "asc" ? "Lowest first" : "Highest first";
 
-    sheet.mergeCells(`A${row}:E${row}`);
+    sheet.mergeCells(`A${row}:${toColumnLetter(totalCols)}${row}`);
     const section = sheet.getCell(`A${row}`);
     section.value = chartTitle;
     section.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.sectionSize, bold: true, color: { argb: COLORS.text } };
     section.alignment = { horizontal: "left", vertical: "middle" };
     section.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
+    sheet.getRow(row).height = 30;
     row += 1;
 
-    sheet.mergeCells(`A${row}:E${row}`);
+    sheet.mergeCells(`A${row}:${toColumnLetter(totalCols)}${row}`);
     const metaCell = sheet.getCell(`A${row}`);
-    metaCell.value = `Bar: ${barLabel} | Line: ${lineLabel} | Sort: ${sortDir}`;
+    metaCell.value = `X-axis: Lease date labels | Bar: ${barLabel} | Line: ${lineLabel} | Sort: ${sortDir}`;
     metaCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.secondaryText } };
     metaCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    sheet.getRow(row).height = 24;
+    row += 1;
+
+    const chartTopRow = row;
+    const chartBottomRow = chartTopRow + 12;
+    for (let r = chartTopRow; r <= chartBottomRow; r += 1) {
+      sheet.getRow(r).height = 20;
+      for (let c = 1; c <= totalCols; c += 1) {
+        const cell = sheet.getCell(r, c);
+        cell.value = "";
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+        const border: Partial<ExcelJS.Borders> = {};
+        if (r === chartTopRow) border.top = { style: "thin", color: { argb: COLORS.border } };
+        if (r === chartBottomRow) border.bottom = { style: "thin", color: { argb: COLORS.border } };
+        if (c === 1) border.left = { style: "thin", color: { argb: COLORS.border } };
+        if (c === totalCols) border.right = { style: "thin", color: { argb: COLORS.border } };
+        if (Object.keys(border).length > 0) cell.border = border;
+      }
+    }
+    row = chartBottomRow + 1;
+
+    sheet.mergeCells(`A${row}:H${row}`);
+    const tableLabelCell = sheet.getCell(row, 1);
+    tableLabelCell.value = "Underlying Data";
+    tableLabelCell.font = {
+      name: EXCEL_THEME.font.family,
+      bold: true,
+      size: EXCEL_THEME.font.labelSize,
+      color: { argb: COLORS.secondaryText },
+    };
+    tableLabelCell.alignment = { horizontal: "left", vertical: "middle" };
+    tableLabelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
     row += 1;
 
     const headerRow = row;
-    const headers = ["Scenario", `${barLabel} (raw)`, `${barLabel} (display)`, `${lineLabel} (raw)`, `${lineLabel} (display)`];
+    const headers = [
+      "Lease Date Label",
+      "Scenario",
+      "Commencement",
+      "Expiration",
+      `${barLabel}`,
+      `${lineLabel}`,
+      `${barLabel} (display)`,
+      `${lineLabel} (display)`,
+    ];
     for (let c = 1; c <= headers.length; c += 1) {
       const cell = sheet.getCell(headerRow, c);
       cell.value = headers[c - 1];
-      cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, bold: true, color: { argb: COLORS.text } };
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.lightGray } };
-      cell.alignment = { horizontal: "left", vertical: "middle" };
+      cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, bold: true, color: { argb: COLORS.white } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+      cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
       cell.border = BORDER_THIN;
     }
+    for (let c = 9; c <= totalCols; c += 1) {
+      const filler = sheet.getCell(headerRow, c);
+      filler.value = "";
+      filler.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
+    }
     row += 1;
+    const firstDataRow = row;
 
     for (const point of chart.points) {
-      sheet.getCell(row, 1).value = normalizeText(point.scenario_name);
-      sheet.getCell(row, 2).value = Number(point.bar_value) || 0;
-      sheet.getCell(row, 3).value = normalizeText(point.bar_value_display, "");
-      sheet.getCell(row, 4).value = Number(point.line_value) || 0;
-      sheet.getCell(row, 5).value = normalizeText(point.line_value_display, "");
-      applyCellFormat(sheet.getCell(row, 1), "text");
-      applyCellFormat(sheet.getCell(row, 2), "currency2");
-      applyCellFormat(sheet.getCell(row, 3), "text");
-      applyCellFormat(sheet.getCell(row, 4), "currency2");
-      applyCellFormat(sheet.getCell(row, 5), "text");
-      for (let c = 1; c <= 5; c += 1) {
+      const commencementRaw = normalizeText(point.commencement_date, "");
+      const expirationRaw = normalizeText(point.expiration_date, "");
+      const dateLabel = normalizeText(
+        point.date_label,
+        buildChartDateLabel(commencementRaw, expirationRaw)
+      ) || normalizeText(point.scenario_name);
+      const commencementLabel = formatMonthYearLabel(commencementRaw) || commencementRaw;
+      const expirationLabel = formatMonthYearLabel(expirationRaw) || expirationRaw;
+
+      sheet.getCell(row, colDateLabel).value = dateLabel;
+      sheet.getCell(row, colScenario).value = normalizeText(point.scenario_name);
+      sheet.getCell(row, colCommencement).value = commencementLabel;
+      sheet.getCell(row, colExpiration).value = expirationLabel;
+      sheet.getCell(row, colBarRaw).value = Number(point.bar_value) || 0;
+      sheet.getCell(row, colLineRaw).value = Number(point.line_value) || 0;
+      sheet.getCell(row, colBarDisplay).value = normalizeText(point.bar_value_display, "");
+      sheet.getCell(row, colLineDisplay).value = normalizeText(point.line_value_display, "");
+
+      applyCellFormat(sheet.getCell(row, colDateLabel), "text");
+      applyCellFormat(sheet.getCell(row, colScenario), "text");
+      applyCellFormat(sheet.getCell(row, colCommencement), "text");
+      applyCellFormat(sheet.getCell(row, colExpiration), "text");
+      sheet.getCell(row, colBarRaw).numFmt = "#,##0.00";
+      sheet.getCell(row, colLineRaw).numFmt = "#,##0.00";
+      sheet.getCell(row, colBarDisplay).numFmt = "@";
+      sheet.getCell(row, colLineDisplay).numFmt = "@";
+
+      for (let c = 1; c <= 8; c += 1) {
         sheet.getCell(row, c).border = BORDER_THIN;
+        sheet.getCell(row, c).font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
+        sheet.getCell(row, c).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+      }
+      for (let c = 9; c <= totalCols; c += 1) {
+        const filler = sheet.getCell(row, c);
+        filler.value = "";
+        filler.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.white } };
       }
       row += 1;
     }
+    const lastDataRow = row - 1;
+    if (lastDataRow >= firstDataRow) {
+      const chartWidthPx = sheetColumnRangePixels(sheet, 1, totalCols);
+      const chartHeightPx = sheetRowRangePixels(sheet, chartTopRow, chartBottomRow);
+      nativeSpecs.push({
+        title: chartTitle,
+        barLabel,
+        lineLabel,
+        categoryAxisTitle: "Lease Dates",
+        headerRow,
+        firstDataRow,
+        lastDataRow,
+        categoryCol: colDateLabel,
+        barValueCol: colBarRaw,
+        lineValueCol: colLineRaw,
+        anchorCol: 1,
+        anchorRow: chartTopRow,
+        widthEmu: Math.round(chartWidthPx * 9525),
+        heightEmu: Math.round(chartHeightPx * 9525),
+      });
+    }
 
-    row += 1;
+    row += 2;
   }
 
   const endRow = Math.max(2, row - 1);
-  autoAdjustRowHeights(sheet, 1, endRow);
-  applyPrintSettings(sheet, { landscape: true, lastRow: endRow, lastCol: 5, repeatRow: 1 });
+  applyPrintSettings(sheet, {
+    landscape: true,
+    lastRow: endRow,
+    lastCol: totalCols,
+    pageBreakPreview: false,
+  });
+  return { sheetName: sheet.name, specs: nativeSpecs };
+}
+
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function decodeXml(text: string): string {
+  return text
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, "\"")
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
+function readXmlAttr(attrs: string, name: string): string | null {
+  const pattern = new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}="([^"]*)"`);
+  const match = attrs.match(pattern);
+  return match ? match[1] : null;
+}
+
+function normalizeZipPath(baseDir: string, target: string): string {
+  const raw = String(target || "").trim();
+  if (!raw) return "";
+  const combined = raw.startsWith("/") ? raw.slice(1) : `${baseDir}/${raw}`;
+  const parts: string[] = [];
+  for (const token of combined.split("/")) {
+    if (!token || token === ".") continue;
+    if (token === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(token);
+  }
+  return parts.join("/");
+}
+
+function nextPartNumber(paths: string[], pattern: RegExp): number {
+  let max = 0;
+  for (const path of paths) {
+    const match = path.match(pattern);
+    const num = Number(match?.[1] ?? 0);
+    if (Number.isFinite(num) && num > max) max = num;
+  }
+  return max + 1;
+}
+
+function ensureContentTypeOverride(xml: string, partName: string, contentType: string): string {
+  if (!xml || xml.includes(`PartName="${partName}"`)) return xml;
+  return xml.replace(
+    "</Types>",
+    `<Override PartName="${partName}" ContentType="${contentType}"/></Types>`
+  );
+}
+
+function argbToRgb(argb: string, fallback = "111827"): string {
+  const raw = String(argb || "").trim().toUpperCase();
+  if (/^[0-9A-F]{8}$/.test(raw)) return raw.slice(2);
+  if (/^[0-9A-F]{6}$/.test(raw)) return raw;
+  return fallback;
+}
+
+function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, chartIndex: number): string {
+  const sheetRef = toFormulaSheetName(sheetName);
+  const catColLetter = toColumnLetter(spec.categoryCol);
+  const barColLetter = toColumnLetter(spec.barValueCol);
+  const lineColLetter = toColumnLetter(spec.lineValueCol);
+  const catRange = `${sheetRef}!$${catColLetter}$${spec.firstDataRow}:$${catColLetter}$${spec.lastDataRow}`;
+  const barName = `${sheetRef}!$${barColLetter}$${spec.headerRow}`;
+  const barRange = `${sheetRef}!$${barColLetter}$${spec.firstDataRow}:$${barColLetter}$${spec.lastDataRow}`;
+  const lineName = `${sheetRef}!$${lineColLetter}$${spec.headerRow}`;
+  const lineRange = `${sheetRef}!$${lineColLetter}$${spec.firstDataRow}:$${lineColLetter}$${spec.lastDataRow}`;
+  const catAxisId = 10 + (chartIndex * 1000);
+  const barAxisId = catAxisId + 90;
+  const lineAxisId = catAxisId + 190;
+  const barColor = argbToRgb(COLORS.darkGray, "111827");
+  const lineColor = argbToRgb(COLORS.secondaryText, "6B7280");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<chartSpace xmlns="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <chart>
+    <title>
+      <tx>
+        <rich>
+          <a:bodyPr/>
+          <a:p>
+            <a:pPr><a:defRPr/></a:pPr>
+            <a:r><a:t>${escapeXml(spec.title)}</a:t></a:r>
+          </a:p>
+        </rich>
+      </tx>
+    </title>
+    <plotArea>
+      <barChart>
+        <barDir val="col"/>
+        <grouping val="clustered"/>
+        <ser>
+          <idx val="0"/>
+          <order val="0"/>
+          <tx><strRef><f>${escapeXml(barName)}</f></strRef></tx>
+          <spPr>
+            <a:solidFill><a:srgbClr val="${barColor}"/></a:solidFill>
+            <a:ln><a:solidFill><a:srgbClr val="${barColor}"/></a:solidFill><a:prstDash val="solid"/></a:ln>
+          </spPr>
+          <cat><strRef><f>${escapeXml(catRange)}</f></strRef></cat>
+          <val><numRef><f>${escapeXml(barRange)}</f></numRef></val>
+          <dLbls>
+            <showLegendKey val="0"/>
+            <showVal val="1"/>
+            <showCatName val="0"/>
+            <showSerName val="0"/>
+            <showPercent val="0"/>
+            <showBubbleSize val="0"/>
+          </dLbls>
+        </ser>
+        <gapWidth val="150"/>
+        <overlap val="0"/>
+        <axId val="${catAxisId}"/>
+        <axId val="${barAxisId}"/>
+      </barChart>
+      <lineChart>
+        <grouping val="standard"/>
+        <ser>
+          <idx val="1"/>
+          <order val="1"/>
+          <tx><strRef><f>${escapeXml(lineName)}</f></strRef></tx>
+          <spPr>
+            <a:ln w="28575"><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill><a:prstDash val="solid"/></a:ln>
+          </spPr>
+          <marker>
+            <symbol val="circle"/>
+            <size val="7"/>
+            <spPr>
+              <a:ln><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill><a:prstDash val="solid"/></a:ln>
+            </spPr>
+          </marker>
+          <cat><strRef><f>${escapeXml(catRange)}</f></strRef></cat>
+          <val><numRef><f>${escapeXml(lineRange)}</f></numRef></val>
+          <dLbls>
+            <showLegendKey val="0"/>
+            <showVal val="1"/>
+            <showCatName val="0"/>
+            <showSerName val="0"/>
+            <showPercent val="0"/>
+            <showBubbleSize val="0"/>
+          </dLbls>
+        </ser>
+        <axId val="${catAxisId}"/>
+        <axId val="${lineAxisId}"/>
+      </lineChart>
+      <catAx>
+        <axId val="${catAxisId}"/>
+        <scaling><orientation val="minMax"/></scaling>
+        <axPos val="b"/>
+        <title>
+          <tx>
+            <rich>
+              <a:bodyPr/>
+              <a:p>
+                <a:pPr><a:defRPr/></a:pPr>
+                <a:r><a:t>${escapeXml(spec.categoryAxisTitle)}</a:t></a:r>
+              </a:p>
+            </rich>
+          </tx>
+        </title>
+        <majorTickMark val="none"/>
+        <minorTickMark val="none"/>
+        <crossAx val="${barAxisId}"/>
+        <lblOffset val="100"/>
+      </catAx>
+      <valAx>
+        <axId val="${barAxisId}"/>
+        <scaling><orientation val="minMax"/></scaling>
+        <axPos val="l"/>
+        <title>
+          <tx>
+            <rich>
+              <a:bodyPr/>
+              <a:p>
+                <a:pPr><a:defRPr/></a:pPr>
+                <a:r><a:t>${escapeXml(spec.barLabel)}</a:t></a:r>
+              </a:p>
+            </rich>
+          </tx>
+        </title>
+        <majorTickMark val="none"/>
+        <minorTickMark val="none"/>
+        <crossAx val="${catAxisId}"/>
+      </valAx>
+      <valAx>
+        <axId val="${lineAxisId}"/>
+        <scaling><orientation val="minMax"/></scaling>
+        <axPos val="r"/>
+        <title>
+          <tx>
+            <rich>
+              <a:bodyPr/>
+              <a:p>
+                <a:pPr><a:defRPr/></a:pPr>
+                <a:r><a:t>${escapeXml(spec.lineLabel)}</a:t></a:r>
+              </a:p>
+            </rich>
+          </tx>
+        </title>
+        <majorTickMark val="none"/>
+        <minorTickMark val="none"/>
+        <crossAx val="${catAxisId}"/>
+        <crosses val="max"/>
+      </valAx>
+    </plotArea>
+    <legend><legendPos val="r"/></legend>
+    <plotVisOnly val="1"/>
+    <dispBlanksAs val="gap"/>
+  </chart>
+</chartSpace>`;
+}
+
+function buildDrawingXml(specs: NativeCustomChartSpec[]): string {
+  const anchors = specs.map((spec, index) => {
+    const rowIndex = Math.max(0, spec.anchorRow - 1);
+    const colIndex = Math.max(0, spec.anchorCol - 1);
+    const widthEmu = Math.max(1, Math.round(spec.widthEmu));
+    const heightEmu = Math.max(1, Math.round(spec.heightEmu));
+    return `<xdr:oneCellAnchor><xdr:from><xdr:col>${colIndex}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${rowIndex}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="${widthEmu}" cy="${heightEmu}"/><xdr:graphicFrame><xdr:nvGraphicFramePr><xdr:cNvPr id="${index + 1}" name="Chart ${index + 1}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId${index + 1}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">${anchors}</xdr:wsDr>`;
+}
+
+function buildDrawingRelsXml(chartNumbers: number[]): string {
+  const rels = chartNumbers
+    .map((chartNum, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="/xl/charts/chart${chartNum}.xml"/>`)
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`;
+}
+
+function upsertRelationship(
+  relsXml: string | null,
+  type: string,
+  target: string
+): { xml: string; rId: string } {
+  if (!relsXml || !relsXml.trim()) {
+    return {
+      rId: "rId1",
+      xml: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${type}" Target="${target}"/></Relationships>`,
+    };
+  }
+  const relPattern = /<Relationship\b([^>]*)\/>/g;
+  let maxId = 0;
+  let existingId: string | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = relPattern.exec(relsXml)) !== null) {
+    const attrs = match[1] ?? "";
+    const relId = readXmlAttr(attrs, "Id");
+    const relType = readXmlAttr(attrs, "Type");
+    const relTarget = readXmlAttr(attrs, "Target");
+    if (relId?.startsWith("rId")) {
+      const num = Number(relId.slice(3));
+      if (Number.isFinite(num) && num > maxId) maxId = num;
+    }
+    if (relType === type && relTarget === target && relId) {
+      existingId = relId;
+    }
+  }
+  if (existingId) return { xml: relsXml, rId: existingId };
+  const nextId = `rId${maxId + 1}`;
+  const relation = `<Relationship Id="${nextId}" Type="${type}" Target="${target}"/>`;
+  return { xml: relsXml.replace("</Relationships>", `${relation}</Relationships>`), rId: nextId };
+}
+
+async function injectNativeCustomCharts(
+  sourceBuffer: ExcelJS.Buffer,
+  sheetName: string,
+  specs: NativeCustomChartSpec[]
+): Promise<ExcelJS.Buffer> {
+  if (specs.length === 0) return sourceBuffer;
+  const zipInput = sourceBuffer as unknown as Uint8Array;
+  const zip = await JSZip.loadAsync(zipInput);
+  const workbookXml = await zip.file("xl/workbook.xml")?.async("string");
+  const workbookRelsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("string");
+  const contentTypesXml = await zip.file("[Content_Types].xml")?.async("string");
+  if (!workbookXml || !workbookRelsXml || !contentTypesXml) return sourceBuffer;
+
+  const sheetRegex = /<sheet\b([^>]*)\/>/g;
+  let sheetRid: string | null = null;
+  let sheetMatch: RegExpExecArray | null;
+  while ((sheetMatch = sheetRegex.exec(workbookXml)) !== null) {
+    const attrs = sheetMatch[1] ?? "";
+    const name = decodeXml(readXmlAttr(attrs, "name") ?? "");
+    if (name !== sheetName) continue;
+    sheetRid = readXmlAttr(attrs, "r:id");
+    break;
+  }
+  if (!sheetRid) return sourceBuffer;
+
+  const relRegex = /<Relationship\b([^>]*)\/>/g;
+  let sheetTarget = "";
+  let relMatch: RegExpExecArray | null;
+  while ((relMatch = relRegex.exec(workbookRelsXml)) !== null) {
+    const attrs = relMatch[1] ?? "";
+    if (readXmlAttr(attrs, "Id") !== sheetRid) continue;
+    sheetTarget = readXmlAttr(attrs, "Target") ?? "";
+    break;
+  }
+  const sheetPath = normalizeZipPath("xl", sheetTarget);
+  if (!sheetPath) return sourceBuffer;
+  const worksheetXml = await zip.file(sheetPath)?.async("string");
+  if (!worksheetXml) return sourceBuffer;
+  if (/<drawing\b/.test(worksheetXml)) return sourceBuffer;
+
+  const paths = Object.keys(zip.files);
+  const drawingNumber = nextPartNumber(paths, /^xl\/drawings\/drawing(\d+)\.xml$/);
+  const firstChartNumber = nextPartNumber(paths, /^xl\/charts\/chart(\d+)\.xml$/);
+  const chartNumbers = specs.map((_, idx) => firstChartNumber + idx);
+  const drawingPath = `xl/drawings/drawing${drawingNumber}.xml`;
+  const drawingRelsPath = `xl/drawings/_rels/drawing${drawingNumber}.xml.rels`;
+  const sheetFileName = sheetPath.split("/").pop();
+  if (!sheetFileName) return sourceBuffer;
+  const sheetRelsPath = `xl/worksheets/_rels/${sheetFileName}.rels`;
+
+  for (let i = 0; i < specs.length; i += 1) {
+    const chartNumber = chartNumbers[i];
+    zip.file(`xl/charts/chart${chartNumber}.xml`, buildNativeChartXml(sheetName, specs[i], i));
+  }
+  zip.file(drawingPath, buildDrawingXml(specs));
+  zip.file(drawingRelsPath, buildDrawingRelsXml(chartNumbers));
+
+  const drawingRelType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
+  const existingSheetRels = await zip.file(sheetRelsPath)?.async("string") ?? null;
+  const drawingTarget = `../drawings/drawing${drawingNumber}.xml`;
+  const updatedSheetRels = upsertRelationship(existingSheetRels, drawingRelType, drawingTarget);
+  zip.file(sheetRelsPath, updatedSheetRels.xml);
+
+  const drawingNode = `<drawing r:id="${updatedSheetRels.rId}"/>`;
+  const patchedWorksheetXml = worksheetXml.replace("</worksheet>", `${drawingNode}</worksheet>`);
+  if (patchedWorksheetXml === worksheetXml) return sourceBuffer;
+  zip.file(sheetPath, patchedWorksheetXml);
+
+  let patchedContentTypes = contentTypesXml;
+  patchedContentTypes = ensureContentTypeOverride(
+    patchedContentTypes,
+    `/xl/drawings/drawing${drawingNumber}.xml`,
+    "application/vnd.openxmlformats-officedocument.drawing+xml"
+  );
+  for (const chartNumber of chartNumbers) {
+    patchedContentTypes = ensureContentTypeOverride(
+      patchedContentTypes,
+      `/xl/charts/chart${chartNumber}.xml`,
+      "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
+    );
+  }
+  zip.file("[Content_Types].xml", patchedContentTypes);
+
+  const patchedBuffer = await zip.generateAsync({ type: "arraybuffer" });
+  return patchedBuffer as ExcelJS.Buffer;
 }
 
 async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: WorkbookBrandingMeta): Promise<ExcelJS.Buffer> {
@@ -2499,13 +3016,20 @@ async function buildWorkbookInternal(scenarios: WorkbookScenario[], meta?: Workb
 
   createCoverSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createSummarySheet(workbook, usedSheetNames, scenarios, safeMeta);
-  createCustomChartsSheet(workbook, usedSheetNames, safeMeta.customCharts);
+  const customChartsSheet = createCustomChartsSheet(workbook, usedSheetNames, safeMeta.customCharts);
   createNotesSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createEqualizedSheet(workbook, usedSheetNames, scenarios, safeMeta);
   createMonthlyGrossMatrixSheet(workbook, usedSheetNames, scenarios, safeMeta);
   scenarios.forEach((scenario) => createAppendixSheet(workbook, usedSheetNames, scenario, safeMeta));
 
-  const buffer = await workbook.xlsx.writeBuffer();
+  let buffer = await workbook.xlsx.writeBuffer();
+  if (customChartsSheet && customChartsSheet.specs.length > 0) {
+    try {
+      buffer = await injectNativeCustomCharts(buffer as ExcelJS.Buffer, customChartsSheet.sheetName, customChartsSheet.specs);
+    } catch {
+      // Keep export successful even if chart XML injection fails unexpectedly.
+    }
+  }
   return buffer as ExcelJS.Buffer;
 }
 
