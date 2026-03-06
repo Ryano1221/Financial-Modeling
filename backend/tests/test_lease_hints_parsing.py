@@ -1046,6 +1046,40 @@ def test_extract_hints_ksd_counter_prefers_total_premises_and_multisuite_terms()
     assert rent_schedule[0]["rent_psf_annual"] == 13.5
 
 
+def test_extract_hints_m42_commencement_clause_prefers_explicit_c_date_and_building_list_suite() -> None:
+    text = (
+        "Landlord Proposal\n"
+        "March 5, 2026\n"
+        "Premises: The Premises will consist of approximately 51,743 RSF located in Buildings 100, 200,300, and Amenity Building.\n"
+        "Lease Term: 128 Month Term\n"
+        "Lease Commencement Date: The Lease Commencement Date will be the earlier of (a) Substantial Completion of tenant improvements "
+        "(b) the date of Substantial Completion if not for Tenant Delay and (c) August 1st, 2026.\n"
+        "Operating Expenses: Year 1 operating expenses are estimated to be $16.80 per RSF.\n"
+    )
+    hints = main._extract_lease_hints(text, "M42 Gaming Proposal_St Elmo_3.5.26_.docx", "test-rid")
+
+    assert hints["suite"] == "100,200,300"
+    assert str(hints["commencement_date"]) == "2026-08-01"
+    assert hints["term_months"] == 128
+    assert str(hints["expiration_date"]) == "2037-03-31"
+    assert hints["opex_psf_year_1"] == 16.8
+
+
+def test_extract_hints_parses_two_digit_term_dates_and_ignores_proposal_header_date() -> None:
+    text = (
+        "Landlord Proposal March 5, 2026\n"
+        "General Inputs\n"
+        "Lease Term (Months) 128\n"
+        "Lease Commencement 8/1/26\n"
+        "Lease Expiration 3/31/37\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+
+    assert str(hints["commencement_date"]) == "2026-08-01"
+    assert str(hints["expiration_date"]) == "2037-03-31"
+    assert hints["term_months"] == 128
+
+
 def test_extract_hints_term_and_free_rent_clause_uses_free_months_not_term_months() -> None:
     text = (
         "COMMENCEMENT: December 1, 2026.\n"

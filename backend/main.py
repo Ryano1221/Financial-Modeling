@@ -1889,30 +1889,37 @@ def _extract_suite_from_text(text: str) -> str:
     multi_suite_candidates: list[tuple[int, int, str]] = []
     for idx, line in enumerate(lines[:320]):
         low = line.lower()
-        if "suite" not in low:
-            continue
         if any(tok in low for tok in ("attn:", "attention:", "address for notices", "dear ", "re:")) and "premises" not in low:
             continue
-        after_suite = line[line.lower().find("suite"):]
-        numbers = [
-            m.group(1)
-            for m in re.finditer(r"(?i)\bsuite\s*[:#-]?\s*(\d{2,4})(?!\d)", line)
-        ]
-        if len(numbers) < 2:
-            suite_list_match = re.search(
-                r"(?i)\bsuite\s*[:#-]?\s*((?:\d{2,4}\s*(?:,|and|&)\s*)+\d{2,4})",
-                after_suite,
+        numbers: list[str] = []
+        if "suite" in low:
+            after_suite = line[line.lower().find("suite"):]
+            numbers = [
+                m.group(1)
+                for m in re.finditer(r"(?i)\bsuite\s*[:#-]?\s*(\d{2,4})(?!\d)", line)
+            ]
+            if len(numbers) < 2:
+                suite_list_match = re.search(
+                    r"(?i)\bsuite\s*[:#-]?\s*((?:\d{2,4}\s*(?:,|and|&)\s*)+\d{2,4})",
+                    after_suite,
+                )
+                if suite_list_match:
+                    numbers = re.findall(r"\b(\d{2,4})\b", suite_list_match.group(1))
+            if len(numbers) < 2:
+                compact_match = re.search(r"(?i)\bsuite\s*[:#-]?\s*(\d{6,12})\b", after_suite)
+                if compact_match:
+                    compact = compact_match.group(1)
+                    if len(compact) % 3 == 0:
+                        chunks = [compact[i: i + 3] for i in range(0, len(compact), 3)]
+                        if len(chunks) >= 2:
+                            numbers = chunks
+        if len(numbers) < 2 and "premises" in low and re.search(r"(?i)\bbuildings?\b", line):
+            bldg_list_match = re.search(
+                r"(?i)\bbuildings?\b\s*((?:\d{2,4}\s*(?:,|and|&)\s*)+\d{2,4})",
+                line,
             )
-            if suite_list_match:
-                numbers = re.findall(r"\b(\d{2,4})\b", suite_list_match.group(1))
-        if len(numbers) < 2:
-            compact_match = re.search(r"(?i)\bsuite\s*[:#-]?\s*(\d{6,12})\b", after_suite)
-            if compact_match:
-                compact = compact_match.group(1)
-                if len(compact) % 3 == 0:
-                    chunks = [compact[i: i + 3] for i in range(0, len(compact), 3)]
-                    if len(chunks) >= 2:
-                        numbers = chunks
+            if bldg_list_match:
+                numbers = re.findall(r"\b(\d{2,4})\b", bldg_list_match.group(1))
         normalized_nums: list[str] = []
         seen_nums: set[str] = set()
         for token in numbers:
@@ -1930,6 +1937,8 @@ def _extract_suite_from_text(text: str) -> str:
         if "total premises" in low:
             score += 3
         if any(tok in low for tok in ("located", "consisting of", "approximately")):
+            score += 2
+        if "buildings" in low:
             score += 2
         multi_suite_candidates.append((score, idx, candidate))
     if multi_suite_candidates:
@@ -2760,26 +2769,69 @@ def _extract_dated_rent_table_schedule_and_rsf(
     return deduped, inferred_rsf_value
 
 
+def _iter_date_tokens(text: str) -> list[tuple[date, int]]:
+    if not text:
+        return []
+    patterns = [
+        r"(?i)\b((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,?\s*\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b",
+        r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2})\b",
+        r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{4})\b",
+        r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2})\b",
+    ]
+    out: list[tuple[date, int]] = []
+    for pat in patterns:
+        for m in re.finditer(pat, text):
+            d = _parse_lease_date(m.group(1))
+            if d:
+                out.append((d, m.start()))
+    out.sort(key=lambda row: row[1])
+    return out
+
+
 def _extract_first_date_token(text: str) -> Optional[date]:
     if not text:
         return None
     low_text = text.lower()
     if "e.g" in low_text or "example" in low_text:
         return None
-    patterns = [
-        r"(?i)\b((?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,?\s*\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b",
-        r"\b(\d{4}[-/]\d{1,2}[-/]\d{1,2})\b",
-        r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{4})\b",
-    ]
-    for pat in patterns:
-        for m in re.finditer(pat, text):
-            prefix = text[max(0, m.start() - 24):m.start()].lower()
-            if "e.g" in prefix or "example" in prefix:
-                continue
-            d = _parse_lease_date(m.group(1))
-            if d:
-                return d
+    for d, pos in _iter_date_tokens(text):
+        prefix = text[max(0, pos - 24):pos].lower()
+        if "e.g" in prefix or "example" in prefix:
+            continue
+        return d
     return None
+
+
+def _extract_last_date_token(text: str) -> Optional[date]:
+    if not text:
+        return None
+    low_text = text.lower()
+    if "e.g" in low_text or "example" in low_text:
+        return None
+    candidates = _iter_date_tokens(text)
+    if not candidates:
+        return None
+    for d, pos in reversed(candidates):
+        prefix = text[max(0, pos - 24):pos].lower()
+        if "e.g" in prefix or "example" in prefix:
+            continue
+        return d
+    return None
+
+
+def _extract_best_commencement_date_from_clause(text: str) -> Optional[date]:
+    if not text:
+        return None
+    low = text.lower()
+    if "e.g" in low or "example" in low:
+        return None
+    if _is_non_term_commencement_context(text):
+        return None
+    if re.search(r"(?i)\b(?:earlier|later)\s+of\b", text):
+        d = _extract_last_date_token(text)
+        if d:
+            return d
+    return _extract_first_date_token(text)
 
 
 def _extract_term_months_from_text(text: str) -> Optional[int]:
@@ -2963,16 +3015,53 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     return None
 
 
+def _is_non_term_commencement_context(context: str) -> bool:
+    low = (context or "").lower()
+    if not low:
+        return False
+    noisy_tokens = (
+        "landlord proposal",
+        "tenant proposal",
+        "proposal date",
+        "counter proposal",
+        "counterproposal",
+        "letter date",
+        "loi date",
+        "issued",
+        "revision date",
+        "prepared",
+    )
+    if any(token in low for token in noisy_tokens):
+        return True
+    # Bare title/header dates should not become lease commencement.
+    if (
+        "commencement" not in low
+        and "lease term" not in low
+        and "term" not in low
+        and re.search(r"(?i)\b(?:proposal|counter|landlord|tenant)\b", low)
+    ):
+        return True
+    return False
+
+
 def _is_non_term_expiration_context(context: str) -> bool:
     low = (context or "").lower()
     if not low:
         return False
+    explicit_lease_expiration = bool(
+        re.search(
+            r"(?i)\b(?:lease\s+)?(?:expiration|termination)(?:\s+date)?\b",
+            low,
+        )
+    )
     # "proposal expires", "allowance expires", and similar clauses are not lease expiration dates.
-    noisy_tokens = (
+    proposal_tokens = (
         "proposal",
         "letter",
         "valid for",
         "remain valid",
+    )
+    structural_non_term_tokens = (
         "allowance",
         "ti allowance",
         "tenant improvement",
@@ -2986,7 +3075,11 @@ def _is_non_term_expiration_context(context: str) -> bool:
         "rofr",
         "right of first refusal",
     )
-    return any(token in low for token in noisy_tokens)
+    if any(token in low for token in structural_non_term_tokens):
+        return True
+    if any(token in low for token in proposal_tokens):
+        return not explicit_lease_expiration
+    return False
 
 
 def _is_historical_recital_context(context: str) -> bool:
@@ -4506,7 +4599,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     # ---- Term: commencement / expiration / ending / through ----
     term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
     month_token = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
-    date_token_value = rf"(?:{month_token}\s*,?\s*\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}})"
+    date_token_value = rf"(?:{month_token}\s*,?\s*\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{2}})"
     date_token_capture = rf"({date_token_value})"
     paired_term_pats = [
         rf"(?i)\b(?:the\s+period\s+)?commenc(?:ing|ement|e)\s+on\s+({date_token_value})\s*(?:,|\s)+and\s+ending\s+on\s+({date_token_value})",
@@ -4517,6 +4610,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         rf"(?i)\b(?:lease\s+)?commencement\b[^.\n]{{0,120}}?\bestimated\s+to\s+be\s+{date_token_capture}",
         rf"(?i)\bfrom\s+{date_token_capture}\s+through\s+the\s+commencement\s+date\b",
         rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\bcommencement\s+date\b",
+        rf"(?i)\b(?:lease\s+)?commencement(?:\s+date)?\b[^.\n]{{0,260}}?\b(?:and|or)\s*\([a-z]\)\s*{date_token_capture}",
     ]
     exp_direct_pats = [
         rf"(?i)\bexpir(?:e|ing|ation)\b(?:\s+date)?(?:\s+on)?(?:\s*[:\-]\s*|\s+){date_token_capture}",
@@ -4527,6 +4621,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     comm_context_pats = [
         r"(?i)\bestimated\s+commencement\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
         r"(?i)\bcommencement\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
+        r"(?i)\b(?:lease\s+)?commencement(?:\s+date)?\b[^A-Za-z0-9]{0,20}([^\n]{0,320})",
     ]
     exp_context_pats = [
         r"(?i)\bestimated\s+(?:termination|expiration)\s+date\b[^A-Za-z0-9]{0,20}([^\n]{0,140})",
@@ -4555,6 +4650,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
                 if _is_historical_recital_context(local):
                     continue
+                if _is_non_term_commencement_context(local):
+                    continue
                 d = _parse_lease_date(m.group(1))
                 if d:
                     term_candidates["commencement"] = d
@@ -4571,7 +4668,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 continue
             if _is_historical_recital_context(candidate_text):
                 continue
-            d = _extract_first_date_token(candidate_text)
+            if _is_non_term_commencement_context(candidate_text):
+                continue
+            d = _extract_best_commencement_date_from_clause(candidate_text)
             if d:
                 term_candidates["commencement"] = d
                 break
@@ -4632,7 +4731,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                         continue
                     if _is_historical_recital_context(f"{ln} {nxt}"):
                         continue
-                    d = _extract_first_date_token(nxt)
+                    d = _extract_best_commencement_date_from_clause(nxt)
                     if d:
                         term_candidates["commencement"] = d
                         break
@@ -4665,6 +4764,21 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                         term_candidates["expiration"] = d
                         break
             if term_candidates["commencement"] is not None and term_candidates["expiration"] is not None:
+                break
+
+    # Support commencement clauses like "... earlier of ... and (c) August 1, 2026".
+    if term_candidates["commencement"] is None:
+        for m in re.finditer(r"(?i)\b(?:lease\s+)?commencement(?:\s+date)?\b[^\n]{0,360}", text):
+            clause = m.group(0) or ""
+            if not clause:
+                continue
+            if _is_historical_recital_context(clause):
+                continue
+            if _is_non_term_commencement_context(clause):
+                continue
+            d = _extract_best_commencement_date_from_clause(clause)
+            if d:
+                term_candidates["commencement"] = d
                 break
 
     if term_candidates["commencement"]:
