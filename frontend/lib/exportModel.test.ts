@@ -520,7 +520,7 @@ describe("exportModel institutional workbook", () => {
     expect(firstChartXml || "").not.toContain("<majorGridlines/>");
     expect(firstChartXml || "").toContain("<dLblPos val=\"outEnd\"/>");
     expect(firstChartXml || "").toContain("<dLblPos val=\"r\"/>");
-    expect(firstChartXml || "").toContain("<legendPos val=\"b\"/>");
+    expect(firstChartXml || "").toContain("<legendPos val=\"t\"/>");
     const showValCount = (firstChartXml || "").split("<showVal val=\"1\"/>").length - 1;
     expect(showValCount).toBeGreaterThanOrEqual(2);
   });

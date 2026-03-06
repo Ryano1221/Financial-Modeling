@@ -2893,7 +2893,7 @@ function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, cha
         <crosses val="max"/>
       </valAx>
     </plotArea>
-    <legend><legendPos val="b"/><layout/></legend>
+    <legend><legendPos val="t"/><overlay val="0"/><layout/></legend>
     <plotVisOnly val="1"/>
     <dispBlanksAs val="gap"/>
   </chart>
