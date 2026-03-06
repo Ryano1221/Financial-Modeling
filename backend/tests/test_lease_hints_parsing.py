@@ -1154,6 +1154,20 @@ def test_extract_hints_parses_non_contiguous_free_rent_month_list() -> None:
     assert start_months == [0, 12, 24, 36, 48, 60, 72]
 
 
+def test_extract_hints_ignores_abatement_distribution_window_month_count() -> None:
+    text = (
+        "LEASE TERM: Landlord proposes sixty-five (65) months from the Lease Commencement Date.\n"
+        "BASE RENT: $47.50 per RSF; full service. The full-service Base Rent shall escalate at 3.00% annually.\n"
+        "Landlord shall abate the initial five (5) months from Base Rent.\n"
+        "Additionally, Tenant shall have the right to spread the rent abatement out in equal monthly installments "
+        "throughout the first twenty-four (24) months of the Term.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints["term_months"] == 65
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 4
+
+
 def test_extract_hints_parses_reserved_unreserved_parking_counts_and_rates() -> None:
     text = (
         "PARKING INPUTS\n"

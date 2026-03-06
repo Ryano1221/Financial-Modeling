@@ -57,6 +57,33 @@ def test_supplemental_quality_checks_flags_opex_equal_to_ti_allowance() -> None:
     assert any("OpEx may be contaminated" in str(w) for w in quality["warnings"])
 
 
+def test_supplemental_quality_checks_blocks_ambiguous_rent_rate_candidates() -> None:
+    canonical = main._dict_to_canonical(
+        {
+            "building_name": "Sample Tower",
+            "suite": "300",
+            "rsf": 6052,
+            "commencement_date": "2026-04-01",
+            "expiration_date": "2031-08-31",
+            "term_months": 65,
+            "rent_schedule": [
+                {"start_month": 0, "end_month": 64, "rent_psf_annual": 47.5},
+            ],
+        }
+    )
+    quality = main._supplemental_quality_checks(
+        canonical=canonical,
+        text="Base Rent and abatement language.",
+        extracted_hints={
+            "_rate_psf_yr_conflict": "low_high_ambiguity",
+            "_rate_psf_yr_candidates": [4.5, 47.5],
+        },
+    )
+    tasks = [t for t in quality["review_tasks"] if isinstance(t, dict)]
+    assert any(t.get("issue_code") == "RENT_RATE_AMBIGUOUS" for t in tasks)
+    assert any(str(t.get("severity") or "").lower() == "blocker" for t in tasks)
+
+
 def test_derive_field_confidence_penalizes_noisy_building_name() -> None:
     canonical = main._dict_to_canonical(
         {

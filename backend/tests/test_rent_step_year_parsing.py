@@ -1,6 +1,6 @@
 """Regression tests for year-based rent schedule extraction/normalization."""
 
-from scenario_extract import _apply_safe_defaults, _regex_prefill
+from scenario_extract import _apply_safe_defaults, _extract_term_months_from_text, _regex_prefill
 
 
 def _base_raw_with_steps(rent_steps: list[dict]) -> dict:
@@ -229,3 +229,38 @@ def test_regex_prefill_parses_proposal_year_rows_with_monthly_and_parenthetical_
         {"start": 72, "end": 95, "rate_psf_yr": 29.0},
         {"start": 96, "end": 119, "rate_psf_yr": 30.0},
     ]
+
+
+def test_regex_prefill_prefers_non_truncated_base_rent_and_ignores_abatement_distribution_window() -> None:
+    text = """
+    Lease Term | Five (5) years | Landlord Response: Landlord proposes sixty-() months from the Lease Commencement Date.
+    Base Rent | Please specify the proposed Base Rent per rentable square foot and any annual escalations that are to be incorporated through the life of the Lease.
+    Tenant shall pay Rent based on the following: Month 1-24: 4,000 RSF Months 25-LEX: 6,052 RSF | Landlord Response: $4.50 per RSF; full service.
+    The full-service Base Rent shall escalate at 3.00% annually on the anniversary of the Lease Commencement Date and each year thereafter.
+    Landlord shall abate the initial () months from Base Rent.
+    Additionally, Tenant shall have the right to spread the rent abatement out in equal monthly installments throughout the first twenty-four (24) months of the Term.
+
+    Base Rent
+    Please specify the proposed Base Rent per rentable square foot and any annual escalations that are to be incorporated through the life of the Lease.
+    Landlord proposes sixty-five (65) months from the Lease Commencement Date.
+    Month 1-24: 4,000 RSF
+    Months 25-LEX: 6,052 RSF
+    Landlord Response:
+    $47.50 per RSF; full service.
+    The full-service Base Rent shall escalate at 3.00% annually on the anniversary of the Lease Commencement Date and each year thereafter.
+    Landlord shall abate the initial five (5) months from Base Rent.
+    Additionally, Tenant shall have the right to spread the rent abatement out in equal monthly installments throughout the first twenty-four (24) months of the Term.
+    """
+    prefill = _regex_prefill(text)
+    assert prefill.get("rate_psf_yr") == 47.5
+    assert prefill.get("free_rent_months") == 5
+    assert prefill.get("term_months") == 65
+    assert prefill.get("_rate_psf_yr_conflict") == "low_high_ambiguity"
+
+
+def test_extract_term_months_prefers_months_from_commencement_over_five_year_fallback() -> None:
+    text = """
+    Lease Term | Five (5) years.
+    Landlord proposes sixty-five (65) months from the Lease Commencement Date.
+    """
+    assert _extract_term_months_from_text(text) == 65

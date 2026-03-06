@@ -2859,9 +2859,39 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
             line_end = len(text)
         return text[line_start:line_end].lower()
 
+    def _looks_like_abatement_distribution_window(snippet: str) -> bool:
+        low = str(snippet or "").lower()
+        if not any(tok in low for tok in ("abatement", "abated", "abate", "free rent")):
+            return False
+        if not any(
+            tok in low
+            for tok in (
+                "spread",
+                "installment",
+                "installments",
+                "throughout",
+                "amortiz",
+                "pro rata",
+                "prorata",
+                "over the first",
+                "over first",
+            )
+        ):
+            return False
+        return bool(
+            re.search(
+                r"(?i)\bfirst\s+(?:[a-z\-]+\s*)?\(?\d{1,3}\)?\s+months?\b|\bmonths?\s+1\s*(?:-|to|through|thru|–|—)\s*\d{1,3}\b",
+                low,
+            )
+        )
+
     def _is_disqualified(match: re.Match[str]) -> bool:
         context = _match_context(match)
-        return any(token in context for token in disqualifying_tokens)
+        if any(token in context for token in disqualifying_tokens):
+            return True
+        if _looks_like_abatement_distribution_window(context):
+            return True
+        return False
 
     month_candidates: list[tuple[int, int, int]] = []
 
@@ -2878,12 +2908,16 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
             continue
         if any(tok in line_low for tok in ("option to extend", "option term", "renewal option", "holdover")):
             continue
+        if _looks_like_abatement_distribution_window(line_low):
+            continue
         for lookahead in range(0, 4):
             if idx + lookahead >= len(lines):
                 break
             probe = lines[idx + lookahead]
             probe_low = probe.lower()
             if any(tok in probe_low for tok in disqualifying_tokens):
+                continue
+            if _looks_like_abatement_distribution_window(probe_low):
                 continue
             month_match = re.search(
                 r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
@@ -2933,6 +2967,18 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
             if months >= 24:
                 score += 2
             month_candidates.append((score, m.start(), int(months)))
+
+    for m in re.finditer(
+        r"(?i)\b(?:landlord\s+proposes|proposes|proposal\s+is)\b[^\n]{0,120}?\b(?:[a-z\-]+\s*)?\(?(\d{1,3})\)?\s*"
+        r"(?:calendar\s+)?months?\s+from\s+(?:the\s+)?lease\s+commencement(?:\s+date)?\b",
+        text,
+    ):
+        if _is_disqualified(m):
+            continue
+        months = _coerce_int_token(m.group(1), 0)
+        if not (1 <= months <= 600):
+            continue
+        month_candidates.append((13, m.start(), int(months)))
 
     # Handle "12 years + 6 months" expressions in term clauses.
     composite_term_patterns = [
@@ -3274,6 +3320,32 @@ def _extract_free_rent_months_from_option_block(block: str) -> int | None:
     if re.search(r"\bno\s+(?:free\s+rent|base\s+rental?\s+abatement|rent\s+abatement)\b", low):
         return 0
 
+    def _looks_like_distribution_window(snippet: str) -> bool:
+        local_low = str(snippet or "").lower()
+        if not any(tok in local_low for tok in ("abatement", "abated", "abate", "free rent")):
+            return False
+        if not any(
+            tok in local_low
+            for tok in (
+                "spread",
+                "installment",
+                "installments",
+                "throughout",
+                "amortiz",
+                "pro rata",
+                "prorata",
+                "over the first",
+                "over first",
+            )
+        ):
+            return False
+        return bool(
+            re.search(
+                r"(?i)\bfirst\s+(?:[a-z\-]+\s*)?\(?\d{1,3}\)?\s+months?\b|\bmonths?\s+1\s*(?:-|to|through|thru|–|—)\s*\d{1,3}\b",
+                local_low,
+            )
+        )
+
     month_candidates: list[int] = []
     patterns = [
         r"(?i)\b(?:with\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+(?:of\s+)?(?:base\s+)?(?:rent(?:al)?\s+)?(?:free\s+rent|abatement)\b",
@@ -3281,6 +3353,9 @@ def _extract_free_rent_months_from_option_block(block: str) -> int | None:
     ]
     for pattern in patterns:
         for m in re.finditer(pattern, block):
+            local = block[max(0, m.start() - 120): min(len(block), m.end() + 20)]
+            if _looks_like_distribution_window(local):
+                continue
             digit_val = _coerce_int_token(m.group(2), 0) or 0
             word_val = _word_token_to_int(m.group(1))
             value = max(digit_val, word_val or 0)
@@ -5037,7 +5112,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         term_cap = _coerce_int_token(hints.get("term_months"), 0) or 0
         for line in [ln.strip() for ln in text.splitlines() if ln.strip()]:
             low_line = line.lower()
-            if "free rent" not in low_line and "abatement" not in low_line and "abated" not in low_line:
+            if "free rent" not in low_line and "abatement" not in low_line and "abated" not in low_line and "abate" not in low_line:
                 continue
             list_match = re.search(
                 r"(?i)\bfollowing\s+months?\b[^:\n]{0,60}[:\-]\s*([0-9,\s]+)\b",
@@ -5081,11 +5156,39 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                     hints["free_rent_start_month"] = min(starts)
                     hints["free_rent_end_month"] = max(ends)
 
+        def _looks_like_abatement_distribution_window(line_text: str) -> bool:
+            low = str(line_text or "").lower()
+            if not low:
+                return False
+            if not any(tok in low for tok in ("abatement", "abated", "abate", "free rent")):
+                return False
+            if not any(
+                tok in low
+                for tok in (
+                    "spread",
+                    "installment",
+                    "installments",
+                    "throughout",
+                    "amortiz",
+                    "pro rata",
+                    "prorata",
+                    "over the first",
+                    "over first",
+                )
+            ):
+                return False
+            return bool(
+                re.search(
+                    r"(?i)\bfirst\s+(?:[a-z\-]+\s*)?\(?\d{1,3}\)?\s+months?\b|\bmonths?\s+1\s*(?:-|to|through|thru|–|—)\s*\d{1,3}\b",
+                    low,
+                )
+            )
+
         free_count_candidates: list[tuple[int, int]] = []
         # Parse line-by-line to avoid grabbing term month counts from "TERM AND FREE RENT" clauses.
         for line in [ln.strip() for ln in text.splitlines() if ln.strip()]:
             low_line = line.lower()
-            if "free rent" not in low_line and "abatement" not in low_line and "abated" not in low_line:
+            if "free rent" not in low_line and "abatement" not in low_line and "abated" not in low_line and "abate" not in low_line:
                 continue
             # Strong, label-aware captures.
             for pattern, score in (
@@ -5096,8 +5199,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:base\s+)?free\s+rent\b", 15),
                 (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:rent\s+abatement|abatement|abated)\b", 13),
                 (r"(?i)\b(?:rent\s+abatement|abatement|abated)\b[^\n]{0,70}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b", 12),
+                (r"(?i)\b(?:abate|abated)\b[^\n]{0,70}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b", 12),
+                (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:abate|abated)\b", 12),
             ):
                 for match in re.finditer(pattern, line):
+                    local = line[max(0, match.start() - 120): min(len(line), match.end() + 20)]
+                    if _looks_like_abatement_distribution_window(local):
+                        continue
                     count = _coerce_int_token(match.group(1), 0) or _coerce_int_token(match.group(2), 0) or 0
                     if count <= 0:
                         continue
@@ -5116,12 +5224,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             free_count = int(free_count_candidates[0][1])
         if free_count <= 0 and not hints.get("free_rent_periods"):
             free_word_match = re.search(
-                r"(?i)\b(?:the\s+)?first\s+([a-z\-]+)\s+months?\b[^\n]{0,120}\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,80}\b(?:abated|abatement|free)\b",
+                r"(?i)\b(?:the\s+)?first\s+([a-z\-]+)\s+months?\b[^\n]{0,120}\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,80}\b(?:abated|abate|abatement|free)\b",
                 text,
             )
             if not free_word_match:
                 free_word_match = re.search(
-                    r"(?i)\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,120}\b(?:abated|abatement|free)\b[^\n]{0,80}\bfirst\s+([a-z\-]+)\s+months?\b",
+                    r"(?i)\b(?:base\s+rent|annual\s+base\s+rent|rent)\b[^\n]{0,120}\b(?:abated|abate|abatement|free)\b[^\n]{0,80}\bfirst\s+([a-z\-]+)\s+months?\b",
                     text,
                 )
             if free_word_match:
@@ -5251,6 +5359,20 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         prefill_hints = extract_prefill_hints(text)
     except Exception:
         prefill_hints = {}
+    rate_conflict_flag = str(prefill_hints.get("_rate_psf_yr_conflict") or "").strip()
+    rate_conflict_candidates_raw = (
+        prefill_hints.get("_rate_psf_yr_candidates")
+        if isinstance(prefill_hints.get("_rate_psf_yr_candidates"), list)
+        else []
+    )
+    rate_conflict_candidates: list[float] = []
+    for val in rate_conflict_candidates_raw:
+        parsed_val = _coerce_float_token(val, 0.0) or 0.0
+        if parsed_val > 0:
+            rate_conflict_candidates.append(round(float(parsed_val), 4))
+    if rate_conflict_flag and rate_conflict_candidates:
+        hints["_rate_psf_yr_conflict"] = rate_conflict_flag
+        hints["_rate_psf_yr_candidates"] = sorted(set(rate_conflict_candidates))
     prefill_ti_allowance = _coerce_float_token(prefill_hints.get("ti_allowance_psf"), 0.0) or 0.0
     if prefill_ti_allowance > 0:
         hints["ti_allowance_psf"] = float(round(prefill_ti_allowance, 4))
@@ -6700,6 +6822,34 @@ def _supplemental_quality_checks(
         )
         penalty += 0.18 if term > 0 else 0.08
         warnings.append("Rent schedule coverage needs manual review.")
+
+    hinted_rate_conflict = str(extracted_hints.get("_rate_psf_yr_conflict") or "").strip().lower()
+    hinted_rate_candidates_raw = (
+        extracted_hints.get("_rate_psf_yr_candidates")
+        if isinstance(extracted_hints.get("_rate_psf_yr_candidates"), list)
+        else []
+    )
+    hinted_rate_candidates: list[float] = []
+    for value in hinted_rate_candidates_raw:
+        parsed = _coerce_float_token(value, 0.0) or 0.0
+        if parsed > 0:
+            hinted_rate_candidates.append(float(parsed))
+    if hinted_rate_conflict and hinted_rate_candidates:
+        low_rate = min(hinted_rate_candidates)
+        high_rate = max(hinted_rate_candidates)
+        if high_rate >= max(12.0, low_rate * 2.0):
+            _append_review_task(
+                tasks,
+                field_path="rent_schedule",
+                severity="blocker",
+                issue_code="RENT_RATE_AMBIGUOUS",
+                message=(
+                    "Conflicting base-rent candidates were detected (possible decimal/redline ambiguity). "
+                    f"Review extracted rent values ({low_rate:.2f} vs {high_rate:.2f} $/SF/YR)."
+                ),
+            )
+            penalty += 0.2
+            warnings.append("Conflicting rent-rate candidates detected; manual rent verification is required.")
 
     if opex > 0 and ti_allowance > 0 and abs(opex - ti_allowance) < 0.01:
         _append_review_task(

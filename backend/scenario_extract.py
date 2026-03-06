@@ -997,6 +997,36 @@ def _expiration_from_term_months(commencement: date, term_months: int) -> date:
     return anniv - timedelta(days=1)
 
 
+def _looks_like_abatement_distribution_window(text: str) -> bool:
+    low = str(text or "").lower()
+    if not low:
+        return False
+    if not any(tok in low for tok in ("abatement", "abated", "abate", "free rent")):
+        return False
+    has_distribution_language = any(
+        tok in low
+        for tok in (
+            "spread",
+            "installment",
+            "installments",
+            "throughout",
+            "amortiz",
+            "pro rata",
+            "prorata",
+            "over the first",
+            "over first",
+        )
+    )
+    if not has_distribution_language:
+        return False
+    return bool(
+        re.search(
+            r"(?i)\bfirst\s+(?:[a-z\-]+\s*)?\(?\d{1,3}\)?\s+months?\b|\bmonths?\s+1\s*(?:-|to|through|thru|–|—)\s*\d{1,3}\b",
+            low,
+        )
+    )
+
+
 def _extract_term_months_from_text(text: str) -> int | None:
     if not text:
         return None
@@ -1023,7 +1053,11 @@ def _extract_term_months_from_text(text: str) -> int | None:
 
     def _is_disqualified(match: re.Match[str]) -> bool:
         context = _match_context(match)
-        return any(token in context for token in disqualifying_tokens)
+        if any(token in context for token in disqualifying_tokens):
+            return True
+        if _looks_like_abatement_distribution_window(context):
+            return True
+        return False
 
     candidates: list[tuple[int, int, int]] = []
 
@@ -1076,6 +1110,11 @@ def _extract_term_months_from_text(text: str) -> int | None:
         (r"(?i)\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+(?:lease\s+|sublease\s+|initial\s+)?term\b", 11),
         (r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,160}?\((\d{1,3})\)\s*months?\b", 7),
         (r"(?i)\b(?:lease\s+)?term\b[^.\n]{0,160}?\b(\d{1,3})\s*months?\b", 6),
+        (
+            r"(?i)\b(?:landlord\s+proposes|proposes|proposal\s+is)\b[^\n]{0,120}?\b(?:[a-z\-]+\s*)?\(?(\d{1,3})\)?\s*"
+            r"(?:calendar\s+)?months?\s+from\s+(?:the\s+)?lease\s+commencement(?:\s+date)?\b",
+            13,
+        ),
     ]
     for pattern, base_score in month_patterns:
         for match in re.finditer(pattern, text):
@@ -1858,7 +1897,7 @@ def _regex_prefill(text: str) -> dict:
     free_rent_candidates: list[tuple[int, int, int]] = []
     for line_idx, raw_line in enumerate([ln.strip() for ln in text.splitlines() if ln.strip()]):
         line = raw_line.lower()
-        if not any(tok in line for tok in ("free rent", "abatement", "abated")):
+        if not any(tok in line for tok in ("free rent", "abatement", "abated", "abate")):
             continue
         if any(tok in line for tok in ("renewal", "option", "notice", "no earlier than", "no later than", "prior to")):
             continue
@@ -1866,6 +1905,9 @@ def _regex_prefill(text: str) -> dict:
             r"(?i)\b(?:with\s+)?(?:the\s+first\s+)?(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b",
             raw_line,
         ):
+            local = raw_line[max(0, m.start() - 120): min(len(raw_line), m.end() + 20)].lower()
+            if _looks_like_abatement_distribution_window(local):
+                continue
             count = _coerce_int_token(m.group(1), 0) or _coerce_int_token(m.group(2), 0) or 0
             if count <= 0:
                 continue
@@ -1879,6 +1921,9 @@ def _regex_prefill(text: str) -> dict:
             free_rent_candidates.append((score, line_idx, int(count)))
         m = _RE_FREE_RENT.search(raw_line)
         if m:
+            local = raw_line[max(0, m.start() - 120): min(len(raw_line), m.end() + 20)].lower()
+            if _looks_like_abatement_distribution_window(local):
+                continue
             count = _coerce_int_token(m.group(1), 0) or 0
             if count > 0:
                 score = 2
@@ -1912,7 +1957,7 @@ def _regex_prefill(text: str) -> dict:
         if opex_candidates:
             prefill["base_opex_psf_yr"] = float(sorted(opex_candidates)[0])
     # Base rent ($/sf/yr) — prefer explicit rent-labeled amounts and avoid OpEx/cam contamination.
-    base_rate_candidates: list[tuple[int, float]] = []
+    base_rate_candidates: list[tuple[int, float, int]] = []
     # Split-line/base-rent label fallback with strong priority.
     lines_for_rent = [ln.strip() for ln in text.splitlines() if ln.strip()]
     rent_label_pat = re.compile(
@@ -1921,29 +1966,43 @@ def _regex_prefill(text: str) -> dict:
     for idx, ln in enumerate(lines_for_rent[:1400]):
         if not rent_label_pat.search(ln):
             continue
-        window = " ".join(lines_for_rent[idx: idx + 2])
-        amount_match = re.search(
+        # Include a wider look-ahead window to capture split-line DOCX responses where
+        # the rent value appears a few lines below the "Base Rent" label.
+        window = " ".join(lines_for_rent[idx: idx + 8])
+        for amount_match in re.finditer(
             r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:nnn|gross|full\s*service|modified\s*gross)?\b",
             window,
-        )
-        if not amount_match:
-            continue
-        value = _coerce_float_token(amount_match.group(1), None)
-        if value is None or not (3 <= value <= 500):
-            continue
-        local = window[max(0, amount_match.start() - 70): min(len(window), amount_match.end() + 80)].lower()
-        if any(tok in local for tok in ("operating expense", "opex", "cam", "base year")):
-            continue
-        score = 12
-        if "renewal base rent" in ln.lower():
-            score += 4
-        if "initial base rent" in ln.lower():
-            score += 3
-        if re.search(r"(?i)\b(?:nnn|gross|full\s*service|modified\s*gross)\b", window):
-            score += 2
-        if "annual increases" in window.lower() or "annual escalation" in window.lower():
-            score += 1
-        base_rate_candidates.append((score, float(value)))
+        ):
+            value = _coerce_float_token(amount_match.group(1), None)
+            if value is None or not (3 <= value <= 500):
+                continue
+            local = window[max(0, amount_match.start() - 80): min(len(window), amount_match.end() + 120)].lower()
+            tight_local = window[max(0, amount_match.start() - 45): min(len(window), amount_match.end() + 45)].lower()
+            if any(tok in tight_local for tok in ("operating expense", "opex", "cam", "base year", "per hour", "hourly", "hvac")):
+                continue
+            if any(tok in tight_local for tok in ("allowance", "amortiz", "interest", "tenant improvement", "ti allowance")):
+                continue
+            score = 12
+            if "renewal base rent" in ln.lower():
+                score += 4
+            if "initial base rent" in ln.lower():
+                score += 3
+            if re.search(r"(?i)\b(?:nnn|gross|full\s*service|modified\s*gross)\b", local):
+                score += 2
+            if "annual increases" in local or "annual escalation" in local:
+                score += 1
+            if amount_match.start() > 220:
+                score -= 6
+            elif amount_match.start() > 140:
+                score -= 3
+            if value >= 15:
+                score += 1
+            elif value < 8:
+                score -= 1
+            # Inline month-table scaffolding often carries redline artifacts like "$4.50" vs "$47.50".
+            if value < 10 and re.search(r"(?i)\bmonths?\s*1\s*(?:-|to|through|thru|–|—)\s*\d{1,3}\b", local):
+                score -= 3
+            base_rate_candidates.append((score, float(value), idx))
 
     for pat in (_RE_BASE_RENT_FLEX, _RE_BASE_RENT):
         for m in pat.finditer(text):
@@ -1984,10 +2043,27 @@ def _regex_prefill(text: str) -> dict:
                 score += 1
             elif v < 8:
                 score -= 1
-            base_rate_candidates.append((score, v))
+            base_rate_candidates.append((score, v, m.start()))
     if base_rate_candidates:
-        base_rate_candidates.sort(key=lambda x: (-x[0], -x[1]))
-        prefill["rate_psf_yr"] = float(base_rate_candidates[0][1])
+        base_rate_candidates.sort(key=lambda row: (-row[0], -row[1], row[2]))
+        chosen = base_rate_candidates[0]
+        best_score = int(chosen[0])
+        low_candidates = [row for row in base_rate_candidates if row[1] < 10 and row[0] >= (best_score - 6)]
+        high_candidates = [row for row in base_rate_candidates if row[1] >= 12 and row[0] >= (best_score - 6)]
+        if low_candidates and high_candidates:
+            best_high = sorted(high_candidates, key=lambda row: (-row[0], -row[1], row[2]))[0]
+            if chosen[1] < 10 and best_high[1] >= max(12.0, chosen[1] * 2.0) and best_high[0] >= (chosen[0] - 4):
+                chosen = best_high
+            conflict_values = sorted(
+                {
+                    round(float(row[1]), 4)
+                    for row in (low_candidates + high_candidates)
+                }
+            )
+            if len(conflict_values) >= 2:
+                prefill["_rate_psf_yr_conflict"] = "low_high_ambiguity"
+                prefill["_rate_psf_yr_candidates"] = conflict_values[:8]
+        prefill["rate_psf_yr"] = float(chosen[1])
     if "rate_psf_yr" not in prefill:
         fallback_candidates: list[tuple[int, float, int]] = []
         for idx, ln in enumerate(lines_for_rent[:1400]):
