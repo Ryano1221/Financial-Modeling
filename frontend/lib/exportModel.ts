@@ -2631,7 +2631,7 @@ function createCustomChartsSheet(
     landscape: true,
     lastRow: endRow,
     lastCol: totalCols,
-    pageBreakPreview: false,
+    pageBreakPreview: true,
   });
   return { sheetName: sheet.name, specs: nativeSpecs };
 }
@@ -2721,17 +2721,6 @@ function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, cha
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <chartSpace xmlns="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <chart>
-    <title>
-      <tx>
-        <rich>
-          <a:bodyPr/>
-          <a:p>
-            <a:pPr><a:defRPr/></a:pPr>
-            <a:r><a:t>${escapeXml(spec.title)}</a:t></a:r>
-          </a:p>
-        </rich>
-      </tx>
-    </title>
     <spPr>
       <a:noFill/>
       <a:ln><a:noFill/></a:ln>

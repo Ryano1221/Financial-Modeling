@@ -398,7 +398,7 @@ describe("exportModel institutional workbook", () => {
     }
   });
 
-  it("exports native custom chart parts and keeps custom sheet in normal view", async () => {
+  it("exports native custom chart parts and keeps custom sheet in print preview", async () => {
     const baseScenario: LeaseScenarioCanonical = {
       id: "chart-1",
       name: "Option A",
@@ -492,7 +492,7 @@ describe("exportModel institutional workbook", () => {
     const customSheet = workbook.getWorksheet("Charts");
     expect(customSheet).toBeDefined();
     const customView = customSheet?.views?.[0] as (ExcelJS.WorksheetView & { style?: string }) | undefined;
-    expect(customView?.style).toBeUndefined();
+    expect(customView?.style).toBe("pageBreakPreview");
     expect(findRowByFirstCell(customSheet, "Jan 2026 - Jan 2031")).not.toBeNull();
 
     const zip = await JSZip.loadAsync(buffer as ArrayBuffer);
@@ -512,7 +512,7 @@ describe("exportModel institutional workbook", () => {
     expect(contentTypes || "").toContain("drawingml.chart+xml");
 
     const firstChartXml = await zip.file(chartParts[0])?.async("string");
-    expect(firstChartXml || "").toContain("Two-Metric Comparison");
+    expect(firstChartXml || "").not.toContain("<chart>\n    <title>");
     expect(firstChartXml || "").toContain("Avg Cost/SF/YR");
     expect(firstChartXml || "").toContain("NPV @ Discount Rate");
     expect(firstChartXml || "").toContain("Lease Dates");
