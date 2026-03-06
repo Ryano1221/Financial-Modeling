@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 import type { CanonicalComputeResponse, CustomChartExportConfig } from "@/lib/types";
-import { formatCurrency, formatCurrencyPerSF, formatNumber, formatPercent } from "@/lib/format";
+import { formatCurrency, formatCurrencyPerSF, formatNumber } from "@/lib/format";
 import {
   Bar,
   BarChart,
@@ -84,7 +84,6 @@ const METRIC_OPTIONS: MetricSpec[] = [
   { key: "tiAllowance", label: "TI Allowance ($/SF)", format: (value) => formatCurrencyPerSF(value) },
   { key: "parkingSpaces", label: "Parking Spaces", format: (value) => formatNumber(value) },
   { key: "parkingCostAnnual", label: "Parking Cost (Annual)", format: (value) => formatCurrency(value) },
-  { key: "parkingSalesTaxPercent", label: "Parking Sales Tax %", format: (value) => formatPercent(value) },
 ];
 
 const DEFAULT_METRIC_KEY: keyof OptionMetrics = "avgCostPsfYr";
