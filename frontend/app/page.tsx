@@ -307,7 +307,7 @@ function formatDateMmDdYyyy(dateValue: Date): string {
   return `${mm}.${dd}.${yyyy}`;
 }
 
-function normalizeDateMmDdYyyy(raw: string): string {
+function normalizeDateMmDdYyyy(raw: string | null | undefined): string {
   const text = String(raw || "").trim();
   if (!text) return "";
   const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
@@ -338,6 +338,15 @@ function normalizeDateMmDdYyyy(raw: string): string {
     }
   }
   return "";
+}
+
+function sanitizeFileNamePart(raw: string, fallback: string): string {
+  const cleaned = String(raw || "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[. ]+|[. ]+$/g, "");
+  return cleaned || fallback;
 }
 
 function normalizeDiscountRateAnnual(raw: unknown): number {
@@ -1191,6 +1200,20 @@ export default function Home() {
     };
   }, [reportMeta, defaultPreparedByFromAuth, inferredReportLocation.market, inferredReportLocation.submarket]);
 
+  const buildExportFileName = useCallback(
+    (kind: "xlsx" | "pdf", meta: ReportMeta): string => {
+      const resolvedBrokerageName = authSession
+        ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+        : CRE_DEFAULT_BROKERAGE_NAME;
+      const brokerage = sanitizeFileNamePart(resolvedBrokerageName, "Brokerage");
+      const client = sanitizeFileNamePart(meta.prepared_for || "Client", "Client");
+      const reportDate = normalizeDateMmDdYyyy(meta.report_date) || formatDateMmDdYyyy(new Date());
+      const descriptor = kind === "xlsx" ? "Financial Analysis" : "Economic Presentation";
+      return `${brokerage} - ${descriptor} - ${client} - ${reportDate}.${kind}`;
+    },
+    [authSession, organizationBranding]
+  );
+
   const downloadBlob = useCallback((blob: Blob, fileName: string) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1297,6 +1320,7 @@ export default function Home() {
         };
       });
       const meta = buildReportMeta();
+      const pdfFileName = buildExportFileName("pdf", meta);
       const resolvedPreparedBy = meta.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
       const headers = getAuthHeaders();
       const deckPayload = {
@@ -1331,7 +1355,7 @@ export default function Home() {
           throw new Error(detail);
         }
         const blob = await pdfRes.blob();
-        downloadBlob(blob, "lease-deck.pdf");
+        downloadBlob(blob, pdfFileName);
         return;
       } catch (deckErr) {
         const msg = deckErr instanceof Error ? deckErr.message : String(deckErr);
@@ -1347,7 +1371,7 @@ export default function Home() {
         });
         if (directDeck.ok) {
           const blob = await directDeck.blob();
-          downloadBlob(blob, "lease-deck.pdf");
+          downloadBlob(blob, pdfFileName);
           return;
         }
       } catch (directDeckErr) {
@@ -1371,7 +1395,7 @@ export default function Home() {
           });
           if (direct.ok) {
             const blob = await direct.blob();
-            downloadBlob(blob, "lease-financial-analysis.pdf");
+            downloadBlob(blob, pdfFileName);
             setExportPdfError("Deck routes failed; downloaded single-scenario PDF fallback.");
             return;
           }
@@ -1389,7 +1413,7 @@ export default function Home() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, defaultPreparedByFromAuth, equalizedForExport, authSession, customChartsForExport]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, buildExportFileName, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, defaultPreparedByFromAuth, equalizedForExport, authSession, customChartsForExport]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1410,6 +1434,7 @@ export default function Home() {
     try {
       const canonical = scenarios.map(scenarioToCanonical);
       const reportMeta = buildReportMeta();
+      const excelFileName = buildExportFileName("xlsx", reportMeta);
       const hasSavedBrokerageBranding = Boolean(
         authSession && organizationBranding?.has_logo && (
           organizationBranding?.logo_data_url || organizationBranding?.logo_asset_bytes
@@ -1524,7 +1549,7 @@ export default function Home() {
       }
       downloadBlob(
         new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-        "lease-comparison.xlsx"
+        excelFileName
       );
       if (usedFallback) {
         setExportExcelError("Downloaded Excel using formula fallback (logos removed) because the primary branded export failed.");
@@ -1535,7 +1560,7 @@ export default function Home() {
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl, customChartsForExport]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, buildExportFileName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl, customChartsForExport]);
 
   const engineResults = useMemo(() => {
     const included = includedScenarios;
