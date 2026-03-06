@@ -2716,6 +2716,8 @@ function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, cha
   const lineAxisId = catAxisId + 190;
   const barColor = argbToRgb(COLORS.darkGray, "111827");
   const lineColor = argbToRgb(COLORS.secondaryText, "6B7280");
+  const labelTextColor = "111827";
+  const labelBgColor = "FFFFFF";
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <chartSpace xmlns="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <chart>
@@ -2730,7 +2732,12 @@ function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, cha
         </rich>
       </tx>
     </title>
+    <spPr>
+      <a:noFill/>
+      <a:ln><a:noFill/></a:ln>
+    </spPr>
     <plotArea>
+      <layout/>
       <barChart>
         <barDir val="col"/>
         <grouping val="clustered"/>
@@ -2745,12 +2752,31 @@ function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, cha
           <cat><strRef><f>${escapeXml(catRange)}</f></strRef></cat>
           <val><numRef><f>${escapeXml(barRange)}</f></numRef></val>
           <dLbls>
+            <numFmt formatCode="#,##0.00" sourceLinked="1"/>
+            <dLblPos val="outEnd"/>
+            <spPr>
+              <a:solidFill><a:srgbClr val="${labelBgColor}"/></a:solidFill>
+              <a:ln><a:solidFill><a:srgbClr val="${labelTextColor}"/></a:solidFill></a:ln>
+            </spPr>
+            <txPr>
+              <a:bodyPr/>
+              <a:lstStyle/>
+              <a:p>
+                <a:pPr>
+                  <a:defRPr sz="900" b="1">
+                    <a:solidFill><a:srgbClr val="${labelTextColor}"/></a:solidFill>
+                  </a:defRPr>
+                </a:pPr>
+                <a:endParaRPr lang="en-US"/>
+              </a:p>
+            </txPr>
             <showLegendKey val="0"/>
             <showVal val="1"/>
             <showCatName val="0"/>
             <showSerName val="0"/>
             <showPercent val="0"/>
             <showBubbleSize val="0"/>
+            <showLeaderLines val="0"/>
           </dLbls>
         </ser>
         <gapWidth val="150"/>
@@ -2777,12 +2803,31 @@ function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, cha
           <cat><strRef><f>${escapeXml(catRange)}</f></strRef></cat>
           <val><numRef><f>${escapeXml(lineRange)}</f></numRef></val>
           <dLbls>
+            <numFmt formatCode="#,##0.00" sourceLinked="1"/>
+            <dLblPos val="r"/>
+            <spPr>
+              <a:solidFill><a:srgbClr val="${labelBgColor}"/></a:solidFill>
+              <a:ln><a:solidFill><a:srgbClr val="${lineColor}"/></a:solidFill></a:ln>
+            </spPr>
+            <txPr>
+              <a:bodyPr/>
+              <a:lstStyle/>
+              <a:p>
+                <a:pPr>
+                  <a:defRPr sz="900" b="1">
+                    <a:solidFill><a:srgbClr val="${labelTextColor}"/></a:solidFill>
+                  </a:defRPr>
+                </a:pPr>
+                <a:endParaRPr lang="en-US"/>
+              </a:p>
+            </txPr>
             <showLegendKey val="0"/>
             <showVal val="1"/>
             <showCatName val="0"/>
             <showSerName val="0"/>
             <showPercent val="0"/>
             <showBubbleSize val="0"/>
+            <showLeaderLines val="1"/>
           </dLbls>
         </ser>
         <axId val="${catAxisId}"/>
@@ -2848,10 +2893,11 @@ function buildNativeChartXml(sheetName: string, spec: NativeCustomChartSpec, cha
         <crosses val="max"/>
       </valAx>
     </plotArea>
-    <legend><legendPos val="r"/></legend>
+    <legend><legendPos val="b"/><layout/></legend>
     <plotVisOnly val="1"/>
     <dispBlanksAs val="gap"/>
   </chart>
+  <roundedCorners val="0"/>
 </chartSpace>`;
 }
 
