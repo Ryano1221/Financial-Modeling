@@ -234,6 +234,21 @@ def _fmt_date(value: Any) -> str:
     return d.strftime("%m.%d.%Y")
 
 
+def _fmt_month_year(value: Any) -> str:
+    d = _parse_date(value)
+    if d is None:
+        return ""
+    return d.strftime("%b %Y")
+
+
+def _build_lease_date_label(start_value: Any, end_value: Any) -> str:
+    start = _fmt_month_year(start_value)
+    end = _fmt_month_year(end_value)
+    if start and end:
+        return f"{start} - {end}"
+    return start or end or ""
+
+
 def _truncate_text(value: str, max_len: int = 88) -> str:
     text = " ".join(str(value or "").split())
     if len(text) <= max_len:
@@ -461,6 +476,9 @@ def _extract_custom_charts(data: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             bar_value = _safe_float(p.get("bar_value"), 0.0)
             line_value = _safe_float(p.get("line_value"), 0.0)
+            commencement_date = str(p.get("commencement_date") or "").strip()
+            expiration_date = str(p.get("expiration_date") or "").strip()
+            date_label = str(p.get("date_label") or "").strip() or _build_lease_date_label(commencement_date, expiration_date)
             points.append(
                 {
                     "scenario_name": scenario_name,
@@ -468,15 +486,21 @@ def _extract_custom_charts(data: dict[str, Any]) -> list[dict[str, Any]]:
                     "line_value": line_value,
                     "bar_value_display": str(p.get("bar_value_display") or "").strip() or _fmt_currency(bar_value, 2),
                     "line_value_display": str(p.get("line_value_display") or "").strip() or _fmt_currency(line_value, 2),
+                    "commencement_date": commencement_date,
+                    "expiration_date": expiration_date,
+                    "date_label": date_label,
                 }
             )
         if not points:
             continue
+        bar_metric_label = str(item.get("bar_metric_label") or "Bar metric").strip() or "Bar metric"
+        line_metric_label = str(item.get("line_metric_label") or "Line metric").strip() or "Line metric"
+        fallback_title = f"{bar_metric_label} vs {line_metric_label}"
         out.append(
             {
-                "title": str(item.get("title") or f"Two-Metric Comparison #{idx + 1}").strip() or f"Two-Metric Comparison #{idx + 1}",
-                "bar_metric_label": str(item.get("bar_metric_label") or "Bar metric").strip() or "Bar metric",
-                "line_metric_label": str(item.get("line_metric_label") or "Line metric").strip() or "Line metric",
+                "title": str(item.get("title") or fallback_title).strip() or fallback_title,
+                "bar_metric_label": bar_metric_label,
+                "line_metric_label": line_metric_label,
                 "sort_direction": "asc" if str(item.get("sort_direction") or "").lower() == "asc" else "desc",
                 "points": points,
             }
@@ -2373,6 +2397,133 @@ def ComboAverageCostsChart(entries: list[dict[str, Any]]) -> str:
     """
 
 
+def CustomMetricComboChart(
+    points: list[dict[str, Any]],
+    *,
+    chart_title: str,
+    bar_metric_label: str,
+    line_metric_label: str,
+) -> str:
+    if not points:
+        return "<article class='chart-block custom-combo-chart-block'><h3>Custom chart</h3><p class='axis-note'>No chart points available.</p></article>"
+
+    values_bar = [_safe_float(p.get("bar_value"), 0.0) for p in points]
+    values_line = [_safe_float(p.get("line_value"), 0.0) for p in points]
+    max_bar = _nice_axis_max(max(values_bar) if values_bar else 1.0, steps=5)
+    max_line = _nice_axis_max(max(values_line) if values_line else 1.0, steps=5)
+
+    w, h = 1120, 418
+    left, right, top, bottom = 108, 108, 66, 146
+    plot_w = w - left - right
+    plot_h = h - top - bottom
+    count = max(1, len(points))
+    slot = plot_w / count
+    bar_w = min(168, slot * 0.52)
+
+    left_ticks: list[str] = []
+    right_ticks: list[str] = []
+    tick_count = 5
+    for i in range(tick_count + 1):
+        frac = i / tick_count
+        y = top + plot_h - (frac * plot_h)
+        yv_bar = frac * max_bar
+        yv_line = frac * max_line
+        left_ticks.append(
+            f'<text x="{left-12}" y="{y+4:.2f}" text-anchor="end" class="custom-combo-axis">{_esc(_fmt_currency(yv_bar, 2))}</text>'
+        )
+        right_ticks.append(
+            f'<text x="{w-right+12}" y="{y+4:.2f}" text-anchor="start" class="custom-combo-axis">{_esc(_fmt_currency(yv_line, 2))}</text>'
+        )
+
+    bars: list[str] = []
+    line_points: list[str] = []
+    line_labels: list[str] = []
+    x_labels: list[str] = []
+    for idx, point in enumerate(points):
+        cx = left + (slot * idx) + (slot / 2)
+        bar_val = values_bar[idx]
+        line_val = values_line[idx]
+        bar_h = (bar_val / max_bar) * plot_h if max_bar > 0 else 0
+        bar_x = cx - (bar_w / 2)
+        bar_y = top + plot_h - bar_h
+        bars.append(
+            f'<rect x="{bar_x:.2f}" y="{bar_y:.2f}" width="{bar_w:.2f}" height="{bar_h:.2f}" class="custom-combo-bar" />'
+        )
+        bar_label = str(point.get("bar_value_display") or _fmt_currency(bar_val, 2))
+        bar_label_y = bar_y - 8
+        bar_label_class = "custom-combo-bar-value"
+        if bar_label_y < top + 10:
+            bar_label_y = min(top + plot_h - 8, bar_y + 14)
+            bar_label_class = "custom-combo-bar-value-onbar"
+        bars.append(
+            f'<text x="{cx:.2f}" y="{bar_label_y:.2f}" text-anchor="middle" class="{bar_label_class}">{_esc(bar_label)}</text>'
+        )
+
+        py = top + plot_h - ((line_val / max_line) * plot_h if max_line > 0 else 0)
+        line_points.append(f"{cx:.2f},{py:.2f}")
+        line_label = str(point.get("line_value_display") or _fmt_currency(line_val, 2))
+        line_labels.append(
+            f'<circle cx="{cx:.2f}" cy="{py:.2f}" r="4.2" class="custom-combo-dot" />'
+            f'<text x="{cx:.2f}" y="{(py - 10):.2f}" text-anchor="middle" class="custom-combo-line-value">{_esc(line_label)}</text>'
+        )
+
+        date_label = str(point.get("date_label") or "").strip() or str(point.get("scenario_name") or "Option")
+        date_lines = _split_label_lines(date_label, max_chars=22)
+        for lidx, line in enumerate(date_lines[:2]):
+            x_labels.append(
+                f'<text x="{cx:.2f}" y="{top + plot_h + 24 + (lidx * 13):.2f}" text-anchor="middle" class="custom-combo-x-label">{_esc(line)}</text>'
+            )
+        scenario_label = _truncate_text(str(point.get("scenario_name") or "Option"), 30)
+        x_labels.append(
+            f'<text x="{cx:.2f}" y="{top + plot_h + 56:.2f}" text-anchor="middle" class="custom-combo-x-sub">{_esc(scenario_label)}</text>'
+        )
+
+    polyline = (
+        f'<polyline points="{" ".join(line_points)}" fill="none" class="custom-combo-line" />'
+        if len(line_points) >= 2
+        else ""
+    )
+    axis_lines = (
+        f'<line x1="{left:.2f}" y1="{top + plot_h:.2f}" x2="{w-right:.2f}" y2="{top + plot_h:.2f}" class="custom-combo-axis-line" />'
+        f'<line x1="{left:.2f}" y1="{top:.2f}" x2="{left:.2f}" y2="{top + plot_h:.2f}" class="custom-combo-axis-line" />'
+        f'<line x1="{w-right:.2f}" y1="{top:.2f}" x2="{w-right:.2f}" y2="{top + plot_h:.2f}" class="custom-combo-axis-line" />'
+    )
+
+    legend_center_x = left + (plot_w / 2)
+    legend = (
+        f'<rect x="{legend_center_x - 190:.2f}" y="18" width="26" height="10" class="custom-combo-bar" />'
+        f'<text x="{legend_center_x - 156:.2f}" y="27" class="custom-combo-legend" text-anchor="start">{_esc(bar_metric_label)}</text>'
+        f'<line x1="{legend_center_x + 18:.2f}" y1="23" x2="{legend_center_x + 44:.2f}" y2="23" class="custom-combo-line" />'
+        f'<circle cx="{legend_center_x + 31:.2f}" cy="23" r="4.2" class="custom-combo-dot" />'
+        f'<text x="{legend_center_x + 54:.2f}" y="27" class="custom-combo-legend" text-anchor="start">{_esc(line_metric_label)}</text>'
+    )
+
+    y_mid = top + (plot_h / 2)
+    axis_titles = (
+        f'<text x="{left + (plot_w / 2):.2f}" y="{h - 16:.2f}" text-anchor="middle" class="custom-combo-axis-title">Lease Dates</text>'
+        f'<text x="24" y="{y_mid:.2f}" text-anchor="middle" class="custom-combo-axis-title" transform="rotate(-90 24 {y_mid:.2f})">{_esc(bar_metric_label)}</text>'
+        f'<text x="{w - 24:.2f}" y="{y_mid:.2f}" text-anchor="middle" class="custom-combo-axis-title" transform="rotate(-90 {w - 24:.2f} {y_mid:.2f})">{_esc(line_metric_label)}</text>'
+    )
+
+    return f"""
+    <article class="chart-block custom-combo-chart-block">
+      <h3>{_esc(chart_title)}</h3>
+      <p class="axis-note">Bar values and line values are shown directly on the chart for each lease date label.</p>
+      <svg viewBox="0 0 {w} {h}" class="custom-combo-chart" role="img" aria-label="{_esc(chart_title)}">
+        {legend}
+        {axis_lines}
+        {''.join(left_ticks)}
+        {''.join(right_ticks)}
+        {''.join(bars)}
+        {polyline}
+        {''.join(line_labels)}
+        {''.join(x_labels)}
+        {axis_titles}
+      </svg>
+    </article>
+    """
+
+
 def _average_costs_combo_page(entries: list[dict[str, Any]]) -> str:
     return f"""
     {SectionTitle("Cost visuals", "Average Costs", "Dual-axis view for average annual cost and average cost per SF/year.")}
@@ -2425,8 +2576,6 @@ def _cost_visuals_pages(entries: list[dict[str, Any]], plan: DeckRenderPlan) -> 
 
 def _custom_visuals_page(chart: dict[str, Any]) -> str:
     points = chart.get("points") if isinstance(chart.get("points"), list) else []
-    bar_rows: list[tuple[str, float, str]] = []
-    line_rows: list[tuple[str, float, str]] = []
     table_rows: list[str] = []
     for point in points:
         if not isinstance(point, dict):
@@ -2438,10 +2587,9 @@ def _custom_visuals_page(chart: dict[str, Any]) -> str:
         line_value = _safe_float(point.get("line_value"), 0.0)
         bar_display = str(point.get("bar_value_display") or "").strip() or _fmt_currency(bar_value, 2)
         line_display = str(point.get("line_value_display") or "").strip() or _fmt_currency(line_value, 2)
-        bar_rows.append((scenario_name, bar_value, bar_display))
-        line_rows.append((scenario_name, line_value, line_display))
+        date_label = str(point.get("date_label") or "").strip() or scenario_name
         table_rows.append(
-            f"<tr><td>{_esc(scenario_name)}</td><td>{_esc(bar_display)}</td><td>{_esc(line_display)}</td></tr>"
+            f"<tr><td>{_esc(date_label)}</td><td>{_esc(scenario_name)}</td><td>{_esc(bar_display)}</td><td>{_esc(line_display)}</td></tr>"
         )
 
     title = str(chart.get("title") or "Two-Metric Comparison").strip() or "Two-Metric Comparison"
@@ -2456,22 +2604,20 @@ def _custom_visuals_page(chart: dict[str, Any]) -> str:
       ("Line metric", line_metric_label),
       ("Sort direction", sort_text),
     ])}
-    <div class="chart-grid">
-      {ChartBlock(bar_metric_label, bar_rows)}
-      {ChartBlock(line_metric_label, line_rows)}
-    </div>
+    {CustomMetricComboChart(points, chart_title=title, bar_metric_label=bar_metric_label, line_metric_label=line_metric_label)}
     <article class="panel">
       <h3>Metric values by scenario</h3>
       <table class="detail-table annualized-table">
         <thead>
           <tr>
+            <th>Lease Dates</th>
             <th>Scenario</th>
             <th>{_esc(bar_metric_label)}</th>
             <th>{_esc(line_metric_label)}</th>
           </tr>
         </thead>
         <tbody>
-          {''.join(table_rows) if table_rows else '<tr><td colspan="3">No data</td></tr>'}
+          {''.join(table_rows) if table_rows else '<tr><td colspan="4">No data</td></tr>'}
         </tbody>
       </table>
     </article>
@@ -2490,7 +2636,7 @@ def _custom_visuals_pages(data: dict[str, Any], plan: DeckRenderPlan) -> list[De
                 body_html=_custom_visuals_page(chart),
                 section_label=f"Custom visuals {idx + 1}",
                 include_frame=True,
-                kind="cost_visuals",
+                kind="custom_visuals",
                 orientation=orientation,
             )
         )
@@ -2721,6 +2867,10 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
         linear-gradient(0deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px) 0 0 / 18px 18px,
         linear-gradient(45deg, rgba(15, 23, 42, 0.022) 1px, transparent 1px) 0 0 / 18px 18px;
       pointer-events: none;
+    }}
+    .pdf-page[data-kind="cost_visuals"] .page-content::before,
+    .pdf-page[data-kind="custom_visuals"] .page-content::before {{
+      display: none;
     }}
     .page-content-inner {{
       width: 100%;
@@ -3008,6 +3158,76 @@ def _deck_css(primary_color: str, font_scale: float = 1.0) -> str:
     .combo-x-label {{
       font-size: 12px;
       fill: #111;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-chart-block {{
+      padding: 3.2mm;
+    }}
+    .custom-combo-chart {{
+      width: 100%;
+      height: 90mm;
+      border: 1px solid #111;
+      background: #ffffff;
+      display: block;
+    }}
+    .custom-combo-axis {{
+      font-size: 11px;
+      fill: #555;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-axis-line {{
+      stroke: #111;
+      stroke-width: 1.2;
+    }}
+    .custom-combo-axis-title {{
+      font-size: 12px;
+      fill: #111;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-legend {{
+      font-size: 11px;
+      fill: #111;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-bar {{
+      fill: {primary_color};
+    }}
+    .custom-combo-line {{
+      stroke: #334155;
+      stroke-width: 3.4;
+    }}
+    .custom-combo-dot {{
+      fill: #334155;
+    }}
+    .custom-combo-bar-value {{
+      font-size: 11px;
+      fill: #111;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-bar-value-onbar {{
+      font-size: 11px;
+      fill: #ffffff;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-line-value {{
+      font-size: 11px;
+      fill: #334155;
+      font-weight: 700;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-x-label {{
+      font-size: 11px;
+      fill: #111;
+      font-weight: 600;
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    }}
+    .custom-combo-x-sub {{
+      font-size: 9px;
+      fill: #555;
       font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
     }}
     .abstract-stack {{

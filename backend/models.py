@@ -344,6 +344,9 @@ class CustomChartPoint(BaseModel):
     line_value: float = 0.0
     bar_value_display: Optional[str] = None
     line_value_display: Optional[str] = None
+    commencement_date: Optional[str] = None
+    expiration_date: Optional[str] = None
+    date_label: Optional[str] = None
 
 
 class CustomChartConfig(BaseModel):

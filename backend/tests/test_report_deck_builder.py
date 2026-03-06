@@ -145,6 +145,9 @@ def test_custom_chart_visuals_render_in_deck_when_provided():
                         "line_value": 1025000,
                         "bar_value_display": "$35.12 / SF",
                         "line_value_display": "$1,025,000",
+                        "commencement_date": "2026-01-01",
+                        "expiration_date": "2031-01-01",
+                        "date_label": "Jan 2026 - Jan 2031",
                     },
                     {
                         "scenario_name": "Scenario B",
@@ -152,6 +155,9 @@ def test_custom_chart_visuals_render_in_deck_when_provided():
                         "line_value": 1118000,
                         "bar_value_display": "$36.45 / SF",
                         "line_value_display": "$1,118,000",
+                        "commencement_date": "2026-03-01",
+                        "expiration_date": "2031-03-01",
+                        "date_label": "Mar 2026 - Mar 2031",
                     },
                 ],
             }
@@ -164,6 +170,9 @@ def test_custom_chart_visuals_render_in_deck_when_provided():
     assert "Avg Cost/SF/YR" in html
     assert "NPV @ Discount Rate" in html
     assert "$1,118,000" in html
+    assert "class=\"custom-combo-chart\"" in html
+    assert "Lease Dates" in html
+    assert "Jan 2026 - Jan 2031" in html
 
 
 def test_resolve_theme_defaults_to_thecremodel():
