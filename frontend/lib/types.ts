@@ -230,6 +230,9 @@ export interface CustomChartExportPoint {
   line_value: number;
   bar_value_display?: string;
   line_value_display?: string;
+  commencement_date?: string;
+  expiration_date?: string;
+  date_label?: string;
 }
 
 export interface CustomChartExportConfig {
