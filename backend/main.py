@@ -7685,6 +7685,8 @@ def _normalize_impl(
                 updates.get("opex_growth_rate"),
                 _coerce_float_token(extracted_hints.get("opex_growth_rate"), _coerce_float_token(canonical.opex_growth_rate, 0.0)),
             ) or 0.0
+            today_year = date.today().year
+            opex_rollforward_applied = False
             if hinted_opex_by_year and commencement_year >= 1900:
                 if commencement_year in hinted_opex_by_year:
                     year_rate = float(hinted_opex_by_year[commencement_year])
@@ -7699,7 +7701,26 @@ def _normalize_impl(
                         updates["expense_stop_psf"] = year_rate
                         if prior_year < commencement_year:
                             years_forward = max(1, commencement_year - prior_year)
-                            if effective_opex_growth > 0 and year_rate > 0:
+                            if commencement_year > today_year and year_rate > 0:
+                                rollforward_growth = 0.03
+                                modeled_rate = float(year_rate) * ((1.0 + rollforward_growth) ** years_forward)
+                                modeled_rate = float(round(modeled_rate, 4))
+                                delta_rate = max(0.0, modeled_rate - float(year_rate))
+                                uplift_pct = max(0.0, ((modeled_rate / float(year_rate)) - 1.0) * 100.0)
+                                updates["opex_psf_year_1"] = modeled_rate
+                                updates["expense_stop_psf"] = modeled_rate
+                                if hinted_opex_by_year:
+                                    rolled_by_year = dict(hinted_opex_by_year)
+                                    rolled_by_year[int(commencement_year)] = modeled_rate
+                                    updates["opex_by_calendar_year"] = dict(sorted(rolled_by_year.items()))
+                                opex_rollforward_applied = True
+                                extra_note_lines.append(
+                                    f"OpEx quoted at ${float(year_rate):,.2f}/SF in {prior_year}; "
+                                    f"escalated 3.00% for {years_forward} "
+                                    f"year{'s' if years_forward != 1 else ''} (+${delta_rate:,.2f}, +{uplift_pct:.2f}%) "
+                                    f"to ${modeled_rate:,.2f}/SF used for {commencement_year}."
+                                )
+                            elif effective_opex_growth > 0 and year_rate > 0:
                                 modeled_rate = float(year_rate) * ((1.0 + float(effective_opex_growth)) ** years_forward)
                                 modeled_rate = float(round(modeled_rate, 4))
                                 delta_rate = max(0.0, modeled_rate - float(year_rate))
@@ -7714,6 +7735,31 @@ def _normalize_impl(
                                 extra_note_lines.append(
                                     f"OpEx table provided through {prior_year}; using ${year_rate:,.2f}/SF as the starting OpEx."
                                 )
+            effective_opex_after_table = _coerce_float_token(
+                updates.get("opex_psf_year_1"),
+                _coerce_float_token(canonical.opex_psf_year_1, 0.0),
+            ) or 0.0
+            if (
+                not opex_rollforward_applied
+                and effective_opex_after_table > 0
+                and commencement_year > today_year
+                and opex_source_year >= 1900
+                and opex_source_year < commencement_year
+            ):
+                years_forward = max(1, commencement_year - int(opex_source_year))
+                rollforward_growth = 0.03
+                modeled_rate = float(effective_opex_after_table) * ((1.0 + rollforward_growth) ** years_forward)
+                modeled_rate = float(round(modeled_rate, 4))
+                delta_rate = max(0.0, modeled_rate - float(effective_opex_after_table))
+                uplift_pct = max(0.0, ((modeled_rate / float(effective_opex_after_table)) - 1.0) * 100.0)
+                updates["opex_psf_year_1"] = modeled_rate
+                updates["expense_stop_psf"] = modeled_rate
+                extra_note_lines.append(
+                    f"OpEx quoted at ${float(effective_opex_after_table):,.2f}/SF in {int(opex_source_year)}; "
+                    f"escalated 3.00% for {years_forward} "
+                    f"year{'s' if years_forward != 1 else ''} (+${delta_rate:,.2f}, +{uplift_pct:.2f}%) "
+                    f"to ${modeled_rate:,.2f}/SF used for {commencement_year}."
+                )
             hinted_ti_allowance = _coerce_float_token(extracted_hints.get("ti_allowance_psf"), 0.0) or 0.0
             if hinted_ti_allowance <= 0:
                 hinted_ti_allowance_total = _coerce_float_token(extracted_hints.get("ti_allowance_total"), 0.0) or 0.0

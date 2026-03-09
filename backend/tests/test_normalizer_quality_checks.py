@@ -191,7 +191,13 @@ def test_normalize_impl_amendment_retains_inferred_rsf_and_opex_when_not_explici
     assert any("retained inferred OpEx value" in str(w) for w in result.warnings)
 
 
-def test_normalize_impl_keeps_source_year_opex_when_commencement_year_missing_from_table(monkeypatch) -> None:
+def test_normalize_impl_rolls_forward_opex_to_future_commencement_year_when_table_missing(monkeypatch) -> None:
+    source_year = max(2026, date.today().year)
+    commencement_year = source_year + 1
+    commencement_date = date(commencement_year, 5, 1)
+    expiration_date = date(commencement_year + 4, 4, 30)
+    expected_rolled_opex = round(26.02 * 1.03, 4)
+
     monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: ("proposal text", "docx"))
     monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
     monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "counter_proposal")
@@ -202,13 +208,13 @@ def test_normalize_impl_keeps_source_year_opex_when_commencement_year_missing_fr
             "building_name": "Lamar Central",
             "suite": "230",
             "rsf": 3947.0,
-            "commencement_date": date(2027, 5, 1),
-            "expiration_date": date(2032, 4, 30),
+            "commencement_date": commencement_date,
+            "expiration_date": expiration_date,
             "term_months": 60,
             "opex_psf_year_1": 26.02,
-            "opex_source_year": 2026,
+            "opex_source_year": source_year,
             "opex_growth_rate": 0.03,
-            "opex_by_calendar_year": {2026: 26.02},
+            "opex_by_calendar_year": {source_year: 26.02},
         },
     )
     monkeypatch.setattr(
@@ -218,8 +224,8 @@ def test_normalize_impl_keeps_source_year_opex_when_commencement_year_missing_fr
             scenario=Scenario(
                 name="Lamar Central Suite 230",
                 rsf=3947.0,
-                commencement=date(2027, 5, 1),
-                expiration=date(2032, 4, 30),
+                commencement=commencement_date,
+                expiration=expiration_date,
                 rent_steps=[RentStep(start=0, end=59, rate_psf_yr=42.0)],
                 free_rent_months=0,
                 ti_allowance_psf=0.0,
@@ -251,10 +257,13 @@ def test_normalize_impl_keeps_source_year_opex_when_commencement_year_missing_fr
     result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
     canonical = result.canonical_lease
 
-    assert canonical.opex_psf_year_1 == 26.02
-    assert canonical.expense_stop_psf == 26.02
-    assert "OpEx quoted at $26.02/SF in 2026; escalated 3.00% for 1 year" in (canonical.notes or "")
-    assert "$26.80/SF used for 2027." in (canonical.notes or "")
+    assert abs(float(canonical.opex_psf_year_1) - expected_rolled_opex) < 1e-4
+    assert abs(float(canonical.expense_stop_psf) - expected_rolled_opex) < 1e-4
+    assert (
+        f"OpEx quoted at $26.02/SF in {source_year}; escalated 3.00% for 1 year"
+        in (canonical.notes or "")
+    )
+    assert f"${expected_rolled_opex:,.2f}/SF used for {commencement_year}." in (canonical.notes or "")
 
 
 def test_normalize_impl_prefers_ratio_derived_parking_count_over_small_inline_count(monkeypatch) -> None:
