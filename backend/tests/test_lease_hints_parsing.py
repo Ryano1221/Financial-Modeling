@@ -419,6 +419,20 @@ def test_extract_hints_phase_rent_prefers_base_rent_over_opex_like_values() -> N
     ]
 
 
+def test_extract_hints_defaults_base_rent_escalation_to_three_percent_only_when_rate_missing() -> None:
+    text = (
+        "Commencement Date: April 1, 2028.\n"
+        "Sublease Term: Expiring on October 31, 2036.\n"
+        "Base Rent: $44.00 / RSF / YR NNN with annual escalations beginning in month 13 of Term.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    schedule = hints.get("rent_schedule")
+    assert isinstance(schedule, list)
+    assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 44.0}
+    assert schedule[1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 45.32}
+    assert 100 <= int(schedule[-1]["end_month"]) <= 102
+
+
 def test_note_highlights_include_parking_ratio() -> None:
     text = "Parking ratio shall be 4.0 spaces per 1,000 RSF for the Premises."
     notes = main._extract_lease_note_highlights(text)
@@ -883,6 +897,11 @@ def test_extract_hints_6xguad_style_docx_text_regression() -> None:
     assert hints["opex_source_year"] == 2025
     assert hints["opex_by_calendar_year"] == {2025: 28.53}
     assert hints["ti_allowance_psf"] == 215.0
+    schedule = hints.get("rent_schedule")
+    assert isinstance(schedule, list)
+    assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 46.0}
+    assert schedule[1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 47.38}
+    assert 100 <= int(schedule[-1]["end_month"]) <= 102
 
 
 def test_extract_hints_summit_lantana_prefers_project_name_and_floor_pair() -> None:
