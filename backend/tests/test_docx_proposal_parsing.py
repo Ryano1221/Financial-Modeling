@@ -220,6 +220,19 @@ def test_regex_prefill_parses_ti_allowance_when_heading_and_body_are_merged() ->
     assert prefill.get("ti_allowance_psf") == 50.0
 
 
+def test_regex_prefill_prefers_split_line_subtenant_allowance_over_tia_date_numbers() -> None:
+    text = (
+        "Rent Commencement Date | April 1, 2028\n"
+        "Subtenant Allowance & Improvements\n"
+        "$215.00 per RSF\n"
+        "Sublandlord shall provide an allowance equal to the above for construction of improvements in the Premises (the \"TIA\").\n"
+        "Any unused portion of the Subtenant Allowance remaining as of May 1, 2029 shall remain with Sublandlord.\n"
+        "Test Fit Allowance | Sublandlord shall reimburse one test fit not to exceed $0.15/RSF.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") == 215.0
+
+
 def test_extract_lease_hints_parses_ti_allowance_when_heading_and_body_are_merged() -> None:
     text = (
         "Building: Domain Place\n"

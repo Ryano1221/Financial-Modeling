@@ -690,7 +690,16 @@ _RE_TI = re.compile(
     re.I,
 )
 _RE_TIA_KEYWORD = re.compile(
-    r"(?i)\b(?:tia|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?(?:\s+allowance)?|improvement\s+allowance)\b"
+    r"(?i)\b(?:"
+    r"tia|"
+    r"ti\s+allowance|"
+    r"tenant\s+allowance|"
+    r"subtenant\s+allowance|"
+    r"tenant\s+improvement(?:s)?(?:\s+allowance)?|"
+    r"subtenant\s+improvement(?:s)?(?:\s+allowance)?|"
+    r"improvement\s+allowance|"
+    r"allowance\s*&\s*improvements?"
+    r")\b"
 )
 _RE_TI_ALLOWANCE_TOTAL = re.compile(
     r"(?i)\b(?:ti(?:a)?|ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b"
@@ -1761,7 +1770,7 @@ def _regex_prefill(text: str) -> dict:
         )
         if not line_has_ti_keyword and not line_is_allowance_with_ti_context:
             continue
-        window = " ".join(lines[max(0, idx - 1): idx + 3])
+        window = " ".join(lines[max(0, idx - 1): idx + 5])
         low_window = window.lower()
         if "e.g" in low_window or "example" in low_window:
             continue
@@ -1773,6 +1782,8 @@ def _regex_prefill(text: str) -> dict:
             if "$" not in (amount_match.group(0) or ""):
                 continue
             if not re.search(r"(?i)\b(?:allowance|tenant improvements?|tia|ti)\b", local):
+                continue
+            if "test fit" in local_low or "test-fit" in local_low:
                 continue
             if re.search(r"(?i)\b(?:base rent|rental rate)\b", local):
                 continue
@@ -1849,16 +1860,22 @@ def _regex_prefill(text: str) -> dict:
         if ti_psf_candidates[0][0] > -2:
             ti_allowance_psf = ti_psf_candidates[0][1]
     if ti_allowance_psf is None:
-        m = _RE_TI.search(text)
-        if m:
-            nums = _RE_NUM.findall(m.group(0))
-            if nums:
-                try:
-                    fallback_val = float(nums[0].replace(",", ""))
-                    if 0.5 <= fallback_val <= 500:
-                        ti_allowance_psf = fallback_val
-                except ValueError:
-                    pass
+        for m in _RE_TI.finditer(text):
+            seg = (m.group(0) or "")
+            seg_low = seg.lower()
+            if "outside of the tenant improvement allowance" in seg_low:
+                continue
+            if "test fit" in seg_low or "test-fit" in seg_low:
+                continue
+            for amount_match in _RE_PSF_AMOUNT.finditer(seg):
+                if "$" not in (amount_match.group(0) or ""):
+                    continue
+                fallback_val = _coerce_float_token(amount_match.group(1), 0.0) or 0.0
+                if 0.5 <= fallback_val <= 500:
+                    ti_allowance_psf = float(fallback_val)
+                    break
+            if ti_allowance_psf is not None:
+                break
     if ti_total_candidates:
         ti_total_candidates.sort(key=lambda row: (-row[0], -row[2], -row[1]))
         if ti_total_candidates[0][0] > -2:

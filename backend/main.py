@@ -2152,26 +2152,43 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
 
     results: dict[int, float] = {}
     row_pat = re.compile(
-        r"(?i)\b(20\d{2})\b[^\n$]{0,60}\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\b"
+        r"(?i)\b(20\d{2})\b[^\n]{0,60}(?:"
+        r"\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\b"
+        r"|"
+        r"([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf)\b"
+        r")"
     )
     rev_pat = re.compile(
-        r"(?i)(?:\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?|([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf))[^\n]{0,80}\b(20\d{2})\b"
+        r"(?i)(?:"
+        r"\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)\b"
+        r"|"
+        r"([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf)\b"
+        r")[^\n]{0,80}\b(20\d{2})\b"
     )
     table_pat = re.compile(
-        r"(?i)^\s*(20\d{2})\s*(?:\||:|-|–|—)?\s*\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?\s*$"
+        r"(?i)^\s*(20\d{2})\s*(?:\||:|-|–|—)?\s*(?:"
+        r"\$\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)?\s*(?:rsf|sf|psf)?"
+        r"|"
+        r"([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rsf|sf|psf)"
+        r")\s*$"
     )
     opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|ope|cam|common area maintenance|additional rent)\b")
 
     for idx, line in enumerate(lines[:1200]):
+        line_low = line.lower()
         context = " ".join(
             lines[max(0, idx - 1): min(len(lines), idx + 2)]
         )
         if not opex_kw.search(context):
             continue
+        if re.search(r"(?i)\b(?:base\s+rent|lease\s+rate|rental\s+rate|annual\s+rent)\b", line_low):
+            continue
         for pat in (table_pat, row_pat):
             for m in pat.finditer(line):
                 year = _coerce_int_token(m.group(1), None)
                 value = _coerce_float_token(m.group(2), None)
+                if value is None:
+                    value = _coerce_float_token(m.group(3), None)
                 if year is None or value is None:
                     continue
                 if not (1990 <= year <= 2200 and 3 <= value <= 150):
@@ -2196,6 +2213,8 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
     for m in span_pat.finditer(text):
         span_text = (m.group(0) or "").lower()
         if any(tok in span_text for tok in ("allowance", "tenant improvement", "ti allowance", "improvement allowance")):
+            continue
+        if re.search(r"(?i)\b(?:base\s+rent|lease\s+rate|rental\s+rate|annual\s+rent)\b", span_text):
             continue
         year = _coerce_int_token(m.group(1), None)
         value = _coerce_float_token(m.group(2), None)

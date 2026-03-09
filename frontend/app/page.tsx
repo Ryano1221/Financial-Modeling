@@ -698,6 +698,18 @@ export default function Home() {
           if (!data) return;
           if ((computeRequestEpochRef.current[s.id] ?? 0) !== epoch) return;
           setCanonicalComputeCache((prev) => ({ ...prev, [s.id]: data }));
+          setResults((prev) => ({
+            ...prev,
+            [s.id]: {
+              term_months: data.metrics.term_months,
+              rent_nominal: data.metrics.base_rent_total,
+              opex_nominal: data.metrics.opex_total,
+              total_cost_nominal: data.metrics.total_obligation_nominal,
+              npv_cost: data.metrics.npv_cost,
+              avg_cost_year: data.metrics.total_obligation_nominal / (data.metrics.term_months / 12 || 1),
+              avg_cost_psf_year: data.metrics.avg_all_in_cost_psf_year,
+            },
+          }));
         })
         .catch(() => {});
     });
@@ -1051,7 +1063,10 @@ export default function Home() {
       delete next[normalized.id];
       return next;
     });
-  }, []);
+    if (isProduction) {
+      void runComputeForScenario(normalized);
+    }
+  }, [isProduction, runComputeForScenario]);
 
   const updateScenarioTiBudgetPsf = useCallback(
     (scenarioId: string, tiBudgetPsf: number) => {
@@ -1067,11 +1082,8 @@ export default function Home() {
         ti_source_of_truth: "psf",
       });
       updateScenario(updatedScenario);
-      if (isProduction) {
-        void runComputeForScenario(updatedScenario);
-      }
     },
-    [isProduction, runComputeForScenario, scenarios, updateScenario]
+    [scenarios, updateScenario]
   );
 
   const updateScenarioCommissionRate = useCallback(
@@ -1084,11 +1096,8 @@ export default function Home() {
         commission_rate: nextRate,
       });
       updateScenario(updatedScenario);
-      if (isProduction) {
-        void runComputeForScenario(updatedScenario);
-      }
     },
-    [isProduction, runComputeForScenario, scenarios, updateScenario]
+    [scenarios, updateScenario]
   );
 
   const updateScenarioCommissionBasis = useCallback(
@@ -1100,11 +1109,8 @@ export default function Home() {
         commission_applies_to: commissionBasis === "gross_obligation" ? "gross_obligation" : "base_rent",
       });
       updateScenario(updatedScenario);
-      if (isProduction) {
-        void runComputeForScenario(updatedScenario);
-      }
     },
-    [isProduction, runComputeForScenario, scenarios, updateScenario]
+    [scenarios, updateScenario]
   );
 
   const renameScenario = useCallback((id: string, newName: string) => {
@@ -1144,11 +1150,8 @@ export default function Home() {
       const modeled = normalizeScenarioEconomics(applyLeaseModelChoice(current, mode));
       const updatedScenario: ScenarioWithId = { ...modeled, id: current.id };
       updateScenario(updatedScenario);
-      if (isProduction) {
-        void runComputeForScenario(updatedScenario);
-      }
     },
-    [isProduction, runComputeForScenario, scenarios, updateScenario]
+    [scenarios, updateScenario]
   );
 
   const inferredReportLocation = useMemo(() => {
