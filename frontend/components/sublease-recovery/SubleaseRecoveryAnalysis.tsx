@@ -486,7 +486,6 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
       )}
       <div className="flex flex-col sm:flex-row sm:flex-wrap items-center sm:items-start justify-center sm:justify-between gap-3 border-b border-white/15 pb-4 mb-4 text-center sm:text-left">
         <div className="w-full sm:w-auto">
-          <p className="heading-kicker">New Module</p>
           <h2 className="heading-section">Sublease Recovery Analysis</h2>
           <p className="text-sm text-slate-300 mt-1">
             Existing obligation is auto-seeded from your extracted lease data. Build and compare sublease scenarios side by side.
