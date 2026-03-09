@@ -90,7 +90,7 @@ export function ScenarioList({
         <h2 className="heading-section mb-2">SCENARIO MANAGER</h2>
         <p className="text-xs text-slate-400">Rename, drag to reorder, include in summary. Information is stored securely.</p>
       </div>
-      <div className="md:hidden p-3 space-y-3">
+      <div className="p-3 grid grid-cols-1 lg:grid-cols-2 gap-3 min-[1600px]:hidden">
         {scenarios.map((s) => {
           const scenarioName = getScenarioName(s);
           return (
@@ -241,19 +241,19 @@ export function ScenarioList({
         })}
       </div>
 
-      <div className="hidden md:block overflow-x-auto">
-        <table className="w-full min-w-[1120px] text-xs sm:text-sm">
+      <div className="hidden min-[1600px]:block">
+        <table className="w-full table-fixed text-xs sm:text-sm">
           <thead>
             <tr className="bg-slate-900/35 border-b border-slate-300/20">
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Name</th>
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Doc type</th>
-              <th className="text-right py-2.5 px-4 font-medium text-slate-300">RSF</th>
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Commencement</th>
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Expiration</th>
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Opex mode</th>
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Obligation</th>
-              <th className="text-left py-2.5 px-4 font-medium text-slate-300">Summary</th>
-              <th className="text-right py-2.5 px-4 font-medium text-slate-300">Actions</th>
+              <th className="w-[22%] text-left py-2.5 px-4 font-medium text-slate-300">Name</th>
+              <th className="w-[11%] text-left py-2.5 px-4 font-medium text-slate-300">Doc type</th>
+              <th className="w-[8%] text-right py-2.5 px-4 font-medium text-slate-300">RSF</th>
+              <th className="w-[11%] text-left py-2.5 px-4 font-medium text-slate-300">Commencement</th>
+              <th className="w-[11%] text-left py-2.5 px-4 font-medium text-slate-300">Expiration</th>
+              <th className="w-[7%] text-left py-2.5 px-4 font-medium text-slate-300">Opex mode</th>
+              <th className="w-[14%] text-left py-2.5 px-4 font-medium text-slate-300">Obligation</th>
+              <th className="w-[6%] text-left py-2.5 px-4 font-medium text-slate-300">Summary</th>
+              <th className="w-[10%] text-right py-2.5 px-4 font-medium text-slate-300">Actions</th>
             </tr>
           </thead>
           <tbody>
