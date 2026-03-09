@@ -1767,15 +1767,12 @@ export default function Home() {
       {activeTopTab === "lease-comparison" ? (
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24 bg-grid">
-        <div className="mx-auto w-full grid grid-cols-1 2xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 border border-white/15 p-3 sm:p-4 bg-grid">
-          {/* Left column: upload & extract */}
-          <div className="space-y-5 sm:space-y-6 bg-grid self-start xl:sticky xl:top-24">
-            <div id="upload-section" className="reveal-on-scroll">
-              <UploadExtractCard>
+        <div className="mx-auto w-full max-w-6xl space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
+          <div id="upload-section" className="reveal-on-scroll">
+            <UploadExtractCard>
+              <div className="mx-auto w-full max-w-[760px] text-center">
                 <p className="heading-kicker mb-2">Extract from document</p>
-                <h2 className="heading-section mb-3">
-                  UPLOAD AND EXTRACT
-                </h2>
+                <h2 className="heading-section mb-3">Upload and Extract</h2>
                 <ExtractUpload
                   showAdvancedOptions={showDiagnostics}
                   onSuccess={handleNormalizeSuccess}
@@ -1787,17 +1784,15 @@ export default function Home() {
                   </div>
                 )}
                 {showDiagnostics && (
-                  <div className="mt-4">
+                  <div className="mt-4 text-left">
                     <Diagnostics />
                   </div>
                 )}
-              </UploadExtractCard>
-            </div>
+              </div>
+            </UploadExtractCard>
           </div>
 
-          {/* Right column: scenarios + form + actions */}
-          <div className="space-y-5 sm:space-y-6 bg-grid">
-            <ResultsActionsCard>
+          <ResultsActionsCard>
         <ScenarioList
           scenarios={scenarios}
           selectedId={selectedId}
@@ -2050,7 +2045,6 @@ export default function Home() {
               </>
             )}
               </ResultsActionsCard>
-          </div>
         </div>
         </section>
       </main>
