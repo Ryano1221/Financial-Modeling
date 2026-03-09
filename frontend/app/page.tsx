@@ -20,7 +20,6 @@ const Diagnostics = showDiagnostics
       { ssr: false }
     )
   : () => null;
-import { UploadExtractCard } from "@/components/UploadExtractCard";
 import { ResultsActionsCard } from "@/components/ResultsActionsCard";
 import { ClientLogoUploader } from "@/components/ClientLogoUploader";
 import type {
@@ -1768,28 +1767,25 @@ export default function Home() {
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="mx-auto w-full max-w-6xl space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
-          <div id="upload-section" className="reveal-on-scroll">
-            <UploadExtractCard>
-              <div className="mx-auto w-full max-w-[760px] text-center">
-                <p className="heading-kicker mb-2">Extract from document</p>
-                <h2 className="heading-section mb-3">Upload and Extract</h2>
-                <ExtractUpload
-                  showAdvancedOptions={showDiagnostics}
-                  onSuccess={handleNormalizeSuccess}
-                  onError={handleExtractError}
-                />
-                {extractError && (
-                  <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-200">
-                    {extractError}
-                  </div>
-                )}
-                {showDiagnostics && (
-                  <div className="mt-4 text-left">
-                    <Diagnostics />
-                  </div>
-                )}
-              </div>
-            </UploadExtractCard>
+          <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
+            <div className="mx-auto w-full max-w-[760px] text-center">
+              <h2 className="heading-section mb-3">Upload and Extract</h2>
+              <ExtractUpload
+                showAdvancedOptions={showDiagnostics}
+                onSuccess={handleNormalizeSuccess}
+                onError={handleExtractError}
+              />
+              {extractError && (
+                <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-200">
+                  {extractError}
+                </div>
+              )}
+              {showDiagnostics && (
+                <div className="mt-4 text-left">
+                  <Diagnostics />
+                </div>
+              )}
+            </div>
           </div>
 
           <ResultsActionsCard>
