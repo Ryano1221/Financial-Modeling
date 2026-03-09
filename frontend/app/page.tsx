@@ -1736,30 +1736,34 @@ export default function Home() {
 
       <FeatureTiles />
 
-      <section className="relative z-10 app-container mt-8 flex justify-center">
-        <div className="border border-white/20 bg-black/40 p-2 inline-flex gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveTopTab("lease-comparison")}
-            className={`px-4 py-2 text-sm border ${
-              activeTopTab === "lease-comparison"
-                ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
-                : "border-white/20 text-slate-200 hover:bg-white/5"
-            }`}
-          >
-            Lease Analysis
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTopTab("sublease-recovery")}
-            className={`px-4 py-2 text-sm border ${
-              activeTopTab === "sublease-recovery"
-                ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
-                : "border-white/20 text-slate-200 hover:bg-white/5"
-            }`}
-          >
-            Sublease Recovery Analysis
-          </button>
+      <section className="relative z-10 app-container mt-8">
+        <div className="mx-auto w-full max-w-6xl">
+          <div className="border border-white/20 bg-black/40 p-2">
+            <div className="grid w-full max-w-[560px] grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTopTab("lease-comparison")}
+                className={`px-4 py-2 text-sm border text-center ${
+                  activeTopTab === "lease-comparison"
+                    ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
+                    : "border-white/20 text-slate-200 hover:bg-white/5"
+                }`}
+              >
+                Lease Analysis
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTopTab("sublease-recovery")}
+                className={`px-4 py-2 text-sm border text-center ${
+                  activeTopTab === "sublease-recovery"
+                    ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
+                    : "border-white/20 text-slate-200 hover:bg-white/5"
+                }`}
+              >
+                Sublease Recovery Analysis
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
