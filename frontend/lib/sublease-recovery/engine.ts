@@ -107,6 +107,32 @@ function selectAnnualBaseRateForMonth(existing: ExistingObligation, month: numbe
   return Math.max(0, Number(step.annualRatePsf) || 0);
 }
 
+function selectScenarioAnnualRateForMonth(scenario: SubleaseScenario, monthIntoSublease: number): number {
+  const explicit = (scenario.explicitBaseRentSchedule || [])
+    .map((step) => ({
+      startMonth: Math.max(0, Math.floor(Number(step.startMonth) || 0)),
+      endMonth: Math.max(0, Math.floor(Number(step.endMonth) || 0)),
+      annualRatePsf: Math.max(0, Number(step.annualRatePsf) || 0),
+    }))
+    .filter((step) => step.endMonth >= step.startMonth)
+    .sort((a, b) => (a.startMonth - b.startMonth) || (a.endMonth - b.endMonth));
+
+  if (explicit.length > 0) {
+    const matched = explicit.find((step) => monthIntoSublease >= step.startMonth && monthIntoSublease <= step.endMonth);
+    if (matched) return matched.annualRatePsf;
+    if (monthIntoSublease < explicit[0].startMonth) return explicit[0].annualRatePsf;
+    return explicit[explicit.length - 1].annualRatePsf;
+  }
+
+  const year = leaseYearIndex(monthIntoSublease);
+  return escalationValue(
+    scenario.baseRent,
+    scenario.annualBaseRentEscalation,
+    scenario.rentEscalationType,
+    year,
+  );
+}
+
 function existingOpexPerMonth(existing: ExistingObligation, occupiedRsf: number, month: number): number {
   if (existing.leaseType === "full_service") return 0;
   const year = leaseYearIndex(month);
@@ -202,12 +228,7 @@ function scenarioProjectedGrossOverTerm(existing: ExistingObligation, scenario: 
     const date = existingMonthly[m].date;
     const occupiedRsf = occupiedRsfAtMonth(scenario.rsf, date, scenario.phaseInEvents);
     const year = leaseYearIndex(monthOffset);
-    const baseEscalated = escalationValue(
-      scenario.baseRent,
-      scenario.annualBaseRentEscalation,
-      scenario.rentEscalationType,
-      year,
-    );
+    const baseEscalated = selectScenarioAnnualRateForMonth(scenario, monthOffset);
     const baseRent = scenario.rentInputType === "annual_psf"
       ? (baseEscalated * occupiedRsf) / 12
       : baseEscalated;
@@ -269,6 +290,7 @@ function summaryFromMonthly(
   return {
     scenarioId: scenario.id,
     scenarioName: scenario.name,
+    subtenantName: scenario.subtenantName,
     totalRemainingObligation: round2(totalRemainingObligation),
     totalSubleaseRecovery: round2(totalSubleaseRecovery),
     totalSubleaseCosts: round2(totalSubleaseCosts),
@@ -301,12 +323,7 @@ export function runSubleaseRecoveryScenario(existing: ExistingObligation, scenar
       : 0;
 
     const year = leaseYearIndex(monthsIntoSublease);
-    const baseEscalated = escalationValue(
-      scenario.baseRent,
-      scenario.annualBaseRentEscalation,
-      scenario.rentEscalationType,
-      year,
-    );
+    const baseEscalated = selectScenarioAnnualRateForMonth(scenario, monthsIntoSublease);
     const scenarioBaseRent = isActive
       ? (scenario.rentInputType === "annual_psf"
         ? (baseEscalated * occupiedRsf) / 12
@@ -561,6 +578,20 @@ function scenarioTemplate(existing: ExistingObligation, name: string, downtimeMo
   return {
     id: `${name.toLowerCase().replace(/\s+/g, "-")}-${Date.now().toString(36).slice(-6)}`,
     name,
+    subtenantName: "",
+    subtenantLegalEntity: "",
+    dbaName: "",
+    guarantor: "",
+    brokerName: "",
+    industry: "",
+    subtenantNotes: "",
+    sourceType: "manual",
+    sourceDocumentName: "",
+    sourceProposalName: "",
+    proposalDate: "",
+    proposalExpirationDate: "",
+    propertyName: existing.premises,
+    importedProposalMeta: undefined,
     downtimeMonths,
     subleaseCommencementDate: startDate,
     subleaseTermMonths,
@@ -589,6 +620,7 @@ function scenarioTemplate(existing: ExistingObligation, name: string, downtimeMo
     parkingCostPerSpace: existing.parkingCostPerSpace,
     annualParkingEscalation: existing.annualParkingEscalation,
     phaseInEvents: [],
+    explicitBaseRentSchedule: [],
     discountRate: DEFAULT_DISCOUNT_RATE,
   };
 }
@@ -607,5 +639,13 @@ export function cloneSubleaseScenario(scenario: SubleaseScenario): SubleaseScena
     id: `${scenario.id}-copy-${Math.random().toString(36).slice(2, 7)}`,
     name: `${scenario.name} Copy`,
     phaseInEvents: scenario.phaseInEvents.map((event) => ({ ...event, id: `${event.id}-copy` })),
+    explicitBaseRentSchedule: (scenario.explicitBaseRentSchedule || []).map((step) => ({ ...step })),
+    importedProposalMeta: scenario.importedProposalMeta
+      ? {
+          parserConfidence: scenario.importedProposalMeta.parserConfidence,
+          reviewTasks: [...scenario.importedProposalMeta.reviewTasks],
+          extractedFields: scenario.importedProposalMeta.extractedFields.map((field) => ({ ...field })),
+        }
+      : undefined,
   };
 }

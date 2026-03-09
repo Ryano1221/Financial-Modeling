@@ -6,7 +6,7 @@ import { runMonthlyEngine } from "@/lib/lease-engine/monthly-engine";
 import { buildWorkbook as buildWorkbookLegacy } from "@/lib/lease-engine/excel-export";
 import type { CanonicalComputeResponse } from "@/lib/types";
 import type { CustomChartExportConfig } from "@/lib/types";
-import { EXCEL_THEME } from "@/lib/excel-style-constants";
+import { EXCEL_THEME } from "@/lib/export-design";
 import { CRE_DEFAULT_LOGO_DATA_URL } from "@/lib/default-brokerage-logo-data-url";
 import { buildOverarchingAssumptionNotes } from "@/lib/global-assumptions";
 

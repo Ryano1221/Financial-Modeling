@@ -2057,7 +2057,17 @@ export default function Home() {
       ) : (
         <main className="relative z-10 app-container pb-14 md:pb-20">
           <section className="scroll-mt-24 bg-grid mt-6">
-            <SubleaseRecoveryAnalysis sourceScenario={selectedScenario ?? scenarios[0] ?? null} />
+            <SubleaseRecoveryAnalysis
+              sourceScenario={selectedScenario ?? scenarios[0] ?? null}
+              exportBranding={{
+                brokerageName: authSession
+                  ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+                  : CRE_DEFAULT_BROKERAGE_NAME,
+                clientName: reportMeta.prepared_for.trim() || "Client",
+                reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
+                preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+              }}
+            />
           </section>
         </main>
       )}

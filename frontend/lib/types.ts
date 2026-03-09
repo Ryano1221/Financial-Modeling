@@ -428,6 +428,14 @@ export interface NormalizerResponse {
   review_tasks?: ExtractionReviewTask[];
   export_allowed?: boolean;
   extraction_confidence?: Record<string, unknown>;
+  provenance?: Record<string, Array<{
+    page?: number | null;
+    snippet?: string | null;
+    bbox?: number[] | null;
+    source?: string;
+    source_confidence?: number;
+  }>>;
+  canonical_extraction?: Record<string, unknown>;
 }
 
 /** One month from POST /compute-canonical monthly_rows. */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ScenarioWithId } from "@/lib/types";
 import {
   buildExistingObligationFromScenario,
@@ -11,13 +11,21 @@ import {
   runSubleaseRecoveryPortfolio,
 } from "@/lib/sublease-recovery/engine";
 import type { SubleaseScenario } from "@/lib/sublease-recovery/types";
+import type { ImportedProposalFieldReview } from "@/lib/sublease-recovery/types";
 import {
+  mapProposalToScenarioDraft,
+  normalizeProposalUpload,
+  type ProposalImportDraft,
+} from "@/lib/sublease-recovery/proposal-import";
+import {
+  buildSubleaseRecoveryExportFileName,
   buildSubleaseRecoveryWorkbook,
   downloadArrayBuffer,
   printSubleaseRecoverySummary,
+  type SubleaseRecoveryExportBranding,
 } from "@/lib/sublease-recovery/export";
 
-const STORAGE_KEY = "sublease_recovery_analysis_scenarios_v1";
+const STORAGE_KEY = "sublease_recovery_analysis_scenarios_v2";
 
 function parseIsoDate(value: string): Date {
   const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -80,11 +88,41 @@ function scenarioSeed(existingKey: string): string {
   return `seed:${existingKey}`;
 }
 
-interface SubleaseRecoveryAnalysisProps {
-  sourceScenario: ScenarioWithId | null;
+function scenarioDisplayTitle(scenario: SubleaseScenario): string {
+  const subtenant = String(scenario.subtenantName || "").trim();
+  return subtenant ? `${scenario.name} · ${subtenant}` : scenario.name;
 }
 
-export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAnalysisProps) {
+function normalizeStoredScenario(existing: ReturnType<typeof buildExistingObligationFromScenario>, scenario: SubleaseScenario): SubleaseScenario {
+  return {
+    ...scenario,
+    subtenantName: String(scenario.subtenantName || "").trim(),
+    subtenantLegalEntity: String(scenario.subtenantLegalEntity || "").trim(),
+    dbaName: String(scenario.dbaName || "").trim(),
+    guarantor: String(scenario.guarantor || "").trim(),
+    brokerName: String(scenario.brokerName || "").trim(),
+    industry: String(scenario.industry || "").trim(),
+    subtenantNotes: String(scenario.subtenantNotes || "").trim(),
+    sourceType: scenario.sourceType === "proposal_import" ? "proposal_import" : "manual",
+    sourceDocumentName: String(scenario.sourceDocumentName || "").trim(),
+    sourceProposalName: String(scenario.sourceProposalName || "").trim(),
+    proposalDate: String(scenario.proposalDate || "").trim(),
+    proposalExpirationDate: String(scenario.proposalExpirationDate || "").trim(),
+    propertyName: String(scenario.propertyName || existing.premises).trim(),
+    explicitBaseRentSchedule: (scenario.explicitBaseRentSchedule || []).map((step) => ({
+      startMonth: Math.max(0, Math.floor(Number(step.startMonth) || 0)),
+      endMonth: Math.max(0, Math.floor(Number(step.endMonth) || 0)),
+      annualRatePsf: Math.max(0, Number(step.annualRatePsf) || 0),
+    })),
+  };
+}
+
+interface SubleaseRecoveryAnalysisProps {
+  sourceScenario: ScenarioWithId | null;
+  exportBranding?: SubleaseRecoveryExportBranding;
+}
+
+export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }: SubleaseRecoveryAnalysisProps) {
   const existing = useMemo(() => buildExistingObligationFromScenario(sourceScenario), [sourceScenario]);
   const existingKey = `${existing.premises}|${existing.commencementDate}|${existing.expirationDate}|${existing.rsf}`;
 
@@ -93,6 +131,12 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
   const [excelLoading, setExcelLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string>("Not saved");
+  const [importLoading, setImportLoading] = useState(false);
+  const [importStatus, setImportStatus] = useState<string>("");
+  const [importError, setImportError] = useState<string>("");
+  const [proposalDraft, setProposalDraft] = useState<ProposalImportDraft | null>(null);
+  const [proposalFieldReview, setProposalFieldReview] = useState<ImportedProposalFieldReview[]>([]);
+  const proposalFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -101,8 +145,9 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
       if (raw) {
         const parsed = JSON.parse(raw) as { seed?: string; scenarios?: SubleaseScenario[] };
         if (parsed.seed === scenarioSeed(existingKey) && Array.isArray(parsed.scenarios) && parsed.scenarios.length > 0) {
-          setScenarios(parsed.scenarios);
-          setActiveScenarioId(parsed.scenarios[0].id);
+          const restored = parsed.scenarios.map((scenario) => normalizeStoredScenario(existing, scenario));
+          setScenarios(restored);
+          setActiveScenarioId(restored[0].id);
           setSaveStatus("Loaded saved scenarios");
           return;
         }
@@ -110,7 +155,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
     } catch {
       // ignore parse issues and reset from baseline
     }
-    const defaults = defaultSubleaseScenarios(existing);
+    const defaults = defaultSubleaseScenarios(existing).map((scenario) => normalizeStoredScenario(existing, scenario));
     setScenarios(defaults);
     setActiveScenarioId(defaults[0]?.id || "");
     setSaveStatus("Seeded from existing obligation");
@@ -181,7 +226,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
   };
 
   const addScenario = () => {
-    const next = defaultSubleaseScenarios(existing)[0];
+    const next = normalizeStoredScenario(existing, defaultSubleaseScenarios(existing)[0]);
     const scenario: SubleaseScenario = {
       ...next,
       id: `custom-${Date.now().toString(36)}`,
@@ -209,7 +254,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
   };
 
   const resetScenarios = () => {
-    const defaults = defaultSubleaseScenarios(existing);
+    const defaults = defaultSubleaseScenarios(existing).map((scenario) => normalizeStoredScenario(existing, scenario));
     setScenarios(defaults);
     setActiveScenarioId(defaults[0]?.id || "");
     setSaveStatus("Reset from existing obligation");
@@ -219,12 +264,10 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
     if (results.length === 0 || !sensitivity) return;
     setExcelLoading(true);
     try {
-      const buffer = await buildSubleaseRecoveryWorkbook(existing, results, sensitivity);
-      const today = new Date();
-      const fileDate = `${String(today.getMonth() + 1).padStart(2, "0")}.${String(today.getDate()).padStart(2, "0")}.${today.getFullYear()}`;
+      const buffer = await buildSubleaseRecoveryWorkbook(existing, results, sensitivity, exportBranding);
       downloadArrayBuffer(
         buffer,
-        `Sublease Recovery Analysis - ${fileDate}.xlsx`,
+        buildSubleaseRecoveryExportFileName("xlsx", exportBranding),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       );
     } finally {
@@ -236,10 +279,112 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
     if (results.length === 0) return;
     setPdfLoading(true);
     try {
-      printSubleaseRecoverySummary(existing, results);
+      printSubleaseRecoverySummary(existing, results, sensitivity, exportBranding);
     } finally {
       setPdfLoading(false);
     }
+  };
+
+  const applyProposalFieldChange = (fieldKey: string, nextValue: string | number) => {
+    setProposalFieldReview((prevFields) => {
+      const nextFields = prevFields.map((field) =>
+        field.key === fieldKey
+          ? { ...field, value: nextValue, accepted: true, needsReview: false }
+          : field
+      );
+      setProposalDraft((prevDraft) => {
+        if (!prevDraft) return prevDraft;
+        const updatedScenario: SubleaseScenario = { ...prevDraft.scenario };
+        const key = fieldKey as keyof SubleaseScenario;
+        if (key in updatedScenario) {
+          (updatedScenario as unknown as Record<string, unknown>)[fieldKey] = nextValue;
+        }
+        return { ...prevDraft, scenario: updatedScenario, fieldReview: nextFields };
+      });
+      return nextFields;
+    });
+  };
+
+  const toggleProposalFieldAccepted = (fieldKey: string, accepted: boolean) => {
+    setProposalFieldReview((prevFields) => {
+      const nextFields = prevFields.map((field) =>
+        field.key === fieldKey
+          ? { ...field, accepted }
+          : field
+      );
+      setProposalDraft((prevDraft) => {
+        if (!prevDraft) return prevDraft;
+        const updatedScenario: SubleaseScenario = { ...prevDraft.scenario };
+        const target = nextFields.find((field) => field.key === fieldKey);
+        const key = fieldKey as keyof SubleaseScenario;
+        if (target && key in updatedScenario && !accepted) {
+          const fallback = typeof target.value === "number" ? 0 : "";
+          (updatedScenario as unknown as Record<string, unknown>)[fieldKey] = fallback;
+        }
+        return { ...prevDraft, scenario: updatedScenario, fieldReview: nextFields };
+      });
+      return nextFields;
+    });
+  };
+
+  const handleImportFiles = async (incoming: FileList | File[] | null | undefined) => {
+    const files = Array.from(incoming ?? []);
+    if (files.length === 0) return;
+    const file = files[0];
+    setImportLoading(true);
+    setImportError("");
+    setImportStatus(`Parsing ${file.name}...`);
+    try {
+      const normalized = await normalizeProposalUpload(file);
+      const draft = mapProposalToScenarioDraft(normalized, existing, file.name || "Uploaded proposal");
+      setProposalDraft(draft);
+      setProposalFieldReview(draft.fieldReview);
+      setImportStatus(`Extracted proposal terms from ${file.name}. Review and approve below.`);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Unable to parse proposal file.");
+      setImportStatus("");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const saveProposalDraftScenario = () => {
+    if (!proposalDraft) return;
+    const scenarioToSave = normalizeStoredScenario(existing, {
+      ...proposalDraft.scenario,
+      importedProposalMeta: {
+        ...proposalDraft.reviewMeta,
+        extractedFields: proposalFieldReview,
+      },
+    });
+    setScenarios((prev) => {
+      const existingIdx = prev.findIndex((item) => item.id === scenarioToSave.id);
+      if (existingIdx >= 0) {
+        const next = [...prev];
+        next[existingIdx] = scenarioToSave;
+        return next;
+      }
+      return [...prev, scenarioToSave];
+    });
+    setActiveScenarioId(scenarioToSave.id);
+    setProposalDraft(null);
+    setProposalFieldReview([]);
+    setImportStatus(`Created scenario: ${scenarioDisplayTitle(scenarioToSave)}`);
+    setImportError("");
+  };
+
+  const openStoredProposalReview = (scenario: SubleaseScenario) => {
+    if (!scenario.importedProposalMeta) return;
+    const restored: ProposalImportDraft = {
+      scenario,
+      fieldReview: scenario.importedProposalMeta.extractedFields,
+      parserConfidence: scenario.importedProposalMeta.parserConfidence,
+      reviewMeta: scenario.importedProposalMeta,
+    };
+    setProposalDraft(restored);
+    setProposalFieldReview(restored.fieldReview);
+    setImportStatus(`Reviewing imported proposal for ${scenario.name}.`);
+    setImportError("");
   };
 
   const renderSensitivityRow = (title: string, rows: Array<{ label: string; netObligation: number; recoveryPercent: number }>) => (
@@ -268,6 +413,24 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <input
+            ref={proposalFileInputRef}
+            type="file"
+            accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+            className="hidden"
+            onChange={(e) => {
+              void handleImportFiles(e.target.files);
+              e.currentTarget.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className="btn-premium btn-premium-success"
+            onClick={() => proposalFileInputRef.current?.click()}
+            disabled={importLoading}
+          >
+            {importLoading ? "Parsing Proposal…" : "Import Proposal"}
+          </button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={addScenario}>Add Scenario</button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={duplicateScenario} disabled={!activeScenario}>Duplicate</button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={resetScenarios}>Reset</button>
@@ -279,6 +442,116 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
           </button>
         </div>
       </div>
+
+      <div
+        className={`mb-4 border p-3 transition ${importLoading ? "border-cyan-300/50 bg-cyan-500/10" : "border-white/15 bg-black/25"}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void handleImportFiles(e.dataTransfer.files);
+        }}
+      >
+        <p className="heading-kicker mb-1">Upload Sublease Proposal</p>
+        <p className="text-xs text-slate-300">
+          Drag and drop PDF/DOCX proposal files here, or use Import Proposal. Parsed terms are reviewed before a scenario is created.
+        </p>
+        {importStatus && <p className="text-xs text-cyan-200 mt-2">{importStatus}</p>}
+        {importError && <p className="text-xs text-rose-300 mt-2">{importError}</p>}
+      </div>
+
+      {proposalDraft && (
+        <div className="mb-4 border border-amber-400/40 bg-amber-500/10 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <div>
+              <p className="heading-kicker">Imported Proposal Review</p>
+              <p className="text-xs text-slate-200">
+                Parser confidence: {(proposalDraft.parserConfidence * 100).toFixed(1)}% · Source: {proposalDraft.scenario.sourceDocumentName || "Uploaded proposal"}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="btn-premium btn-premium-secondary text-xs"
+                onClick={() => {
+                  const accepted = proposalFieldReview.map((field) => ({ ...field, accepted: true, needsReview: false }));
+                  setProposalFieldReview(accepted);
+                  setProposalDraft((prev) => (prev ? { ...prev, fieldReview: accepted } : prev));
+                }}
+              >
+                Accept All
+              </button>
+              <button
+                type="button"
+                className="btn-premium btn-premium-success text-xs"
+                onClick={saveProposalDraftScenario}
+              >
+                Save as Scenario
+              </button>
+              <button
+                type="button"
+                className="btn-premium btn-premium-secondary text-xs"
+                onClick={() => {
+                  setProposalDraft(null);
+                  setProposalFieldReview([]);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+
+          <div className="max-h-[320px] overflow-auto border border-white/20 bg-black/35">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-950/95">
+                <tr>
+                  <th className="px-2 py-2 text-left">Field</th>
+                  <th className="px-2 py-2 text-left">Value</th>
+                  <th className="px-2 py-2 text-left">Use</th>
+                  <th className="px-2 py-2 text-left">Confidence</th>
+                  <th className="px-2 py-2 text-left">Source Snippet</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proposalFieldReview.map((field) => (
+                  <tr key={field.key} className={`border-t border-white/10 ${field.needsReview ? "bg-amber-500/10" : ""}`}>
+                    <td className="px-2 py-1.5 align-top text-slate-200">{field.label}</td>
+                    <td className="px-2 py-1.5 align-top">
+                      <input
+                        className="input-premium text-xs"
+                        value={String(field.value ?? "")}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          const nextValue = typeof field.value === "number"
+                            ? (Number.isFinite(Number(raw)) ? Number(raw) : 0)
+                            : raw;
+                          applyProposalFieldChange(field.key, nextValue);
+                        }}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 align-top">
+                      <input
+                        type="checkbox"
+                        checked={field.accepted}
+                        onChange={(e) => toggleProposalFieldAccepted(field.key, e.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 align-top text-slate-300">
+                      {field.confidence == null ? "—" : `${(field.confidence * 100).toFixed(0)}%`}
+                    </td>
+                    <td className="px-2 py-1.5 align-top text-slate-400">
+                      {field.sourceSnippet || "No snippet"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="mb-4 border border-white/15 bg-black/25 p-3">
         <p className="heading-kicker mb-2">Existing Obligation (Auto-Populated)</p>
@@ -304,7 +577,13 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
               onClick={() => setActiveScenarioId(scenario.id)}
               className={`px-3 py-2 text-sm border ${selected ? "border-cyan-300 bg-cyan-500/20 text-cyan-100" : "border-white/20 text-slate-200 hover:bg-white/5"}`}
             >
-              {scenario.name}
+              <div className="text-left">
+                <div>{scenario.name}</div>
+                <div className="text-[11px] text-slate-300">
+                  {scenario.subtenantName ? `Subtenant: ${scenario.subtenantName}` : "Subtenant: —"}
+                  {scenario.sourceType === "proposal_import" ? " · Imported" : ""}
+                </div>
+              </div>
             </button>
           );
         })}
@@ -321,6 +600,43 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
                 value={activeScenario.name}
                 onChange={(e) => updateScenario(activeScenario.id, { name: e.target.value })}
               />
+              <label className="block text-xs text-slate-400 mb-1">Subtenant name</label>
+              <input
+                className="input-premium mb-2"
+                value={activeScenario.subtenantName}
+                onChange={(e) => updateScenario(activeScenario.id, { subtenantName: e.target.value })}
+                placeholder="Confidential Tech Tenant"
+              />
+              <label className="block text-xs text-slate-400 mb-1">Subtenant legal entity (optional)</label>
+              <input
+                className="input-premium mb-2"
+                value={activeScenario.subtenantLegalEntity || ""}
+                onChange={(e) => updateScenario(activeScenario.id, { subtenantLegalEntity: e.target.value })}
+              />
+              <label className="block text-xs text-slate-400 mb-1">Guarantor (optional)</label>
+              <input
+                className="input-premium mb-2"
+                value={activeScenario.guarantor || ""}
+                onChange={(e) => updateScenario(activeScenario.id, { guarantor: e.target.value })}
+              />
+              {activeScenario.sourceType === "proposal_import" && (
+                <div className="border border-white/15 bg-black/30 p-2 mb-2 text-xs text-slate-300">
+                  <p><span className="text-slate-400">Source:</span> {activeScenario.sourceDocumentName || "Imported proposal"}</p>
+                  {activeScenario.sourceProposalName && <p><span className="text-slate-400">Proposal:</span> {activeScenario.sourceProposalName}</p>}
+                  {activeScenario.importedProposalMeta && (
+                    <p><span className="text-slate-400">Parser confidence:</span> {(activeScenario.importedProposalMeta.parserConfidence * 100).toFixed(1)}%</p>
+                  )}
+                  {activeScenario.importedProposalMeta && (
+                    <button
+                      type="button"
+                      className="btn-premium btn-premium-secondary text-xs mt-2"
+                      onClick={() => openStoredProposalReview(activeScenario)}
+                    >
+                      Reopen Parsed Terms Review
+                    </button>
+                  )}
+                </div>
+              )}
               <label className="block text-xs text-slate-400 mb-1">Downtime (months)</label>
               <input
                 className="input-premium mb-2"
@@ -383,6 +699,11 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
 
             <div className="border border-white/15 bg-black/35 p-3">
               <p className="heading-kicker mb-2">Rent Inputs</p>
+              {activeScenario.explicitBaseRentSchedule && activeScenario.explicitBaseRentSchedule.length > 1 && (
+                <div className="border border-cyan-300/30 bg-cyan-500/10 p-2 mb-2 text-xs text-cyan-100">
+                  Using explicit rent schedule extracted from proposal ({activeScenario.explicitBaseRentSchedule.length} steps).
+                </div>
+              )}
               <label className="block text-xs text-slate-400 mb-1">Base rent</label>
               <input className="input-premium mb-2" type="number" value={activeScenario.baseRent} onChange={(e) => updateScenario(activeScenario.id, { baseRent: Math.max(0, Number(e.target.value) || 0) })} />
               <label className="block text-xs text-slate-400 mb-1">Rent input type</label>
@@ -524,6 +845,17 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
           <div className="space-y-4">
             {activeResult && (
               <>
+                <div className="border border-white/15 bg-black/30 p-3 text-sm text-slate-200">
+                  <span className="text-slate-400">Scenario:</span> {activeResult.summary.scenarioName}
+                  {" · "}
+                  <span className="text-slate-400">Subtenant:</span> {activeResult.scenario.subtenantName || "—"}
+                  {activeResult.scenario.sourceType === "proposal_import" && (
+                    <>
+                      {" · "}
+                      <span className="text-slate-400">Source:</span> {activeResult.scenario.sourceDocumentName || "Imported proposal"}
+                    </>
+                  )}
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div className="border border-white/15 bg-black/30 p-3">
                     <p className="text-xs text-slate-400">Total Remaining Obligation</p>
@@ -602,6 +934,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
             <thead className="bg-slate-950/90">
               <tr className="text-slate-300">
                 <th className="px-3 py-2 text-left">Case</th>
+                <th className="px-3 py-2 text-left">Subtenant</th>
                 <th className="px-3 py-2 text-right">Total Remaining Obligation</th>
                 <th className="px-3 py-2 text-right">Total Sublease Recovery</th>
                 <th className="px-3 py-2 text-right">Total Sublease Costs</th>
@@ -619,6 +952,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
               {baselineSummary && (
                 <tr className="border-t border-white/10">
                   <td className="px-3 py-2">Existing Obligation</td>
+                  <td className="px-3 py-2">—</td>
                   <td className="px-3 py-2 text-right">{toCurrency(baselineSummary.totalRemainingObligation)}</td>
                   <td className="px-3 py-2 text-right">-</td>
                   <td className="px-3 py-2 text-right">-</td>
@@ -635,6 +969,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario }: SubleaseRecoveryAna
               {results.map((result) => (
                 <tr key={result.scenario.id} className="border-t border-white/10">
                   <td className="px-3 py-2">{result.summary.scenarioName}</td>
+                  <td className="px-3 py-2">{result.scenario.subtenantName || "—"}</td>
                   <td className="px-3 py-2 text-right">{toCurrency(result.summary.totalRemainingObligation)}</td>
                   <td className="px-3 py-2 text-right">{toCurrency(result.summary.totalSubleaseRecovery)}</td>
                   <td className="px-3 py-2 text-right">{toCurrency(result.summary.totalSubleaseCosts)}</td>

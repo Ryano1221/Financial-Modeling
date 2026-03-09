@@ -22,6 +22,30 @@ export interface PhaseInEvent {
   rsfIncrease: number;
 }
 
+export type SubleaseScenarioSourceType = "manual" | "proposal_import";
+
+export interface ImportedProposalFieldReview {
+  key: string;
+  label: string;
+  value: string | number;
+  confidence: number | null;
+  sourceSnippet?: string;
+  sourcePage?: number | null;
+  needsReview: boolean;
+  accepted: boolean;
+}
+
+export interface ImportedProposalMeta {
+  parserConfidence: number;
+  reviewTasks: Array<{
+    fieldPath: string;
+    severity: string;
+    issueCode: string;
+    message: string;
+  }>;
+  extractedFields: ImportedProposalFieldReview[];
+}
+
 export interface ExistingObligation {
   premises: string;
   rsf: number;
@@ -45,6 +69,20 @@ export interface ExistingObligation {
 export interface SubleaseScenario {
   id: string;
   name: string;
+  subtenantName: string;
+  subtenantLegalEntity?: string;
+  dbaName?: string;
+  guarantor?: string;
+  brokerName?: string;
+  industry?: string;
+  subtenantNotes?: string;
+  sourceType: SubleaseScenarioSourceType;
+  sourceDocumentName?: string;
+  sourceProposalName?: string;
+  proposalDate?: string;
+  proposalExpirationDate?: string;
+  propertyName?: string;
+  importedProposalMeta?: ImportedProposalMeta;
   downtimeMonths: number;
   subleaseCommencementDate: string;
   subleaseTermMonths: number;
@@ -73,6 +111,7 @@ export interface SubleaseScenario {
   parkingCostPerSpace: number;
   annualParkingEscalation: number;
   phaseInEvents: PhaseInEvent[];
+  explicitBaseRentSchedule?: RateStep[];
   discountRate: number;
 }
 
@@ -95,6 +134,7 @@ export interface SubleaseMonthlyRow {
 export interface SubleaseSummary {
   scenarioId: string;
   scenarioName: string;
+  subtenantName: string;
   totalRemainingObligation: number;
   totalSubleaseRecovery: number;
   totalSubleaseCosts: number;

@@ -32,6 +32,20 @@ function baseScenario(): SubleaseScenario {
   return {
     id: "realistic",
     name: "Realistic Case",
+    subtenantName: "",
+    subtenantLegalEntity: "",
+    dbaName: "",
+    guarantor: "",
+    brokerName: "",
+    industry: "",
+    subtenantNotes: "",
+    sourceType: "manual",
+    sourceDocumentName: "",
+    sourceProposalName: "",
+    proposalDate: "",
+    proposalExpirationDate: "",
+    propertyName: "Test Tower Suite 100",
+    importedProposalMeta: undefined,
     downtimeMonths: 0,
     subleaseCommencementDate: "2026-01-01",
     subleaseTermMonths: 12,
@@ -60,6 +74,7 @@ function baseScenario(): SubleaseScenario {
     parkingCostPerSpace: 0,
     annualParkingEscalation: 0,
     phaseInEvents: [],
+    explicitBaseRentSchedule: [],
     discountRate: 0.08,
   };
 }
@@ -122,6 +137,23 @@ describe("sublease recovery engine", () => {
       "Worst Case",
     ]);
     expect(defaults).toHaveLength(3);
+  });
+
+  it("uses explicit proposal rent schedule when provided", () => {
+    const existing = baseExisting();
+    const scenario: SubleaseScenario = {
+      ...baseScenario(),
+      explicitBaseRentSchedule: [
+        { startMonth: 0, endMonth: 5, annualRatePsf: 120 },
+        { startMonth: 6, endMonth: 11, annualRatePsf: 60 },
+      ],
+      annualBaseRentEscalation: 0.25,
+    };
+
+    const result = runSubleaseRecoveryScenario(existing, scenario);
+
+    expect(result.summary.totalSubleaseRecovery).toBe(90000);
+    expect(result.summary.netObligation).toBe(30000);
   });
 
   it("produces sensitivity outputs for required levers", () => {

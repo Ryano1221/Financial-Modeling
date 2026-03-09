@@ -2934,6 +2934,10 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
                 break
             probe = lines[idx + lookahead]
             probe_low = probe.lower()
+            # Avoid pulling free-rent/abatement month counts from nearby lines when
+            # we are scanning after a term header.
+            if lookahead > 0 and any(tok in probe_low for tok in ("free rent", "rent abatement", "abatement", "abated", "abate")):
+                continue
             if any(tok in probe_low for tok in disqualifying_tokens):
                 continue
             if _looks_like_abatement_distribution_window(probe_low):
@@ -5417,6 +5421,42 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 parking_abatement_ranges.append((0, max(0, free_count - 1)))
                 break
 
+    # Some proposals express parking abatement by reference to the rent abatement period
+    # (e.g., "Parking costs shall be abated during the Abatement Period").
+    if not parking_abatement_ranges:
+        references_abatement_period = bool(
+            re.search(
+                r"(?is)\bparking(?:\s+costs?|\s+charges?|\s+rent|\s+fees?)?\b[\s\S]{0,220}\b(?:abated|abatement|waived|free)\b[\s\S]{0,220}\babatement\s+period\b",
+                text,
+            )
+            or re.search(r"(?is)\bgross\s+rent\b[\s\S]{0,80}\bparking\s+abatement\b", text)
+        )
+        if references_abatement_period:
+            normalized_free_periods = _normalize_option_free_rent_periods(
+                hints.get("free_rent_periods"),
+                term_months=_coerce_int_token(hints.get("term_months"), 0) or 0,
+            )
+            for period in normalized_free_periods:
+                if not isinstance(period, dict):
+                    continue
+                start_i = _coerce_int_token(period.get("start_month"), None)
+                end_i = _coerce_int_token(period.get("end_month"), start_i)
+                if start_i is None or end_i is None:
+                    continue
+                start = max(0, int(start_i))
+                end = max(start, int(end_i))
+                parking_abatement_ranges.append((start, end))
+            if not parking_abatement_ranges:
+                free_start = _coerce_int_token(hints.get("free_rent_start_month"), None)
+                free_end = _coerce_int_token(hints.get("free_rent_end_month"), free_start)
+                free_months = _coerce_int_token(hints.get("free_rent_months"), 0) or 0
+                if free_start is not None:
+                    derived_end = free_end if free_end is not None else (int(free_start) + max(0, free_months - 1))
+                    if derived_end >= free_start:
+                        parking_abatement_ranges.append((int(free_start), int(derived_end)))
+                elif free_months > 0:
+                    parking_abatement_ranges.append((0, max(0, free_months - 1)))
+
     if parking_abatement_ranges:
         deduped = sorted({(max(0, s), max(max(0, s), e)) for s, e in parking_abatement_ranges}, key=lambda row: (row[0], row[1]))
         hints["parking_abatement_periods"] = [
@@ -7205,6 +7245,313 @@ def _canonical_opex_mode_for_extraction(canonical: CanonicalLease) -> str:
     return "nnn"
 
 
+_ENTITY_SUFFIXES = (
+    "llc",
+    "inc",
+    "corp",
+    "corporation",
+    "l.p.",
+    "lp",
+    "llp",
+    "ltd",
+    "pllc",
+    "co.",
+    "company",
+)
+
+
+def _clean_extracted_entity_name(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"^[\-\u2022:;,]+", "", text).strip()
+    text = re.sub(r"[\-:;,]+$", "", text).strip()
+    text = re.sub(
+        r"(?i)\b(?:for discussion purposes only|subject to contract|non-binding)\b.*$",
+        "",
+        text,
+    ).strip()
+    if len(text) > 140:
+        text = text[:140].rstrip(" .,:;-")
+    return text
+
+
+def _date_iso_from_flexible_token(raw: str) -> str | None:
+    token = str(raw or "").strip()
+    if not token:
+        return None
+    for fmt in (
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%m-%d-%Y",
+        "%m-%d-%y",
+        "%m.%d.%Y",
+        "%m.%d.%y",
+        "%Y-%m-%d",
+    ):
+        try:
+            return datetime.strptime(token, fmt).date().isoformat()
+        except Exception:
+            continue
+    for fmt in ("%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(token, fmt).date().isoformat()
+        except Exception:
+            continue
+    return None
+
+
+def _extract_proposal_profile_from_text(
+    *,
+    text: str,
+    filename: str,
+    canonical: CanonicalLease,
+) -> dict:
+    raw_text = str(text or "")
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln and ln.strip()]
+    top_lines = lines[:30]
+    lower_text = raw_text.lower()
+    evidence: dict[str, list[dict]] = {}
+    review_tasks: list[dict] = []
+
+    def set_field(field: str, value: str | float | int | None, snippet: str, confidence: float, page: int | None = None) -> None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return
+        evidence[field] = [
+            {
+                "page": page,
+                "snippet": snippet[:280],
+                "bbox": None,
+                "source": "proposal_overlay_regex",
+                "source_confidence": round(max(0.0, min(1.0, float(confidence))), 4),
+            }
+        ]
+
+    proposal_name: str | None = None
+    for ln in top_lines:
+        low = ln.lower()
+        if len(ln) > 120:
+            continue
+        if any(token in low for token in ("proposal", "counter", "letter of intent", "loi", "deal sheet", "term sheet")):
+            proposal_name = _clean_extracted_entity_name(ln)
+            set_field("proposal.proposal_name", proposal_name, ln, 0.78)
+            break
+    if not proposal_name:
+        stem = Path(filename or "proposal").stem.replace("_", " ").replace("-", " ").strip()
+        proposal_name = _clean_extracted_entity_name(stem) or "Imported Proposal"
+        set_field("proposal.proposal_name", proposal_name, f"filename:{filename}", 0.62)
+
+    proposal_date: str | None = None
+    proposal_expiration_date: str | None = None
+    date_label_regex = re.compile(
+        r"(?i)\b(?:date|proposal date|dated)\b\s*[:\-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4}|[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})"
+    )
+    exp_label_regex = re.compile(
+        r"(?i)\b(?:expires?|expiration|valid through|offer expires?)\b\s*[:\-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4}|[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})"
+    )
+    for ln in top_lines:
+        if proposal_date is None:
+            m = date_label_regex.search(ln)
+            if m:
+                proposal_date = _date_iso_from_flexible_token(m.group(1))
+                if proposal_date:
+                    set_field("proposal.proposal_date", proposal_date, ln, 0.75)
+        if proposal_expiration_date is None:
+            m = exp_label_regex.search(ln)
+            if m:
+                proposal_expiration_date = _date_iso_from_flexible_token(m.group(1))
+                if proposal_expiration_date:
+                    set_field("proposal.proposal_expiration_date", proposal_expiration_date, ln, 0.76)
+
+    subtenant_candidates: list[tuple[str, float, str]] = []
+    name_patterns = [
+        (re.compile(r"(?i)\b(?:proposed\s+subtenant|subtenant|tenant|prospect|applicant|proposed occupant)\b\s*[:\-]\s*([^\n;|]{2,140})"), 0.82),
+        (re.compile(r"(?i)\bon behalf of\s+([A-Z][A-Za-z0-9&.,'()\-\/ ]{2,140})"), 0.72),
+        (re.compile(r"(?i)\bfor\s+the\s+account\s+of\s+([A-Z][A-Za-z0-9&.,'()\-\/ ]{2,140})"), 0.7),
+    ]
+    for ln in lines:
+        for pattern, base_score in name_patterns:
+            match = pattern.search(ln)
+            if not match:
+                continue
+            candidate = _clean_extracted_entity_name(match.group(1))
+            if not candidate:
+                continue
+            score = base_score
+            low = ln.lower()
+            if any(sfx in candidate.lower() for sfx in _ENTITY_SUFFIXES):
+                score += 0.08
+            if "landlord" in candidate.lower() or "sublandlord" in candidate.lower():
+                score -= 0.2
+            if "subtenant" in low or "prospect" in low or "applicant" in low:
+                score += 0.05
+            subtenant_candidates.append((candidate, max(0.1, min(0.97, score)), ln))
+
+    subtenant_name: str | None = None
+    subtenant_conf = 0.0
+    if subtenant_candidates:
+        subtenant_candidates.sort(key=lambda row: (-row[1], len(row[0])))
+        subtenant_name, subtenant_conf, subtenant_snippet = subtenant_candidates[0]
+        set_field("proposal.subtenant_name", subtenant_name, subtenant_snippet, subtenant_conf)
+    else:
+        review_tasks.append(
+            {
+                "field_path": "proposal.subtenant_name",
+                "severity": "warn",
+                "issue_code": "SUBTENANT_NAME_MISSING",
+                "message": "Subtenant identity could not be confidently extracted. Please review and confirm the subtenant name.",
+                "candidates": [],
+                "recommended_value": None,
+                "evidence": [],
+            }
+        )
+
+    if subtenant_name and subtenant_conf < 0.68:
+        review_tasks.append(
+            {
+                "field_path": "proposal.subtenant_name",
+                "severity": "warn",
+                "issue_code": "SUBTENANT_NAME_LOW_CONFIDENCE",
+                "message": "Subtenant name was inferred with low confidence. Please review before saving the scenario.",
+                "candidates": [{"value": subtenant_name, "score": round(subtenant_conf, 4)}],
+                "recommended_value": subtenant_name,
+                "evidence": evidence.get("proposal.subtenant_name", []),
+            }
+        )
+
+    subtenant_legal_entity: str | None = None
+    if subtenant_name and any(sfx in subtenant_name.lower() for sfx in _ENTITY_SUFFIXES):
+        subtenant_legal_entity = subtenant_name
+        set_field(
+            "proposal.subtenant_legal_entity",
+            subtenant_legal_entity,
+            (evidence.get("proposal.subtenant_name", [{}])[0] or {}).get("snippet") or "",
+            min(0.95, subtenant_conf + 0.05),
+        )
+
+    dba_name: str | None = None
+    dba_match = re.search(r"(?i)\b(?:d/b/a|dba)\b\s*[:\-]?\s*([^\n;|]{2,140})", raw_text)
+    if dba_match:
+        dba_name = _clean_extracted_entity_name(dba_match.group(1))
+        set_field("proposal.dba_name", dba_name, dba_match.group(0), 0.74)
+
+    guarantor: str | None = None
+    guarantor_match = re.search(r"(?i)\bguarant(?:or|y)\b\s*[:\-]?\s*([^\n;|]{2,140})", raw_text)
+    if guarantor_match:
+        guarantor = _clean_extracted_entity_name(guarantor_match.group(1))
+        set_field("proposal.guarantor", guarantor, guarantor_match.group(0), 0.75)
+
+    broker_name: str | None = None
+    broker_match = re.search(r"(?i)\b(?:broker|representative|agent)\b\s*[:\-]?\s*([^\n;|]{2,140})", raw_text)
+    if broker_match:
+        broker_name = _clean_extracted_entity_name(broker_match.group(1))
+        set_field("proposal.broker_name", broker_name, broker_match.group(0), 0.72)
+
+    industry: str | None = None
+    industry_match = re.search(r"(?i)\bindustry\b\s*[:\-]?\s*([^\n;|]{2,100})", raw_text)
+    if industry_match:
+        industry = _clean_extracted_entity_name(industry_match.group(1))
+        set_field("proposal.industry", industry, industry_match.group(0), 0.66)
+
+    property_name = _clean_extracted_entity_name(
+        str(canonical.building_name or canonical.premises_name or "")
+    ) or None
+    if property_name:
+        set_field("proposal.property_name", property_name, "canonical building/premises", 0.86)
+
+    building_address = _clean_extracted_entity_name(str(canonical.address or "")) or None
+    if building_address:
+        set_field("proposal.building_address", building_address, "canonical address", 0.86)
+
+    suite_or_premises = _clean_extracted_entity_name(
+        " ".join(
+            p
+            for p in [
+                f"Suite {canonical.suite}" if str(canonical.suite or "").strip() else "",
+                f"Floor {canonical.floor}" if str(canonical.floor or "").strip() else "",
+            ]
+            if p
+        )
+    ) or None
+    if suite_or_premises:
+        set_field("proposal.suite_or_premises", suite_or_premises, "canonical suite/floor", 0.84)
+
+    lease_type_label = str(
+        canonical.lease_type.value if hasattr(canonical.lease_type, "value") else canonical.lease_type
+    ).strip()
+    lease_type = lease_type_label or None
+    if lease_type:
+        set_field("proposal.lease_type", lease_type, "canonical lease type", 0.82)
+
+    if "subtenant" not in lower_text and subtenant_name:
+        review_tasks.append(
+            {
+                "field_path": "proposal.subtenant_name",
+                "severity": "info",
+                "issue_code": "SUBTENANT_CONTEXT_WEAK",
+                "message": "Subtenant name was inferred from contextual text. Verify party identity in review before saving.",
+                "candidates": [{"value": subtenant_name, "score": round(subtenant_conf, 4)}],
+                "recommended_value": subtenant_name,
+                "evidence": evidence.get("proposal.subtenant_name", []),
+            }
+        )
+
+    proposal = {
+        "proposal_name": proposal_name,
+        "property_name": property_name,
+        "building_address": building_address,
+        "suite_or_premises": suite_or_premises,
+        "rentable_square_footage": float(canonical.rsf or 0.0),
+        "usable_square_footage": None,
+        "lease_type": lease_type,
+        "proposal_date": proposal_date,
+        "proposal_expiration_date": proposal_expiration_date,
+        "subtenant_name": subtenant_name,
+        "subtenant_legal_entity": subtenant_legal_entity,
+        "dba_name": dba_name,
+        "guarantor": guarantor,
+        "broker_name": broker_name,
+        "industry": industry,
+        "source_document_name": filename or None,
+    }
+
+    return {"proposal": proposal, "provenance": evidence, "review_tasks": review_tasks}
+
+
+def _merge_proposal_profile_into_extraction_artifacts(
+    *,
+    extraction_artifacts: dict,
+    canonical: CanonicalLease,
+    text: str,
+    filename: str,
+) -> dict:
+    payload = dict(extraction_artifacts or {})
+    canonical_extraction = payload.get("canonical_extraction") or _canonical_only_extraction(canonical, doc_type="unknown")
+    if not isinstance(canonical_extraction, dict):
+        canonical_extraction = _canonical_only_extraction(canonical, doc_type="unknown")
+
+    overlay = _extract_proposal_profile_from_text(text=text, filename=filename, canonical=canonical)
+    proposal_obj = overlay.get("proposal") if isinstance(overlay.get("proposal"), dict) else {}
+    proposal_provenance = overlay.get("provenance") if isinstance(overlay.get("provenance"), dict) else {}
+    proposal_review_tasks = list(overlay.get("review_tasks") or [])
+
+    existing_proposal = canonical_extraction.get("proposal") if isinstance(canonical_extraction.get("proposal"), dict) else {}
+    canonical_extraction["proposal"] = {**existing_proposal, **proposal_obj}
+
+    canonical_provenance = canonical_extraction.get("provenance") if isinstance(canonical_extraction.get("provenance"), dict) else {}
+    canonical_provenance = {**canonical_provenance, **proposal_provenance}
+    canonical_extraction["provenance"] = canonical_provenance
+
+    canonical_review = _merge_review_tasks(list(canonical_extraction.get("review_tasks") or []), proposal_review_tasks)
+    canonical_extraction["review_tasks"] = canonical_review
+
+    payload["canonical_extraction"] = canonical_extraction
+    payload["provenance"] = {**(payload.get("provenance") or {}), **proposal_provenance}
+    payload["review_tasks"] = _merge_review_tasks(list(payload.get("review_tasks") or []), proposal_review_tasks)
+    return payload
+
+
 def _canonical_only_extraction(canonical: CanonicalLease, *, doc_type: str = "unknown") -> dict:
     return {
         "document": {
@@ -7259,6 +7606,31 @@ def _canonical_only_extraction(canonical: CanonicalLease, *, doc_type: str = "un
             "base_psf_year_1": float(canonical.opex_psf_year_1),
             "growth_rate": float(canonical.opex_growth_rate),
             "cues": [],
+        },
+        "proposal": {
+            "proposal_name": canonical.scenario_name or None,
+            "property_name": canonical.building_name or canonical.premises_name or None,
+            "building_address": canonical.address or None,
+            "suite_or_premises": (
+                f"Suite {canonical.suite}".strip() if str(canonical.suite or "").strip()
+                else (f"Floor {canonical.floor}".strip() if str(canonical.floor or "").strip() else None)
+            ),
+            "rentable_square_footage": float(canonical.rsf),
+            "usable_square_footage": None,
+            "lease_type": (
+                canonical.lease_type.value
+                if hasattr(canonical.lease_type, "value")
+                else str(canonical.lease_type or "")
+            ) or None,
+            "proposal_date": None,
+            "proposal_expiration_date": None,
+            "subtenant_name": None,
+            "subtenant_legal_entity": None,
+            "dba_name": None,
+            "guarantor": None,
+            "broker_name": None,
+            "industry": None,
+            "source_document_name": None,
         },
         "provenance": {},
         "review_tasks": [],
@@ -8194,6 +8566,12 @@ def _normalize_impl(
             ),
             canonical=canonical,
         )
+        extraction_artifacts = _merge_proposal_profile_into_extraction_artifacts(
+            extraction_artifacts=extraction_artifacts,
+            canonical=canonical,
+            text=extraction_text_for_summary,
+            filename=file.filename or extraction_filename_for_summary or "uploaded-document",
+        )
         merged_review_tasks = _merge_review_tasks(
             list(extraction_artifacts.get("review_tasks") or []),
             list(supplemental_checks.get("review_tasks") or []),
@@ -8304,6 +8682,12 @@ def _normalize_impl(
                 ),
             },
         }
+        extraction_artifacts = _merge_proposal_profile_into_extraction_artifacts(
+            extraction_artifacts=extraction_artifacts,
+            canonical=canonical,
+            text=raw,
+            filename=extraction_filename_for_summary or "pasted_text.txt",
+        )
         return (
             NormalizerResponse(
                 canonical_lease=canonical,
@@ -8382,6 +8766,12 @@ def _normalize_impl(
             ),
         },
     }
+    extraction_artifacts = _merge_proposal_profile_into_extraction_artifacts(
+        extraction_artifacts=extraction_artifacts,
+        canonical=canonical,
+        text=raw_payload,
+        filename=extraction_filename_for_summary or "manual.json",
+    )
     return (
         NormalizerResponse(
             canonical_lease=canonical,

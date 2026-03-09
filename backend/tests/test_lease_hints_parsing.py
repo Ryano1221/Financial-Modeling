@@ -910,13 +910,16 @@ def test_extract_hints_6xguad_style_docx_text_regression() -> None:
         "In the event Subtenant operates for business up to twelve (12) months prior to the Rent Commencement Date, "
         "Subtenant shall be responsible for Operating Expenses prior to Rent Commencement.\n"
         "Sublease Term | Expiring on October 31, 2036.\n"
+        "Lease Term (Months) | 103 Months\n"
         "Base Rent | $46.00 / RSF / YR NNN with 3% annual escalations beginning in month 13 of Term.\n"
+        "Rent Abatement | Nine (9) Months Gross Rent and parking abatement.\n"
         "Operating Expenses | Estimated 2025 Operating Expenses are approximately $28.53/rsf.\n"
         "Subtenant Allowance & Improvements\n"
         "$215.00 per RSF\n"
         "Sublandlord shall provide an allowance equal to the above for construction of improvements (the \"TIA\").\n"
         "Parking | Subtenant will contract for non-exclusive parking at a ratio of 2.76 passes per 1,000 RSF leased "
-        "throughout the entire Sublease Term and the current rate for unreserved spaces shall be $200/space/month.\n"
+        "throughout the entire Sublease Term and the current rate for unreserved spaces shall be $200/space/month. "
+        "Parking costs shall be abated during the Abatement Period.\n"
     )
     hints = main._extract_lease_hints(text, "2 - Response - Solarwinds - 6xGuad.docx", "test-rid")
     assert hints["building_name"] == "6xGuad"
@@ -928,6 +931,7 @@ def test_extract_hints_6xguad_style_docx_text_regression() -> None:
     assert hints["term_months"] == 103
     assert hints["parking_ratio"] == 2.76
     assert hints["parking_rate_monthly"] == 200.0
+    assert hints["parking_abatement_periods"] == [{"start_month": 0, "end_month": 8}]
     assert hints["opex_psf_year_1"] == 28.53
     assert hints["opex_source_year"] == 2025
     assert hints["opex_by_calendar_year"] == {2025: 28.53}
@@ -937,6 +941,21 @@ def test_extract_hints_6xguad_style_docx_text_regression() -> None:
     assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 46.0}
     assert schedule[1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 47.38}
     assert 100 <= int(schedule[-1]["end_month"]) <= 102
+
+
+def test_extract_hints_parking_abatement_can_reference_abatement_period() -> None:
+    text = (
+        "Commencement Date: April 1, 2028.\n"
+        "Lease Term: 103 months.\n"
+        "Sublease Term: Expiring on October 31, 2036.\n"
+        "Rent Abatement: Nine (9) Months Gross Rent and parking abatement.\n"
+        "Parking: Parking costs shall be abated during the Abatement Period.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints["term_months"] == 103
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 8
+    assert hints["parking_abatement_periods"] == [{"start_month": 0, "end_month": 8}]
 
 
 def test_extract_hints_summit_lantana_prefers_project_name_and_floor_pair() -> None:
