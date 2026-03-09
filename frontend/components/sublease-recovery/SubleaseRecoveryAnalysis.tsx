@@ -685,7 +685,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
       </div>
 
       {activeScenario ? (
-        <div className="grid grid-cols-1 min-[1700px]:grid-cols-[350px_1fr] gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4">
           <aside className="space-y-3">
             <div className="border border-white/15 bg-black/35 p-3">
               <p className="heading-kicker mb-2">General Inputs</p>
@@ -951,7 +951,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
                     </>
                   )}
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 min-[1700px]:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div className="border border-white/15 bg-black/30 p-3">
                     <p className="text-xs text-slate-400">Total Remaining Obligation</p>
                     <p className="text-lg text-white">{toCurrency(activeResult.summary.totalRemainingObligation)}</p>
@@ -1120,7 +1120,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
             </table>
           </div>
 
-          <div className="grid grid-cols-1 min-[1700px]:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {renderSensitivityRow("Term", sensitivity.termSensitivity)}
             {renderSensitivityRow("Commission", sensitivity.commissionSensitivity)}
             {renderSensitivityRow("TI + Legal", sensitivity.tiLegalSensitivity)}
