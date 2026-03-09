@@ -65,6 +65,7 @@ import {
   type UserBrandingResponse,
   fetchUserBranding,
 } from "@/lib/user-settings";
+import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/SubleaseRecoveryAnalysis";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -549,6 +550,7 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
 }
 
 export default function Home() {
+  const [activeTopTab, setActiveTopTab] = useState<"lease-comparison" | "sublease-recovery">("lease-comparison");
   const [authSession, setAuthSession] = useState<SupabaseAuthSession | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1735,6 +1737,34 @@ export default function Home() {
 
       <FeatureTiles />
 
+      <section className="relative z-10 app-container mt-8">
+        <div className="border border-white/20 bg-black/40 p-2 inline-flex gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTopTab("lease-comparison")}
+            className={`px-4 py-2 text-sm border ${
+              activeTopTab === "lease-comparison"
+                ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
+                : "border-white/20 text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            Lease Analysis
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTopTab("sublease-recovery")}
+            className={`px-4 py-2 text-sm border ${
+              activeTopTab === "sublease-recovery"
+                ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
+                : "border-white/20 text-slate-200 hover:bg-white/5"
+            }`}
+          >
+            Sublease Recovery Analysis
+          </button>
+        </div>
+      </section>
+
+      {activeTopTab === "lease-comparison" ? (
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="grid grid-cols-1 2xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 border border-white/15 p-3 sm:p-4 bg-grid">
@@ -2024,6 +2054,13 @@ export default function Home() {
         </div>
         </section>
       </main>
+      ) : (
+        <main className="relative z-10 app-container pb-14 md:pb-20">
+          <section className="scroll-mt-24 bg-grid mt-6">
+            <SubleaseRecoveryAnalysis sourceScenario={selectedScenario ?? scenarios[0] ?? null} />
+          </section>
+        </main>
+      )}
     </>
   );
 }
