@@ -685,7 +685,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
       </div>
 
       {activeScenario ? (
-        <div className="grid grid-cols-1 xl:grid-cols-[350px_1fr] gap-4">
+        <div className="grid grid-cols-1 min-[1700px]:grid-cols-[350px_1fr] gap-4">
           <aside className="space-y-3">
             <div className="border border-white/15 bg-black/35 p-3">
               <p className="heading-kicker mb-2">General Inputs</p>
@@ -951,7 +951,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
                     </>
                   )}
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 min-[1700px]:grid-cols-4 gap-3">
                   <div className="border border-white/15 bg-black/30 p-3">
                     <p className="text-xs text-slate-400">Total Remaining Obligation</p>
                     <p className="text-lg text-white">{toCurrency(activeResult.summary.totalRemainingObligation)}</p>
@@ -973,41 +973,41 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
 
                 <div className="border border-white/15 bg-black/30 p-3">
                   <p className="heading-kicker mb-2">Monthly Cash Flow</p>
-                  <div className="max-h-[420px] overflow-auto border border-white/15">
-                    <table className="w-full text-xs">
+                  <div className="max-h-[420px] overflow-y-auto overflow-x-hidden border border-white/15">
+                    <table className="w-full table-fixed text-[11px]">
                       <thead className="sticky top-0 bg-slate-950/95 z-10">
                         <tr className="text-slate-300">
-                          <th className="px-2 py-2 text-left">Month</th>
-                          <th className="px-2 py-2 text-left">Date</th>
-                          <th className="px-2 py-2 text-right">Occupied RSF</th>
-                          <th className="px-2 py-2 text-right">Base Rent</th>
-                          <th className="px-2 py-2 text-right">OpEx</th>
-                          <th className="px-2 py-2 text-right">Parking</th>
-                          <th className="px-2 py-2 text-right">TI Amort.</th>
-                          <th className="px-2 py-2 text-right">Gross Rent</th>
-                          <th className="px-2 py-2 text-right">Abatements</th>
-                          <th className="px-2 py-2 text-right">Net Rent</th>
-                          <th className="px-2 py-2 text-right">One-Time</th>
-                          <th className="px-2 py-2 text-right">Recovery</th>
-                          <th className="px-2 py-2 text-right">Net Obligation</th>
+                          <th className="px-1.5 py-2 text-left leading-tight">Month</th>
+                          <th className="px-1.5 py-2 text-left leading-tight">Date</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Occupied RSF</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Base Rent</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">OpEx</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Parking</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">TI Amort.</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Gross Rent</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Abatements</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Net Rent</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">One-Time</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Recovery</th>
+                          <th className="px-1.5 py-2 text-right leading-tight">Net Obligation</th>
                         </tr>
                       </thead>
                       <tbody>
                         {activeResult.monthly.map((row) => (
                           <tr key={`${row.monthNumber}-${row.date}`} className="border-t border-white/10">
-                            <td className="px-2 py-1.5">{row.monthNumber}</td>
-                            <td className="px-2 py-1.5">{toDateLabel(row.date)}</td>
-                            <td className="px-2 py-1.5 text-right">{row.occupiedRsf.toLocaleString()}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.baseRent)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.operatingExpenses)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.parking)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.tiAmortization)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.grossMonthlyRent)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.abatementsOrCredits)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.netMonthlyRent)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.oneTimeCosts)}</td>
-                            <td className="px-2 py-1.5 text-right">{toCurrency(row.subleaseRecovery)}</td>
-                            <td className="px-2 py-1.5 text-right font-medium">{toCurrency(row.netObligation)}</td>
+                            <td className="px-1.5 py-1.5">{row.monthNumber}</td>
+                            <td className="px-1.5 py-1.5">{toDateLabel(row.date)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{row.occupiedRsf.toLocaleString()}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.baseRent)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.operatingExpenses)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.parking)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.tiAmortization)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.grossMonthlyRent)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.abatementsOrCredits)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.netMonthlyRent)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.oneTimeCosts)}</td>
+                            <td className="px-1.5 py-1.5 text-right">{toCurrency(row.subleaseRecovery)}</td>
+                            <td className="px-1.5 py-1.5 text-right font-medium">{toCurrency(row.netObligation)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1024,8 +1024,8 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
 
       <div className="mt-5 border border-white/15 bg-black/30 p-3">
         <p className="heading-kicker mb-2">Scenario Comparison</p>
-        <div className="overflow-auto border border-white/15">
-          <table className="w-full text-sm">
+        <div className="overflow-x-hidden border border-white/15">
+          <table className="w-full table-fixed text-xs sm:text-sm">
             <thead className="bg-slate-950/90">
               <tr className="text-slate-300">
                 <th className="px-3 py-2 text-left">Case</th>
@@ -1086,8 +1086,8 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
       {sensitivity && (
         <div className="mt-5 border border-white/15 bg-black/30 p-3 space-y-3">
           <p className="heading-kicker">Sensitivity Analysis</p>
-          <div className="overflow-auto border border-white/15">
-            <table className="w-full text-xs">
+          <div className="overflow-x-hidden border border-white/15">
+            <table className="w-full table-fixed text-xs">
               <thead className="bg-slate-950/90">
                 <tr>
                   <th className="px-2 py-2 text-left text-slate-300">Downtime \\ Base Rent</th>
@@ -1120,7 +1120,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
             </table>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 min-[1700px]:grid-cols-2 gap-3">
             {renderSensitivityRow("Term", sensitivity.termSensitivity)}
             {renderSensitivityRow("Commission", sensitivity.commissionSensitivity)}
             {renderSensitivityRow("TI + Legal", sensitivity.tiLegalSensitivity)}
