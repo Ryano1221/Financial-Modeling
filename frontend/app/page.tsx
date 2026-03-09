@@ -1739,7 +1739,7 @@ export default function Home() {
       <section className="relative z-10 app-container mt-8">
         <div className="mx-auto w-full max-w-6xl">
           <div className="border border-white/20 bg-black/40 p-2">
-            <div className="grid w-full max-w-[560px] grid-cols-2 gap-2">
+            <div className="grid w-full grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setActiveTopTab("lease-comparison")}
