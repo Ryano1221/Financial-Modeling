@@ -2047,104 +2047,106 @@ export default function Home() {
       ) : (
         <main className="relative z-10 app-container pb-14 md:pb-20">
           <section className="scroll-mt-24 bg-grid mt-6 space-y-4">
-            {!authSession && (
-              <div className="border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
-                <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
-                <div className="flex flex-wrap gap-2">
-                  <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
-                    Sign in
-                  </a>
-                  <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
-                    Create account
-                  </a>
-                </div>
-              </div>
-            )}
-            <div className="border border-white/20 bg-slate-950/35 p-4 space-y-4">
-              <div className="border border-slate-300/20 bg-slate-950/30 p-4">
-                <p className="heading-kicker mb-2">Brokerage branding</p>
-                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
-                  <div>
-                    <p className="text-xs text-slate-400">Brokerage name</p>
-                    <p className="mt-1 text-sm text-white">{brokerageName || "The CRE Model"}</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Brokerage logo: {organizationBranding?.has_logo ? "Saved" : "Using The CRE Model default"}
-                    </p>
-                    <p className="mt-2 text-xs text-slate-400">
-                      Brokerage name and logo are editable only in Account.
-                    </p>
+            <div className="mx-auto w-full max-w-6xl space-y-4">
+              {!authSession && (
+                <div className="border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
+                  <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+                      Sign in
+                    </a>
+                    <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
+                      Create account
+                    </a>
                   </div>
-                  {authSession ? (
-                    <a href="/branding" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                      Manage brokerage branding
-                    </a>
-                  ) : (
-                    <a href="/account?mode=signin" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                      Sign in to manage branding
-                    </a>
-                  )}
                 </div>
-                {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading brokerage branding…</p>}
-              </div>
+              )}
+              <div className="border border-white/20 bg-slate-950/35 p-4 space-y-4">
+                <div className="border border-slate-300/20 bg-slate-950/30 p-4">
+                  <p className="heading-kicker mb-2">Brokerage branding</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
+                    <div>
+                      <p className="text-xs text-slate-400">Brokerage name</p>
+                      <p className="mt-1 text-sm text-white">{brokerageName || "The CRE Model"}</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Brokerage logo: {organizationBranding?.has_logo ? "Saved" : "Using The CRE Model default"}
+                      </p>
+                      <p className="mt-2 text-xs text-slate-400">
+                        Brokerage name and logo are editable only in Account.
+                      </p>
+                    </div>
+                    {authSession ? (
+                      <a href="/branding" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                        Manage brokerage branding
+                      </a>
+                    ) : (
+                      <a href="/account?mode=signin" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                        Sign in to manage branding
+                      </a>
+                    )}
+                  </div>
+                  {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading brokerage branding…</p>}
+                </div>
 
-              <div className="border-t border-slate-300/20 pt-4">
-                <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
-                <div className="mb-3">
-                  <ClientLogoUploader
-                    logoDataUrl={clientLogoDataUrl}
-                    fileName={clientLogoFileName}
-                    uploading={clientLogoUploading}
-                    disabled={!authSession}
-                    disabledMessage="Sign in to upload a client logo."
-                    error={clientLogoError}
-                    onUpload={uploadClientLogo}
-                    onClear={clearClientLogo}
-                  />
+                <div className="border-t border-slate-300/20 pt-4">
+                  <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
+                  <div className="mb-3">
+                    <ClientLogoUploader
+                      logoDataUrl={clientLogoDataUrl}
+                      fileName={clientLogoFileName}
+                      uploading={clientLogoUploading}
+                      disabled={!authSession}
+                      disabledMessage="Sign in to upload a client logo."
+                      error={clientLogoError}
+                      onUpload={uploadClientLogo}
+                      onClear={clearClientLogo}
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Prepared for</span>
+                      <input
+                        type="text"
+                        value={reportMeta.prepared_for}
+                        onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
+                        className="input-premium mt-1 disabled:opacity-60"
+                        placeholder="Client"
+                        disabled={!authSession}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Prepared by</span>
+                      <input
+                        type="text"
+                        value={reportMeta.prepared_by}
+                        onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
+                        className="input-premium mt-1 disabled:opacity-60"
+                        placeholder={CRE_DEFAULT_PREPARED_BY}
+                        disabled={!authSession}
+                      />
+                    </label>
+                    <label className="block sm:col-span-2">
+                      <span className="text-xs text-slate-400">Report date</span>
+                      <input
+                        type="text"
+                        value={reportMeta.report_date}
+                        onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
+                        onBlur={(e) =>
+                          setReportMeta((prev) => ({
+                            ...prev,
+                            report_date: normalizeDateMmDdYyyy(e.target.value),
+                          }))
+                        }
+                        className="input-premium mt-1 disabled:opacity-60"
+                        placeholder="MM.DD.YYYY"
+                        disabled={!authSession}
+                      />
+                    </label>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Defaults if blank: Prepared for = Client, Prepared by = The CRE Model, Report date = today (MM.DD.YYYY).
+                  </p>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <label className="block">
-                    <span className="text-xs text-slate-400">Prepared for</span>
-                    <input
-                      type="text"
-                      value={reportMeta.prepared_for}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
-                      className="input-premium mt-1 disabled:opacity-60"
-                      placeholder="Client"
-                      disabled={!authSession}
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-xs text-slate-400">Prepared by</span>
-                    <input
-                      type="text"
-                      value={reportMeta.prepared_by}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
-                      className="input-premium mt-1 disabled:opacity-60"
-                      placeholder={CRE_DEFAULT_PREPARED_BY}
-                      disabled={!authSession}
-                    />
-                  </label>
-                  <label className="block sm:col-span-2">
-                    <span className="text-xs text-slate-400">Report date</span>
-                    <input
-                      type="text"
-                      value={reportMeta.report_date}
-                      onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
-                      onBlur={(e) =>
-                        setReportMeta((prev) => ({
-                          ...prev,
-                          report_date: normalizeDateMmDdYyyy(e.target.value),
-                        }))
-                      }
-                      className="input-premium mt-1 disabled:opacity-60"
-                      placeholder="MM.DD.YYYY"
-                      disabled={!authSession}
-                    />
-                  </label>
-                </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Defaults if blank: Prepared for = Client, Prepared by = The CRE Model, Report date = today (MM.DD.YYYY).
-                </p>
               </div>
             </div>
 
