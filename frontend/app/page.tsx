@@ -1769,7 +1769,7 @@ export default function Home() {
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="grid grid-cols-1 2xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 border border-white/15 p-3 sm:p-4 bg-grid">
           {/* Left column: upload & extract */}
-          <div className="space-y-5 sm:space-y-6 bg-grid">
+          <div className="space-y-5 sm:space-y-6 bg-grid self-start xl:sticky xl:top-24">
             <div id="upload-section" className="reveal-on-scroll">
               <UploadExtractCard>
                 <p className="heading-kicker mb-2">Extract from document</p>
