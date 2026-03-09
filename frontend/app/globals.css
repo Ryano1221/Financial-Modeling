@@ -92,7 +92,8 @@
     width: 100%;
     max-width: 1400px;
     margin-inline: auto;
-    padding-inline: clamp(1rem, 2vw, 2.2rem);
+    padding-left: max(clamp(1rem, 2vw, 2.2rem), env(safe-area-inset-left));
+    padding-right: max(clamp(1rem, 2vw, 2.2rem), env(safe-area-inset-right));
   }
 
   .section-shell {
@@ -309,6 +310,13 @@
   .hero-parallax-layer {
     transform: translate3d(0, var(--parallax-y, 0px), 0);
     will-change: transform;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-container {
+    padding-left: max(0.95rem, env(safe-area-inset-left));
+    padding-right: max(0.95rem, env(safe-area-inset-right));
   }
 }
 

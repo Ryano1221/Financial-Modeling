@@ -476,7 +476,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
   );
 
   return (
-    <section className="border border-white/15 bg-grid p-4 sm:p-5">
+    <section className="mx-auto w-full border border-white/15 bg-grid p-4 sm:p-5">
       {globalDragActive && (
         <div className="pointer-events-none fixed inset-0 z-[70] border-2 border-dashed border-cyan-300/70 bg-cyan-500/10 backdrop-blur-[1px]">
           <div className="absolute inset-x-4 top-16 rounded-xl border border-cyan-200/70 bg-slate-900/90 px-4 py-3 text-center text-sm font-semibold tracking-tight text-cyan-100 shadow-[0_20px_60px_rgba(2,6,23,0.45)]">

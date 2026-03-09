@@ -1737,7 +1737,7 @@ export default function Home() {
 
       <FeatureTiles />
 
-      <section className="relative z-10 app-container mt-8">
+      <section className="relative z-10 app-container mt-8 flex justify-center">
         <div className="border border-white/20 bg-black/40 p-2 inline-flex gap-2">
           <button
             type="button"
@@ -1767,7 +1767,7 @@ export default function Home() {
       {activeTopTab === "lease-comparison" ? (
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24 bg-grid">
-        <div className="grid grid-cols-1 2xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 border border-white/15 p-3 sm:p-4 bg-grid">
+        <div className="mx-auto w-full grid grid-cols-1 2xl:grid-cols-[0.86fr_1.14fr] gap-6 lg:gap-8 2xl:gap-10 border border-white/15 p-3 sm:p-4 bg-grid">
           {/* Left column: upload & extract */}
           <div className="space-y-5 sm:space-y-6 bg-grid self-start xl:sticky xl:top-24">
             <div id="upload-section" className="reveal-on-scroll">
