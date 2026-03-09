@@ -476,7 +476,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
   );
 
   return (
-    <section className="mx-auto w-full border border-white/15 bg-grid p-4 sm:p-5">
+    <section className="mx-auto w-full max-w-6xl border border-white/15 bg-grid p-4 sm:p-5">
       {globalDragActive && (
         <div className="pointer-events-none fixed inset-0 z-[70] border-2 border-dashed border-cyan-300/70 bg-cyan-500/10 backdrop-blur-[1px]">
           <div className="absolute inset-x-4 top-16 rounded-xl border border-cyan-200/70 bg-slate-900/90 px-4 py-3 text-center text-sm font-semibold tracking-tight text-cyan-100 shadow-[0_20px_60px_rgba(2,6,23,0.45)]">
@@ -484,15 +484,15 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
           </div>
         </div>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/15 pb-4 mb-4">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:flex-wrap items-center sm:items-start justify-center sm:justify-between gap-3 border-b border-white/15 pb-4 mb-4 text-center sm:text-left">
+        <div className="w-full sm:w-auto">
           <p className="heading-kicker">New Module</p>
           <h2 className="heading-section">Sublease Recovery Analysis</h2>
           <p className="text-sm text-slate-300 mt-1">
             Existing obligation is auto-seeded from your extracted lease data. Build and compare sublease scenarios side by side.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full sm:w-auto flex-wrap justify-center sm:justify-end gap-2">
           <input
             ref={proposalFileInputRef}
             type="file"
@@ -649,9 +649,9 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
         </div>
       )}
 
-      <div className="mb-4 border border-white/15 bg-black/25 p-3">
+      <div className="mb-4 border border-white/15 bg-black/25 p-3 text-center sm:text-left">
         <p className="heading-kicker mb-2">Existing Obligation (Auto-Populated)</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm justify-items-center sm:justify-items-start">
           <div><span className="text-slate-400">Premises:</span> <span className="text-white">{existing.premises}</span></div>
           <div><span className="text-slate-400">RSF:</span> <span className="text-white">{existing.rsf.toLocaleString()}</span></div>
           <div><span className="text-slate-400">Commencement:</span> <span className="text-white">{toDateLabel(existing.commencementDate)}</span></div>
@@ -663,7 +663,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
+      <div className="flex flex-wrap justify-center sm:justify-start gap-2 mb-4">
         {scenarios.map((scenario) => {
           const selected = scenario.id === activeScenario?.id;
           return (
