@@ -3231,6 +3231,28 @@ def _word_token_to_int(token: str | None) -> Optional[int]:
     return None
 
 
+def _percent_token_to_float(token: str | None) -> Optional[float]:
+    pct = _coerce_float_token(token, None)
+    if pct is not None:
+        return float(pct)
+    word_val = _word_token_to_int(token)
+    if word_val is not None:
+        return float(word_val)
+    cleaned = re.sub(r"[^a-z\- ]", " ", str(token or "").lower()).strip()
+    if not cleaned:
+        return None
+    parts = [p for p in re.split(r"[-\s]+", cleaned) if p]
+    for width in (2, 1):
+        if len(parts) < width:
+            continue
+        for end in range(len(parts), width - 1, -1):
+            candidate = " ".join(parts[end - width:end])
+            parsed = _word_token_to_int(candidate)
+            if parsed is not None:
+                return float(parsed)
+    return None
+
+
 def _extract_option_blocks(section_text: str) -> list[tuple[str, str]]:
     if not section_text:
         return []
@@ -3589,11 +3611,25 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
             5,
         ),
         (
+            r"(?i)\b([a-z]+(?:[-\s]+[a-z]+)?)\s+percent\s+"
+            r"(?:(?:annual(?:ly)?\s+)?(?:increase|increases|escalation|escalations|escalator)\b"
+            r"|annual(?:ly)?\s+(?:increase|increases|escalation|escalations|escalator)\b)",
+            1,
+            3,
+        ),
+        (
             r"(?i)\b(\d+(?:\.\d+)?)%\s+"
             r"(?:(?:annual(?:ly)?\s+(?:(?:base\s+)?rent(?:al)?(?:\s+rate)?\s+)?)?(?:increase|increases|escalation|escalations|escalator)\b"
             r"|(?:increase|increases|escalation|escalations|escalator)\b[^\n]{0,60}\bannual(?:ly| anniversary)?\b)",
             1,
             4,
+        ),
+        (
+            r"(?i)\bannual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
+            r"(?:increase|increases|escalation|escalations|escalator)\b"
+            r"(?:\s*[:|=]\s*|[^\n]{0,140}?)([a-z]+(?:[-\s]+[a-z]+)?)\s+percent\b",
+            1,
+            3,
         ),
         (
             r"(?i)\bannual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
@@ -3619,7 +3655,7 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
     ]
     for pattern, group_index, base_score in patterns:
         for m in re.finditer(pattern, block):
-            pct = _coerce_float_token(m.group(group_index), None)
+            pct = _percent_token_to_float(m.group(group_index))
             if pct is None or pct <= 0 or pct > 25:
                 continue
             segment = (m.group(0) or "").lower()
@@ -5538,14 +5574,50 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     option_base_rate = _coerce_float_token(option_hints.get("base_rate_psf_yr"), 0.0) or 0.0
     option_escalation_pct = _coerce_float_token(option_hints.get("escalation_pct"), 0.0) or 0.0
     option_term = _coerce_int_token(hints.get("term_months"), 0) or 0
-    if option_base_rate >= 2.0 and option_term > 0:
+    option_escalation_effective: float | None = None
+    if option_escalation_pct > 0:
+        option_escalation_effective = float(option_escalation_pct)
+    elif explicit_escalation_pct is not None and explicit_escalation_pct > 0:
+        option_escalation_effective = float(explicit_escalation_pct)
+    elif not (hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []):
+        option_escalation_effective = 3.0
+
+    if option_base_rate >= 2.0 and option_term > 0 and option_escalation_effective is not None:
         option_schedule = _build_option_rent_schedule(
             term_months=int(option_term),
             base_rate_psf_yr=float(option_base_rate),
-            escalation_pct=float(option_escalation_pct),
+            escalation_pct=float(option_escalation_effective),
+            escalation_start_month_1=explicit_escalation_start_month_1 or 13,
         )
         if option_schedule:
-            hints["rent_schedule"] = option_schedule
+            current = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
+            current_rates = {
+                round(_coerce_float_token(step.get("rent_psf_annual"), 0.0) or 0.0, 4)
+                for step in current
+                if isinstance(step, dict)
+            }
+            option_rates = {
+                round(_coerce_float_token(step.get("rent_psf_annual"), 0.0) or 0.0, 4)
+                for step in option_schedule
+                if isinstance(step, dict)
+            }
+            option_first_rate = _coerce_float_token(option_schedule[0].get("rent_psf_annual"), 0.0) or 0.0
+            current_first_rate = (
+                _coerce_float_token(current[0].get("rent_psf_annual"), 0.0) or 0.0
+                if current and isinstance(current[0], dict)
+                else 0.0
+            )
+            current_rate_max = max(current_rates) if current_rates else 0.0
+            current_low_flat = bool(current_rates) and len(current_rates) <= 1 and current_rate_max <= 10.0
+            selected_option_differs = bool(current) and abs(option_first_rate - current_first_rate) >= 1.0
+            should_replace = (
+                not current
+                or len(option_rates) > len(current_rates)
+                or current_low_flat
+                or selected_option_differs
+            )
+            if should_replace:
+                hints["rent_schedule"] = option_schedule
 
     option_variants: list[dict] = []
     for raw_variant in raw_option_variants:

@@ -433,6 +433,41 @@ def test_extract_hints_defaults_base_rent_escalation_to_three_percent_only_when_
     assert 100 <= int(schedule[-1]["end_month"]) <= 102
 
 
+def test_extract_hints_parses_word_percent_base_rent_escalation() -> None:
+    text = (
+        "Commencement Date: April 1, 2028.\n"
+        "Lease Term: Sixty (60) months.\n"
+        "Base Rent: $44.00 / RSF / YR NNN with four percent annual escalations beginning in month 13 of Term.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    schedule = hints.get("rent_schedule")
+    assert isinstance(schedule, list)
+    assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 44.0}
+    assert schedule[1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 45.76}
+    assert schedule[-1]["end_month"] == 59
+
+
+def test_extract_hints_keeps_rich_rent_schedule_when_option_rate_lacks_escalation() -> None:
+    text = (
+        "Commencement Date: January 1, 2027.\n"
+        "Lease Term: Thirty-six (36) months.\n"
+        "Phase I - Initial Occupancy (Months 1-12)\n"
+        "Base Rent: $40.00/RSF NNN\n"
+        "Phase II - Expansion Premises (Months 13-24)\n"
+        "Base Rent: $42.00/RSF NNN\n"
+        "Phase III - Expansion Premises (Months 25-36)\n"
+        "Base Rent: $44.00/RSF NNN\n"
+        "TERM: Option 1: thirty-six (36) months.\n"
+        "BASE RENTAL RATE: Option 1: 36 Month Term | $40.00 NNN.\n"
+    )
+    hints = main._extract_lease_hints(text, "option-counter.docx", "test-rid")
+    schedule = hints.get("rent_schedule")
+    assert isinstance(schedule, list)
+    rates = [float(step["rent_psf_annual"]) for step in schedule if isinstance(step, dict)]
+    assert set(rates) >= {40.0, 42.0, 44.0}
+    assert len(set(rates)) >= 3
+
+
 def test_note_highlights_include_parking_ratio() -> None:
     text = "Parking ratio shall be 4.0 spaces per 1,000 RSF for the Premises."
     notes = main._extract_lease_note_highlights(text)

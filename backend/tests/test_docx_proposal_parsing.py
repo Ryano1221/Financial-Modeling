@@ -136,6 +136,24 @@ def test_regex_prefill_parses_annual_rental_increases_with_percent_after_phrase(
     assert steps[-1]["end"] == 59
 
 
+def test_regex_prefill_parses_word_percent_annual_escalation() -> None:
+    text = (
+        "Premises: Suite 230 consisting of 3,947 RSF.\n"
+        "Commencement Date: May 1, 2027.\n"
+        "Lease Term: Sixty (60) months from the Commencement Date.\n"
+        "Base Rent: $42.00 / RSF / YR NNN with four percent annual escalations beginning in month 13.\n"
+        "Base Operating Expenses: $26.80/SF.\n"
+    )
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("_rent_steps_source") == "base_rate_plus_escalation_regex"
+    steps = prefill.get("rent_steps")
+    assert isinstance(steps, list)
+    assert steps[0] == {"start": 0, "end": 11, "rate_psf_yr": 42.0}
+    assert steps[1] == {"start": 12, "end": 23, "rate_psf_yr": 43.68}
+    assert steps[-1]["end"] == 59
+
+
 def test_regex_prefill_parses_lease_rate_label_without_base_rent_phrase() -> None:
     text = (
         "Premises: Portion of Suite 500 totaling approximately 4,165 rentable square feet.\n"

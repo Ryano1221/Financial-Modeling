@@ -788,6 +788,82 @@ _RE_ANNUAL_ESCALATION_START_IN_PARENS = re.compile(
 )
 
 
+_WORD_UNITS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+_WORD_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+
+
+def _word_token_to_int(token: str | None) -> int | None:
+    if not token:
+        return None
+    cleaned = re.sub(r"[^a-z\- ]", "", token.lower()).strip()
+    if not cleaned:
+        return None
+    parts = [p for p in re.split(r"[-\s]+", cleaned) if p]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        if parts[0] in _WORD_UNITS:
+            return _WORD_UNITS[parts[0]]
+        if parts[0] in _WORD_TENS:
+            return _WORD_TENS[parts[0]]
+        return None
+    if len(parts) == 2 and parts[0] in _WORD_TENS and parts[1] in _WORD_UNITS:
+        return _WORD_TENS[parts[0]] + _WORD_UNITS[parts[1]]
+    return None
+
+
+def _percent_token_to_float(token: str | None) -> float | None:
+    pct = _coerce_float_token(token, None)
+    if pct is not None:
+        return float(pct)
+    word_val = _word_token_to_int(token)
+    if word_val is not None:
+        return float(word_val)
+    cleaned = re.sub(r"[^a-z\- ]", " ", str(token or "").lower()).strip()
+    if not cleaned:
+        return None
+    parts = [p for p in re.split(r"[-\s]+", cleaned) if p]
+    for width in (2, 1):
+        if len(parts) < width:
+            continue
+        for end in range(len(parts), width - 1, -1):
+            candidate = " ".join(parts[end - width:end])
+            parsed = _word_token_to_int(candidate)
+            if parsed is not None:
+                return float(parsed)
+    return None
+
+
 def _has_ti_context_token(text: str) -> bool:
     segment = str(text or "")
     if not segment:
@@ -809,14 +885,32 @@ def _extract_annual_rent_escalation_pct(text: str) -> float | None:
     candidates: list[tuple[int, float, int]] = []
     patterns = (
         (_RE_ANNUAL_ESCALATION_PERCENT_IN_PARENS, 1, 5),
+        (
+            re.compile(
+                r"(?i)\b([a-z]+(?:[-\s]+[a-z]+)?)\s+percent\s+"
+                r"(?:(?:annual(?:ly)?\s+)?(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+                r"|annual(?:ly)?\s+(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b)"
+            ),
+            1,
+            3,
+        ),
         (_RE_ANNUAL_ESCALATION_GENERIC, 1, 4),
+        (
+            re.compile(
+                r"(?i)\bannual(?:\s+(?:base\s+)?rent(?:al)?(?:\s+rate)?)?\s+"
+                r"(?:escalat(?:ion|ions)|increase(?:s)?|escalator)\b"
+                r"(?:\s*[:|=]\s*|[^\n]{0,140}?)([a-z]+(?:[-\s]+[a-z]+)?)\s+percent\b"
+            ),
+            1,
+            3,
+        ),
         (_RE_ANNUAL_ESCALATION_LABEL_VALUE, 1, 4),
         (_RE_BASE_RENT_INCREASE_PERCENT_AFTER, 1, 5),
         (_RE_BASE_RENT_PERCENT_INCREASE_ANNUAL_LATER, 1, 6),
     )
     for pattern, group_index, base_score in patterns:
         for match in pattern.finditer(text):
-            pct = _coerce_float_token(match.group(group_index), None)
+            pct = _percent_token_to_float(match.group(group_index))
             if pct is None or pct <= 0 or pct > 25:
                 continue
             segment = (match.group(0) or "").lower()
