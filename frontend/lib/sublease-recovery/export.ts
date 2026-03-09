@@ -115,6 +115,45 @@ function styleMetaRow(
   return row + 2;
 }
 
+function dataUrlImageExtension(dataUrl: string | null | undefined): "png" | "jpeg" | null {
+  const raw = String(dataUrl || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^data:([^;]+);base64,/i);
+  const mime = match?.[1]?.toLowerCase() || "";
+  if (mime === "image/png") return "png";
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpeg";
+  return null;
+}
+
+function addHeaderLogos(
+  workbook: ExcelJS.Workbook,
+  sheet: ExcelJS.Worksheet,
+  totalCols: number,
+  branding: SubleaseRecoveryExportBranding,
+): void {
+  const brokerageLogo = String(branding.brokerageLogoDataUrl || "").trim();
+  const clientLogo = String(branding.clientLogoDataUrl || "").trim();
+  const brokerageExt = dataUrlImageExtension(brokerageLogo);
+  const clientExt = dataUrlImageExtension(clientLogo);
+
+  if (brokerageExt) {
+    const imageId = workbook.addImage({ base64: brokerageLogo, extension: brokerageExt });
+    sheet.addImage(imageId, {
+      tl: { col: 0.2, row: 0.15 },
+      ext: { width: 112, height: 28 },
+      editAs: "oneCell",
+    });
+  }
+  if (clientExt) {
+    const imageId = workbook.addImage({ base64: clientLogo, extension: clientExt });
+    sheet.addImage(imageId, {
+      tl: { col: Math.max(1.2, totalCols - 1.7), row: 0.15 },
+      ext: { width: 102, height: 28 },
+      editAs: "oneCell",
+    });
+  }
+}
+
 function styleTableHeader(sheet: ExcelJS.Worksheet, row: number, startCol: number, endCol: number): void {
   sheet.getRow(row).height = EXCEL_THEME.rowHeights.tableHeader;
   for (let c = startCol; c <= endCol; c += 1) {
@@ -159,6 +198,7 @@ function styleTableBodyRow(sheet: ExcelJS.Worksheet, row: number, startCol: numb
 }
 
 function addBrandedHeader(
+  workbook: ExcelJS.Workbook,
   sheet: ExcelJS.Worksheet,
   title: string,
   subtitle: string,
@@ -166,6 +206,7 @@ function addBrandedHeader(
   branding: SubleaseRecoveryExportBranding,
 ): number {
   const rowAfterBand = styleHeaderBand(sheet, title, subtitle, totalCols);
+  addHeaderLogos(workbook, sheet, totalCols, branding);
   return styleMetaRow(sheet, rowAfterBand, totalCols, branding);
 }
 
@@ -186,6 +227,7 @@ function writeSummarySheet(
   ];
   const totalCols = 6;
   let row = addBrandedHeader(
+    workbook,
     sheet,
     "Sublease Recovery Analysis",
     "Decision summary with baseline obligation and scenario outcomes",
@@ -375,6 +417,7 @@ function writeScenarioComparisonSheet(
   sheet.columns = [{ width: 34 }, ...Array.from({ length: totalCols - 1 }, () => ({ width: 21 }))];
 
   let row = addBrandedHeader(
+    workbook,
     sheet,
     "Sublease Recovery Analysis",
     "Scenario comparison grid",
@@ -446,6 +489,7 @@ function writeExistingCashFlowSheet(
   ];
   const totalCols = 9;
   let row = addBrandedHeader(
+    workbook,
     sheet,
     "Sublease Recovery Analysis",
     "Existing Obligation Monthly Cash Flow",
@@ -538,6 +582,7 @@ function writeScenarioCashFlowSheet(
   ];
   const totalCols = 13;
   let row = addBrandedHeader(
+    workbook,
     sheet,
     "Sublease Recovery Analysis",
     `${result.summary.scenarioName} Monthly Cash Flow`,
@@ -629,6 +674,7 @@ function writeSensitivitySheet(
   sheet.columns = [{ width: 22 }, ...Array.from({ length: totalCols - 1 }, () => ({ width: 20 }))];
 
   let row = addBrandedHeader(
+    workbook,
     sheet,
     "Sublease Recovery Analysis",
     "Sensitivity analysis across downtime and rent assumptions",
@@ -719,6 +765,7 @@ function writeAssumptionsSheet(
   sheet.columns = [{ width: 30 }, { width: 24 }, { width: 24 }, { width: 24 }, { width: 24 }];
   const totalCols = 5;
   let row = addBrandedHeader(
+    workbook,
     sheet,
     "Sublease Recovery Analysis",
     "Assumptions reference for baseline and scenarios",
@@ -890,12 +937,16 @@ function renderPdfPage(
   const logo = branding.brokerageLogoDataUrl
     ? `<img class="brand-logo" src="${escHtml(branding.brokerageLogoDataUrl)}" alt="${escHtml(brokerage)}" />`
     : `<div class="brand-wordmark">${escHtml(brokerage)}</div>`;
+  const clientLogo = branding.clientLogoDataUrl
+    ? `<img class="client-logo" src="${escHtml(branding.clientLogoDataUrl)}" alt="${escHtml(client)}" />`
+    : "";
 
   return `
     <section class="pdf-page">
       <header class="page-header">
         <div class="brand-wrap">${logo}</div>
         <div class="report-meta">
+          ${clientLogo ? `<div class="client-logo-wrap">${clientLogo}</div>` : ""}
           <div class="report-title">Sublease Recovery Analysis</div>
           <div class="report-sub">${escHtml(client)} | ${escHtml(reportDate)}</div>
         </div>
@@ -1154,6 +1205,8 @@ function buildSubleaseRecoveryPdfHtml(
             text-transform: uppercase;
           }
           .report-meta { text-align: right; }
+          .client-logo-wrap { margin-bottom: 5px; }
+          .client-logo { max-height: 26px; max-width: 120px; object-fit: contain; }
           .report-title {
             font-size: 11px;
             font-weight: 700;

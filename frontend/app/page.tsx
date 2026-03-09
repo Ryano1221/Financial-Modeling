@@ -2066,6 +2066,15 @@ export default function Home() {
                 clientName: reportMeta.prepared_for.trim() || "Client",
                 reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
                 preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+                brokerageLogoDataUrl: authSession
+                  ? (
+                    organizationBranding?.logo_data_url
+                    || (organizationBranding?.logo_asset_bytes
+                      ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+                      : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
+                  )
+                  : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
+                clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
               }}
             />
           </section>
