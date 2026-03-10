@@ -8,6 +8,11 @@ import type { ChartRow } from "@/components/Charts";
 import { getApiUrl, fetchApiProxy, getAuthHeaders, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
+import {
+  PlatformModuleTabs,
+  PlatformPanel,
+  PlatformSection,
+} from "@/components/platform/PlatformShell";
 
 const showDiagnostics =
   typeof process !== "undefined" &&
@@ -548,7 +553,14 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
   return payload;
 }
 
+type PlatformModuleId =
+  | "financial-analyses"
+  | "completed-leases"
+  | "surveys"
+  | "obligations";
+
 export default function Home() {
+  const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>("financial-analyses");
   const [activeTopTab, setActiveTopTab] = useState<"lease-comparison" | "sublease-recovery">("lease-comparison");
   const [authSession, setAuthSession] = useState<SupabaseAuthSession | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
@@ -591,12 +603,60 @@ export default function Home() {
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
+  const platformModules: Array<{ id: PlatformModuleId; label: string; description: string }> = [
+    {
+      id: "financial-analyses",
+      label: "Financial Analyses",
+      description: "Lease comparison and sublease recovery workflows.",
+    },
+    {
+      id: "completed-leases",
+      label: "Completed Leases",
+      description: "Executed lease and amendment abstraction workspace.",
+    },
+    {
+      id: "surveys",
+      label: "Surveys",
+      description: "Survey generation from flyers, floorplans, and proposal packages.",
+    },
+    {
+      id: "obligations",
+      label: "Obligations",
+      description: "Company-level obligation dashboard and document repository.",
+    },
+  ];
+  const financialTabs = [
+    { id: "lease-comparison", label: "Financial Analysis", description: "Scenario comparison and lease economics." },
+    { id: "sublease-recovery", label: "Sublease Recovery Analysis", description: "Recovery outcomes vs remaining obligation." },
+  ] as const;
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
   const defaultPreparedByFromAuth = useMemo(
     () => derivePreparedByFromSession(authSession),
     [authSession]
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const raw = String(params.get("module") || "").trim().toLowerCase();
+    if (
+      raw === "financial-analyses"
+      || raw === "completed-leases"
+      || raw === "surveys"
+      || raw === "obligations"
+    ) {
+      setActivePlatformModule(raw);
+    }
+  }, []);
+
+  const handlePlatformModuleChange = useCallback((id: PlatformModuleId) => {
+    setActivePlatformModule(id);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("module", id);
+    window.history.replaceState(null, "", url.toString());
+  }, []);
 
   const getDefaultBrokerageLogoDataUrl = useCallback(async (): Promise<string | null> => {
     if (!defaultBrokerageLogoPromiseRef.current) {
@@ -1738,36 +1798,27 @@ export default function Home() {
 
       <section className="relative z-10 app-container mt-8">
         <div className="mx-auto w-full max-w-6xl">
-          <div className="border border-white/20 bg-black/40 p-2">
-            <div className="grid w-full grid-cols-1 sm:grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveTopTab("lease-comparison")}
-                className={`px-4 py-2 text-sm border text-center ${
-                  activeTopTab === "lease-comparison"
-                    ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
-                    : "border-white/20 text-slate-200 hover:bg-white/5"
-                }`}
-              >
-                Lease Analysis
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTopTab("sublease-recovery")}
-                className={`px-4 py-2 text-sm border text-center ${
-                  activeTopTab === "sublease-recovery"
-                    ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
-                    : "border-white/20 text-slate-200 hover:bg-white/5"
-                }`}
-              >
-                Sublease Recovery Analysis
-              </button>
+          <PlatformModuleTabs
+            tabs={platformModules}
+            activeId={activePlatformModule}
+            onChange={(id) => handlePlatformModuleChange(id as PlatformModuleId)}
+          />
+          {activePlatformModule === "financial-analyses" ? (
+            <div className="mt-3">
+              <PlatformModuleTabs
+                tabs={financialTabs}
+                activeId={activeTopTab}
+                onChange={(id) => setActiveTopTab(id as "lease-comparison" | "sublease-recovery")}
+                dense
+              />
             </div>
-          </div>
+          ) : null}
         </div>
       </section>
 
-      {activeTopTab === "lease-comparison" ? (
+      {(() => {
+        if (activePlatformModule === "financial-analyses") {
+          return activeTopTab === "lease-comparison" ? (
       <main className="relative z-10 app-container pb-14 md:pb-20">
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="mx-auto w-full max-w-6xl space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
@@ -2176,7 +2227,130 @@ export default function Home() {
             />
           </section>
         </main>
-      )}
+          );
+        }
+        if (activePlatformModule === "completed-leases") {
+          return (
+        <main className="relative z-10 app-container pb-14 md:pb-20">
+          <PlatformSection
+            kicker="Completed Leases"
+            title="Completed Lease Abstraction"
+            description="Upload executed leases and amendments, review controlling terms, and generate polished abstract exports."
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <PlatformPanel
+                kicker="Intake"
+                title="Upload and classify"
+                className="lg:col-span-5"
+              >
+                <p className="text-sm text-slate-300">
+                  Phase 3 will wire the completed-lease ingestion pipeline, amendment linking, and review queue to this panel.
+                </p>
+              </PlatformPanel>
+              <PlatformPanel
+                kicker="Review"
+                title="Extraction workspace"
+                className="lg:col-span-7"
+              >
+                <p className="text-sm text-slate-300">
+                  Field-by-field review, confidence states, and controlling-term audit trail will be rendered here.
+                </p>
+              </PlatformPanel>
+              <PlatformPanel
+                kicker="Outputs"
+                title="Abstract exports"
+                className="lg:col-span-12"
+              >
+                <p className="text-sm text-slate-300">
+                  PDF and Excel abstract exports will share the same branded export layer as Financial Analyses while remaining lease-abstract specific.
+                </p>
+              </PlatformPanel>
+            </div>
+          </PlatformSection>
+        </main>
+          );
+        }
+        if (activePlatformModule === "surveys") {
+          return (
+        <main className="relative z-10 app-container pb-14 md:pb-20">
+          <PlatformSection
+            kicker="Surveys"
+            title="Survey Generation Workspace"
+            description="Ingest flyers and floorplans, normalize availabilities, and publish client-ready survey outputs."
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <PlatformPanel
+                kicker="Intake"
+                title="Flyer and floorplan upload"
+                className="lg:col-span-5"
+              >
+                <p className="text-sm text-slate-300">
+                  Phase 4 will attach document parsing for suite-level availability, lease type, and rent assumptions.
+                </p>
+              </PlatformPanel>
+              <PlatformPanel
+                kicker="Pipeline"
+                title="Survey staging"
+                className="lg:col-span-7"
+              >
+                <p className="text-sm text-slate-300">
+                  Parsed survey entries, ambiguity flags, and review workflows will be surfaced in this workspace.
+                </p>
+              </PlatformPanel>
+              <PlatformPanel
+                kicker="Delivery"
+                title="Client output channels"
+                className="lg:col-span-12"
+              >
+                <p className="text-sm text-slate-300">
+                  Branded PDF export and share-link output structure is reserved here for the survey module.
+                </p>
+              </PlatformPanel>
+            </div>
+          </PlatformSection>
+        </main>
+          );
+        }
+        return (
+        <main className="relative z-10 app-container pb-14 md:pb-20">
+          <PlatformSection
+            kicker="Obligations"
+            title="Portfolio Obligation Command Center"
+            description="Centralize obligations, documents, and key dates across companies and locations in one repository."
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <PlatformPanel
+                kicker="Portfolio"
+                title="Company workspace"
+                className="lg:col-span-6"
+              >
+                <p className="text-sm text-slate-300">
+                  Phase 5 will establish company-level obligation entities, storage, and cross-document associations.
+                </p>
+              </PlatformPanel>
+              <PlatformPanel
+                kicker="Timeline"
+                title="Obligation intelligence"
+                className="lg:col-span-6"
+              >
+                <p className="text-sm text-slate-300">
+                  Expiration timelines, notice tracking, and renewal/termination signals will be visualized here.
+                </p>
+              </PlatformPanel>
+              <PlatformPanel
+                kicker="Repository"
+                title="Document system"
+                className="lg:col-span-12"
+              >
+                <p className="text-sm text-slate-300">
+                  All leases, amendments, proposals, surveys, and analyses will be linked to the obligation graph from this module.
+                </p>
+              </PlatformPanel>
+            </div>
+          </PlatformSection>
+        </main>
+        );
+      })()}
     </>
   );
 }
