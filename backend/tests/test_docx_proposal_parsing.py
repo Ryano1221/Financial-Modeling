@@ -7,7 +7,8 @@ from io import BytesIO
 from docx import Document
 
 import main
-from scenario_extract import _regex_prefill, extract_text_from_docx
+from models import Scenario
+from scenario_extract import _apply_safe_defaults, _regex_prefill, extract_text_from_docx
 
 
 def test_extract_text_from_docx_includes_table_rows() -> None:
@@ -73,6 +74,35 @@ def test_extract_lease_hints_parses_loi_term_suite_and_opex_from_docx_style_text
     assert hints["opex_psf_year_1"] == 14.26
     assert hints["opex_source_year"] == 2026
     assert hints["ti_allowance_psf"] == 1.5
+
+
+def test_apply_safe_defaults_normalizes_none_numeric_fields() -> None:
+    raw = {
+        "scenario": {
+            "name": "Example",
+            "rsf": 1000,
+            "commencement": "2026-01-01",
+            "expiration": "2026-12-31",
+            "rent_steps": [{"start": 0, "end": 11, "rate_psf_yr": 25.0}],
+            "free_rent_months": None,
+            "ti_allowance_psf": None,
+            "opex_mode": "nnn",
+            "base_opex_psf_yr": None,
+            "base_year_opex_psf_yr": None,
+            "opex_growth": None,
+            "discount_rate_annual": None,
+        }
+    }
+    scenario_dict, confidence, warnings = _apply_safe_defaults(raw, prefill={})
+    scenario = Scenario.model_validate(scenario_dict)
+    assert scenario.free_rent_months == 0
+    assert scenario.ti_allowance_psf == 0.0
+    assert scenario.base_opex_psf_yr == 10.0
+    assert scenario.base_year_opex_psf_yr == 10.0
+    assert scenario.opex_growth == 0.03
+    assert scenario.discount_rate_annual == 0.08
+    assert isinstance(confidence, dict)
+    assert isinstance(warnings, list)
 
 
 def test_regex_prefill_prefers_basic_rent_over_opex_line_in_proposal() -> None:
@@ -402,6 +432,7 @@ def test_regex_prefill_handles_access_card_parking_and_nnn_with_base_year_refere
     prefill = _regex_prefill(text)
     assert prefill.get("opex_mode") == "nnn"
     assert prefill.get("base_opex_psf_yr") == 20.9
+    assert prefill.get("free_rent_months") == 7
     assert prefill.get("parking_ratio_per_1000_rsf") == 2.0
     assert prefill.get("parking_spaces") == 11
     assert prefill.get("parking_cost_monthly_per_space") == 225.0
@@ -415,6 +446,15 @@ def test_regex_prefill_free_rent_ignores_renewal_notice_months() -> None:
     prefill = _regex_prefill(text)
     assert prefill.get("term_months") == 127
     assert prefill.get("free_rent_months") == 7
+
+
+def test_regex_prefill_ignores_termination_fee_months_when_free_rent_is_present() -> None:
+    text = (
+        "Free Base Rent: Tenant shall receive four (4) months of abated base rent at the beginning of the lease term.\n"
+        "Termination fee shall include unamortized costs (including free rent) and 7 months' gross rent.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("free_rent_months") == 4
 
 
 def test_regex_prefill_ignores_holdover_months_and_prefers_primary_term() -> None:

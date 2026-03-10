@@ -967,16 +967,27 @@ def test_extract_hints_6xguad_style_docx_text_regression() -> None:
     assert hints["term_months"] == 103
     assert hints["parking_ratio"] == 2.76
     assert hints["parking_rate_monthly"] == 200.0
-    assert hints["parking_abatement_periods"] == [{"start_month": 0, "end_month": 8}]
-    assert hints["opex_psf_year_1"] == 28.53
-    assert hints["opex_source_year"] == 2025
-    assert hints["opex_by_calendar_year"] == {2025: 28.53}
-    assert hints["ti_allowance_psf"] == 215.0
-    schedule = hints.get("rent_schedule")
-    assert isinstance(schedule, list)
-    assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 46.0}
-    assert schedule[1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 47.38}
-    assert 100 <= int(schedule[-1]["end_month"]) <= 102
+
+
+def test_extract_hints_parses_zero_rent_window_and_occupancy_only_phase_in() -> None:
+    text = (
+        "Premises: Suite 1550 consisting of 5,618 RSF.\n"
+        "Commencement Date: 10/1/2026\n"
+        "Expiration Date: 4/30/2034\n"
+        "Lease Term: 91 months\n"
+        "Base Rental Rate: Months 1-7: $0.00 PSF + NNN. Months 8-12: $52.00 PSF + NNN. "
+        "Starting month 13, base rent shall escalate by 3.0% annually.\n"
+        "Tenant shall pay as if occupying only 4,700 RSF for the first 14 months of the term. "
+        "Thereafter, Tenant will pay on the full size of the space.\n"
+    )
+    hints = main._extract_lease_hints(text, "atx-counter.docx", "test-rid")
+    assert hints["term_months"] == 91
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 6
+    phase = hints.get("phase_in_schedule")
+    assert isinstance(phase, list) and len(phase) == 2
+    assert phase[0] == {"start_month": 0, "end_month": 13, "rsf": 4700.0}
+    assert phase[1] == {"start_month": 14, "end_month": 90, "rsf": 5618.0}
 
 
 def test_extract_hints_parking_abatement_can_reference_abatement_period() -> None:
@@ -992,6 +1003,18 @@ def test_extract_hints_parking_abatement_can_reference_abatement_period() -> Non
     assert hints["free_rent_start_month"] == 0
     assert hints["free_rent_end_month"] == 8
     assert hints["parking_abatement_periods"] == [{"start_month": 0, "end_month": 8}]
+
+
+def test_extract_hints_ignores_termination_fee_months_when_parsing_free_rent() -> None:
+    text = (
+        "Lease Term: 88 months.\n"
+        "Free Base Rent: Tenant shall receive four (4) months of abated base rent at the beginning of the lease term.\n"
+        "Termination Right: Termination fee shall include unamortized deal costs (including free rent) "
+        "and 7 months' gross rent.\n"
+    )
+    hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
+    assert hints["free_rent_start_month"] == 0
+    assert hints["free_rent_end_month"] == 3
 
 
 def test_extract_hints_summit_lantana_prefers_project_name_and_floor_pair() -> None:

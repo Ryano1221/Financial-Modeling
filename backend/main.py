@@ -4651,6 +4651,56 @@ def _extract_phase_in_schedule(text: str, term_months_hint: Optional[int] = None
     return deduped
 
 
+def _extract_occupancy_only_phase_in_schedule(
+    text: str,
+    *,
+    total_rsf_hint: Optional[float] = None,
+    term_months_hint: Optional[int] = None,
+) -> list[dict]:
+    """
+    Parse narrative phase-in language such as:
+      "Tenant shall pay as if occupying only 4,700 RSF for the first 14 months.
+       Thereafter, Tenant will pay on the full size of the space."
+    """
+    if not text:
+        return []
+
+    pattern = re.compile(
+        r"(?is)\b(?:tenant|subtenant)?\s*shall\s+pay\s+as\s+if\s+occup(?:ying|ancy)\s+only\s+"
+        r"(\d{1,3}(?:,\d{3})+|\d{3,7})(?:\.\d+)?\s*(?:rsf|sf|square\s*feet)\b"
+        r"[^\n]{0,220}?\bfirst\s+(\d{1,3})\s+months?\b"
+        r"[^\n]{0,240}?\b(?:thereafter|after\s+that|following\s+that|then)\b"
+        r"[^\n]{0,220}?\b(?:full\s+size|full\s+premises|full\s+space|full\s+rentable)\b",
+        re.IGNORECASE,
+    )
+    m = pattern.search(text)
+    if not m:
+        return []
+
+    phase_rsf = _coerce_float_token(m.group(1), 0.0) or 0.0
+    phase_months = _coerce_int_token(m.group(2), 0) or 0
+    if phase_rsf <= 0 or phase_months <= 0:
+        return []
+
+    total_rsf = _coerce_float_token(total_rsf_hint, 0.0) or 0.0
+    if total_rsf <= 0:
+        return []
+    if phase_rsf >= total_rsf:
+        return []
+
+    term_months = _coerce_int_token(term_months_hint, 0) or 0
+    if term_months <= 0:
+        return []
+    if phase_months >= term_months:
+        return []
+
+    phase_end = max(0, phase_months - 1)
+    return [
+        {"start_month": 0, "end_month": int(phase_end), "rsf": float(phase_rsf)},
+        {"start_month": int(phase_end + 1), "end_month": int(term_months - 1), "rsf": float(total_rsf)},
+    ]
+
+
 def _extract_phase_rent_schedule(text: str, term_months_hint: Optional[int] = None) -> list[dict]:
     """
     Extract base-rent schedule from phase blocks such as:
@@ -5291,6 +5341,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     raw_option_variants = option_hints.get("options") if isinstance(option_hints.get("options"), list) else []
     has_multiple_option_variants = len(raw_option_variants) >= 2
     option_term = _coerce_int_token(option_hints.get("term_months"), 0) or 0
+    option_has_core_econ = bool(
+        option_term > 0
+        or (isinstance(option_hints.get("rent_steps"), list) and len(option_hints.get("rent_steps") or []) > 0)
+        or (_coerce_float_token(option_hints.get("rate_psf_yr"), 0.0) or 0.0) > 0
+        or bool(option_hints.get("commencement_date"))
+        or bool(option_hints.get("expiration_date"))
+    )
     if option_term > 0 and (not hints.get("term_months") or has_multiple_option_variants):
         hints["term_months"] = option_term
         if hints.get("commencement_date"):
@@ -5435,7 +5492,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 (r"(?i)\brent\s+abatement\s*\(months?\)\s*[:\-]?\s*(\d{1,3})\b", 20),
                 (r"(?i)\bfree\s+rent\s*\(months?\)\s*[:\-]?\s*(\d{1,3})\b", 20),
                 (r"(?i)\bwith\s+(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\s+(?:base\s+)?free\s+rent\b", 18),
-                (r"(?i)\b(?:base\s+)?free\s+rent\b[^\n]{0,40}\b(?:for\s+)?(?:the\s+first\s+)?(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b", 17),
+                (r"(?i)\b(?:base\s+)?free\s+rent\b[^\n]{0,20}\b(?:for|of|with)\s+(?:the\s+first\s+)?(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b", 17),
                 (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:base\s+)?free\s+rent\b", 15),
                 (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:rent\s+abatement|abatement|abated)\b", 13),
                 (r"(?i)\b(?:rent\s+abatement|abatement|abated)\b[^\n]{0,70}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b", 12),
@@ -5526,12 +5583,30 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             ],
             term_months=_coerce_int_token(hints.get("term_months"), 0) or 0,
         )
-    elif has_multiple_option_variants:
+    elif has_multiple_option_variants and option_has_core_econ:
         # In multi-option proposals, generic abatement language may belong to a different option.
         # Use the selected option's explicit abatement (including zero free rent) as source of truth.
         hints["free_rent_scope"] = "base"
         hints["free_rent_start_month"] = None
         hints["free_rent_end_month"] = None
+
+    # Parse zero-dollar front-loaded base rent windows (e.g., "Months 1-7: $0.00 PSF + NNN")
+    # and map them to free-rent fields when explicit abatement fields are absent.
+    if hints.get("free_rent_start_month") is None and hints.get("free_rent_end_month") is None:
+        zero_rent_pattern = re.compile(
+            r"(?is)\b(?:base\s+rent(?:al)?\s+rate|base\s+rent|lease\s+rate)\b[^\n]{0,220}?"
+            r"\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b"
+            r"[^\n]{0,120}?\$\s*0+(?:\.0+)?\s*(?:/|per)?\s*(?:rsf|sf|psf)?\b"
+        )
+        zero_match = zero_rent_pattern.search(text)
+        if zero_match:
+            start_1 = _coerce_int_token(zero_match.group(1), 0) or 0
+            end_1 = _coerce_int_token(zero_match.group(2), 0) or 0
+            if start_1 > 0 and end_1 >= start_1:
+                hints["free_rent_start_month"] = start_1 - 1
+                hints["free_rent_end_month"] = end_1 - 1
+                if hints.get("free_rent_scope") is None:
+                    hints["free_rent_scope"] = "base"
 
     # ---- Parking abatement range ----
     parking_abatement_ranges: list[tuple[int, int]] = []
@@ -5612,6 +5687,14 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     )
     if not phase_schedule and gross_abatement_phase_schedule:
         phase_schedule = gross_abatement_phase_schedule
+    if not phase_schedule:
+        occupancy_only_phase_schedule = _extract_occupancy_only_phase_in_schedule(
+            text,
+            total_rsf_hint=_coerce_float_token(hints.get("rsf"), 0.0),
+            term_months_hint=hinted_term_months,
+        )
+        if occupancy_only_phase_schedule:
+            phase_schedule = occupancy_only_phase_schedule
     if phase_schedule:
         hints["phase_in_schedule"] = phase_schedule
         phase_rsf = max(float(step.get("rsf", 0.0) or 0.0) for step in phase_schedule)
@@ -6792,6 +6875,7 @@ def _extract_lease_note_highlights(text: str, max_items: int = 8) -> list[str]:
 
 def _detect_document_type(text: str, filename: str = "") -> str:
     """Best-effort document type detection across leases, proposals, LOIs, amendments, etc."""
+    filename_low = str(filename or "").lower()
     corpus = f"{filename}\n{text[:6000]}".lower()
     score: dict[str, int] = {
         "rfp": 0,
@@ -6823,17 +6907,46 @@ def _detect_document_type(text: str, filename: str = "") -> str:
             if hits > 0:
                 score[kind] += hits
 
+    # Guardrail: avoid false "sublease" classification from generic
+    # "assignment/sublease" rights clauses in otherwise non-sublease docs.
+    sublease_strong_hits = len(
+        re.findall(
+            r"(?i)\b(?:sublease\s+agreement|sublease\s+premises|sublease\s+term|sublessor|sublessee|subtenant|sublandlord)\b",
+            corpus,
+        )
+    )
+    assignment_sublease_noise_hits = len(
+        re.findall(
+            r"(?i)\b(?:assignment\s*/\s*sublease|assignment\s+and\s+sublease|assign(?:ment)?\s+or\s+sublease)\b",
+            corpus,
+        )
+    )
+    if assignment_sublease_noise_hits > 0 and sublease_strong_hits == 0:
+        score["sublease"] = max(0, score["sublease"] - assignment_sublease_noise_hits * 3)
+
     # Prefer more specific document types over generic lease if both appear.
     if score["counter"] > 0:
         return "counter_proposal"
     if score["subsublease"] > 0:
         return "subsublease"
-    if score["sublease"] > 0:
+    if score["sublease"] > 0 and (sublease_strong_hits > 0 or score["sublease"] >= 2):
         return "sublease"
-    if score["amendment"] > 0:
-        return "amendment"
+    if score["rfp"] > 0:
+        return "rfp"
+    if score["loi"] > 0:
+        return "loi"
+    if score["term_sheet"] > 0 and score["proposal"] == 0:
+        return "term_sheet"
     if score["renewal"] > 0 and score["proposal"] > 0:
         return "renewal_proposal"
+    if score["proposal"] > 0 and (
+        score["amendment"] <= score["proposal"]
+        or "proposal" in filename_low
+        or "counter" in filename_low
+    ):
+        return "proposal"
+    if score["amendment"] > 0:
+        return "amendment"
     ordered = sorted(score.items(), key=lambda kv: kv[1], reverse=True)
     if not ordered or ordered[0][1] <= 0:
         return "unknown"
@@ -8547,6 +8660,38 @@ def _normalize_impl(
                     elif len(current_rent_schedule) == 1:
                         only = next(iter(current_rates), 0.0)
                         if abs(float(only) - 0.0) < 0.01 and len(normalized_hint) >= 1:
+                            should_override_rent = True
+                    if (
+                        not should_override_rent
+                        and current_rent_schedule
+                        and normalized_hint
+                    ):
+                        current_first_step = sorted(
+                            current_rent_schedule,
+                            key=lambda s: int(
+                                _coerce_int_token(
+                                    (s.get("start_month") if isinstance(s, dict) else getattr(s, "start_month", 0)),
+                                    0,
+                                )
+                                or 0
+                            ),
+                        )[0]
+                        current_first_rate = (
+                            _coerce_float_token(
+                                current_first_step.get("rent_psf_annual") if isinstance(current_first_step, dict) else getattr(current_first_step, "rent_psf_annual", 0.0),
+                                0.0,
+                            )
+                            or 0.0
+                        )
+                        hinted_first_rate = float(normalized_hint[0]["rent_psf_annual"])
+                        hinted_first_end = int(normalized_hint[0]["end_month"])
+                        hinted_free_end = _coerce_int_token(extracted_hints.get("free_rent_end_month"), None)
+                        if (
+                            current_first_rate <= 0.01
+                            and hinted_first_rate > 0.01
+                            and hinted_free_end is not None
+                            and hinted_free_end < hinted_first_end
+                        ):
                             should_override_rent = True
 
                     if should_override_rent:

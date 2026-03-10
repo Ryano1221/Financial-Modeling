@@ -1,7 +1,7 @@
 from datetime import date
 
 import main
-from backend.models import CanonicalLease
+from models import CanonicalLease
 
 
 def _stub_canonical() -> CanonicalLease:
@@ -64,6 +64,17 @@ def test_detect_document_type_across_five_plus_formats() -> None:
             "TERM SHEET\nSummary of terms for occupancy and economics.",
             "term-sheet.docx",
             "term_sheet",
+        ),
+        (
+            "Landlord Proposal\nAssignment / sublease rights require landlord consent.\n"
+            "Base rent schedule and operating expense assumptions are outlined below.",
+            "landlord-proposal.docx",
+            "proposal",
+        ),
+        (
+            "Landlord Proposal\nThe existing lease shall be amended to include the following business terms.",
+            "ibc-landlord-proposal.docx",
+            "proposal",
         ),
     ]
 

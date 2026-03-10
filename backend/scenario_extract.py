@@ -2138,6 +2138,10 @@ def _regex_prefill(text: str) -> dict:
         line = raw_line.lower()
         if not any(tok in line for tok in ("free rent", "abatement", "abated", "abate")):
             continue
+        if any(tok in line for tok in ("termination fee", "termination right", "security deposit")) and not any(
+            tok in line for tok in ("abatement", "abated", "abate")
+        ):
+            continue
         if any(tok in line for tok in ("renewal", "option", "notice", "no earlier than", "no later than", "prior to")):
             continue
         for m in re.finditer(
@@ -2146,6 +2150,8 @@ def _regex_prefill(text: str) -> dict:
         ):
             local = raw_line[max(0, m.start() - 120): min(len(raw_line), m.end() + 20)].lower()
             if _looks_like_abatement_distribution_window(local):
+                continue
+            if not any(tok in local for tok in ("free rent", "abatement", "abated", "abate")):
                 continue
             count = _coerce_int_token(m.group(1), 0) or _coerce_int_token(m.group(2), 0) or 0
             if count <= 0:
@@ -2172,6 +2178,36 @@ def _regex_prefill(text: str) -> dict:
     if free_rent_candidates:
         free_rent_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
         prefill["free_rent_months"] = int(free_rent_candidates[0][2])
+    # Fallback: infer base free-rent from zero-dollar front-loaded rent windows
+    # like "Months 1-7: $0.00 PSF + NNN" when "free rent" wording is absent.
+    if "free_rent_months" not in prefill:
+        zero_rent_candidates: list[tuple[int, int]] = []
+        zero_rent_pattern = re.compile(
+            r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\s*[:\-]?\s*"
+            r"\$?\s*0+(?:\.0+)?\s*(?:/|per)?\s*(?:rsf|sf|psf)\b"
+        )
+        for m in zero_rent_pattern.finditer(text):
+            start_1 = _coerce_int_token(m.group(1), None)
+            end_1 = _coerce_int_token(m.group(2), start_1)
+            if start_1 is None or end_1 is None or start_1 != 1 or end_1 < start_1:
+                continue
+            months = int(end_1 - start_1 + 1)
+            if months <= 0 or months > 60:
+                continue
+            local = text[max(0, m.start() - 140): min(len(text), m.end() + 120)].lower()
+            if "parking" in local and not re.search(r"(?i)\b(?:base\s+rent|rental\s+rate|lease\s+rate)\b", local):
+                continue
+            if not re.search(r"(?i)\b(?:base\s+rent|rental\s+rate|lease\s+rate|rent)\b", local):
+                continue
+            score = 4
+            if re.search(r"(?i)\b(?:base\s+rent|rental\s+rate|lease\s+rate)\b", local):
+                score += 4
+            if "nnn" in local:
+                score += 1
+            zero_rent_candidates.append((score, months))
+        if zero_rent_candidates:
+            zero_rent_candidates.sort(key=lambda row: (-row[0], -row[1]))
+            prefill["free_rent_months"] = int(zero_rent_candidates[0][1])
     # Base opex $/sf
     opex_candidates: list[tuple[int, float]] = []
     for m in _RE_BASE_OPEX.finditer(text):
@@ -2953,6 +2989,44 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
     scenario.setdefault("sublease_income_monthly", 0.0)
     scenario.setdefault("sublease_start_month", 0)
     scenario.setdefault("sublease_duration_months", 0)
+    # model_validate requires these numeric fields to be real numbers, not None.
+    scenario["free_rent_months"] = max(0, int(_coerce_int_token(scenario.get("free_rent_months"), 0) or 0))
+    scenario["ti_allowance_psf"] = max(0.0, float(_coerce_float_token(scenario.get("ti_allowance_psf"), 0.0) or 0.0))
+    scenario["base_opex_psf_yr"] = max(0.0, float(_coerce_float_token(scenario.get("base_opex_psf_yr"), 10.0) or 10.0))
+    scenario["base_year_opex_psf_yr"] = max(
+        0.0,
+        float(
+            _coerce_float_token(
+                scenario.get("base_year_opex_psf_yr"),
+                scenario.get("base_opex_psf_yr"),
+            )
+            or scenario["base_opex_psf_yr"]
+        ),
+    )
+    scenario["opex_growth"] = max(0.0, float(_coerce_float_token(scenario.get("opex_growth"), 0.03) or 0.03))
+    scenario["discount_rate_annual"] = max(0.0, float(_coerce_float_token(scenario.get("discount_rate_annual"), 0.08) or 0.08))
+    scenario["parking_spaces"] = max(0, int(_coerce_int_token(scenario.get("parking_spaces"), 0) or 0))
+    scenario["parking_cost_monthly_per_space"] = max(
+        0.0,
+        float(_coerce_float_token(scenario.get("parking_cost_monthly_per_space"), 0.0) or 0.0),
+    )
+    scenario["parking_sales_tax_rate"] = max(0.0, float(_coerce_float_token(scenario.get("parking_sales_tax_rate"), 0.0825) or 0.0825))
+    scenario["broker_fee"] = max(0.0, float(_coerce_float_token(scenario.get("broker_fee"), 0.0) or 0.0))
+    scenario["security_deposit_months"] = max(0.0, float(_coerce_float_token(scenario.get("security_deposit_months"), 0.0) or 0.0))
+    scenario["holdover_months"] = max(0, int(_coerce_int_token(scenario.get("holdover_months"), 0) or 0))
+    scenario["holdover_rent_multiplier"] = max(
+        0.0,
+        float(_coerce_float_token(scenario.get("holdover_rent_multiplier"), 1.5) or 1.5),
+    )
+    scenario["sublease_income_monthly"] = max(
+        0.0,
+        float(_coerce_float_token(scenario.get("sublease_income_monthly"), 0.0) or 0.0),
+    )
+    scenario["sublease_start_month"] = max(0, int(_coerce_int_token(scenario.get("sublease_start_month"), 0) or 0))
+    scenario["sublease_duration_months"] = max(
+        0,
+        int(_coerce_int_token(scenario.get("sublease_duration_months"), 0) or 0),
+    )
     if "one_time_costs" not in scenario:
         scenario["one_time_costs"] = []
     if "termination_option" not in scenario:
