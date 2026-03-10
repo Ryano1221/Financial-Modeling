@@ -93,6 +93,31 @@ def _normalize_free_rent_months(v: Any) -> Tuple[int, List[str]]:
         return 0, warnings
 
 
+def _normalize_decimal_rate(
+    value: Any,
+    *,
+    default: float,
+    field_label: str,
+    warnings: List[str],
+) -> float:
+    """
+    Accept either decimal rates (0.06) or percent-point values (6 for 6%).
+    """
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if parsed < 0:
+        return float(default)
+    normalized = float(parsed)
+    if normalized > 1.0:
+        normalized = normalized / 100.0
+        warnings.append(
+            f"{field_label} interpreted as percent points ({parsed:g}) and converted to decimal ({normalized:.6f})."
+        )
+    return float(normalized)
+
+
 def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple[CanonicalLease, List[str]]:
     """
     Apply safe defaults and coercion so CanonicalLease never fails on extraction quirks.
@@ -114,6 +139,31 @@ def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple
         val, w = _normalize_free_rent_months(data["free_rent_months"])
         data["free_rent_months"] = val
         warnings.extend(w)
+
+    data["discount_rate_annual"] = _normalize_decimal_rate(
+        data.get("discount_rate_annual", 0.08),
+        default=0.08,
+        field_label="discount_rate_annual",
+        warnings=warnings,
+    )
+    data["opex_growth_rate"] = _normalize_decimal_rate(
+        data.get("opex_growth_rate", 0.0),
+        default=0.0,
+        field_label="opex_growth_rate",
+        warnings=warnings,
+    )
+    data["parking_sales_tax_rate"] = _normalize_decimal_rate(
+        data.get("parking_sales_tax_rate", 0.0825),
+        default=0.0825,
+        field_label="parking_sales_tax_rate",
+        warnings=warnings,
+    )
+    data["parking_escalation_rate"] = _normalize_decimal_rate(
+        data.get("parking_escalation_rate", 0.0),
+        default=0.0,
+        field_label="parking_escalation_rate",
+        warnings=warnings,
+    )
     free_scope = str(data.get("free_rent_scope", data.get("free_rent_abatement_type", "base")) or "base").strip().lower()
     if free_scope not in {"base", "gross"}:
         free_scope = "base"

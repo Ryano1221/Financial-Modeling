@@ -32,6 +32,14 @@ function normalizeCommissionRateDecimal(value: unknown, fallback = 0.06): number
   return Math.min(1, Math.max(0, asDecimal));
 }
 
+function normalizeDecimalRate(value: unknown, fallback = 0): number {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  const asDecimal = parsed > 1 ? parsed / 100 : parsed;
+  return Math.max(0, asDecimal);
+}
+
 export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
   const termMonths = monthDiff(s.commencement, s.expiration);
   const rsf = s.rsf;
@@ -52,7 +60,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       : (buildingName || suiteName || s.name);
   const parkingSpaces = s.parking_spaces ?? 0;
   const parkingCost = s.parking_cost_monthly_per_space ?? 0;
-  const parkingSalesTax = s.parking_sales_tax_rate ?? 0.0825;
+  const parkingSalesTax = normalizeDecimalRate(s.parking_sales_tax_rate, 0.0825);
   const tiBudgetTotal = effectiveTiBudgetTotal(s);
   const tiAllowancePsf = effectiveTiAllowancePsf(s);
   const tiAllowanceTotal = rsf > 0 ? round0(tiAllowancePsf * rsf) : tiBudgetTotal;
@@ -101,7 +109,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
     name: s.name,
     isRemainingObligation: Boolean(s.is_remaining_obligation),
     documentTypeDetected: (s.document_type_detected ?? "").trim() || undefined,
-    discountRateAnnual: s.discount_rate_annual,
+    discountRateAnnual: normalizeDecimalRate(s.discount_rate_annual, 0.08),
     commissionRate: normalizeCommissionRateDecimal(s.commission_rate, 0.06),
     commissionAppliesTo: s.commission_applies_to === "base_rent" ? "base_rent" : "gross_obligation",
     partyAndPremises: {
@@ -136,7 +144,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       baseOpexPsfYr: s.base_opex_psf_yr,
       baseYearOpexPsfYr: s.base_year_opex_psf_yr,
       opexByCalendarYear: s.opex_by_calendar_year,
-      annualEscalationPercent: s.opex_growth,
+      annualEscalationPercent: normalizeDecimalRate(s.opex_growth, 0),
     },
     parkingSchedule: {
       spacesAllotted: parkingSpaces,

@@ -59,6 +59,22 @@ class NormalizerResponse(BaseModel):
 CONFIDENCE_THRESHOLD = 0.85
 
 
+def _normalize_decimal_rate(raw_value: Any, default: float) -> float:
+    """
+    Accept decimal rates (0.06) and whole-number percentages (6 for 6%).
+    Returns a decimal rate.
+    """
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        return float(default)
+    if parsed < 0:
+        return float(default)
+    if parsed > 1.0:
+        parsed = parsed / 100.0
+    return float(parsed)
+
+
 def _normalize_lease_type_text(raw_value: Any) -> LeaseType:
     text = str(raw_value or "NNN").strip().lower().replace("-", " ").replace("_", " ")
     if any(k in text for k in ("absolute nnn",)):
@@ -118,12 +134,12 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         term_months=term,
         free_rent_months=scenario.free_rent_months,
         free_rent_scope="base",
-        discount_rate_annual=scenario.discount_rate_annual,
+        discount_rate_annual=_normalize_decimal_rate(scenario.discount_rate_annual, 0.08),
         notes="",
         rent_schedule=rent_schedule,
         phase_in_schedule=[],
         opex_psf_year_1=scenario.base_opex_psf_yr,
-        opex_growth_rate=scenario.opex_growth,
+        opex_growth_rate=_normalize_decimal_rate(scenario.opex_growth, 0.03),
         expense_stop_psf=scenario.base_year_opex_psf_yr,
         base_year=None,
         pro_rata_share=1.0,
@@ -131,7 +147,7 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
         parking_ratio=0.0,
         parking_count=scenario.parking_spaces,
         parking_rate_monthly=scenario.parking_cost_monthly_per_space,
-        parking_sales_tax_rate=scenario.parking_sales_tax_rate,
+        parking_sales_tax_rate=_normalize_decimal_rate(scenario.parking_sales_tax_rate, 0.0825),
         parking_escalation_rate=0.0,
         ti_allowance_psf=scenario.ti_allowance_psf,
         ti_total=scenario.ti_allowance_psf * scenario.rsf,
@@ -270,12 +286,12 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         term_months=int(get("term_months", 60)),
         free_rent_months=free_rent_months,
         free_rent_scope=free_rent_scope,  # type: ignore[arg-type]
-        discount_rate_annual=float(get("discount_rate_annual", 0.08) or 0.08),
+        discount_rate_annual=_normalize_decimal_rate(get("discount_rate_annual", 0.08), 0.08),
         notes=str(get("notes", "")),
         rent_schedule=rent_schedule,
         phase_in_schedule=phase_in_schedule,
         opex_psf_year_1=float(get("opex_psf_year_1", get("base_opex_psf_yr", 0)) or 0),
-        opex_growth_rate=float(get("opex_growth_rate", get("opex_growth", 0)) or 0),
+        opex_growth_rate=_normalize_decimal_rate(get("opex_growth_rate", get("opex_growth", 0)), 0.0),
         expense_stop_psf=float(get("expense_stop_psf", get("base_year_opex_psf_yr", 0)) or 0),
         base_year=get("base_year"),
         pro_rata_share=float(get("pro_rata_share", 1) or 1),
@@ -283,7 +299,10 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         parking_ratio=float(get("parking_ratio", 0) or 0),
         parking_count=int(get("parking_count", get("parking_spaces", 0)) or 0),
         parking_rate_monthly=float(get("parking_rate_monthly", get("parking_cost_monthly_per_space", 0)) or 0),
-        parking_sales_tax_rate=float(get("parking_sales_tax_rate", get("parking_sales_tax_percent", 0.0825)) or 0.0825),
+        parking_sales_tax_rate=_normalize_decimal_rate(
+            get("parking_sales_tax_rate", get("parking_sales_tax_percent", 0.0825)),
+            0.0825,
+        ),
         parking_escalation_rate=float(get("parking_escalation_rate", 0) or 0),
         ti_allowance_psf=float(get("ti_allowance_psf", 0) or 0),
         ti_total=float(get("ti_total", 0) or 0),

@@ -27,6 +27,13 @@ function toNumber(value: unknown, fallback: number = 0): number {
   return fallback;
 }
 
+function normalizeDecimalRate(value: unknown, fallback = 0): number {
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed > 1 ? parsed / 100 : parsed;
+}
+
 function normalizeCommissionRate(value: unknown, fallback = 0.06): number {
   if (value === undefined || value === null || String(value).trim() === "") return fallback;
   const parsed = Number(value);
@@ -317,7 +324,7 @@ export function scenarioInputToBackendCanonical(
     free_rent_scope: firstAbatement?.scope ?? (s.free_rent_abatement_type ?? "base"),
     free_rent_periods: effectiveAbatementPeriods,
     parking_abatement_periods: normalizedParkingAbatementPeriods,
-    discount_rate_annual: s.discount_rate_annual ?? 0.08,
+    discount_rate_annual: normalizeDecimalRate(s.discount_rate_annual, 0.08),
     commission_rate: normalizeCommissionRate(s.commission_rate, 0.06),
     commission_applies_to: normalizeCommissionBasis(s.commission_applies_to),
     rent_schedule: (s.rent_steps ?? []).map((step) => ({
@@ -332,12 +339,12 @@ export function scenarioInputToBackendCanonical(
     })),
     opex_psf_year_1: s.base_opex_psf_yr ?? 0,
     opex_by_calendar_year: s.opex_by_calendar_year,
-    opex_growth_rate: s.opex_growth ?? 0,
+    opex_growth_rate: normalizeDecimalRate(s.opex_growth, 0),
     expense_stop_psf: s.base_year_opex_psf_yr ?? 0,
     expense_structure_type: backendExpenseStructureType,
     parking_count: s.parking_spaces ?? 0,
     parking_rate_monthly: s.parking_cost_monthly_per_space ?? 0,
-    parking_sales_tax_rate: s.parking_sales_tax_rate ?? 0.0825,
+    parking_sales_tax_rate: normalizeDecimalRate(s.parking_sales_tax_rate, 0.0825),
     ti_allowance_psf: tiAllowancePsf,
     ti_budget_total: tiBudgetTotal,
     ti_source_of_truth: tiSource,
@@ -448,13 +455,13 @@ export function backendCanonicalToScenarioInput(
     base_opex_psf_yr: c.opex_psf_year_1 ?? 0,
     opex_by_calendar_year: c.opex_by_calendar_year,
     base_year_opex_psf_yr: c.expense_stop_psf ?? c.opex_psf_year_1 ?? 0,
-    opex_growth: c.opex_growth_rate ?? 0,
-    discount_rate_annual: c.discount_rate_annual ?? 0.08,
+    opex_growth: normalizeDecimalRate(c.opex_growth_rate, 0),
+    discount_rate_annual: normalizeDecimalRate(c.discount_rate_annual, 0.08),
     commission_rate: normalizeCommissionRate(c.commission_rate, 0.06),
     commission_applies_to: normalizeCommissionBasis(c.commission_applies_to),
     parking_spaces: c.parking_count ?? 0,
     parking_cost_monthly_per_space: c.parking_rate_monthly ?? 0,
-    parking_sales_tax_rate: c.parking_sales_tax_rate ?? 0.0825,
+    parking_sales_tax_rate: normalizeDecimalRate(c.parking_sales_tax_rate, 0.0825),
     is_remaining_obligation: Boolean((c as { is_remaining_obligation?: unknown }).is_remaining_obligation),
   };
   return syncTiFields(scenario);
