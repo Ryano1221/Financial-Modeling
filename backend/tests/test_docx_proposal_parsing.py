@@ -389,6 +389,24 @@ def test_regex_prefill_parses_parking_ratio_per_every_1000_without_false_decimal
     assert prefill.get("parking_cost_monthly_per_space") == 200.0
 
 
+def test_regex_prefill_handles_access_card_parking_and_nnn_with_base_year_reference() -> None:
+    text = (
+        "Premises: Suite 1550 consisting of 5,618 rentable square feet.\n"
+        "Base Rental Rate: Months 1-7: $0.00 PSF + NNN; Months 8-12: $52.00 PSF + NNN.\n"
+        "Operating Expenses: Tenant shall pay its pro rata share of actual NNN operating expenses during the term. "
+        "Operating expenses for the year 2026 are estimated to be $20.90. "
+        "Tenant shall have a cap on controllable opex of 6% per year, using a base year of 2027.\n"
+        "PARKING: Tenant shall be provided non-reserved parking at a ratio of 2.0 access cards/1,000 RSF.\n"
+        "Current charge for parking is $225/access card/month plus tax for non-reserved parking.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("opex_mode") == "nnn"
+    assert prefill.get("base_opex_psf_yr") == 20.9
+    assert prefill.get("parking_ratio_per_1000_rsf") == 2.0
+    assert prefill.get("parking_spaces") == 11
+    assert prefill.get("parking_cost_monthly_per_space") == 225.0
+
+
 def test_regex_prefill_free_rent_ignores_renewal_notice_months() -> None:
     text = (
         "TERM AND FREE RENT: One hundred twenty-seven (127) months, with seven (7) months base free rent.\n"

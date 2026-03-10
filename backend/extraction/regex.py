@@ -182,14 +182,22 @@ def _nearest_keyword_distance(line_low: str, idx: int, keywords: tuple[str, ...]
 
 def _detect_opex_mode_from_line(line: str) -> tuple[str, float] | None:
     low = f" {line.lower()} "
-    if any(k in low for k in BASE_YEAR_CUES):
+    has_nnn = bool(re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", line or ""))
+    has_strong_base_year = any(k in low for k in ("expense stop", "gross with stop", "modified gross", "mod gross"))
+    has_base_year_phrase = "base year" in low or "base-year" in low
+
+    if has_nnn and "not nnn" not in low and "no nnn" not in low:
+        if has_strong_base_year and not any(k in low for k in ("pro rata share", "actual nnn operating expenses")):
+            return "gross_with_stop", 0.8
+        return "nnn", 0.83
+    if has_strong_base_year:
         return "gross_with_stop", 0.8
+    if has_base_year_phrase and re.search(r"(?i)\b(?:lease|expense|rent)\s*(?:type|structure|mode)\b", line or ""):
+        return "gross_with_stop", 0.72
     if any(k in low for k in FULL_SERVICE_CUES):
         return "full_service", 0.78
-    if any(k in low for k in NNN_CUES) and "not nnn" not in low and "no nnn" not in low:
-        return "nnn", 0.83
-    if " gross " in low and "base year" not in low and "expense stop" not in low and "modified gross" not in low:
-        return "full_service", 0.66
+    if re.search(r"(?i)\b(?:lease|expense|rent)\s*(?:type|structure|mode)\b[^\n]{0,40}\bgross\b", line or ""):
+        return "full_service", 0.72
     return None
 
 

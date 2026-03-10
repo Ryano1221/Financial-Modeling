@@ -87,11 +87,28 @@ _FULL_SERVICE_OPEX_CUES = (
 
 def _detect_opex_mode_from_text(raw_text: str) -> str | None:
     low = f" {(raw_text or '').lower()} "
-    if any(k in low for k in _BASE_YEAR_OPEX_CUES):
-        return "base_year"
-    # Word-boundary NNN detection catches punctuation variants like ("NNN"), N.N.N., etc.
-    if re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", raw_text or ""):
+    has_nnn = bool(re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", raw_text or ""))
+    has_full_service = any(k in low for k in _FULL_SERVICE_OPEX_CUES)
+    has_strong_base_year = any(
+        k in low for k in ("expense stop", "gross with stop", "modified gross", "mod gross")
+    )
+    has_base_year_phrase = "base year" in low or "base-year" in low
+
+    # NNN should control when explicitly stated, even if a sentence references a base year
+    # for cap math (common in NNN proposals).
+    if has_nnn and "not nnn" not in low and "no nnn" not in low:
+        if has_strong_base_year and not any(k in low for k in ("pro rata share", "actual nnn operating expenses")):
+            return "base_year"
         return "nnn"
+
+    if has_strong_base_year:
+        return "base_year"
+    if has_base_year_phrase and re.search(
+        r"(?i)\b(?:lease|expense|rent)\s*(?:type|structure|mode)\b[^\n]{0,60}\b(?:base\s*year|gross)\b",
+        raw_text or "",
+    ):
+        return "base_year"
+
     if any(k in low for k in _FULL_SERVICE_OPEX_CUES):
         return "full_service"
     if any(k in low for k in _NNN_OPEX_CUES) and "not nnn" not in low and "no nnn" not in low:
@@ -2156,28 +2173,52 @@ def _regex_prefill(text: str) -> dict:
         free_rent_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
         prefill["free_rent_months"] = int(free_rent_candidates[0][2])
     # Base opex $/sf
-    m = _RE_BASE_OPEX.search(text)
-    if m:
+    opex_candidates: list[tuple[int, float]] = []
+    for m in _RE_BASE_OPEX.finditer(text):
         seg = m.group(0)
-        opex_candidates: list[float] = []
+        seg_low = seg.lower()
         for amount_match in _RE_PSF_AMOUNT.finditer(seg):
             try:
                 value = float(amount_match.group(1).replace(",", ""))
             except ValueError:
                 continue
-            if 0 < value <= 150:
-                opex_candidates.append(value)
-        if not opex_candidates:
-            amount_match = re.search(r"\$\s*([\d,]+(?:\.\d+)?)", seg)
-            if amount_match:
-                try:
-                    value = float(amount_match.group(1).replace(",", ""))
-                except ValueError:
-                    value = 0.0
-                if 0 < value <= 150:
-                    opex_candidates.append(value)
-        if opex_candidates:
-            prefill["base_opex_psf_yr"] = float(sorted(opex_candidates)[0])
+            if not (0 < value <= 150):
+                continue
+            score = 8
+            if "operating expenses" in seg_low or "opex" in seg_low or "cam" in seg_low:
+                score += 3
+            if "estimated" in seg_low or "currently" in seg_low:
+                score += 2
+            if "nnn" in seg_low:
+                score += 1
+            opex_candidates.append((score, value))
+        for amount_match in re.finditer(r"\$\s*([\d,]+(?:\.\d+)?)", seg):
+            try:
+                value = float(amount_match.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            if not (0 < value <= 150):
+                continue
+            local = seg[max(0, amount_match.start() - 60): min(len(seg), amount_match.end() + 80)].lower()
+            if any(tok in local for tok in ("per month", "/month", "monthly", "year ", "yearly")):
+                continue
+            score = 5
+            if "estimated" in local or "currently" in local:
+                score += 2
+            if "operating" in local or "opex" in local or "cam" in local:
+                score += 2
+            opex_candidates.append((score, value))
+    # Additional narrative pattern commonly seen in proposals.
+    for m in re.finditer(
+        r"(?is)\boperating\s+expenses?\b[^.\n]{0,180}?\bestimated\b[^.\n]{0,120}?\$\s*([\d,]+(?:\.\d+)?)",
+        text,
+    ):
+        value = _coerce_float_token(m.group(1), None)
+        if value is not None and 0 < value <= 150:
+            opex_candidates.append((11, float(value)))
+    if opex_candidates:
+        opex_candidates.sort(key=lambda row: (-row[0], row[1]))
+        prefill["base_opex_psf_yr"] = float(opex_candidates[0][1])
     # Base rent ($/sf/yr) — prefer explicit rent-labeled amounts and avoid OpEx/cam contamination.
     base_rate_candidates: list[tuple[int, float, int]] = []
     # Split-line/base-rent label fallback with strong priority.
@@ -2476,7 +2517,9 @@ def _regex_prefill(text: str) -> dict:
     parking_count_evidence = False
     parking_ratio_patterns = [
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:parking\s+)?(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf|spaces?)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:access\s*cards?|cards?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf)\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:/|per)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf|spaces?)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:access\s*cards?|cards?)\s*\/\s*1,?000\s*(?:(?:rentable\s+)?square\s*feet|rsf|sf)\b",
         r"(?i)\bparking\s+ratio\b[^.\n]{0,100}\b(\d+(?:\.\d+)?)\s*(?:/|per|:)\s*(?:every\s*)?1,?000\b",
         r"(?i)\bparking\s+ratio\s*(?:/|per)?\s*(?:every\s*)?1,?000\s*(?:rsf|sf|(?:rentable\s+)?square\s*feet)?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
     ]
@@ -2557,6 +2600,8 @@ def _regex_prefill(text: str) -> dict:
 
     parking_rate_patterns = [
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\s*(?:per|\/)\s*month\b",
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:access\s*cards?|cards?|permits?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*\/\s*(?:access\s*cards?|cards?|permits?)\s*\/\s*(?:month|mo\.?)\b",
         r"(?i)\bparking\b[^.\n]{0,120}\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
     ]
     for pat in parking_rate_patterns:

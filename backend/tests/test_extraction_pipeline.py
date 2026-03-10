@@ -135,6 +135,31 @@ def test_regex_detects_full_service_gross_opex_mode() -> None:
     assert "full_service" in values
 
 
+def test_regex_opex_mode_prefers_nnn_when_base_year_is_only_cap_reference() -> None:
+    normalized = NormalizedDocument(
+        sha256="n",
+        filename="sample.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text=(
+                    "Operating Expenses: Tenant shall pay its pro rata share of actual NNN operating expenses. "
+                    "Operating expenses for 2026 are estimated to be $20.90. "
+                    "Tenant shall have a cap on controllable opex using a base year of 2027."
+                ),
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text="NNN operating expenses with base year cap reference",
+    )
+    candidates = mine_candidates(normalized)
+    values = [str(c.get("value") or "") for c in candidates.get("opex_mode", [])]
+    assert "nnn" in values
+
+
 def test_reconcile_detects_phase_in_without_abatement() -> None:
     normalized = NormalizedDocument(
         sha256="phasein",

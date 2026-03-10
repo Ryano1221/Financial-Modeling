@@ -5951,7 +5951,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     parking_count_evidence = False
     parking_ratio_patterns = [
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+){0,2}(?:parking\s+)?(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:access\s*cards?|cards?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf)\b",
         r"(?i)\b(\d+(?:\.\d+)?)\s*(?:permits?)\s*(?:per|\/)\s*(?:every\s*)?1,?000\s*(?:(?:rentable\s+)?square\s*feet|lease\s+space|rsf|sf)\b",
+        r"(?i)\b(\d+(?:\.\d+)?)\s*(?:access\s*cards?|cards?)\s*\/\s*1,?000\s*(?:rsf|sf|(?:rentable\s+)?square\s*feet)\b",
         r"(?i)\bparking\s+ratio\b[^.\n]{0,60}\b(\d+(?:\.\d+)?)\s*(?:\/|per)\s*(?:every\s*)?1,?000\b",
         r"(?i)\bparking\s+ratio\b[^\n]{0,80}\(\s*per\s*1,?000\s*(?:rsf|sf)\s*\)\s*[:\-]?\s*(\d+(?:\.\d+)?)\b",
         r"(?i)\bparking\s+ratio\b[^\n]{0,80}\b1,?000\s*(?:rsf|sf)\b[^\n]{0,16}?[:\-]?\s*(\d+(?:\.\d+)?)\b",
@@ -6050,6 +6052,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     parking_rate_patterns = [
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+)?(?:space|stall)\s*(?:per|\/)\s*month\b",
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:(?:reserved|unreserved|covered|surface|garage)\s+)?(?:permit)\s*(?:per|\/)\s*month\b",
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:access\s*cards?|cards?|permits?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*\/\s*(?:access\s*cards?|cards?|permits?)\s*\/\s*(?:month|mo\.?)\b",
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\s*(?:for\s+)?(?:unreserved|reserved)?\s*parking\b",
         r"(?i)\bparking\b[^.\n]{0,80}\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
     ]
