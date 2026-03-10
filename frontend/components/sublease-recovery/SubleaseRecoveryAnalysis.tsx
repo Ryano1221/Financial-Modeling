@@ -685,8 +685,8 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
       </div>
 
       {activeScenario ? (
-        <div className="grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4">
-          <aside className="space-y-3">
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(520px,46%)_minmax(0,54%)] 2xl:grid-cols-[minmax(560px,48%)_minmax(0,52%)] gap-4">
+          <aside className="grid grid-cols-1 xl:grid-cols-2 gap-3 content-start">
             <div className="border border-white/15 bg-black/35 p-3">
               <p className="heading-kicker mb-2">General Inputs</p>
               <label className="block text-xs text-slate-400 mb-1">Scenario name</label>
@@ -865,7 +865,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
               <input className="input-premium" type="number" step="0.1" value={toPercentInput(activeScenario.annualParkingEscalation)} onChange={(e) => updateScenario(activeScenario.id, { annualParkingEscalation: fromPercentInput(e.target.value) })} />
             </div>
 
-            <div className="border border-white/15 bg-black/35 p-3">
+            <div className="border border-white/15 bg-black/35 p-3 xl:col-span-2">
               <div className="flex items-center justify-between mb-2">
                 <p className="heading-kicker">Rent Phase In (max 5)</p>
                 <button
@@ -927,7 +927,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 xl:col-span-2">
               <button type="button" className="btn-premium btn-premium-secondary w-full" onClick={duplicateScenario}>
                 Duplicate Scenario
               </button>
