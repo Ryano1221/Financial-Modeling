@@ -1,0 +1,218 @@
+[
+  {
+    "case_id": "curated-ibc-bank-plaza-2026",
+    "family": "proposal",
+    "documents": [
+      {
+        "doc_id": "ibc-v1",
+        "family": "proposal",
+        "role": "primary",
+        "as_of_date": "2026-03-09",
+        "text": "Landlord Proposal\nProperty: IBC Bank Plaza\nAddress: 500 W 5th St, Austin, TX\nPremises: Suite 950\nRentable Square Feet: 5,562 RSF\nLease Type: NNN\nLease Commencement: 10/01/2026\nLease Expiration: 01/31/2034\nLease Term: 88 months\nBase Rent: $46.00 / SF / YR\nAnnual Escalation: 3.00%\nOperating Expenses: $25.50 / SF\nOpEx Escalation: 3.00%\nParking Spaces: 13\nParking Cost/Spot/Month: $225.00",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 11, "rate_psf_annual": 46.0},
+          {"start_month": 12, "end_month": 23, "rate_psf_annual": 47.38},
+          {"start_month": 24, "end_month": 35, "rate_psf_annual": 48.8},
+          {"start_month": 36, "end_month": 47, "rate_psf_annual": 50.27},
+          {"start_month": 48, "end_month": 59, "rate_psf_annual": 51.78},
+          {"start_month": 60, "end_month": 71, "rate_psf_annual": 53.33},
+          {"start_month": 72, "end_month": 83, "rate_psf_annual": 54.93},
+          {"start_month": 84, "end_month": 87, "rate_psf_annual": 56.58}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2026-10-01",
+      "expiration_date": "2034-01-31",
+      "term_months": 88,
+      "rsf": 5562,
+      "suite": "950",
+      "base_rent_psf": 46.0,
+      "op_ex_psf": 25.5
+    },
+    "controlling_fields": ["commencement_date", "expiration_date", "term_months", "rsf", "base_rent_psf"],
+    "tags": ["curated", "real-regression", "ibc"]
+  },
+  {
+    "case_id": "curated-atx-tower-2026",
+    "family": "proposal",
+    "documents": [
+      {
+        "doc_id": "atx-v1",
+        "family": "proposal",
+        "role": "primary",
+        "as_of_date": "2026-03-03",
+        "text": "Landlord Proposal\nBuilding: 321 W 6th Street\nPremises: Suite 1550\nRentable Area: 5,618 square feet\nLease Type: NNN\nTerm Start: 10.01.2026\nTerm End: 04.30.2034\nTerm: 91 months\nBase Rental Rate: $52.00 per square foot per year\nAnnual Increase: 3.00%\nOperating Expenses: $20.90 / SF\nOperating Expense Increase: 3.00%\nParking Spaces: 11\nParking Rate: $225 per space per month\nNote: Tenant shall pay as if occupying only 4,700 RSF for the first 14 months.",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 11, "rate_psf_annual": 52.0},
+          {"start_month": 12, "end_month": 23, "rate_psf_annual": 53.56},
+          {"start_month": 24, "end_month": 35, "rate_psf_annual": 55.17},
+          {"start_month": 36, "end_month": 47, "rate_psf_annual": 56.82},
+          {"start_month": 48, "end_month": 59, "rate_psf_annual": 58.53},
+          {"start_month": 60, "end_month": 71, "rate_psf_annual": 60.29},
+          {"start_month": 72, "end_month": 83, "rate_psf_annual": 62.10},
+          {"start_month": 84, "end_month": 90, "rate_psf_annual": 63.96}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2026-10-01",
+      "expiration_date": "2034-04-30",
+      "term_months": 91,
+      "rsf": 5618,
+      "suite": "1550",
+      "base_rent_psf": 52.0,
+      "op_ex_psf": 20.9
+    },
+    "controlling_fields": ["commencement_date", "expiration_date", "term_months", "rsf", "base_rent_psf"],
+    "tags": ["curated", "real-regression", "atx"]
+  },
+  {
+    "case_id": "curated-amendment-overrides-term",
+    "family": "amendment",
+    "documents": [
+      {
+        "doc_id": "prime-lease-v1",
+        "family": "lease",
+        "role": "base_lease",
+        "as_of_date": "2024-01-01",
+        "text": "Lease\nPremises: Suite 400\nRentable Square Feet: 24,500 RSF\nCommencement Date: 01/01/2024\nExpiration Date: 12/31/2028\nLease Term: 60 months\nBase Rent: $38.00 / SF",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 11, "rate_psf_annual": 38.0},
+          {"start_month": 12, "end_month": 23, "rate_psf_annual": 39.14},
+          {"start_month": 24, "end_month": 35, "rate_psf_annual": 40.31},
+          {"start_month": 36, "end_month": 47, "rate_psf_annual": 41.52},
+          {"start_month": 48, "end_month": 59, "rate_psf_annual": 42.77}
+        ]
+      },
+      {
+        "doc_id": "first-amendment-v2",
+        "family": "amendment",
+        "role": "override",
+        "as_of_date": "2026-07-01",
+        "text": "First Amendment to Lease\nNotwithstanding the Lease, Section 2 is hereby amended and replaced.\nPrior language: ~~Lease Term: 60 months~~\nControlling replacement: Lease Term: 84 months.\nLease Commencement remains 01/01/2024.\nExpiration Date is amended to 12/31/2030.\nBase Rent: $41.00 / SF.",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 11, "rate_psf_annual": 41.0},
+          {"start_month": 12, "end_month": 23, "rate_psf_annual": 42.23},
+          {"start_month": 24, "end_month": 35, "rate_psf_annual": 43.50},
+          {"start_month": 36, "end_month": 47, "rate_psf_annual": 44.81},
+          {"start_month": 48, "end_month": 59, "rate_psf_annual": 46.15},
+          {"start_month": 60, "end_month": 71, "rate_psf_annual": 47.54},
+          {"start_month": 72, "end_month": 83, "rate_psf_annual": 48.96}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2024-01-01",
+      "expiration_date": "2030-12-31",
+      "term_months": 84,
+      "rsf": 24500,
+      "suite": "400",
+      "base_rent_psf": 41.0,
+      "op_ex_psf": null
+    },
+    "controlling_fields": ["term_months", "expiration_date", "base_rent_psf"],
+    "tags": ["curated", "override", "amendment"]
+  },
+  {
+    "case_id": "curated-counter-option-replace",
+    "family": "counterproposal",
+    "documents": [
+      {
+        "doc_id": "loi-v1",
+        "family": "loi",
+        "role": "primary",
+        "as_of_date": "2026-01-10",
+        "text": "Letter of Intent\nPremises: Suite 700\nRSF: 18,000\nCommencement Date: 05/01/2027\nExpiration Date: 04/30/2032\nLease Term: 60 months\nOption 1 Base Rent: $48.00 / SF",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 59, "rate_psf_annual": 48.0}
+        ]
+      },
+      {
+        "doc_id": "counter-v2",
+        "family": "counter",
+        "role": "override",
+        "as_of_date": "2026-01-25",
+        "text": "Counter Proposal\nOption 2 is amended to replace Option 1.\nCommencement Date: 05/01/2027\nExpiration Date: 04/30/2032\nTerm: 60 months\nBase Rent: $44.00 / SF / YR",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 59, "rate_psf_annual": 44.0}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2027-05-01",
+      "expiration_date": "2032-04-30",
+      "term_months": 60,
+      "rsf": 18000,
+      "suite": "700",
+      "base_rent_psf": 44.0,
+      "op_ex_psf": null
+    },
+    "controlling_fields": ["base_rent_psf", "term_months"],
+    "tags": ["curated", "override", "counter"]
+  },
+  {
+    "case_id": "curated-redline-delete-and-replace",
+    "family": "redline",
+    "documents": [
+      {
+        "doc_id": "sublease-v1",
+        "family": "sublease_proposal",
+        "role": "primary",
+        "as_of_date": "2026-02-01",
+        "text": "Sublease Proposal\nPremises: Suite 300\nRentable Square Feet: 6,052 RSF\nCommencement Date: 04/01/2026\nExpiration Date: 03/31/2031\nLease Term: 60 months\nBase Rent: $47.50 / SF",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 59, "rate_psf_annual": 47.5}
+        ]
+      },
+      {
+        "doc_id": "redline-v2",
+        "family": "redline",
+        "role": "override",
+        "as_of_date": "2026-02-18",
+        "text": "Redline\nSection 3 (Term) is deleted and replaced.\n~~Lease Term: 60 months~~\nLease Term: 65 months.\n~~Expiration Date: 03/31/2031~~\nExpiration Date: 08/31/2031.\nBase Rent remains $47.50 / SF.",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 64, "rate_psf_annual": 47.5}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2026-04-01",
+      "expiration_date": "2031-08-31",
+      "term_months": 65,
+      "rsf": 6052,
+      "suite": "300",
+      "base_rent_psf": 47.5,
+      "op_ex_psf": null
+    },
+    "controlling_fields": ["term_months", "expiration_date"],
+    "tags": ["curated", "override", "redline"]
+  },
+  {
+    "case_id": "curated-ocr-noise-term",
+    "family": "broker_summary",
+    "documents": [
+      {
+        "doc_id": "ocr-1",
+        "family": "broker_summary",
+        "role": "primary",
+        "as_of_date": "2026-04-11",
+        "text": "Broker Summary\nProperty: Eastlake Logistics Center\nPremises: Suite 100,200,300\nRentable Square Feet: 129,600 RSF\nC o m m e n c e m e n t Date: 09.01.2026\nE x p i r a t i o n Date: 02.28.2034\nTerm Length: 90 months\nRental Rate: $42.75 / SF / YR\nOperating Expenses: $18.00 / SF",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 89, "rate_psf_annual": 42.75}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2026-09-01",
+      "expiration_date": "2034-02-28",
+      "term_months": 90,
+      "rsf": 129600,
+      "suite": "100,200,300",
+      "base_rent_psf": 42.75,
+      "op_ex_psf": 18.0
+    },
+    "controlling_fields": ["commencement_date", "expiration_date", "term_months", "rsf"],
+    "tags": ["curated", "ocr-noise"]
+  }
+]

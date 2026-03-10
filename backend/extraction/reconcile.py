@@ -189,6 +189,11 @@ def _candidate_score(candidate: dict[str, Any]) -> float:
     source = str(candidate.get("source") or "")
     snippet = str(candidate.get("snippet") or "")
     score = (_source_weight(source) * 0.6) + (conf * 0.4)
+    low_src = source.lower()
+    if "::override::" in low_src or "::amendment::" in low_src or "::counter::" in low_src or "::redline::" in low_src:
+        score += 0.08
+    if "::base_lease::" in low_src and any(k in snippet.lower() for k in ("whereas", "scheduled to expire")):
+        score -= 0.06
     score += _snippet_score_adjustment(snippet, source)
     return max(0.0, min(1.0, score))
 

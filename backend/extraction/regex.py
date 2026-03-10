@@ -39,6 +39,28 @@ FULL_SERVICE_CUES = (
 )
 
 
+def _normalize_keyword_spacing(line: str) -> str:
+    """
+    Normalize OCR-spaced keyword artifacts (e.g., "C o m m e n c e m e n t").
+    Keeps original line for snippets but improves matching robustness.
+    """
+    out = str(line or "")
+    for word in (
+        "commencement",
+        "expiration",
+        "operating",
+        "expenses",
+        "term",
+        "lease",
+        "premises",
+        "suite",
+        "rent",
+    ):
+        pattern = r"(?i)\b" + r"\s+".join(list(word)) + r"\b"
+        out = re.sub(pattern, word, out)
+    return out
+
+
 def _is_phase_in_context(line: str) -> bool:
     low = f" {line.lower()} "
     has_phase_token = any(
@@ -194,18 +216,34 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
     for page in normalized.pages:
         lines = [ln.strip() for ln in (page.text or "").splitlines() if ln.strip()]
         for ln in lines:
-            low = ln.lower()
+            scan_line = _normalize_keyword_spacing(ln)
+            low = scan_line.lower()
 
             # Date fields with keyword anchoring.
             for pat in DATE_PATTERNS:
-                for m in re.finditer(pat, ln):
+                for m in re.finditer(pat, scan_line):
                     dt = _parse_date_token(m.group(1))
                     if not dt:
                         continue
                     idx = m.start()
-                    comm_dist = _nearest_keyword_distance(low, idx, ("commenc", "lease commencement", "term commencement"))
+                    comm_dist = _nearest_keyword_distance(
+                        low,
+                        idx,
+                        (
+                            "commenc",
+                            "lease commencement",
+                            "term commencement",
+                            "term start",
+                            "rental commencement",
+                            "rent commencement",
+                        ),
+                    )
                     rent_comm_dist = _nearest_keyword_distance(low, idx, ("rent commenc", "rent start"))
-                    exp_dist = _nearest_keyword_distance(low, idx, ("expir", "terminat", "through", "ending"))
+                    exp_dist = _nearest_keyword_distance(
+                        low,
+                        idx,
+                        ("expir", "terminat", "through", "ending", "term end", "lease through"),
+                    )
 
                     if rent_comm_dist is not None and (exp_dist is None or rent_comm_dist <= exp_dist):
                         out["rent_commencement_date"].append(
@@ -230,24 +268,45 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                                 _mk_candidate("expiration_date", dt, page.page_number, ln, "pdf_text_regex", 0.70)
                             )
 
-            tm = re.search(r"(?:term|lease term)[^\d]{0,20}(\d{1,3})\s*(?:months?|mos?)", ln, flags=re.IGNORECASE)
+            tm = re.search(
+                r"(?:initial\s+term|lease\s+term|term\s+length|term)\D{0,20}(\d{1,3})\s*(?:months?|mos?)",
+                scan_line,
+                flags=re.IGNORECASE,
+            )
             if tm:
                 out["term_months"].append(_mk_candidate("term_months", int(tm.group(1)), page.page_number, ln, "pdf_text_regex", 0.78))
 
-            rsf_match = re.search(r"([0-9]{1,3}(?:,[0-9]{3})+|\d{3,6})\s*(?:rsf|rentable\s+square\s+feet|square\s+feet)", ln, flags=re.IGNORECASE)
+            rsf_match = re.search(
+                r"([0-9]{1,3}(?:,[0-9]{3})+|\d{3,6})\s*(?:rsf|rentable\s+square\s+feet|rentable\s+area|square\s+feet)",
+                scan_line,
+                flags=re.IGNORECASE,
+            )
             if rsf_match and "per 1,000" not in low:
                 rsf = float(rsf_match.group(1).replace(",", ""))
-                out["rsf"].append(_mk_candidate("rsf", rsf, page.page_number, ln, "pdf_text_regex", 0.77))
+                rsf_conf = 0.77
+                if any(k in low for k in ("premises", "suite", "rentable")):
+                    rsf_conf += 0.08
+                if any(k in low for k in ("occupying only", "phase", "months 1", "first 14 months", "first year")):
+                    rsf_conf -= 0.16
+                rsf_conf = max(0.2, min(0.95, rsf_conf))
+                out["rsf"].append(_mk_candidate("rsf", rsf, page.page_number, ln, "pdf_text_regex", rsf_conf))
 
-            suite_match = re.search(r"\b(?:suite|ste\.?|unit)\s*[:#-]?\s*([a-z0-9-]+)", ln, flags=re.IGNORECASE)
+            suite_match = re.search(
+                r"\b(?:suite|ste\.?|unit)\s*[:#-]?\s*([a-z0-9][a-z0-9 ,/&-]{0,40})",
+                scan_line,
+                flags=re.IGNORECASE,
+            )
             if suite_match:
-                out["suite"].append(_mk_candidate("suite", suite_match.group(1).upper(), page.page_number, ln, "pdf_text_regex", 0.72))
+                suite = re.split(r"(?i)\b(?:rsf|rentable|square|commencement|expiration|term)\b", suite_match.group(1))[0]
+                suite = suite.strip(" ,.-").upper()
+                if suite:
+                    out["suite"].append(_mk_candidate("suite", suite, page.page_number, ln, "pdf_text_regex", 0.72))
 
-            floor_match = re.search(r"\b(?:floor|fl\.?)[\s:#-]*([0-9]{1,2})\b", ln, flags=re.IGNORECASE)
+            floor_match = re.search(r"\b(?:floor|fl\.?)[\s:#-]*([0-9]{1,2})\b", scan_line, flags=re.IGNORECASE)
             if floor_match:
                 out["floor"].append(_mk_candidate("floor", floor_match.group(1), page.page_number, ln, "pdf_text_regex", 0.68))
 
-            if _is_phase_in_context(ln):
+            if _is_phase_in_context(scan_line):
                 out["phase_in_detected"].append(
                     _mk_candidate("phase_in_detected", True, page.page_number, ln, "pdf_text_regex", 0.82)
                 )
@@ -255,7 +314,7 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                     _mk_candidate("abatement_classification", "phase_in", page.page_number, ln, "pdf_text_regex", 0.79)
                 )
 
-            scope = _detect_abatement_scope_from_line(ln)
+            scope = _detect_abatement_scope_from_line(scan_line)
             if scope:
                 scope_conf = 0.75 if scope == "gross_rent" else 0.72 if scope == "base_rent_only" else 0.52
                 out["abatement_scope"].append(
@@ -276,18 +335,26 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                         _mk_candidate("rent_definition_scope", "rent_base_only", page.page_number, ln, "pdf_text_regex", 0.70)
                     )
 
-            opex_mode = _detect_opex_mode_from_line(ln)
+            opex_mode = _detect_opex_mode_from_line(scan_line)
             if opex_mode:
                 mode, conf = opex_mode
                 out["opex_mode"].append(_mk_candidate("opex_mode", mode, page.page_number, ln, "pdf_text_regex", conf))
 
-            opex_match = re.search(r"(?:opex|operating\s+expenses?)\D{0,20}\$?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/\s*sf|psf)", ln, flags=re.IGNORECASE)
+            opex_match = re.search(
+                r"(?:opex|operating\s+expenses?|cam)\D{0,20}\$?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/\s*sf|psf)",
+                scan_line,
+                flags=re.IGNORECASE,
+            )
             if opex_match:
                 out["opex_psf_year_1"].append(
                     _mk_candidate("opex_psf_year_1", float(opex_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.73)
                 )
 
-            growth_match = re.search(r"(?:opex|operating\s+expenses?).{0,30}?(\d{1,2}(?:\.\d+)?)\s*%", ln, flags=re.IGNORECASE)
+            growth_match = re.search(
+                r"(?:opex|operating\s+expenses?|cam).{0,40}?(\d{1,2}(?:\.\d+)?)\s*%",
+                scan_line,
+                flags=re.IGNORECASE,
+            )
             if growth_match:
                 out["opex_growth_rate"].append(
                     _mk_candidate("opex_growth_rate", float(growth_match.group(1)) / 100.0, page.page_number, ln, "pdf_text_regex", 0.69)
