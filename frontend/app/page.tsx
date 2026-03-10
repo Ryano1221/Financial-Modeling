@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
+import { useSearchParams } from "next/navigation";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
 import type { ChartRow } from "@/components/Charts";
@@ -70,6 +71,7 @@ import {
   fetchUserBranding,
 } from "@/lib/user-settings";
 import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/SubleaseRecoveryAnalysis";
+import { CompletedLeasesWorkspace } from "@/components/completed-leases/CompletedLeasesWorkspace";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -559,7 +561,8 @@ type PlatformModuleId =
   | "surveys"
   | "obligations";
 
-export default function Home() {
+function HomeContent() {
+  const searchParams = useSearchParams();
   const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>("financial-analyses");
   const [activeTopTab, setActiveTopTab] = useState<"lease-comparison" | "sublease-recovery">("lease-comparison");
   const [authSession, setAuthSession] = useState<SupabaseAuthSession | null>(null);
@@ -603,28 +606,6 @@ export default function Home() {
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
-  const platformModules: Array<{ id: PlatformModuleId; label: string; description: string }> = [
-    {
-      id: "financial-analyses",
-      label: "Financial Analyses",
-      description: "Lease comparison and sublease recovery workflows.",
-    },
-    {
-      id: "completed-leases",
-      label: "Completed Leases",
-      description: "Executed lease and amendment abstraction workspace.",
-    },
-    {
-      id: "surveys",
-      label: "Surveys",
-      description: "Survey generation from flyers, floorplans, and proposal packages.",
-    },
-    {
-      id: "obligations",
-      label: "Obligations",
-      description: "Company-level obligation dashboard and document repository.",
-    },
-  ];
   const financialTabs = [
     { id: "lease-comparison", label: "Financial Analysis", description: "Scenario comparison and lease economics." },
     { id: "sublease-recovery", label: "Sublease Recovery Analysis", description: "Recovery outcomes vs remaining obligation." },
@@ -637,26 +618,28 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const raw = String(params.get("module") || "").trim().toLowerCase();
+    const raw = String(searchParams?.get("module") || "").trim().toLowerCase();
+    if (!authSession) {
+      if (activePlatformModule !== "financial-analyses") {
+        setActivePlatformModule("financial-analyses");
+      }
+      return;
+    }
     if (
       raw === "financial-analyses"
       || raw === "completed-leases"
       || raw === "surveys"
       || raw === "obligations"
     ) {
-      setActivePlatformModule(raw);
+      if (activePlatformModule !== raw) {
+        setActivePlatformModule(raw);
+      }
+      return;
     }
-  }, []);
-
-  const handlePlatformModuleChange = useCallback((id: PlatformModuleId) => {
-    setActivePlatformModule(id);
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    url.searchParams.set("module", id);
-    window.history.replaceState(null, "", url.toString());
-  }, []);
+    if (activePlatformModule !== "financial-analyses") {
+      setActivePlatformModule("financial-analyses");
+    }
+  }, [searchParams, authSession, activePlatformModule]);
 
   const getDefaultBrokerageLogoDataUrl = useCallback(async (): Promise<string | null> => {
     if (!defaultBrokerageLogoPromiseRef.current) {
@@ -1693,128 +1676,126 @@ export default function Home() {
       })
       .join(" ");
   }, [heroSparklineValues]);
+  const showHomeHero = activePlatformModule === "financial-analyses";
 
   return (
     <>
-      <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
-        <div className="app-container">
-          <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
-            <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25 reveal-on-scroll">
-              <p className="heading-kicker mb-4">Platform</p>
-              <h1 className="heading-display max-w-3xl">
-                The Commercial Real Estate Model
-              </h1>
+      {showHomeHero ? (
+        <>
+          <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
+            <div className="app-container">
+              <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
+                <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25 reveal-on-scroll">
+                  <p className="heading-kicker mb-4">Platform</p>
+                  <h1 className="heading-display max-w-3xl">
+                    The Commercial Real Estate Model
+                  </h1>
 
-              <p className="body-lead mt-6 max-w-xl">
-                Transform any lease into a structured, branded financial analysis in minutes.
-                Built for brokerages, investment firms, and enterprise real estate teams.
-              </p>
+                  <p className="body-lead mt-6 max-w-xl">
+                    Transform any lease into a structured, branded financial analysis in minutes.
+                    Built for brokerages, investment firms, and enterprise real estate teams.
+                  </p>
 
-              <div className="flex gap-3 sm:gap-4 mt-8 flex-wrap">
-                <a
-                  href="/example"
-                  className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
-                >
-                  View Example Report
-                </a>
+                  <div className="flex gap-3 sm:gap-4 mt-8 flex-wrap">
+                    <a
+                      href="/example"
+                      className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
+                    >
+                      View Example Report
+                    </a>
 
-                <a
-                  href="#extract"
-                  className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
-                >
-                  Try It Live
-                </a>
-              </div>
-            </div>
-            <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll flex">
-              <div className="border border-white/25 bg-black/65 p-2 sm:p-3 flex-1 min-h-[280px]">
-                <div className="grid grid-cols-12 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 h-full">
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
-                    <p className="heading-kicker mb-1">Scenarios</p>
-                    <p className="text-3xl sm:text-4xl tracking-tight text-white leading-none">{Math.max(1, scenarios.length)}</p>
+                    <a
+                      href="#extract"
+                      className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
+                    >
+                      Try It Live
+                    </a>
                   </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
-                    <p className="heading-kicker mb-1">Status</p>
-                    <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
-                  </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
-                    <p className="heading-kicker mb-1">Brokerage</p>
-                    <p className="text-sm text-white/90 leading-tight truncate">{brokerageName || CRE_DEFAULT_BROKERAGE_NAME}</p>
-                  </div>
+                </div>
+                <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll flex">
+                  <div className="border border-white/25 bg-black/65 p-2 sm:p-3 flex-1 min-h-[280px]">
+                    <div className="grid grid-cols-12 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 h-full">
+                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
+                        <p className="heading-kicker mb-1">Scenarios</p>
+                        <p className="text-3xl sm:text-4xl tracking-tight text-white leading-none">{Math.max(1, scenarios.length)}</p>
+                      </div>
+                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
+                        <p className="heading-kicker mb-1">Status</p>
+                        <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
+                      </div>
+                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
+                        <p className="heading-kicker mb-1">Brokerage</p>
+                        <p className="text-sm text-white/90 leading-tight truncate">{brokerageName || CRE_DEFAULT_BROKERAGE_NAME}</p>
+                      </div>
 
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
-                    <p className="heading-kicker mb-1">Prepared for</p>
-                    <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_for || "Client"}</p>
-                  </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
-                    <p className="heading-kicker mb-1">Prepared by</p>
-                    <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_by || CRE_DEFAULT_PREPARED_BY}</p>
-                  </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
-                    <p className="heading-kicker mb-1">Report date</p>
-                    <p className="text-sm text-white/90 leading-tight">{coverMetaPreview.report_date}</p>
-                  </div>
+                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
+                        <p className="heading-kicker mb-1">Prepared for</p>
+                        <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_for || "Client"}</p>
+                      </div>
+                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
+                        <p className="heading-kicker mb-1">Prepared by</p>
+                        <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_by || CRE_DEFAULT_PREPARED_BY}</p>
+                      </div>
+                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
+                        <p className="heading-kicker mb-1">Report date</p>
+                        <p className="text-sm text-white/90 leading-tight">{coverMetaPreview.report_date}</p>
+                      </div>
 
-                  <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-between min-h-[132px]" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="heading-kicker">NPV trend</p>
-                      <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live profile</p>
-                    </div>
-                    <svg viewBox="0 0 260 70" className="w-full h-20 sm:h-24">
-                      <polyline
-                        points={heroSparklinePoints}
-                        fill="none"
-                        stroke="rgba(255,255,255,0.28)"
-                        strokeWidth="5"
-                        strokeLinejoin="round"
-                        strokeLinecap="round"
-                      />
-                      <polyline
-                        points={heroSparklinePoints}
-                        fill="none"
-                        stroke="rgba(255,255,255,0.9)"
-                        strokeWidth="1.8"
-                        strokeLinejoin="round"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </div>
-                  <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
-                    <p className="heading-kicker mb-2">Document pipeline</p>
-                    <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/80 h-full content-center">
-                      <span className="border border-white/20 px-2 py-1 text-center">Upload</span>
-                      <span className="border border-white/20 px-2 py-1 text-center">Extract</span>
-                      <span className="border border-white/20 px-2 py-1 text-center">Compare</span>
+                      <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-between min-h-[132px]" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="heading-kicker">NPV trend</p>
+                          <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live profile</p>
+                        </div>
+                        <svg viewBox="0 0 260 70" className="w-full h-20 sm:h-24">
+                          <polyline
+                            points={heroSparklinePoints}
+                            fill="none"
+                            stroke="rgba(255,255,255,0.28)"
+                            strokeWidth="5"
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                          />
+                          <polyline
+                            points={heroSparklinePoints}
+                            fill="none"
+                            stroke="rgba(255,255,255,0.9)"
+                            strokeWidth="1.8"
+                            strokeLinejoin="round"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </div>
+                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
+                        <p className="heading-kicker mb-2">Document pipeline</p>
+                        <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/80 h-full content-center">
+                          <span className="border border-white/20 px-2 py-1 text-center">Upload</span>
+                          <span className="border border-white/20 px-2 py-1 text-center">Extract</span>
+                          <span className="border border-white/20 px-2 py-1 text-center">Compare</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
+          </section>
+
+          <FeatureTiles />
+        </>
+      ) : null}
+
+      {authSession && activePlatformModule === "financial-analyses" ? (
+        <section className="relative z-10 app-container mt-8">
+          <div className="mx-auto w-full max-w-6xl">
+            <PlatformModuleTabs
+              tabs={financialTabs}
+              activeId={activeTopTab}
+              onChange={(id) => setActiveTopTab(id as "lease-comparison" | "sublease-recovery")}
+              dense
+            />
           </div>
-        </div>
-      </section>
-
-      <FeatureTiles />
-
-      <section className="relative z-10 app-container mt-8">
-        <div className="mx-auto w-full max-w-6xl">
-          <PlatformModuleTabs
-            tabs={platformModules}
-            activeId={activePlatformModule}
-            onChange={(id) => handlePlatformModuleChange(id as PlatformModuleId)}
-          />
-          {activePlatformModule === "financial-analyses" ? (
-            <div className="mt-3">
-              <PlatformModuleTabs
-                tabs={financialTabs}
-                activeId={activeTopTab}
-                onChange={(id) => setActiveTopTab(id as "lease-comparison" | "sublease-recovery")}
-                dense
-              />
-            </div>
-          ) : null}
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       {(() => {
         if (activePlatformModule === "financial-analyses") {
@@ -2232,41 +2213,25 @@ export default function Home() {
         if (activePlatformModule === "completed-leases") {
           return (
         <main className="relative z-10 app-container pb-14 md:pb-20">
-          <PlatformSection
-            kicker="Completed Leases"
-            title="Completed Lease Abstraction"
-            description="Upload executed leases and amendments, review controlling terms, and generate polished abstract exports."
-          >
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <PlatformPanel
-                kicker="Intake"
-                title="Upload and classify"
-                className="lg:col-span-5"
-              >
-                <p className="text-sm text-slate-300">
-                  Phase 3 will wire the completed-lease ingestion pipeline, amendment linking, and review queue to this panel.
-                </p>
-              </PlatformPanel>
-              <PlatformPanel
-                kicker="Review"
-                title="Extraction workspace"
-                className="lg:col-span-7"
-              >
-                <p className="text-sm text-slate-300">
-                  Field-by-field review, confidence states, and controlling-term audit trail will be rendered here.
-                </p>
-              </PlatformPanel>
-              <PlatformPanel
-                kicker="Outputs"
-                title="Abstract exports"
-                className="lg:col-span-12"
-              >
-                <p className="text-sm text-slate-300">
-                  PDF and Excel abstract exports will share the same branded export layer as Financial Analyses while remaining lease-abstract specific.
-                </p>
-              </PlatformPanel>
-            </div>
-          </PlatformSection>
+          <CompletedLeasesWorkspace
+            exportBranding={{
+              brokerageName: authSession
+                ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+                : CRE_DEFAULT_BROKERAGE_NAME,
+              clientName: reportMeta.prepared_for.trim() || "Client",
+              reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
+              preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+              brokerageLogoDataUrl: authSession
+                ? (
+                  organizationBranding?.logo_data_url
+                  || (organizationBranding?.logo_asset_bytes
+                    ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+                    : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
+                )
+                : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
+              clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
+            }}
+          />
         </main>
           );
         }
@@ -2352,5 +2317,13 @@ export default function Home() {
         );
       })()}
     </>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={<main className="relative z-10 app-container pb-14 md:pb-20" />}>
+      <HomeContent />
+    </Suspense>
   );
 }
