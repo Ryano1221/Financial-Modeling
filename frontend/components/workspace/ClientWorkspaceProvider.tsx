@@ -147,18 +147,25 @@ function parseStoredDocuments(raw: string | null): ClientWorkspaceDocument[] {
         if (!id || !clientId || !name) return null;
         const previewDataUrl = asText(obj.previewDataUrl);
         const normalizeSnapshot = toNormalizeSnapshot(obj.normalizeSnapshot);
+        const sourceModule = (asText(obj.sourceModule) as ClientDocumentSourceModule) || "document-center";
+        const inferredType = inferWorkspaceDocumentType(name, sourceModule, normalizeSnapshot);
+        const storedType = asText(obj.type) as ClientDocumentType;
+        const normalizedType: ClientDocumentType =
+          storedType === "sublease documents" && inferredType === "proposals"
+            ? "proposals"
+            : (storedType || inferredType || "other");
         return {
           id,
           clientId,
           name,
-          type: (asText(obj.type) as ClientDocumentType) || "other",
+          type: normalizedType,
           building: asText(obj.building),
           address: asText(obj.address),
           suite: asText(obj.suite),
           parsed: Boolean(obj.parsed),
           uploadedBy: asText(obj.uploadedBy) || "User",
           uploadedAt: asText(obj.uploadedAt) || new Date().toISOString(),
-          sourceModule: (asText(obj.sourceModule) as ClientDocumentSourceModule) || "document-center",
+          sourceModule,
           ...(previewDataUrl ? { previewDataUrl } : {}),
           ...(normalizeSnapshot ? { normalizeSnapshot } : {}),
         } satisfies ClientWorkspaceDocument;
