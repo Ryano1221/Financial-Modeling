@@ -72,6 +72,7 @@ import {
 } from "@/lib/user-settings";
 import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/SubleaseRecoveryAnalysis";
 import { CompletedLeasesWorkspace } from "@/components/completed-leases/CompletedLeasesWorkspace";
+import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -610,6 +611,7 @@ function HomeContent() {
     { id: "lease-comparison", label: "Financial Analysis", description: "Scenario comparison and lease economics." },
     { id: "sublease-recovery", label: "Sublease Recovery Analysis", description: "Recovery outcomes vs remaining obligation." },
   ] as const;
+  const rawModuleParam = String(searchParams?.get("module") || "").trim().toLowerCase();
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
   const defaultPreparedByFromAuth = useMemo(
@@ -618,7 +620,6 @@ function HomeContent() {
   );
 
   useEffect(() => {
-    const raw = String(searchParams?.get("module") || "").trim().toLowerCase();
     if (!authSession) {
       if (activePlatformModule !== "financial-analyses") {
         setActivePlatformModule("financial-analyses");
@@ -626,20 +627,20 @@ function HomeContent() {
       return;
     }
     if (
-      raw === "financial-analyses"
-      || raw === "completed-leases"
-      || raw === "surveys"
-      || raw === "obligations"
+      rawModuleParam === "financial-analyses"
+      || rawModuleParam === "completed-leases"
+      || rawModuleParam === "surveys"
+      || rawModuleParam === "obligations"
     ) {
-      if (activePlatformModule !== raw) {
-        setActivePlatformModule(raw);
+      if (activePlatformModule !== rawModuleParam) {
+        setActivePlatformModule(rawModuleParam);
       }
       return;
     }
     if (activePlatformModule !== "financial-analyses") {
       setActivePlatformModule("financial-analyses");
     }
-  }, [searchParams, authSession, activePlatformModule]);
+  }, [rawModuleParam, authSession, activePlatformModule]);
 
   const getDefaultBrokerageLogoDataUrl = useCallback(async (): Promise<string | null> => {
     if (!defaultBrokerageLogoPromiseRef.current) {
@@ -1676,7 +1677,7 @@ function HomeContent() {
       })
       .join(" ");
   }, [heroSparklineValues]);
-  const showHomeHero = activePlatformModule === "financial-analyses";
+  const showHomeHero = rawModuleParam.length === 0;
 
   return (
     <>
@@ -1685,7 +1686,7 @@ function HomeContent() {
           <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
             <div className="app-container">
               <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
-                <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25 reveal-on-scroll">
+                <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25">
                   <p className="heading-kicker mb-4">Platform</p>
                   <h1 className="heading-display max-w-3xl">
                     The Commercial Real Estate Model
@@ -1712,7 +1713,7 @@ function HomeContent() {
                     </a>
                   </div>
                 </div>
-                <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] reveal-on-scroll flex">
+                <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] flex">
                   <div className="border border-white/25 bg-black/65 p-2 sm:p-3 flex-1 min-h-[280px]">
                     <div className="grid grid-cols-12 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 h-full">
                       <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
@@ -2238,41 +2239,25 @@ function HomeContent() {
         if (activePlatformModule === "surveys") {
           return (
         <main className="relative z-10 app-container pb-14 md:pb-20">
-          <PlatformSection
-            kicker="Surveys"
-            title="Survey Generation Workspace"
-            description="Ingest flyers and floorplans, normalize availabilities, and publish client-ready survey outputs."
-          >
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <PlatformPanel
-                kicker="Intake"
-                title="Flyer and floorplan upload"
-                className="lg:col-span-5"
-              >
-                <p className="text-sm text-slate-300">
-                  Phase 4 will attach document parsing for suite-level availability, lease type, and rent assumptions.
-                </p>
-              </PlatformPanel>
-              <PlatformPanel
-                kicker="Pipeline"
-                title="Survey staging"
-                className="lg:col-span-7"
-              >
-                <p className="text-sm text-slate-300">
-                  Parsed survey entries, ambiguity flags, and review workflows will be surfaced in this workspace.
-                </p>
-              </PlatformPanel>
-              <PlatformPanel
-                kicker="Delivery"
-                title="Client output channels"
-                className="lg:col-span-12"
-              >
-                <p className="text-sm text-slate-300">
-                  Branded PDF export and share-link output structure is reserved here for the survey module.
-                </p>
-              </PlatformPanel>
-            </div>
-          </PlatformSection>
+          <SurveysWorkspace
+            exportBranding={{
+              brokerageName: authSession
+                ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+                : CRE_DEFAULT_BROKERAGE_NAME,
+              clientName: reportMeta.prepared_for.trim() || "Client",
+              reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
+              preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+              brokerageLogoDataUrl: authSession
+                ? (
+                  organizationBranding?.logo_data_url
+                  || (organizationBranding?.logo_asset_bytes
+                    ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+                    : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
+                )
+                : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
+              clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
+            }}
+          />
         </main>
           );
         }
