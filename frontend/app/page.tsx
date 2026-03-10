@@ -11,8 +11,6 @@ import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
 import {
   PlatformModuleTabs,
-  PlatformPanel,
-  PlatformSection,
 } from "@/components/platform/PlatformShell";
 
 const showDiagnostics =
@@ -73,6 +71,7 @@ import {
 import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/SubleaseRecoveryAnalysis";
 import { CompletedLeasesWorkspace } from "@/components/completed-leases/CompletedLeasesWorkspace";
 import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
+import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -2262,43 +2261,9 @@ function HomeContent() {
           );
         }
         return (
-        <main className="relative z-10 app-container pb-14 md:pb-20">
-          <PlatformSection
-            kicker="Obligations"
-            title="Portfolio Obligation Command Center"
-            description="Centralize obligations, documents, and key dates across companies and locations in one repository."
-          >
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <PlatformPanel
-                kicker="Portfolio"
-                title="Company workspace"
-                className="lg:col-span-6"
-              >
-                <p className="text-sm text-slate-300">
-                  Phase 5 will establish company-level obligation entities, storage, and cross-document associations.
-                </p>
-              </PlatformPanel>
-              <PlatformPanel
-                kicker="Timeline"
-                title="Obligation intelligence"
-                className="lg:col-span-6"
-              >
-                <p className="text-sm text-slate-300">
-                  Expiration timelines, notice tracking, and renewal/termination signals will be visualized here.
-                </p>
-              </PlatformPanel>
-              <PlatformPanel
-                kicker="Repository"
-                title="Document system"
-                className="lg:col-span-12"
-              >
-                <p className="text-sm text-slate-300">
-                  All leases, amendments, proposals, surveys, and analyses will be linked to the obligation graph from this module.
-                </p>
-              </PlatformPanel>
-            </div>
-          </PlatformSection>
-        </main>
+          <main className="relative z-10 app-container pb-14 md:pb-20">
+            <ObligationsWorkspace />
+          </main>
         );
       })()}
     </>
