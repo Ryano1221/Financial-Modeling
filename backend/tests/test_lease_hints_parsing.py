@@ -142,6 +142,42 @@ def test_extract_hints_parses_commencement_and_expiration_from_term_clause() -> 
     assert hints["term_months"] == 33
 
 
+def test_extract_hints_ignores_notice_months_and_keeps_primary_lease_term() -> None:
+    text = (
+        "COMMENCEMENT DATE: The Commencement Date shall be the earlier of "
+        "(i) Tenant occupying the Premises for business purposes, "
+        "(ii) substantial completion of Tenant Improvements or "
+        "(iii) October 1, 2026.\n"
+        "LEASE TERM: Eighty-eight (88) months from the Commencement Date.\n"
+        "free base rent: Tenant shall receive four (4) months of abated base rent at the beginning of the lease term.\n"
+        "TERMINATION RIGHT: Tenant may terminate in month 64 by providing at least 12 months prior written notice.\n"
+    )
+    hints = main._extract_lease_hints(text, "ibc-proposal.docx", "test-rid")
+
+    assert hints["term_months"] == 88
+    assert str(hints["commencement_date"]) == "2026-10-01"
+    assert str(hints["expiration_date"]) == "2034-01-31"
+
+
+def test_extract_hints_derives_relative_commencement_and_rsf_from_premises_clause() -> None:
+    text = (
+        "PREMISES: Suite 1550: a 5,618 Rentable Square Foot (RSF) spec suite to be built on a portion of the 15th Floor.\n"
+        "Lease Commencement: 30 days following substantial completion of the Landlord's Work to deliver the spec suites.\n"
+        "INITIAL TERM: Ninety-one (91) Months.\n"
+        "Base Rental Rate: Months 1-7: $0.00 PSF + NNN.\n"
+        "Months 8-12: $52.00 PSF + NNN.\n"
+        "Starting month 13, the proposed rental rate shall escalate by 3.0% annually.\n"
+        "Landlord's work: These spec suites currently have a delivery date of August 15, 2026.\n"
+        "Next-level amenities: 7,000 SF fitness center and rooftop sky lounge.\n"
+    )
+    hints = main._extract_lease_hints(text, "atx-proposal.docx", "test-rid")
+
+    assert hints["rsf"] == 5618.0
+    assert hints["term_months"] == 91
+    assert str(hints["commencement_date"]) == "2026-10-01"
+    assert str(hints["expiration_date"]) == "2034-04-30"
+
+
 def test_extract_hints_amendment_prefers_extended_term_not_whereas_schedule() -> None:
     text = (
         "WHEREAS, the term of the Lease is scheduled to expire on August 31, 2019; and\n"

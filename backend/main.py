@@ -2853,6 +2853,73 @@ def _extract_best_commencement_date_from_clause(text: str) -> Optional[date]:
     return _extract_first_date_token(text)
 
 
+def _derive_relative_commencement_date(text: str) -> Optional[date]:
+    if not text:
+        return None
+
+    commencement_clause_match = re.search(
+        r"(?is)\b(?:lease\s+)?commencement(?:\s+date)?\s*[:\-]\s*([^\n]{0,280})",
+        text,
+    )
+    if not commencement_clause_match:
+        return None
+
+    clause = str(commencement_clause_match.group(1) or "").strip()
+    low_clause = clause.lower()
+    if not clause:
+        return None
+    if "following" not in low_clause and "after" not in low_clause:
+        return None
+
+    offset_match = re.search(r"(?i)\b(\d{1,3})\s+days?\s+(?:following|after)\b", clause)
+    if not offset_match:
+        return None
+    day_offset = _coerce_int_token(offset_match.group(1), 0) or 0
+    if day_offset <= 0 or day_offset > 365:
+        return None
+
+    span_start = max(0, commencement_clause_match.start() - 120)
+    span_end = min(len(text), commencement_clause_match.end() + 900)
+    local_span = text[span_start:span_end]
+
+    date_token = (
+        r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|"
+        r"Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*,?\s*\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}"
+        r"|\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+        r"|\d{1,2}[/-]\d{1,2}[/-]\d{4}"
+        r"|\d{1,2}[/-]\d{1,2}[/-]\d{2}"
+    )
+    anchor_patterns = [
+        rf"(?is)\bdelivery\s+date(?:\s+of)?\b[^A-Za-z0-9]{{0,16}}({date_token})",
+        rf"(?is)\bspec\s+suites?\b[^\n]{{0,220}}?\bdelivery\s+date\b[^\n]{{0,40}}({date_token})",
+        rf"(?is)\bsubstantial\s+completion\b[^\n]{{0,200}}({date_token})",
+    ]
+
+    def _find_anchor_date(scope_text: str) -> Optional[date]:
+        for pat in anchor_patterns:
+            m = re.search(pat, scope_text)
+            if not m:
+                continue
+            parsed = _parse_lease_date(m.group(1))
+            if parsed:
+                return parsed
+        return None
+
+    anchor_date: Optional[date] = _find_anchor_date(local_span)
+    if anchor_date is None:
+        anchor_date = _find_anchor_date(text)
+    if anchor_date is None:
+        return None
+
+    derived = anchor_date + timedelta(days=int(day_offset))
+    if derived.day != 1:
+        if derived.month == 12:
+            derived = date(derived.year + 1, 1, 1)
+        else:
+            derived = date(derived.year, derived.month + 1, 1)
+    return derived
+
+
 def _extract_term_months_from_text(text: str) -> Optional[int]:
     if not text:
         return None
@@ -2862,6 +2929,7 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         "option",
         "termination option",
         "advance notice",
+        "prior written notice",
         "month-to-month",
         "holdover",
         "prior to",
@@ -2912,6 +2980,36 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
             return True
         return False
 
+    def _looks_like_non_term_month_context(snippet: str) -> bool:
+        low = str(snippet or "").lower()
+        if not low:
+            return False
+        if _looks_like_abatement_distribution_window(low):
+            return True
+        if re.search(r"(?i)\bfirst\s+\(?\d{1,3}\)?\s+months?\s+of\s+the\s+term\b", low):
+            return True
+        if re.search(r"(?i)\b\d{1,3}\s+months?\s+prior\b", low):
+            return True
+        if re.search(r"(?i)\b(?:starting|beginning|commencing)\s+month\s+\d{1,3}\b", low):
+            return True
+        if (
+            re.search(r"(?i)\bmonth\s+\d{1,3}\b", low)
+            and any(tok in low for tok in ("escalat", "increase", "base rent", "rental rate"))
+        ):
+            return True
+        if any(
+            tok in low
+            for tok in (
+                "parking",
+                "access card",
+                "parking pass",
+                "must take and pay",
+                "event parking",
+            )
+        ) and "lease term" not in low and "initial term" not in low:
+            return True
+        return False
+
     month_candidates: list[tuple[int, int, int]] = []
 
     # Handle split-line term blocks:
@@ -2919,7 +3017,10 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     #   Ninety(90) months
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     term_label_pat = re.compile(
-        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|renewal\s+term|initial\s+term|term)\b"
+        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|renewal\s+term|initial\s+term)\b|"
+        r"\bterm\s+and\s+free\s+rent\b|"
+        r"\bterm\s*[:\-]|"
+        r"\bterm\s+(?:shall\s+be|is|of)\b"
     )
     for idx, line in enumerate(lines[:1400]):
         line_low = line.lower()
@@ -2928,6 +3029,8 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         if any(tok in line_low for tok in ("option to extend", "option term", "renewal option", "holdover")):
             continue
         if _looks_like_abatement_distribution_window(line_low):
+            continue
+        if _looks_like_non_term_month_context(line_low):
             continue
         for lookahead in range(0, 4):
             if idx + lookahead >= len(lines):
@@ -2942,12 +3045,21 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
                 continue
             if _looks_like_abatement_distribution_window(probe_low):
                 continue
-            month_match = re.search(
+            if _looks_like_non_term_month_context(probe_low):
+                continue
+            month_matches = re.findall(
                 r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
                 probe,
             )
-            if month_match:
-                months = _coerce_int_token(month_match.group(1), 0)
+            if month_matches:
+                parsed_months = [
+                    _coerce_int_token(token, 0)
+                    for token in month_matches
+                ]
+                parsed_months = [m for m in parsed_months if 1 <= m <= 600]
+                if not parsed_months:
+                    continue
+                months = max(parsed_months)
                 if 1 <= months <= 600:
                     score = 14 - lookahead
                     if "renewal term" in line_low:
@@ -2970,11 +3082,13 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     explicit_month_term_patterns = [
         r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+term\b",
         r"(?i)\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\s+(?:lease\s+|sublease\s+|initial\s+)?term\b",
-        r"(?i)\bterm\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
+        r"(?i)\bterm(?:\s*[:\-]|\s+(?:shall\s+be|is|of))\b[^.\n]{0,180}?\b\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
     ]
     for pat in explicit_month_term_patterns:
         for m in re.finditer(pat, text):
             if _is_disqualified(m):
+                continue
+            if _looks_like_non_term_month_context(_match_context(m)):
                 continue
             context = (m.group(0) or "").lower()
             months = _coerce_int_token(m.group(1), 0)
@@ -3028,12 +3142,16 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     term_month_patterns = [
         r"(?i)\b(?:leased\s+premises\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\s*[:\-]\s*[^.\n]{0,120}?\((\d{1,3})\)\s*(?:calendar\s+)?months?\b",
         r"(?i)\b(?:leased\s+premises\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\s*[:\-]\s*[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
-        r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,120}?\((\d{1,3})\)\s*(?:calendar\s+)?months?\b",
-        r"(?i)\b(?:initial\s+)?term\b[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
+        r"(?i)\bterm\s+and\s+free\s+rent\s*[:\-]\s*[^.\n]{0,140}?\((\d{1,3})\)\s*(?:calendar\s+)?months?\b",
+        r"(?i)\bterm\s+and\s+free\s+rent\s*[:\-]\s*[^.\n]{0,140}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
+        r"(?i)\binitial\s+term\b[^.\n]{0,120}?\((\d{1,3})\)\s*(?:calendar\s+)?months?\b",
+        r"(?i)\binitial\s+term\b[^.\n]{0,120}?\b(\d{1,3})\s*(?:calendar\s+)?months?\b",
     ]
     for pat in term_month_patterns:
         for m in re.finditer(pat, text):
             if _is_disqualified(m):
+                continue
+            if _looks_like_non_term_month_context(_match_context(m)):
                 continue
             context = (m.group(0) or "").lower()
             months = _coerce_int_token(m.group(1), 0)
@@ -3051,7 +3169,7 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
             month_candidates.append((score, m.start(), int(months)))
 
     if month_candidates:
-        month_candidates.sort(key=lambda row: (-row[0], -row[1], -row[2]))
+        month_candidates.sort(key=lambda row: (-row[0], -row[2], row[1]))
         return month_candidates[0][2]
 
     # Handles "Term shall be ten (10) years ..." and "Term: 5 years"
@@ -4775,8 +4893,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     rsf_patterns = [
         r"(?i)\blocated\s+on\s+\d{1,3}(?:\s*(?:-|–|—|to)\s*\d{1,3})?[^\n]{0,40}\(\s*(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|rentable\s+square\s+feet)\s*\)",
         r"(?i)\b(?:rentable\s+area|rentable\s+square\s+feet|rsf)\b\s*[:#-]?\s*(\d{1,3}(?:,\d{3})+|\d{3,7})",
-        r"(?i)\b(?:premises|leased\s+premises|sublease\s+premises)[^.:\n]{0,140}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|rsf)\b",
-        r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s+feet|rentable\s+(?:sf|s\.?f\.?)|square\s*feet|sf|s\.?f\.?)\b",
+        r"(?i)\b(?:premises|leased\s+premises|sublease\s+premises)[^.:\n]{0,140}?\b(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rentable\s+square\s*(?:feet|foot(?:age)?s?)|rentable\s+(?:sf|s\.?f\.?)|square\s*(?:feet|foot(?:age)?s?)|rsf)\b",
+        r"(?i)(\d{1,3}(?:,\d{3})+|\d{3,7})\s*(?:rsf|r\.?s\.?f\.?|rentable\s+square\s*(?:feet|foot(?:age)?s?)|rentable\s+(?:sf|s\.?f\.?)|square\s*(?:feet|foot(?:age)?s?)|sf|s\.?f\.?)\b",
     ]
     rsf_candidates: list[dict] = []
     strong_total_patterns = [
@@ -4839,6 +4957,23 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 score -= 8
             if any(k in low for k in ("parking", "spaces per", "density", "work station", "workstation", "cam", "opex", "operating expenses", "taxes", "insurance")):
                 score -= 4
+            if any(
+                k in low
+                for k in (
+                    "amenities",
+                    "fitness center",
+                    "rooftop",
+                    "sky lounge",
+                    "coffee shops",
+                    "restaurants",
+                    "walk score",
+                    "event space",
+                    "luxury apartments",
+                )
+            ):
+                score -= 8
+            if "[docx image ocr" in low:
+                score -= 6
             if any(k in low for k in ("shopping center contains", "center contains", "total rsf", "whole center", "entire center", "building contains approximately")):
                 score -= 5
             if "defined at a later date" in low:
@@ -5097,6 +5232,10 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if d:
                 term_candidates["commencement"] = d
                 break
+    if term_candidates["commencement"] is None:
+        relative_commencement = _derive_relative_commencement_date(text)
+        if relative_commencement:
+            term_candidates["commencement"] = relative_commencement
 
     if term_candidates["commencement"]:
         hints["commencement_date"] = term_candidates["commencement"]
