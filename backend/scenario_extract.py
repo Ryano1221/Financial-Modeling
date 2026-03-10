@@ -1505,6 +1505,58 @@ def _looks_like_fragmented_year_schedule(steps: list[dict[str, float | int]], te
     return True
 
 
+def _rent_steps_look_implausible(
+    steps: list[dict[str, float | int]],
+    *,
+    reference_rate_psf_yr: float | None = None,
+    rsf: float | None = None,
+) -> tuple[bool, str]:
+    """
+    Detect rent schedules that are likely annual-total amounts misread as $/SF/YR.
+    """
+    if not steps:
+        return False, ""
+
+    rates: list[float] = []
+    for step in steps:
+        rate = _coerce_float_token(step.get("rate_psf_yr"), None)
+        if rate is None or rate <= 0:
+            continue
+        rates.append(float(rate))
+    if not rates:
+        return False, ""
+
+    max_rate = max(rates)
+    min_rate = min(rates)
+    # Hard guardrail: above this is almost certainly annual dollar rent, not PSF rent.
+    if max_rate > 1000:
+        return True, f"maximum extracted rent rate ({max_rate:,.2f}) is outside PSF bounds"
+
+    reference = _coerce_float_token(reference_rate_psf_yr, None)
+    if reference is not None and reference > 0:
+        if max_rate > max(500.0, float(reference) * 8.0):
+            return True, (
+                f"maximum extracted rent rate ({max_rate:,.2f}) is not plausible versus "
+                f"document base rate ({float(reference):,.2f})"
+            )
+        if min_rate < max(0.25, float(reference) / 20.0) and float(reference) >= 8.0:
+            return True, (
+                f"minimum extracted rent rate ({min_rate:,.2f}) is not plausible versus "
+                f"document base rate ({float(reference):,.2f})"
+            )
+
+    rsf_val = _coerce_float_token(rsf, None)
+    if rsf_val is not None and rsf_val > 0 and max_rate > 500:
+        implied_monthly = (max_rate * float(rsf_val)) / 12.0
+        if implied_monthly > 5_000_000:
+            return True, (
+                f"implied monthly base rent (${implied_monthly:,.0f}) exceeds sanity bounds "
+                "for extracted PSF rates"
+            )
+
+    return False, ""
+
+
 def _extract_year_table_rent_steps(text: str) -> list[dict[str, float | int]]:
     """
     Parse common proposal tables like:
@@ -2947,12 +2999,59 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
             if start is None or end is None or rate is None:
                 continue
             parsed_explicit.append({"start": int(start), "end": int(max(start, end)), "rate_psf_yr": float(rate)})
+        prefill_base_rate = _coerce_float_token((prefill or {}).get("rate_psf_yr"), None)
+        explicit_rsf = _coerce_float_token(scenario.get("rsf"), _coerce_float_token((prefill or {}).get("rsf"), None))
+        schedule_implausible, schedule_reason = _rent_steps_look_implausible(
+            parsed_explicit,
+            reference_rate_psf_yr=prefill_base_rate,
+            rsf=explicit_rsf,
+        )
+        if parsed_explicit and schedule_implausible:
+            rent_steps_input = prefill_steps
+            warnings.append(
+                "Rent steps from AI output looked implausible; replaced with document-derived rent schedule "
+                f"({schedule_reason})."
+            )
+            confidence["rent_steps"] = min(float(_coerce_float_token(confidence.get("rent_steps"), 1.0) or 1.0), 0.35)
         if parsed_explicit and _looks_like_fragmented_year_schedule(parsed_explicit, term_month_count):
             rent_steps_input = prefill_steps
             warnings.append(
                 "Rent steps from AI output looked fragmented; replaced with rent schedule table extraction "
                     "(Year 1 = months 1-12, stored internally as 0-11)."
             )
+    elif len(rent_steps_input) > 0:
+        parsed_explicit: list[dict[str, float | int]] = []
+        for step in rent_steps_input:
+            if not isinstance(step, dict):
+                continue
+            start = _coerce_int_token(step.get("start"), None)
+            end = _coerce_int_token(step.get("end"), start)
+            rate = _coerce_float_token(step.get("rate_psf_yr"), None)
+            if start is None or end is None or rate is None:
+                continue
+            parsed_explicit.append({"start": int(start), "end": int(max(start, end)), "rate_psf_yr": float(rate)})
+        prefill_base_rate = _coerce_float_token((prefill or {}).get("rate_psf_yr"), None)
+        explicit_rsf = _coerce_float_token(scenario.get("rsf"), _coerce_float_token((prefill or {}).get("rsf"), None))
+        schedule_implausible, schedule_reason = _rent_steps_look_implausible(
+            parsed_explicit,
+            reference_rate_psf_yr=prefill_base_rate,
+            rsf=explicit_rsf,
+        )
+        if parsed_explicit and schedule_implausible:
+            fallback_rate = _coerce_float_token(prefill_base_rate, 0.0) or 0.0
+            if fallback_rate > 0:
+                rent_steps_input = [{"start": 0, "end": max(0, term_month_count - 1), "rate_psf_yr": float(fallback_rate)}]
+                warnings.append(
+                    "Rent steps from AI output looked implausible; replaced with extracted base-rate fallback "
+                    f"({schedule_reason})."
+                )
+            else:
+                rent_steps_input = [{"start": 0, "end": max(0, term_month_count - 1), "rate_psf_yr": 0.0}]
+                warnings.append(
+                    "Rent steps from AI output looked implausible and no reliable rent table/rate was found; "
+                    f"inserted $0.00 placeholder schedule for review ({schedule_reason})."
+                )
+            confidence["rent_steps"] = min(float(_coerce_float_token(confidence.get("rent_steps"), 1.0) or 1.0), 0.25)
 
     normalized_steps, rent_step_notes = _normalize_rent_steps(
         rent_steps_input,

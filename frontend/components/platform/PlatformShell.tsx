@@ -34,9 +34,18 @@ export function PlatformModuleTabs({
   onChange,
   dense = false,
 }: PlatformModuleTabsProps) {
+  const smColsClass =
+    tabs.length <= 1
+      ? "sm:grid-cols-1"
+      : tabs.length === 2
+        ? "sm:grid-cols-2"
+        : tabs.length === 3
+          ? "sm:grid-cols-3"
+          : "sm:grid-cols-4";
+
   return (
     <div className="border border-white/20 bg-black/40 p-2">
-      <div className="grid w-full grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+      <div className={`grid w-full grid-cols-1 ${smColsClass} gap-2 items-stretch`}>
         {tabs.map((tab) => {
           const isActive = tab.id === activeId;
           return (
@@ -44,17 +53,19 @@ export function PlatformModuleTabs({
               key={tab.id}
               type="button"
               onClick={() => onChange(tab.id)}
-              className={`border text-left transition-colors ${
-                dense ? "px-3 py-2" : "px-4 py-3"
+              className={`border transition-colors min-w-0 ${
+                dense
+                  ? "px-3 py-2 min-h-[44px] flex items-center justify-center text-center"
+                  : "px-4 py-3 min-h-[96px] flex h-full flex-col justify-start gap-1.5 text-left"
               } ${
                 isActive
                   ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
                   : "border-white/20 text-slate-200 hover:bg-white/5"
               }`}
             >
-              <div className={dense ? "text-sm" : "text-sm sm:text-base"}>{tab.label}</div>
+              <div className={dense ? "w-full text-center text-sm leading-snug break-words" : "text-sm sm:text-base leading-snug break-words"}>{tab.label}</div>
               {!dense && tab.description ? (
-                <div className="text-[11px] text-slate-400 mt-1">{tab.description}</div>
+                <div className="mt-0.5 text-[12px] leading-relaxed text-slate-400 break-words">{tab.description}</div>
               ) : null}
             </button>
           );
@@ -97,7 +108,7 @@ export function PlatformPanel({
   className = "",
 }: PlatformPanelProps) {
   return (
-    <div className={`border border-white/15 bg-black/30 p-4 ${className}`.trim()}>
+    <div className={`min-w-0 border border-white/15 bg-black/30 p-4 ${className}`.trim()}>
       {kicker ? <p className="heading-kicker mb-2">{kicker}</p> : null}
       <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
       <div>{children}</div>

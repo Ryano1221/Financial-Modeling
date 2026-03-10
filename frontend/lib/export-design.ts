@@ -48,6 +48,20 @@ export interface ExportFileNameOptions {
   pdfDescriptor: string;
 }
 
+export interface SharedExportBranding {
+  brokerageName?: string | null;
+  clientName?: string | null;
+  reportDate?: string | null;
+  preparedBy?: string | null;
+}
+
+export interface ResolvedExportBranding {
+  brokerageName: string;
+  clientName: string;
+  reportDate: string;
+  preparedBy: string;
+}
+
 export function formatDateMmDdYyyy(dateValue: Date): string {
   const month = `${dateValue.getMonth() + 1}`.padStart(2, "0");
   const day = `${dateValue.getDate()}`.padStart(2, "0");
@@ -80,6 +94,22 @@ export function buildPlatformExportFileName(options: ExportFileNameOptions): str
   const client = sanitizeFileNamePart(options.clientName, "Client");
   const descriptor = options.kind === "xlsx" ? options.excelDescriptor : options.pdfDescriptor;
   return `${brokerage} - ${descriptor} - ${client} - ${reportDate}.${options.kind}`;
+}
+
+export function resolveExportBranding(
+  branding: SharedExportBranding | null | undefined,
+): ResolvedExportBranding {
+  return {
+    brokerageName: String(branding?.brokerageName || EXPORT_BRAND.name).trim() || EXPORT_BRAND.name,
+    clientName: String(branding?.clientName || "Client").trim() || "Client",
+    reportDate: normalizeDateMmDdYyyy(branding?.reportDate) || formatDateMmDdYyyy(new Date()),
+    preparedBy: String(branding?.preparedBy || "").trim(),
+  };
+}
+
+export function buildExportMetaLine(branding: SharedExportBranding | null | undefined): string {
+  const resolved = resolveExportBranding(branding);
+  return `${resolved.brokerageName} | ${resolved.clientName} | Report Date ${resolved.reportDate}${resolved.preparedBy ? ` | Prepared by ${resolved.preparedBy}` : ""}`;
 }
 
 export function toColumnLetter(index: number): string {

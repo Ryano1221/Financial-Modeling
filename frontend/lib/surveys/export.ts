@@ -3,29 +3,17 @@ import {
   EXCEL_THEME,
   EXPORT_BRAND,
   applyExcelPageSetup,
+  buildExportMetaLine,
   buildPlatformExportFileName,
-  formatDateMmDdYyyy,
+  resolveExportBranding,
 } from "@/lib/export-design";
+import { downloadArrayBuffer as downloadArrayBufferShared, escapeHtml, openPrintWindow } from "@/lib/export-runtime";
+import { buildShareUrl, decodeSharePayload, encodeSharePayload } from "@/lib/share-link";
 import { computeSurveyMonthlyOccupancyCost } from "./engine";
 import type { SurveyEntry, SurveysExportBranding, SurveysSharePayload } from "./types";
 
 const COLORS = EXPORT_BRAND.excel.colors;
 const NUM_FMT = EXPORT_BRAND.excel.numberFormats;
-
-function escHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function toDateLabel(raw: string): string {
-  const value = String(raw || "").trim();
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return value || "-";
-  return `${m[2]}.${m[3]}.${m[1]}`;
-}
 
 function toCurrency(value: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -33,24 +21,6 @@ function toCurrency(value: number): string {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
-}
-
-function serializeForShare(payload: SurveysSharePayload): string {
-  const json = JSON.stringify(payload);
-  if (typeof window === "undefined") return "";
-  return window.btoa(unescape(encodeURIComponent(json)));
-}
-
-function deserializeShare(value: string): SurveysSharePayload | null {
-  try {
-    if (typeof window === "undefined") return null;
-    const json = decodeURIComponent(escape(window.atob(value)));
-    const parsed = JSON.parse(json) as SurveysSharePayload;
-    if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
 }
 
 export function buildSurveysExportFileName(kind: "xlsx" | "pdf", branding: SurveysExportBranding): string {
@@ -74,10 +44,7 @@ export async function buildSurveysWorkbook(
   workbook.modified = new Date();
 
   const sheet = workbook.addWorksheet("Surveys");
-  const reportDate = String(branding.reportDate || formatDateMmDdYyyy(new Date())).trim();
-  const brokerage = String(branding.brokerageName || EXPORT_BRAND.name).trim() || EXPORT_BRAND.name;
-  const client = String(branding.clientName || "Client").trim() || "Client";
-  const preparedBy = String(branding.preparedBy || "").trim();
+  const reportMeta = resolveExportBranding(branding);
 
   sheet.columns = [
     { width: 26 },
@@ -106,7 +73,7 @@ export async function buildSurveysWorkbook(
 
   sheet.mergeCells(3, 1, 3, 13);
   const metaCell = sheet.getCell(3, 1);
-  metaCell.value = `${brokerage} | ${client} | Report Date ${reportDate}${preparedBy ? ` | Prepared by ${preparedBy}` : ""}`;
+  metaCell.value = buildExportMetaLine(reportMeta);
   metaCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.labelSize, color: { argb: COLORS.secondaryText }, bold: true };
   metaCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
   sheet.getRow(3).height = 18;
@@ -193,25 +160,23 @@ export async function buildSurveysWorkbook(
 }
 
 export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportBranding = {}): void {
-  const reportDate = String(branding.reportDate || formatDateMmDdYyyy(new Date())).trim();
-  const brokerage = String(branding.brokerageName || EXPORT_BRAND.name).trim() || EXPORT_BRAND.name;
-  const client = String(branding.clientName || "Client").trim() || "Client";
+  const reportMeta = resolveExportBranding(branding);
 
   const rows = entries
     .map((entry) => {
       const cost = computeSurveyMonthlyOccupancyCost(entry);
       const suiteFloor = [entry.suite, entry.floor].filter(Boolean).join(" / ");
       return `<tr>
-        <td>${escHtml(entry.buildingName || "-")}</td>
-        <td>${escHtml(entry.address || "-")}</td>
-        <td>${escHtml(suiteFloor || "-")}</td>
-        <td>${escHtml(entry.occupancyType)}</td>
-        <td>${escHtml(entry.leaseType)}</td>
-        <td style="text-align:right">${escHtml(entry.availableSqft.toLocaleString("en-US"))}</td>
-        <td style="text-align:right">${escHtml(toCurrency(entry.baseRentPsfAnnual))}</td>
-        <td style="text-align:right">${escHtml(toCurrency(entry.opexPsfAnnual))}</td>
-        <td style="text-align:right">${escHtml(toCurrency(cost.totalMonthly))}</td>
-        <td>${escHtml(entry.needsReview ? "Needs Review" : "Ready")}</td>
+        <td>${escapeHtml(entry.buildingName || "-")}</td>
+        <td>${escapeHtml(entry.address || "-")}</td>
+        <td>${escapeHtml(suiteFloor || "-")}</td>
+        <td>${escapeHtml(entry.occupancyType)}</td>
+        <td>${escapeHtml(entry.leaseType)}</td>
+        <td style="text-align:right">${escapeHtml(entry.availableSqft.toLocaleString("en-US"))}</td>
+        <td style="text-align:right">${escapeHtml(toCurrency(entry.baseRentPsfAnnual))}</td>
+        <td style="text-align:right">${escapeHtml(toCurrency(entry.opexPsfAnnual))}</td>
+        <td style="text-align:right">${escapeHtml(toCurrency(cost.totalMonthly))}</td>
+        <td>${escapeHtml(entry.needsReview ? "Needs Review" : "Ready")}</td>
       </tr>`;
     })
     .join("");
@@ -220,7 +185,7 @@ export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportB
   <html>
     <head>
       <meta charset="utf-8" />
-      <title>${escHtml(buildSurveysExportFileName("pdf", branding).replace(/\.pdf$/i, ""))}</title>
+      <title>${escapeHtml(buildSurveysExportFileName("pdf", branding).replace(/\.pdf$/i, ""))}</title>
       <style>
         @page { size: letter landscape; margin: 0.45in; }
         body { margin: 0; font-family: ${EXPORT_BRAND.pdf.fonts.family}; color: ${EXPORT_BRAND.pdf.colors.ink}; }
@@ -235,7 +200,7 @@ export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportB
     <body>
       <section class="page">
         <p class="title">Survey Comparison</p>
-        <p class="meta">${escHtml(brokerage)} | ${escHtml(client)} | Report Date ${escHtml(reportDate)}</p>
+        <p class="meta">${escapeHtml(reportMeta.brokerageName)} | ${escapeHtml(reportMeta.clientName)} | Report Date ${escapeHtml(reportMeta.reportDate)}</p>
         <table>
           <thead>
             <tr>
@@ -257,48 +222,34 @@ export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportB
     </body>
   </html>`;
 
-  const popup = window.open("", "_blank", "width=1280,height=900");
-  if (!popup) return;
-  popup.document.open();
-  popup.document.write(html);
-  popup.document.close();
-  popup.focus();
-  popup.print();
+  openPrintWindow(html, { width: 1280, height: 900 });
 }
 
 export function buildSurveysShareLink(entries: SurveyEntry[], branding: SurveysExportBranding = {}): string {
+  const reportMeta = resolveExportBranding(branding);
   const payload: SurveysSharePayload = {
     version: 1,
     generatedAtIso: new Date().toISOString(),
     branding: {
-      brokerageName: String(branding.brokerageName || EXPORT_BRAND.name).trim() || EXPORT_BRAND.name,
-      clientName: String(branding.clientName || "Client").trim() || "Client",
-      reportDate: String(branding.reportDate || formatDateMmDdYyyy(new Date())).trim(),
-      preparedBy: String(branding.preparedBy || "").trim(),
+      brokerageName: reportMeta.brokerageName,
+      clientName: reportMeta.clientName,
+      reportDate: reportMeta.reportDate,
+      preparedBy: reportMeta.preparedBy,
     },
     entries,
   };
-  const encoded = serializeForShare(payload);
-  if (typeof window === "undefined") return "";
-  return `${window.location.origin}/surveys/share?data=${encodeURIComponent(encoded)}`;
+  const encoded = encodeSharePayload(payload);
+  return buildShareUrl("/surveys/share", encoded);
 }
 
 export function parseSurveysShareData(encoded: string | null | undefined): SurveysSharePayload | null {
   const value = String(encoded || "").trim();
   if (!value) return null;
-  return deserializeShare(value);
+  const parsed = decodeSharePayload<SurveysSharePayload>(value);
+  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.entries)) return null;
+  return parsed;
 }
 
 export function downloadArrayBuffer(arrayBuffer: ArrayBuffer, fileName: string, mimeType: string): void {
-  const blob = new Blob([arrayBuffer], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadArrayBufferShared(arrayBuffer, fileName, mimeType);
 }
-

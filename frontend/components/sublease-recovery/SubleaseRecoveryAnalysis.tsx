@@ -685,7 +685,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
       </div>
 
       {activeScenario ? (
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(520px,46%)_minmax(0,54%)] 2xl:grid-cols-[minmax(560px,48%)_minmax(0,52%)] gap-4">
+        <div className="space-y-4">
           <aside className="grid grid-cols-1 xl:grid-cols-2 gap-3 content-start">
             <div className="border border-white/15 bg-black/35 p-3">
               <p className="heading-kicker mb-2">General Inputs</p>
@@ -951,30 +951,30 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
                     </>
                   )}
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-3">
                   <div className="border border-white/15 bg-black/30 p-3">
                     <p className="text-xs text-slate-400">Total Remaining Obligation</p>
-                    <p className="text-lg text-white">{toCurrency(activeResult.summary.totalRemainingObligation)}</p>
+                    <p className="text-base sm:text-lg leading-tight break-all text-white">{toCurrency(activeResult.summary.totalRemainingObligation)}</p>
                   </div>
                   <div className="border border-white/15 bg-black/30 p-3">
                     <p className="text-xs text-slate-400">Net Sublease Recovery</p>
-                    <p className="text-lg text-cyan-100">{toCurrency(activeResult.summary.netSubleaseRecovery)}</p>
+                    <p className="text-base sm:text-lg leading-tight break-all text-cyan-100">{toCurrency(activeResult.summary.netSubleaseRecovery)}</p>
                   </div>
                   <div className="border border-white/15 bg-black/30 p-3">
                     <p className="text-xs text-slate-400">Net Obligation</p>
-                    <p className="text-lg text-white">{toCurrency(activeResult.summary.netObligation)}</p>
+                    <p className="text-base sm:text-lg leading-tight break-all text-white">{toCurrency(activeResult.summary.netObligation)}</p>
                   </div>
                   <div className="border border-white/15 bg-black/30 p-3">
                     <p className="text-xs text-slate-400">Recovery % | NPV</p>
-                    <p className="text-lg text-white">{toPercent(activeResult.summary.recoveryPercent)}</p>
-                    <p className="text-xs text-slate-400">NPV: {toCurrency(activeResult.summary.npv)}</p>
+                    <p className="text-base sm:text-lg leading-tight text-white">{toPercent(activeResult.summary.recoveryPercent)}</p>
+                    <p className="text-xs leading-tight break-all text-slate-400">NPV: {toCurrency(activeResult.summary.npv)}</p>
                   </div>
                 </div>
 
                 <div className="border border-white/15 bg-black/30 p-3">
                   <p className="heading-kicker mb-2">Monthly Cash Flow</p>
-                  <div className="max-h-[420px] overflow-y-auto overflow-x-hidden border border-white/15">
-                    <table className="w-full table-fixed text-[11px]">
+                  <div className="max-h-[420px] overflow-auto border border-white/15">
+                    <table className="w-full min-w-[1160px] text-[11px] whitespace-nowrap">
                       <thead className="sticky top-0 bg-slate-950/95 z-10">
                         <tr className="text-slate-300">
                           <th className="px-1.5 py-2 text-left leading-tight">Month</th>
@@ -994,7 +994,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
                       </thead>
                       <tbody>
                         {activeResult.monthly.map((row) => (
-                          <tr key={`${row.monthNumber}-${row.date}`} className="border-t border-white/10">
+                          <tr key={`${row.monthNumber}-${row.date}`} className="border-t border-white/10 hover:bg-white/[0.03]">
                             <td className="px-1.5 py-1.5">{row.monthNumber}</td>
                             <td className="px-1.5 py-1.5">{toDateLabel(row.date)}</td>
                             <td className="px-1.5 py-1.5 text-right">{row.occupiedRsf.toLocaleString()}</td>
@@ -1024,8 +1024,8 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
 
       <div className="mt-5 border border-white/15 bg-black/30 p-3">
         <p className="heading-kicker mb-2">Scenario Comparison</p>
-        <div className="overflow-x-hidden border border-white/15">
-          <table className="w-full table-fixed text-xs sm:text-sm">
+        <div className="overflow-x-auto border border-white/15">
+          <table className="w-full min-w-[1620px] text-xs sm:text-sm whitespace-nowrap">
             <thead className="bg-slate-950/90">
               <tr className="text-slate-300">
                 <th className="px-3 py-2 text-left">Case</th>
@@ -1045,7 +1045,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
             </thead>
             <tbody>
               {baselineSummary && (
-                <tr className="border-t border-white/10">
+                <tr className="border-t border-white/10 hover:bg-white/[0.03]">
                   <td className="px-3 py-2">Existing Obligation</td>
                   <td className="px-3 py-2">—</td>
                   <td className="px-3 py-2 text-right">{toCurrency(baselineSummary.totalRemainingObligation)}</td>
@@ -1062,7 +1062,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
                 </tr>
               )}
               {results.map((result) => (
-                <tr key={result.scenario.id} className="border-t border-white/10">
+                <tr key={result.scenario.id} className="border-t border-white/10 hover:bg-white/[0.03]">
                   <td className="px-3 py-2">{result.summary.scenarioName}</td>
                   <td className="px-3 py-2">{result.scenario.subtenantName || "—"}</td>
                   <td className="px-3 py-2 text-right">{toCurrency(result.summary.totalRemainingObligation)}</td>
@@ -1086,8 +1086,8 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
       {sensitivity && (
         <div className="mt-5 border border-white/15 bg-black/30 p-3 space-y-3">
           <p className="heading-kicker">Sensitivity Analysis</p>
-          <div className="overflow-x-hidden border border-white/15">
-            <table className="w-full table-fixed text-xs">
+          <div className="overflow-x-auto border border-white/15">
+            <table className="w-full min-w-[760px] text-xs">
               <thead className="bg-slate-950/90">
                 <tr>
                   <th className="px-2 py-2 text-left text-slate-300">Downtime \\ Base Rent</th>

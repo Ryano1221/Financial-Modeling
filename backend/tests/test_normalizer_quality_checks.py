@@ -84,6 +84,31 @@ def test_supplemental_quality_checks_blocks_ambiguous_rent_rate_candidates() -> 
     assert any(str(t.get("severity") or "").lower() == "blocker" for t in tasks)
 
 
+def test_supplemental_quality_checks_blocks_implausible_rent_rate_outlier() -> None:
+    canonical = main._dict_to_canonical(
+        {
+            "building_name": "ATX Tower",
+            "suite": "1550",
+            "rsf": 5618,
+            "commencement_date": "2026-10-01",
+            "expiration_date": "2034-04-30",
+            "term_months": 91,
+            "rent_schedule": [
+                {"start_month": 0, "end_month": 90, "rent_psf_annual": 244400.0},
+            ],
+        }
+    )
+    quality = main._supplemental_quality_checks(
+        canonical=canonical,
+        text="Base Rent table extracted from proposal.",
+        extracted_hints={"rate_psf_yr": 52.0},
+    )
+    tasks = [t for t in quality["review_tasks"] if isinstance(t, dict)]
+    assert any(t.get("issue_code") == "RENT_RATE_OUTLIER" for t in tasks)
+    assert any(str(t.get("severity") or "").lower() == "blocker" for t in tasks)
+    assert any("outlier detected" in str(w).lower() for w in quality["warnings"])
+
+
 def test_derive_field_confidence_penalizes_noisy_building_name() -> None:
     canonical = main._dict_to_canonical(
         {

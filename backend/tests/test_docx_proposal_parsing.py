@@ -76,6 +76,32 @@ def test_extract_lease_hints_parses_loi_term_suite_and_opex_from_docx_style_text
     assert hints["ti_allowance_psf"] == 1.5
 
 
+def test_extract_lease_hints_handles_reversed_suite_tokens_and_proposal_header_noise() -> None:
+    text = (
+        "OAKPOINTE\n"
+        "9111 Jollyville Road, Austin, TX 78759\n"
+        "LEASE PROPOSAL FOR\n"
+        "Law Office of Don E. Walden\n"
+        "PREMISES | 245 Suite (See attached floor plan)\n"
+        "SQUARE FOOTAGE | 1,145 RSF\n"
+        "COMMENCEMENT | May 1, 2026\n"
+        "TERM | 36 Months | 60 Months | 60 Months\n"
+        "BASE RENT | $17.00/RSF | $16.50/RSF | $16.50/RSF\n"
+        "ABATEMENT | 1 Month outside the lease term. | 3 Months outside the lease term.\n"
+    )
+    hints = main._extract_lease_hints(text, "oakpointe-proposal.docx", "test-rid")
+
+    assert hints["suite"] == "245"
+    assert hints["address"] == "9111 Jollyville Road, Austin, TX 78759"
+    assert "LEASE PROPOSAL FOR" not in str(hints["address"])
+    assert "LEASE PROPOSAL FOR" not in str(hints["building_name"])
+    assert hints["term_months"] == 60
+    schedule = hints.get("rent_schedule")
+    assert isinstance(schedule, list)
+    assert schedule
+    assert schedule[0]["rent_psf_annual"] == 17.0
+
+
 def test_apply_safe_defaults_normalizes_none_numeric_fields() -> None:
     raw = {
         "scenario": {

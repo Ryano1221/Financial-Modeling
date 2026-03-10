@@ -3,9 +3,10 @@ import {
   EXCEL_THEME,
   EXPORT_BRAND,
   applyExcelPageSetup,
+  buildExportMetaLine,
   buildPlatformExportFileName,
-  formatDateMmDdYyyy,
 } from "@/lib/export-design";
+import { downloadArrayBuffer as downloadArrayBufferShared, escapeHtml, openPrintWindow } from "@/lib/export-runtime";
 import type { BackendCanonicalLease } from "@/lib/types";
 import type { CompletedLeaseAbstractView, CompletedLeaseDocumentRecord, CompletedLeaseExportBranding } from "./types";
 
@@ -53,14 +54,6 @@ function getEscalationPct(canonical: BackendCanonicalLease): number {
   const second = toNumber(steps[1]?.rent_psf_annual);
   if (first <= 0 || second <= 0) return 0;
   return (second - first) / first;
-}
-
-function escHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function abstractRows(canonical: BackendCanonicalLease): Array<{ label: string; value: string }> {
@@ -117,15 +110,9 @@ function styleWorkbookHeader(
   sheet.getRow(1).height = 20;
   sheet.getRow(2).height = 20;
 
-  const brokerage = String(branding.brokerageName || EXPORT_BRAND.name).trim() || EXPORT_BRAND.name;
-  const client = String(branding.clientName || "Client").trim() || "Client";
-  const reportDate = String(branding.reportDate || formatDateMmDdYyyy(new Date())).trim();
-  const preparedBy = String(branding.preparedBy || "").trim();
-  const metaText = `${brokerage} | ${client} | Report Date ${reportDate}${preparedBy ? ` | Prepared by ${preparedBy}` : ""}`;
-
   sheet.mergeCells(3, 1, 3, totalCols);
   const metaCell = sheet.getCell(3, 1);
-  metaCell.value = metaText;
+  metaCell.value = buildExportMetaLine(branding);
   metaCell.font = {
     name: EXCEL_THEME.font.family,
     size: EXCEL_THEME.font.labelSize,
@@ -262,31 +249,28 @@ function buildPdfHtml(
 ): string {
   const canonical = abstract.controllingCanonical;
   const rows = abstractRows(canonical);
-  const reportDate = String(branding.reportDate || formatDateMmDdYyyy(new Date())).trim();
-  const brokerage = String(branding.brokerageName || EXPORT_BRAND.name).trim() || EXPORT_BRAND.name;
-  const client = String(branding.clientName || "Client").trim() || "Client";
-  const preparedBy = String(branding.preparedBy || "").trim();
+  const metaLine = buildExportMetaLine(branding);
 
   const tableRows = rows
-    .map((item) => `<tr><th>${escHtml(item.label)}</th><td>${escHtml(item.value)}</td></tr>`)
+    .map((item) => `<tr><th>${escapeHtml(item.label)}</th><td>${escapeHtml(item.value)}</td></tr>`)
     .join("");
 
   const sourceRows = abstract.sourceDocuments
     .map(
       (doc) =>
-        `<tr><td>${escHtml(doc.kind === "amendment" ? "Amendment" : "Lease")}</td><td>${escHtml(doc.fileName)}</td><td>${escHtml(toDateLabel(doc.uploadedAtIso.slice(0, 10)))}</td><td>${doc.id === abstract.controllingDocumentId ? "Controlling" : "Reference"}</td></tr>`
+        `<tr><td>${escapeHtml(doc.kind === "amendment" ? "Amendment" : "Lease")}</td><td>${escapeHtml(doc.fileName)}</td><td>${escapeHtml(toDateLabel(doc.uploadedAtIso.slice(0, 10)))}</td><td>${doc.id === abstract.controllingDocumentId ? "Controlling" : "Reference"}</td></tr>`
     )
     .join("");
 
   const overrides = abstract.overrideNotes
-    .map((note) => `<li>${escHtml(note)}</li>`)
+    .map((note) => `<li>${escapeHtml(note)}</li>`)
     .join("");
 
   return `<!doctype html>
   <html>
     <head>
       <meta charset="utf-8" />
-      <title>${escHtml(buildCompletedLeaseAbstractFileName("pdf", branding).replace(/\.pdf$/i, ""))}</title>
+      <title>${escapeHtml(buildCompletedLeaseAbstractFileName("pdf", branding).replace(/\.pdf$/i, ""))}</title>
       <style>
         @page { size: letter portrait; margin: 0.45in; }
         body {
@@ -342,7 +326,7 @@ function buildPdfHtml(
     <body>
       <section class="page">
         <p class="title">Completed Lease Abstract</p>
-        <p class="meta">${escHtml(brokerage)} | ${escHtml(client)} | Report Date ${escHtml(reportDate)}${preparedBy ? ` | Prepared by ${escHtml(preparedBy)}` : ""}</p>
+        <p class="meta">${escapeHtml(metaLine)}</p>
         <h2>Controlling Terms</h2>
         <table>
           <tbody>${tableRows}</tbody>
@@ -369,25 +353,9 @@ export function printCompletedLeaseAbstract(
   branding: CompletedLeaseExportBranding = {},
 ): void {
   const html = buildPdfHtml(abstract, branding);
-  const popup = window.open("", "_blank", "width=1280,height=900");
-  if (!popup) return;
-  popup.document.open();
-  popup.document.write(html);
-  popup.document.close();
-  popup.focus();
-  popup.print();
+  openPrintWindow(html, { width: 1280, height: 900 });
 }
 
 export function downloadArrayBuffer(arrayBuffer: ArrayBuffer, fileName: string, mimeType: string): void {
-  const blob = new Blob([arrayBuffer], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadArrayBufferShared(arrayBuffer, fileName, mimeType);
 }
-

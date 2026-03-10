@@ -3,9 +3,11 @@ import {
   EXCEL_THEME,
   EXPORT_BRAND,
   applyExcelPageSetup,
+  buildExportMetaLine,
   buildPlatformExportFileName,
   formatDateMmDdYyyy,
 } from "@/lib/export-design";
+import { downloadArrayBuffer as downloadArrayBufferShared, escapeHtml, openPrintWindow } from "@/lib/export-runtime";
 import type { ExistingObligation, SensitivityResult, SubleaseScenarioResult } from "./types";
 
 export interface SubleaseRecoveryExportBranding {
@@ -47,13 +49,7 @@ function toDateLabel(iso: string): string {
   return `${m[2]}.${m[3]}.${m[1]}`;
 }
 
-function escHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+const escHtml = escapeHtml;
 
 function safeSheetName(input: string, fallback: string): string {
   const normalized = String(input || "")
@@ -87,15 +83,9 @@ function styleMetaRow(
   totalCols: number,
   branding: SubleaseRecoveryExportBranding,
 ): number {
-  const reportDate = branding.reportDate || formatDateMmDdYyyy(new Date());
-  const brokerage = String(branding.brokerageName || EXPORT_BRAND.name).trim() || EXPORT_BRAND.name;
-  const client = String(branding.clientName || "Client").trim() || "Client";
-  const preparedBy = String(branding.preparedBy || "").trim();
-  const preparedByText = preparedBy ? ` | Prepared by ${preparedBy}` : "";
-
   sheet.mergeCells(row, 1, row, totalCols);
   const cell = sheet.getCell(row, 1);
-  cell.value = `${brokerage} | ${client} | Report Date ${reportDate}${preparedByText}`;
+  cell.value = buildExportMetaLine(branding);
   cell.font = {
     name: EXCEL_THEME.font.family,
     size: EXCEL_THEME.font.labelSize,
@@ -914,15 +904,7 @@ export async function buildSubleaseRecoveryWorkbook(
 }
 
 export function downloadArrayBuffer(arrayBuffer: ArrayBuffer, fileName: string, mimeType: string): void {
-  const blob = new Blob([arrayBuffer], { type: mimeType });
-  const href = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = href;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(href);
+  downloadArrayBufferShared(arrayBuffer, fileName, mimeType);
 }
 
 function renderPdfPage(
@@ -1403,13 +1385,7 @@ export function printSubleaseRecoverySummary(
   branding: SubleaseRecoveryExportBranding = {},
 ): void {
   const html = buildSubleaseRecoveryPdfHtml(existing, results, sensitivity, branding);
-  const popup = window.open("", "_blank", "width=1280,height=920");
-  if (!popup) return;
-  popup.document.open();
-  popup.document.write(html);
-  popup.document.close();
-  popup.focus();
-  popup.print();
+  openPrintWindow(html, { width: 1280, height: 920 });
 }
 
 export function buildSubleaseRecoveryExportFileName(

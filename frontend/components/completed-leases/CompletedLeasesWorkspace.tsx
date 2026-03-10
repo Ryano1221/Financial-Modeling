@@ -466,9 +466,9 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
           {error ? <p className="text-xs text-red-300 mt-2">{error}</p> : null}
         </PlatformPanel>
 
-        <PlatformPanel kicker="Repository" title="Document Stack" className="lg:col-span-8">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[780px] border-collapse text-sm">
+        <PlatformPanel kicker="Repository" title="Document Stack" className="lg:col-span-8 min-w-0">
+          <div className="w-full overflow-x-auto">
+            <table className="w-full min-w-[980px] border-collapse text-sm whitespace-nowrap">
               <thead>
                 <tr className="border-b border-white/20">
                   <th className="text-left py-2 pr-3 text-slate-300 font-medium">Document</th>
@@ -676,4 +676,3 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
     </PlatformSection>
   );
 }
-

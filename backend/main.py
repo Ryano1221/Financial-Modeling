@@ -1945,6 +1945,40 @@ def _extract_suite_from_text(text: str) -> str:
         multi_suite_candidates.sort(key=lambda row: (-row[0], row[1], -len(row[2])))
         return multi_suite_candidates[0][2]
 
+    # Table exports may emit reversed suite tokens, e.g. "PREMISES | 245 Suite".
+    reversed_suite_patterns = [
+        r"(?i)\b(?:premises|leased\s+premises)\b[^\n]{0,140}?\b([A-Za-z0-9][A-Za-z0-9\-]{0,12})\s+(?:suite|ste\.?|unit)\b",
+        r"(?i)^\s*([A-Za-z0-9][A-Za-z0-9\-]{0,12})\s+(?:suite|ste\.?|unit)\b",
+    ]
+    reversed_candidates: list[tuple[int, int, str]] = []
+    segments = _iter_text_segments(lines, max_lines=260)
+    for idx, ln in enumerate(segments):
+        low = ln.lower()
+        for pat in reversed_suite_patterns:
+            for m in re.finditer(pat, ln):
+                candidate = _normalize_suite_candidate(m.group(1))
+                if not candidate:
+                    continue
+                local = ln[max(0, m.start() - 90): min(len(ln), m.end() + 90)]
+                local_low = local.lower()
+                score = 1
+                if "premises" in local_low or "|" in local:
+                    score += 4
+                if any(k in local_low for k in ("located", "description of premises")):
+                    score += 2
+                if _is_notice_or_party_context(local_low):
+                    score -= 3
+                if re.search(
+                    r"(?i)\b\d{1,6}\s+[A-Za-z0-9].*\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?)\b",
+                    local,
+                ) and "premises" not in local_low and "|" not in local:
+                    score -= 8
+                reversed_candidates.append((score, idx, candidate))
+    if reversed_candidates:
+        reversed_candidates.sort(key=lambda row: (-row[0], row[1], 0 if re.search(r"\d", row[2]) else 1))
+        if reversed_candidates[0][0] > 0:
+            return reversed_candidates[0][2]
+
     suite_patterns = [
         r"(?i)\b(?:suite|ste\.?|unit)\b\s*[:#-]?\s*(?:no\.?|#)?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
         r"(?i)\bspace\b\s*(?:no\.?|#)\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,24})\b",
@@ -2236,6 +2270,11 @@ def _clean_address_candidate(raw: str) -> str:
     v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+\b(?:contraction|contract)\s+premises\b.*$", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\s+\b(?:premises|term|lease term)\b\s*[:#-].*$", "", v).strip(" ,.;:-")
+    v = re.split(
+        r"(?i)\b(?:lease\s+proposal(?:\s+for)?|proposal\s+for|tenant\s+broker|premises|square\s+footage|commencement|term|base\s+rent|operating\s+expenses|escalation|abatement|tenant\s+improvements|parking\s+ratio|hours\s+of\s+operation|after\s+hours\s+hvac|signage|fiber\s+infrastructure|security\s+deposit|commission\s+agreement|contingency)\b",
+        v,
+        maxsplit=1,
+    )[0].strip(" ,.;:-")
     return v
 
 
@@ -2935,6 +2974,8 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         "prior to",
         "no earlier than",
         "no later than",
+        "outside the lease term",
+        "outside lease term",
     )
 
     def _match_context(match: re.Match[str]) -> str:
@@ -2986,6 +3027,8 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
             return False
         if _looks_like_abatement_distribution_window(low):
             return True
+        if "outside the lease term" in low or "outside lease term" in low:
+            return True
         if re.search(r"(?i)\bfirst\s+\(?\d{1,3}\)?\s+months?\s+of\s+the\s+term\b", low):
             return True
         if re.search(r"(?i)\b\d{1,3}\s+months?\s+prior\b", low):
@@ -3017,10 +3060,11 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
     #   Ninety(90) months
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     term_label_pat = re.compile(
-        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|renewal\s+term|initial\s+term)\b|"
+        r"\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|renewal\s+term|initial\s+term)\b|"
         r"\bterm\s+and\s+free\s+rent\b|"
-        r"\bterm\s*[:\-]|"
-        r"\bterm\s+(?:shall\s+be|is|of)\b"
+        r"^\s*term(?:\s*[:\-\|].*)?$|"
+        r"\bterm\s+(?:shall\s+be|is|of)\b",
+        re.I,
     )
     for idx, line in enumerate(lines[:1400]):
         line_low = line.lower()
@@ -6911,7 +6955,13 @@ def _detect_document_type(text: str, filename: str = "") -> str:
     # "assignment/sublease" rights clauses in otherwise non-sublease docs.
     sublease_strong_hits = len(
         re.findall(
-            r"(?i)\b(?:sublease\s+agreement|sublease\s+premises|sublease\s+term|sublessor|sublessee|subtenant|sublandlord)\b",
+            r"(?i)\b(?:sublease\s+agreement|sublease\s+premises|sublease\s+term|sublessor|sublessee)\b",
+            corpus,
+        )
+    )
+    proposal_anchor_hits = len(
+        re.findall(
+            r"(?i)\b(?:landlord\s+proposal|economic\s+proposal|counter\s+proposal|proposal\s+summary|business\s+terms\s+proposal)\b",
             corpus,
         )
     )
@@ -6923,13 +6973,18 @@ def _detect_document_type(text: str, filename: str = "") -> str:
     )
     if assignment_sublease_noise_hits > 0 and sublease_strong_hits == 0:
         score["sublease"] = max(0, score["sublease"] - assignment_sublease_noise_hits * 3)
+    if proposal_anchor_hits > 0 and sublease_strong_hits == 0:
+        # Prioritize proposal/counter when sublease language only appears in legal rights
+        # clauses and no controlling sublease construct (agreement/premises/term/parties) exists.
+        score["sublease"] = max(0, score["sublease"] - max(4, proposal_anchor_hits * 2))
+        score["proposal"] += proposal_anchor_hits
 
     # Prefer more specific document types over generic lease if both appear.
     if score["counter"] > 0:
         return "counter_proposal"
     if score["subsublease"] > 0:
         return "subsublease"
-    if score["sublease"] > 0 and (sublease_strong_hits > 0 or score["sublease"] >= 2):
+    if score["sublease"] > 0 and (sublease_strong_hits > 0 or score["sublease"] >= 3):
         return "sublease"
     if score["rfp"] > 0:
         return "rfp"
@@ -7267,6 +7322,37 @@ def _supplemental_quality_checks(
         )
         penalty += 0.18 if term > 0 else 0.08
         warnings.append("Rent schedule coverage needs manual review.")
+
+    rent_rates: list[float] = []
+    for step in list(canonical.rent_schedule or []):
+        if isinstance(step, dict):
+            rate = _coerce_float_token(step.get("rent_psf_annual"), None)
+        else:
+            rate = _coerce_float_token(getattr(step, "rent_psf_annual", None), None)
+        if rate is None or rate <= 0:
+            continue
+        rent_rates.append(float(rate))
+    if rent_rates:
+        max_rate = max(rent_rates)
+        hinted_base_rate = _coerce_float_token(extracted_hints.get("base_rate_psf_yr"), None)
+        if hinted_base_rate is None:
+            hinted_base_rate = _coerce_float_token(extracted_hints.get("rate_psf_yr"), None)
+        rate_outlier = max_rate > 1000
+        if not rate_outlier and hinted_base_rate is not None and hinted_base_rate > 0:
+            rate_outlier = max_rate > max(500.0, float(hinted_base_rate) * 8.0)
+        if rate_outlier:
+            _append_review_task(
+                tasks,
+                field_path="rent_schedule",
+                severity="blocker",
+                issue_code="RENT_RATE_OUTLIER",
+                message=(
+                    f"Extracted rent schedule contains an implausible rate (${max_rate:,.2f}/SF/YR). "
+                    "This often indicates annual-dollar rent was misread as PSF rent."
+                ),
+            )
+            penalty += 0.25
+            warnings.append("Rent rate outlier detected; verify base-rent schedule before modeling.")
 
     hinted_rate_conflict = str(extracted_hints.get("_rate_psf_yr_conflict") or "").strip().lower()
     hinted_rate_candidates_raw = (

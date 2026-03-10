@@ -76,6 +76,26 @@ def test_detect_document_type_across_five_plus_formats() -> None:
             "ibc-landlord-proposal.docx",
             "proposal",
         ),
+        (
+            "Landlord Proposal\nAssignment/Sublease rights shall require landlord consent.\n"
+            "Subtenant references in legal boilerplate do not change controlling document type.\n"
+            "Base rent schedule and operating expenses are outlined below.",
+            "atx-tower-landlord-proposal.docx",
+            "proposal",
+        ),
+        (
+            "Counter Proposal\nLandlord Counter to tenant proposal.\n"
+            "Assignment and sublease rights are addressed in Section 15.\n"
+            "This is a counter proposal and not a sublease agreement.",
+            "ibc-counter-proposal.docx",
+            "counter_proposal",
+        ),
+        (
+            "SUBLEASE PROPOSAL\nSublessor and Sublessee agree that Sublease Premises are Suite 700.\n"
+            "Sublease Term expires October 31, 2036.",
+            "sublease-proposal.docx",
+            "sublease",
+        ),
     ]
 
     for text, filename, expected in samples:

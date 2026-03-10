@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
 import { TopNav } from "@/components/TopNav";
 import { Footer } from "@/components/Footer";
@@ -48,10 +49,14 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={inter.variable}>
       <body className="font-sans antialiased min-h-screen bg-[#0a0a0b] text-white premium-noise bg-grid">
-        <TopNav />
+        <Suspense fallback={null}>
+          <TopNav />
+        </Suspense>
         {children}
         <Footer />
-        <DebugBackendUrl />
+        <Suspense fallback={null}>
+          <DebugBackendUrl />
+        </Suspense>
       </body>
     </html>
   );

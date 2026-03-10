@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
@@ -72,9 +73,18 @@ import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/Subleas
 import { CompletedLeasesWorkspace } from "@/components/completed-leases/CompletedLeasesWorkspace";
 import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
 import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
+import { buildPlatformExportFileName } from "@/lib/export-design";
+import { downloadBlob as downloadBlobFile } from "@/lib/export-runtime";
+import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
+import { ClientWorkspaceGate } from "@/components/workspace/ClientWorkspaceGate";
+import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCenter";
+import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
+import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
+const REPORT_META_STATE_KEY = "lease_deck_report_meta_state";
 const CRE_DEFAULT_BROKERAGE_NAME = "The CRE Model";
 const CRE_DEFAULT_PREPARED_BY = "The CRE Model";
 const CRE_DEFAULT_LOGO_PUBLIC_PATH = "/brand/logo.png";
@@ -347,15 +357,6 @@ function normalizeDateMmDdYyyy(raw: string | null | undefined): string {
   return "";
 }
 
-function sanitizeFileNamePart(raw: string, fallback: string): string {
-  const cleaned = String(raw || "")
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^[. ]+|[. ]+$/g, "");
-  return cleaned || fallback;
-}
-
 function normalizeDiscountRateAnnual(raw: unknown): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0.08;
@@ -563,9 +564,29 @@ type PlatformModuleId =
 
 function HomeContent() {
   const searchParams = useSearchParams();
+  const {
+    session: authSession,
+    isAuthenticated,
+    activeClient,
+    activeClientId,
+    documents: clientDocuments,
+    registerDocument,
+  } = useClientWorkspace();
+  const workspaceScopeId = activeClientId || (isAuthenticated ? "unselected" : "guest");
+  const scenariosStorageKey = useMemo(
+    () => makeClientScopedStorageKey(SCENARIOS_STATE_KEY, workspaceScopeId),
+    [workspaceScopeId],
+  );
+  const brandStorageKey = useMemo(
+    () => makeClientScopedStorageKey(BRAND_ID_STORAGE_KEY, workspaceScopeId),
+    [workspaceScopeId],
+  );
+  const reportMetaStorageKey = useMemo(
+    () => makeClientScopedStorageKey(REPORT_META_STATE_KEY, workspaceScopeId),
+    [workspaceScopeId],
+  );
   const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>("financial-analyses");
   const [activeTopTab, setActiveTopTab] = useState<"lease-comparison" | "sublease-recovery">("lease-comparison");
-  const [authSession, setAuthSession] = useState<SupabaseAuthSession | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
@@ -648,27 +669,21 @@ function HomeContent() {
     return await defaultBrokerageLogoPromiseRef.current;
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    getSession()
-      .then((session) => {
-        if (cancelled) return;
-        setAuthSession(session);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setAuthSession(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const [hasRestored, setHasRestored] = useState(false);
+  useEffect(() => {
+    setScenarios([]);
+    setSelectedId(null);
+    setResults({});
+    setCanonicalComputeCache({});
+    setIncludedInSummary({});
+    computeRequestEpochRef.current = {};
+    setHasRestored(false);
+  }, [scenariosStorageKey]);
+
   useEffect(() => {
     if (hasRestored || typeof window === "undefined") return;
     try {
-      const raw = localStorage.getItem(SCENARIOS_STATE_KEY);
+      const raw = localStorage.getItem(scenariosStorageKey);
       if (!raw) {
         setHasRestored(true);
         return;
@@ -684,7 +699,7 @@ function HomeContent() {
     } catch {
       setHasRestored(true);
     }
-  }, [hasRestored]);
+  }, [hasRestored, scenariosStorageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !hasRestored) return;
@@ -694,13 +709,13 @@ function HomeContent() {
     });
     try {
       localStorage.setItem(
-        SCENARIOS_STATE_KEY,
+        scenariosStorageKey,
         JSON.stringify({ scenarios, includedInSummary: included })
       );
     } catch {
       // ignore
     }
-  }, [scenarios, includedInSummary, hasRestored]);
+  }, [scenarios, includedInSummary, hasRestored, scenariosStorageKey]);
 
   useEffect(() => {
     if (!hasRestored) return;
@@ -1252,25 +1267,17 @@ function HomeContent() {
       const resolvedBrokerageName = authSession
         ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
         : CRE_DEFAULT_BROKERAGE_NAME;
-      const brokerage = sanitizeFileNamePart(resolvedBrokerageName, "Brokerage");
-      const client = sanitizeFileNamePart(meta.prepared_for || "Client", "Client");
-      const reportDate = normalizeDateMmDdYyyy(meta.report_date) || formatDateMmDdYyyy(new Date());
-      const descriptor = kind === "xlsx" ? "Financial Analysis" : "Economic Presentation";
-      return `${brokerage} - ${descriptor} - ${client} - ${reportDate}.${kind}`;
+      return buildPlatformExportFileName({
+        kind,
+        brokerageName: resolvedBrokerageName,
+        clientName: meta.prepared_for || "Client",
+        reportDate: meta.report_date,
+        excelDescriptor: "Financial Analysis",
+        pdfDescriptor: "Economic Presentation",
+      });
     },
     [authSession, organizationBranding]
   );
-
-  const downloadBlob = useCallback((blob: Blob, fileName: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-  }, []);
 
   const getScenarioResultForExport = useCallback((scenario: ScenarioWithId): CashflowResult => {
     const existing = results[scenario.id];
@@ -1402,7 +1409,7 @@ function HomeContent() {
           throw new Error(detail);
         }
         const blob = await pdfRes.blob();
-        downloadBlob(blob, pdfFileName);
+        downloadBlobFile(blob, pdfFileName);
         return;
       } catch (deckErr) {
         const msg = deckErr instanceof Error ? deckErr.message : String(deckErr);
@@ -1418,7 +1425,7 @@ function HomeContent() {
         });
         if (directDeck.ok) {
           const blob = await directDeck.blob();
-          downloadBlob(blob, pdfFileName);
+          downloadBlobFile(blob, pdfFileName);
           return;
         }
       } catch (directDeckErr) {
@@ -1442,7 +1449,7 @@ function HomeContent() {
           });
           if (direct.ok) {
             const blob = await direct.blob();
-            downloadBlob(blob, pdfFileName);
+            downloadBlobFile(blob, pdfFileName);
             setExportPdfError("Deck routes failed; downloaded single-scenario PDF fallback.");
             return;
           }
@@ -1460,7 +1467,7 @@ function HomeContent() {
     } finally {
       setExportPdfLoading(false);
     }
-  }, [scenarios, selectedScenario, brandId, buildReportMeta, buildExportFileName, getScenarioResultForExport, downloadBlob, organizationBranding, clientLogoDataUrl, defaultPreparedByFromAuth, equalizedForExport, authSession, customChartsForExport]);
+  }, [scenarios, selectedScenario, brandId, buildReportMeta, buildExportFileName, getScenarioResultForExport, organizationBranding, clientLogoDataUrl, defaultPreparedByFromAuth, equalizedForExport, authSession, customChartsForExport]);
 
   const exportExcelDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1594,7 +1601,7 @@ function HomeContent() {
           throw secondaryErr;
         }
       }
-      downloadBlob(
+      downloadBlobFile(
         new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
         excelFileName
       );
@@ -1607,7 +1614,7 @@ function HomeContent() {
     } finally {
       setExportExcelLoading(false);
     }
-  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, downloadBlob, buildReportMeta, buildExportFileName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl, customChartsForExport]);
+  }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, buildReportMeta, buildExportFileName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl, customChartsForExport]);
 
   const engineResults = useMemo(() => {
     const included = includedScenarios;
@@ -1677,6 +1684,10 @@ function HomeContent() {
       .join(" ");
   }, [heroSparklineValues]);
   const showHomeHero = rawModuleParam.length === 0;
+  const topNavOffsetClass = "pt-24 sm:pt-28";
+  const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === "financial-analyses";
+  const mainTopOffsetClass = !showHomeHero && !moduleHasDedicatedTopTabs ? topNavOffsetClass : "";
+  const tabTopOffsetClass = !showHomeHero ? topNavOffsetClass : "mt-8";
 
   return (
     <>
@@ -1697,19 +1708,19 @@ function HomeContent() {
                   </p>
 
                   <div className="flex gap-3 sm:gap-4 mt-8 flex-wrap">
-                    <a
+                    <Link
                       href="/example"
                       className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
                     >
                       View Example Report
-                    </a>
+                    </Link>
 
-                    <a
-                      href="#extract"
+                    <Link
+                      href="/?module=financial-analyses#extract"
                       className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
                     >
                       Try It Live
-                    </a>
+                    </Link>
                   </div>
                 </div>
                 <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] flex">
@@ -1784,8 +1795,8 @@ function HomeContent() {
         </>
       ) : null}
 
-      {authSession && activePlatformModule === "financial-analyses" ? (
-        <section className="relative z-10 app-container mt-8">
+      {!showHomeHero && moduleHasDedicatedTopTabs ? (
+        <section className={`relative z-10 app-container ${tabTopOffsetClass}`}>
           <div className="mx-auto w-full max-w-6xl">
             <PlatformModuleTabs
               tabs={financialTabs}
@@ -1797,10 +1808,10 @@ function HomeContent() {
         </section>
       ) : null}
 
-      {(() => {
+      {!showHomeHero ? (() => {
         if (activePlatformModule === "financial-analyses") {
           return activeTopTab === "lease-comparison" ? (
-      <main className="relative z-10 app-container pb-14 md:pb-20">
+      <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="mx-auto w-full max-w-6xl space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
           <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
@@ -2081,7 +2092,7 @@ function HomeContent() {
         </section>
       </main>
       ) : (
-        <main className="relative z-10 app-container pb-14 md:pb-20">
+        <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
           <section className="scroll-mt-24 bg-grid mt-6 space-y-4">
             <div className="mx-auto w-full max-w-6xl space-y-4">
               {!authSession && (
@@ -2212,7 +2223,7 @@ function HomeContent() {
         }
         if (activePlatformModule === "completed-leases") {
           return (
-        <main className="relative z-10 app-container pb-14 md:pb-20">
+        <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
           <CompletedLeasesWorkspace
             exportBranding={{
               brokerageName: authSession
@@ -2237,7 +2248,7 @@ function HomeContent() {
         }
         if (activePlatformModule === "surveys") {
           return (
-        <main className="relative z-10 app-container pb-14 md:pb-20">
+        <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
           <SurveysWorkspace
             exportBranding={{
               brokerageName: authSession
@@ -2261,18 +2272,18 @@ function HomeContent() {
           );
         }
         return (
-          <main className="relative z-10 app-container pb-14 md:pb-20">
+          <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
             <ObligationsWorkspace />
           </main>
         );
-      })()}
+      })() : null}
     </>
   );
 }
 
 export default function Home() {
   return (
-    <Suspense fallback={<main className="relative z-10 app-container pb-14 md:pb-20" />}>
+    <Suspense fallback={<main className="relative z-10 app-container pt-24 sm:pt-28 pb-14 md:pb-20" />}>
       <HomeContent />
     </Suspense>
   );

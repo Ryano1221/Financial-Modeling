@@ -193,6 +193,45 @@ def test_apply_safe_defaults_replaces_fragmented_llm_schedule_with_prefill_table
     assert any("replaced with rent schedule table extraction" in w for w in warnings)
 
 
+def test_apply_safe_defaults_replaces_implausible_llm_rent_rates_with_prefill_table() -> None:
+    raw = {
+        "scenario": {
+            "name": "ATX Tower",
+            "rsf": 5618,
+            "commencement": "2026-10-01",
+            "expiration": "2034-04-30",
+            "rent_steps": [
+                {"start": 0, "end": 11, "rate_psf_yr": 244400.0},
+                {"start": 12, "end": 23, "rate_psf_yr": 292705.0},
+                {"start": 24, "end": 35, "rate_psf_yr": 309945.0},
+            ],
+            "opex_mode": "nnn",
+        },
+        "confidence": {"rent_steps": 0.92},
+        "warnings": [],
+    }
+    prefill = {
+        "rate_psf_yr": 52.0,
+        "rent_steps": [
+            {"start": 0, "end": 11, "rate_psf_yr": 52.0},
+            {"start": 12, "end": 23, "rate_psf_yr": 53.56},
+            {"start": 24, "end": 35, "rate_psf_yr": 55.17},
+            {"start": 36, "end": 47, "rate_psf_yr": 56.83},
+            {"start": 48, "end": 59, "rate_psf_yr": 58.53},
+            {"start": 60, "end": 71, "rate_psf_yr": 60.29},
+            {"start": 72, "end": 83, "rate_psf_yr": 62.1},
+            {"start": 84, "end": 90, "rate_psf_yr": 63.96},
+        ],
+        "_rent_steps_basis": "month_index",
+    }
+
+    scenario, confidence, warnings = _apply_safe_defaults(raw, prefill=prefill)
+
+    assert scenario["rent_steps"] == prefill["rent_steps"]
+    assert float(confidence.get("rent_steps") or 0.0) <= 0.35
+    assert any("looked implausible" in w for w in warnings)
+
+
 def test_regex_prefill_inferrs_rate_psf_from_prepaid_monthly_rent() -> None:
     text = """
     Premises consists of approximately 22,022 rentable square feet.
