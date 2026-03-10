@@ -5,6 +5,7 @@ import "./globals.css";
 import { TopNav } from "@/components/TopNav";
 import { Footer } from "@/components/Footer";
 import { DebugBackendUrl } from "@/components/DebugBackendUrl";
+import { ClientWorkspaceProvider } from "@/components/workspace/ClientWorkspaceProvider";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -49,14 +50,16 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={inter.variable}>
       <body className="font-sans antialiased min-h-screen bg-[#0a0a0b] text-white premium-noise bg-grid">
-        <Suspense fallback={null}>
-          <TopNav />
-        </Suspense>
-        {children}
-        <Footer />
-        <Suspense fallback={null}>
-          <DebugBackendUrl />
-        </Suspense>
+        <ClientWorkspaceProvider>
+          <Suspense fallback={null}>
+            <TopNav />
+          </Suspense>
+          {children}
+          <Footer />
+          <Suspense fallback={null}>
+            <DebugBackendUrl />
+          </Suspense>
+        </ClientWorkspaceProvider>
       </body>
     </html>
   );

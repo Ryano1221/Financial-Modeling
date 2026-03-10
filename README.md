@@ -2,6 +2,11 @@
 
 **TheCREmodel** — Advanced commercial real estate financial modeling and lease analysis: scenario comparison, PDF reports, and AI lease extraction.
 
+## Platform Architecture Notes
+
+- Phase 7 module readiness and extensibility guide:
+  - `/Users/ryanarnold/Desktop/Lease Deck/docs/PHASE7_PLATFORM_READINESS.md`
+
 ## SaaS setup (multi-tenant)
 
 - **Auth & orgs:** Clerk (JWT + organizations). Backend verifies JWTs and syncs org/user/member on first use or via webhooks.

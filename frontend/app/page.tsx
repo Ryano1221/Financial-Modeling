@@ -13,6 +13,14 @@ import { FeatureTiles } from "@/components/FeatureTiles";
 import {
   PlatformModuleTabs,
 } from "@/components/platform/PlatformShell";
+import {
+  DEFAULT_PLATFORM_MODULE_ID,
+  FINANCIAL_ANALYSES_TOOL_TABS,
+  isFinancialAnalysesToolId,
+  resolveActivePlatformModule,
+  type FinancialAnalysesToolId,
+  type PlatformModuleId,
+} from "@/lib/platform/module-registry";
 
 const showDiagnostics =
   typeof process !== "undefined" &&
@@ -59,7 +67,6 @@ import {
 } from "@/lib/ti";
 import type { CanonicalComputeResponse } from "@/lib/types";
 import type { SupabaseAuthSession } from "@/lib/supabase";
-import { getSession } from "@/lib/supabase";
 import {
   applyLeaseModelChoice,
   hasCommencementBeforeToday,
@@ -75,6 +82,7 @@ import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
 import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
 import { buildPlatformExportFileName } from "@/lib/export-design";
 import { downloadBlob as downloadBlobFile } from "@/lib/export-runtime";
+import { buildFinancialAnalysesShareLink } from "@/lib/financial-analyses/share";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { ClientWorkspaceGate } from "@/components/workspace/ClientWorkspaceGate";
@@ -556,12 +564,6 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
   return payload;
 }
 
-type PlatformModuleId =
-  | "financial-analyses"
-  | "completed-leases"
-  | "surveys"
-  | "obligations";
-
 function HomeContent() {
   const searchParams = useSearchParams();
   const {
@@ -569,7 +571,6 @@ function HomeContent() {
     isAuthenticated,
     activeClient,
     activeClientId,
-    documents: clientDocuments,
     registerDocument,
   } = useClientWorkspace();
   const workspaceScopeId = activeClientId || (isAuthenticated ? "unselected" : "guest");
@@ -585,8 +586,12 @@ function HomeContent() {
     () => makeClientScopedStorageKey(REPORT_META_STATE_KEY, workspaceScopeId),
     [workspaceScopeId],
   );
-  const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>("financial-analyses");
-  const [activeTopTab, setActiveTopTab] = useState<"lease-comparison" | "sublease-recovery">("lease-comparison");
+  const pendingScenarioKey = useMemo(
+    () => makeClientScopedStorageKey(PENDING_SCENARIO_KEY, workspaceScopeId),
+    [workspaceScopeId],
+  );
+  const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>(DEFAULT_PLATFORM_MODULE_ID);
+  const [activeTopTab, setActiveTopTab] = useState<FinancialAnalysesToolId>("lease-comparison");
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
@@ -597,6 +602,8 @@ function HomeContent() {
   const [globalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const [exportExcelError, setExportExcelError] = useState<string | null>(null);
+  const [shareLinkStatus, setShareLinkStatus] = useState<string | null>(null);
+  const [shareLinkError, setShareLinkError] = useState<string | null>(null);
   const [customChartsForExport, setCustomChartsForExport] = useState<CustomChartExportConfig[]>([]);
   const [reportMeta, setReportMeta] = useState<{
     prepared_for: string;
@@ -627,10 +634,6 @@ function HomeContent() {
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
-  const financialTabs = [
-    { id: "lease-comparison", label: "Financial Analysis", description: "Scenario comparison and lease economics." },
-    { id: "sublease-recovery", label: "Sublease Recovery Analysis", description: "Recovery outcomes vs remaining obligation." },
-  ] as const;
   const rawModuleParam = String(searchParams?.get("module") || "").trim().toLowerCase();
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
@@ -640,26 +643,8 @@ function HomeContent() {
   );
 
   useEffect(() => {
-    if (!authSession) {
-      if (activePlatformModule !== "financial-analyses") {
-        setActivePlatformModule("financial-analyses");
-      }
-      return;
-    }
-    if (
-      rawModuleParam === "financial-analyses"
-      || rawModuleParam === "completed-leases"
-      || rawModuleParam === "surveys"
-      || rawModuleParam === "obligations"
-    ) {
-      if (activePlatformModule !== rawModuleParam) {
-        setActivePlatformModule(rawModuleParam);
-      }
-      return;
-    }
-    if (activePlatformModule !== "financial-analyses") {
-      setActivePlatformModule("financial-analyses");
-    }
+    const resolved = resolveActivePlatformModule(rawModuleParam, Boolean(authSession));
+    if (activePlatformModule !== resolved) setActivePlatformModule(resolved);
   }, [rawModuleParam, authSession, activePlatformModule]);
 
   const getDefaultBrokerageLogoDataUrl = useCallback(async (): Promise<string | null> => {
@@ -690,7 +675,9 @@ function HomeContent() {
       }
       const data = JSON.parse(raw) as { scenarios?: ScenarioWithId[]; includedInSummary?: Record<string, boolean> };
       if (Array.isArray(data.scenarios) && data.scenarios.length > 0) {
-        const restoredScenarios = data.scenarios.map((s) => normalizeScenarioEconomics(s));
+        const restoredScenarios = data.scenarios.map((s) =>
+          normalizeScenarioEconomics({ ...s, clientId: workspaceScopeId }),
+        );
         setScenarios(restoredScenarios);
         setSelectedId(null);
       }
@@ -699,7 +686,7 @@ function HomeContent() {
     } catch {
       setHasRestored(true);
     }
-  }, [hasRestored, scenariosStorageKey]);
+  }, [hasRestored, scenariosStorageKey, workspaceScopeId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !hasRestored) return;
@@ -776,19 +763,20 @@ function HomeContent() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    setBrandId("default");
     try {
-      const s = localStorage.getItem(BRAND_ID_STORAGE_KEY);
+      const s = localStorage.getItem(brandStorageKey);
       if (s) setBrandId(s);
     } catch {
       // ignore localStorage failures
     }
-  }, []);
+  }, [brandStorageKey]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && brandId) {
-      localStorage.setItem(BRAND_ID_STORAGE_KEY, brandId);
+      localStorage.setItem(brandStorageKey, brandId);
     }
-  }, [brandId]);
+  }, [brandId, brandStorageKey]);
 
   const loadOrganizationBranding = useCallback(async () => {
     if (!authSession) {
@@ -828,6 +816,63 @@ function HomeContent() {
       return { ...prev, prepared_by: defaultPreparedByFromAuth };
     });
   }, [defaultPreparedByFromAuth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setReportMeta({
+      prepared_for: activeClient?.name || "",
+      prepared_by: "",
+      report_date: "",
+      market: "",
+      submarket: "",
+    });
+    setClientLogoDataUrl(null);
+    setClientLogoFileName(null);
+    try {
+      const raw = localStorage.getItem(reportMetaStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        reportMeta?: Partial<{
+          prepared_for: string;
+          prepared_by: string;
+          report_date: string;
+          market: string;
+          submarket: string;
+        }>;
+        clientLogoDataUrl?: string | null;
+        clientLogoFileName?: string | null;
+      };
+      if (parsed.reportMeta && typeof parsed.reportMeta === "object") {
+        setReportMeta({
+          prepared_for: String(parsed.reportMeta.prepared_for || activeClient?.name || "").trim(),
+          prepared_by: String(parsed.reportMeta.prepared_by || "").trim(),
+          report_date: String(parsed.reportMeta.report_date || "").trim(),
+          market: String(parsed.reportMeta.market || "").trim(),
+          submarket: String(parsed.reportMeta.submarket || "").trim(),
+        });
+      }
+      setClientLogoDataUrl(parsed.clientLogoDataUrl || null);
+      setClientLogoFileName(parsed.clientLogoFileName || null);
+    } catch {
+      // ignore parse errors
+    }
+  }, [reportMetaStorageKey, activeClient?.name]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(
+        reportMetaStorageKey,
+        JSON.stringify({
+          reportMeta,
+          clientLogoDataUrl,
+          clientLogoFileName,
+        }),
+      );
+    } catch {
+      // ignore storage limits
+    }
+  }, [reportMetaStorageKey, reportMeta, clientLogoDataUrl, clientLogoFileName]);
 
   const uploadClientLogo = useCallback(async (file: File) => {
     if (!authSession) {
@@ -928,6 +973,7 @@ function HomeContent() {
       preferredName?: string
     ) => {
       let scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical, preferredName));
+      scenarioInput = normalizeScenarioEconomics({ ...scenarioInput, clientId: workspaceScopeId });
       if (hasCommencementBeforeToday(scenarioInput.commencement)) {
         scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, "remaining_obligation"));
       }
@@ -972,11 +1018,19 @@ function HomeContent() {
       setExtractError(null);
       onAdded?.(scenarioWithId);
     },
-    []
+    [workspaceScopeId]
   );
 
   const handleNormalizeSuccess = useCallback(
-    async (data: NormalizerResponse) => {
+    async (
+      data: NormalizerResponse,
+      source?: {
+        name?: string;
+        file?: File | null;
+        sourceModule?: "financial-analyses" | "sublease-recovery" | "upload";
+        skipDocumentRegister?: boolean;
+      },
+    ) => {
       const hasCanonical = !!data?.canonical_lease;
       console.log("[compute] about to call", { hasCanonical });
       setExtractError(null);
@@ -988,6 +1042,16 @@ function HomeContent() {
       }
 
       const canonical = data.canonical_lease;
+      if (!source?.skipDocumentRegister && activeClientId) {
+        await registerDocument({
+          clientId: activeClientId,
+          name: source?.name || `Lease ${formatDateISO(new Date())}`,
+          file: source?.file,
+          sourceModule: source?.sourceModule || "financial-analyses",
+          normalize: data,
+          parsed: true,
+        });
+      }
       const documentTypeDetected = (data.extraction_summary?.document_type_detected || "unknown").trim();
       const canonicalWithDocType: BackendCanonicalLease = {
         ...canonical,
@@ -1015,30 +1079,55 @@ function HomeContent() {
         );
       });
     },
-    [addScenarioFromCanonical, runComputeForScenario]
+    [addScenarioFromCanonical, runComputeForScenario, activeClientId, registerDocument]
   );
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message || null);
   }, []);
 
+  const handleExistingDocumentSelection = useCallback((document: ClientWorkspaceDocument) => {
+    const snapshot = document.normalizeSnapshot;
+    if (!snapshot?.canonical_lease) {
+      setExtractError("Selected document has no parsed payload. Upload or parse the file first.");
+      return;
+    }
+      const payload: NormalizerResponse = {
+      canonical_lease: snapshot.canonical_lease,
+      option_variants: snapshot.option_variants || [],
+      confidence_score: Number(snapshot.confidence_score || 0),
+      field_confidence: snapshot.field_confidence || {},
+      missing_fields: [],
+      clarification_questions: [],
+      warnings: snapshot.warnings || [],
+      extraction_summary: snapshot.extraction_summary,
+      review_tasks: snapshot.review_tasks || [],
+    };
+    void handleNormalizeSuccess(payload, {
+      name: document.name,
+      sourceModule: "financial-analyses",
+      skipDocumentRegister: true,
+    });
+  }, [handleNormalizeSuccess]);
+
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(PENDING_SCENARIO_KEY);
+      const raw = sessionStorage.getItem(pendingScenarioKey);
       if (!raw) return;
-      sessionStorage.removeItem(PENDING_SCENARIO_KEY);
+      sessionStorage.removeItem(pendingScenarioKey);
       const scenarioInput: ScenarioInput = JSON.parse(raw);
-      const withId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
+      const withId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput, clientId: workspaceScopeId });
       setScenarios((prev) => [...prev, withId]);
       setSelectedId(null);
     } catch {
       // ignore invalid or missing
     }
-  }, []);
+  }, [workspaceScopeId, pendingScenarioKey]);
 
   const addScenario = useCallback(() => {
     const newScenario: ScenarioWithId = normalizeScenarioEconomics({
       id: nextId(),
+      clientId: workspaceScopeId,
       ...defaultScenarioInput,
       discount_rate_annual: globalDiscountRate,
     });
@@ -1049,7 +1138,7 @@ function HomeContent() {
       delete next[newScenario.id];
       return next;
     });
-  }, [globalDiscountRate]);
+  }, [globalDiscountRate, workspaceScopeId]);
 
   const duplicateScenario = useCallback(() => {
     if (!selectedScenario) return;
@@ -1338,6 +1427,8 @@ function HomeContent() {
     }
     setExportPdfLoading(true);
     setExportPdfError(null);
+    setShareLinkStatus(null);
+    setShareLinkError(null);
     try {
       const clientLogoBase64 = extractDataUrlBase64(clientLogoDataUrl);
       const clientLogoUrl =
@@ -1485,6 +1576,8 @@ function HomeContent() {
     }
     setExportExcelLoading(true);
     setExportExcelError(null);
+    setShareLinkStatus(null);
+    setShareLinkError(null);
     try {
       const canonical = scenarios.map(scenarioToCanonical);
       const reportMeta = buildReportMeta();
@@ -1616,6 +1709,80 @@ function HomeContent() {
     }
   }, [scenarios, globalDiscountRate, isProduction, canonicalComputeCache, buildReportMeta, buildExportFileName, defaultPreparedByFromAuth, organizationBranding, clientLogoDataUrl, authSession, getDefaultBrokerageLogoDataUrl, customChartsForExport]);
 
+  const copyFinancialAnalysisShareLink = useCallback(async () => {
+    if (includedScenarios.length === 0 || typeof navigator === "undefined") {
+      setShareLinkError("Add at least one included scenario.");
+      setShareLinkStatus(null);
+      return;
+    }
+    setShareLinkError(null);
+    setShareLinkStatus(null);
+    try {
+      const meta = buildReportMeta();
+      const resolvedBrokerageName = authSession
+        ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+        : CRE_DEFAULT_BROKERAGE_NAME;
+      const scenariosForShare = includedScenarios.map((scenario) => {
+        const result = getScenarioResultForExport(scenario);
+        const cached = canonicalComputeCache[scenario.id];
+        const metrics = cached?.metrics;
+        const suiteFloor = [String(metrics?.suite || "").trim(), String(metrics?.floor || "").trim()].filter(Boolean).join(" / ");
+        const equalized = equalizedUi.metricsByScenario[scenario.id];
+        return {
+          id: scenario.id,
+          scenarioName: scenario.name,
+          documentType: String(scenario.document_type_detected || "unknown").trim() || "unknown",
+          buildingName: String(metrics?.building_name || scenario.building_name || "").trim(),
+          suiteFloor: suiteFloor || String(scenario.suite || "").trim(),
+          address: String(metrics?.address || scenario.address || "").trim(),
+          leaseType: String(metrics?.lease_type || "NNN").trim() || "NNN",
+          rsf: Math.max(0, Number(metrics?.rsf || scenario.rsf || 0)),
+          commencementDate: String(metrics?.commencement_date || scenario.commencement || "").trim(),
+          expirationDate: String(metrics?.expiration_date || scenario.expiration || "").trim(),
+          termMonths: Math.max(0, Math.floor(Number(result.term_months || 0))),
+          totalObligation: Number(result.total_cost_nominal || 0),
+          npvCost: Number(result.npv_cost || 0),
+          avgCostPsfYear: Number(result.avg_cost_psf_year || 0),
+          equalizedAvgCostPsfYear: Number(equalized?.averageCostPsfYear || 0),
+        };
+      });
+      const equalizedWindow = equalizedUi.windowStart && equalizedUi.windowEnd
+        ? {
+          start: equalizedUi.windowStart,
+          end: equalizedUi.windowEnd,
+          source: equalizedUi.windowSource || "overlap",
+        }
+        : null;
+      const link = buildFinancialAnalysesShareLink(
+        {
+          scenarios: scenariosForShare,
+          equalizedWindow,
+        },
+        {
+          brokerageName: resolvedBrokerageName,
+          clientName: meta.prepared_for || "Client",
+          reportDate: meta.report_date || undefined,
+          preparedBy: meta.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+        },
+      );
+      await navigator.clipboard.writeText(link);
+      setShareLinkStatus("Share link copied.");
+      setShareLinkError(null);
+    } catch (err) {
+      setShareLinkError(getDisplayErrorMessage(err));
+      setShareLinkStatus(null);
+    }
+  }, [
+    includedScenarios,
+    buildReportMeta,
+    authSession,
+    organizationBranding,
+    getScenarioResultForExport,
+    canonicalComputeCache,
+    equalizedUi,
+    defaultPreparedByFromAuth,
+  ]);
+
   const engineResults = useMemo(() => {
     const included = includedScenarios;
     if (isProduction) {
@@ -1685,9 +1852,21 @@ function HomeContent() {
   }, [heroSparklineValues]);
   const showHomeHero = rawModuleParam.length === 0;
   const topNavOffsetClass = "pt-24 sm:pt-28";
-  const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === "financial-analyses";
+  const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === DEFAULT_PLATFORM_MODULE_ID;
   const mainTopOffsetClass = !showHomeHero && !moduleHasDedicatedTopTabs ? topNavOffsetClass : "";
   const tabTopOffsetClass = !showHomeHero ? topNavOffsetClass : "mt-8";
+
+  if (Boolean(authSession) && !activeClient) {
+    return (
+      <main className={`relative z-10 app-container ${topNavOffsetClass} pb-14 md:pb-20`}>
+        <section className="scroll-mt-24 bg-grid mt-6">
+          <div className="mx-auto w-full max-w-6xl">
+            <ClientWorkspaceGate />
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <>
@@ -1799,9 +1978,11 @@ function HomeContent() {
         <section className={`relative z-10 app-container ${tabTopOffsetClass}`}>
           <div className="mx-auto w-full max-w-6xl">
             <PlatformModuleTabs
-              tabs={financialTabs}
+              tabs={FINANCIAL_ANALYSES_TOOL_TABS}
               activeId={activeTopTab}
-              onChange={(id) => setActiveTopTab(id as "lease-comparison" | "sublease-recovery")}
+              onChange={(id) => {
+                if (isFinancialAnalysesToolId(id)) setActiveTopTab(id);
+              }}
               dense
             />
           </div>
@@ -1812,6 +1993,7 @@ function HomeContent() {
         if (activePlatformModule === "financial-analyses") {
           return activeTopTab === "lease-comparison" ? (
       <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+        <ClientDocumentCenter />
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="mx-auto w-full max-w-6xl space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
           <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
@@ -1819,9 +2001,24 @@ function HomeContent() {
               <h2 className="heading-section mb-3">Upload and Extract</h2>
               <ExtractUpload
                 showAdvancedOptions={showDiagnostics}
-                onSuccess={handleNormalizeSuccess}
+                onSuccess={(data, context) =>
+                  handleNormalizeSuccess(data, {
+                    name: context?.fileName,
+                    file: context?.file,
+                    sourceModule: "financial-analyses",
+                  })
+                }
                 onError={handleExtractError}
               />
+              {activeClient ? (
+                <div className="mt-3 text-left">
+                  <ClientDocumentPicker
+                    buttonLabel="Select Existing Client Document"
+                    allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
+                    onSelectDocument={handleExistingDocumentSelection}
+                  />
+                </div>
+              ) : null}
               {extractError && (
                 <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-200">
                   {extractError}
@@ -2003,9 +2200,18 @@ function HomeContent() {
               >
                 {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
               </button>
+              <button
+                type="button"
+                onClick={() => { void copyFinancialAnalysisShareLink(); }}
+                disabled={includedScenarios.length === 0}
+                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
+              >
+                Copy Share Link
+              </button>
           </div>
-          {(exportPdfError || exportExcelError) && (
-            <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError}</p>
+          {shareLinkStatus ? <p className="mt-2 text-sm text-cyan-200">{shareLinkStatus}</p> : null}
+          {(exportPdfError || exportExcelError || shareLinkError) && (
+            <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError || shareLinkError}</p>
           )}
         </section>
 
@@ -2093,6 +2299,7 @@ function HomeContent() {
       </main>
       ) : (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+          <ClientDocumentCenter />
           <section className="scroll-mt-24 bg-grid mt-6 space-y-4">
             <div className="mx-auto w-full max-w-6xl space-y-4">
               {!authSession && (
@@ -2198,6 +2405,7 @@ function HomeContent() {
             </div>
 
             <SubleaseRecoveryAnalysis
+              clientId={workspaceScopeId}
               sourceScenario={selectedScenario ?? scenarios[0] ?? null}
               exportBranding={{
                 brokerageName: authSession
@@ -2224,7 +2432,9 @@ function HomeContent() {
         if (activePlatformModule === "completed-leases") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+          <ClientDocumentCenter />
           <CompletedLeasesWorkspace
+            clientId={workspaceScopeId}
             exportBranding={{
               brokerageName: authSession
                 ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
@@ -2249,7 +2459,9 @@ function HomeContent() {
         if (activePlatformModule === "surveys") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+          <ClientDocumentCenter />
           <SurveysWorkspace
+            clientId={workspaceScopeId}
             exportBranding={{
               brokerageName: authSession
                 ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
@@ -2273,7 +2485,8 @@ function HomeContent() {
         }
         return (
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-            <ObligationsWorkspace />
+            <ClientDocumentCenter />
+            <ObligationsWorkspace clientId={workspaceScopeId} />
           </main>
         );
       })() : null}
