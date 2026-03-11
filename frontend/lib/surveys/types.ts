@@ -5,6 +5,7 @@ export type SurveyOccupancyType = "Direct" | "Sublease" | "Unknown";
 
 export interface SurveyEntry {
   id: string;
+  clientId: string;
   sourceDocumentName: string;
   sourceType: "parsed_document" | "manual_image";
   uploadedAtIso: string;
@@ -59,4 +60,3 @@ export interface SurveysSharePayload {
   };
   entries: SurveyEntry[];
 }
-

@@ -2,7 +2,7 @@
 
 This package provides a durable extraction-quality program for CRE documents, covering:
 
-- Synthetic corpus generation across proposals, LOIs, counters, leases, amendments, redlines, abstracts, and sublease docs.
+- Synthetic corpus generation across proposals, LOIs, counters, leases, amendments, redlines, flyers, floorplans, abstracts, and sublease docs.
 - Multi-document precedence resolution (base lease + amendment/counter/redline stacks).
 - Field-level scoring and confidence calibration.
 - Failure clustering and coverage reporting by document family.
@@ -45,3 +45,4 @@ Curated cases live at:
 - `backend/tests/fixtures/parser_hardening/curated_cases.json`
 
 These are regression anchors for known failure classes (term mis-selection, override precedence, OCR spacing artifacts, rent-schedule conflicts).
+They include survey-source families (`flyer`, `floorplan`) to keep those parsing paths protected.

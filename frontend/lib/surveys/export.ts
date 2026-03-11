@@ -8,7 +8,11 @@ import {
   resolveExportBranding,
 } from "@/lib/export-design";
 import { downloadArrayBuffer as downloadArrayBufferShared, escapeHtml, openPrintWindow } from "@/lib/export-runtime";
-import { buildShareUrl, decodeSharePayload, encodeSharePayload } from "@/lib/share-link";
+import {
+  buildPlatformShareLink,
+  parsePlatformShareData,
+} from "@/lib/platform-share";
+import { decodeSharePayload } from "@/lib/share-link";
 import { computeSurveyMonthlyOccupancyCost } from "./engine";
 import type { SurveyEntry, SurveysExportBranding, SurveysSharePayload } from "./types";
 
@@ -21,6 +25,35 @@ function toCurrency(value: number): string {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
+}
+
+function toShareSafeEntry(entry: SurveyEntry): SurveyEntry {
+  return {
+    id: entry.id,
+    clientId: entry.clientId,
+    sourceDocumentName: entry.sourceDocumentName,
+    sourceType: entry.sourceType,
+    uploadedAtIso: entry.uploadedAtIso,
+    buildingName: entry.buildingName,
+    address: entry.address,
+    floor: entry.floor,
+    suite: entry.suite,
+    availableSqft: entry.availableSqft,
+    baseRentPsfAnnual: entry.baseRentPsfAnnual,
+    opexPsfAnnual: entry.opexPsfAnnual,
+    leaseType: entry.leaseType,
+    occupancyType: entry.occupancyType,
+    sublessor: entry.sublessor,
+    subleaseExpirationDate: entry.subleaseExpirationDate,
+    parkingSpaces: entry.parkingSpaces,
+    parkingRateMonthlyPerSpace: entry.parkingRateMonthlyPerSpace,
+    notes: entry.notes,
+    needsReview: entry.needsReview,
+    reviewReasons: entry.reviewReasons,
+    extractionSummary: entry.extractionSummary,
+    reviewTasks: [],
+    fieldConfidence: {},
+  };
 }
 
 export function buildSurveysExportFileName(kind: "xlsx" | "pdf", branding: SurveysExportBranding): string {
@@ -51,6 +84,8 @@ export async function buildSurveysWorkbook(
     { width: 26 },
     { width: 14 },
     { width: 12 },
+    { width: 20 },
+    { width: 16 },
     { width: 12 },
     { width: 14 },
     { width: 12 },
@@ -62,7 +97,7 @@ export async function buildSurveysWorkbook(
     { width: 20 },
   ];
 
-  sheet.mergeCells(1, 1, 2, 13);
+  sheet.mergeCells(1, 1, 2, 15);
   const titleCell = sheet.getCell(1, 1);
   titleCell.value = "Survey Comparison";
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
@@ -71,7 +106,7 @@ export async function buildSurveysWorkbook(
   sheet.getRow(1).height = 20;
   sheet.getRow(2).height = 20;
 
-  sheet.mergeCells(3, 1, 3, 13);
+  sheet.mergeCells(3, 1, 3, 15);
   const metaCell = sheet.getCell(3, 1);
   metaCell.value = buildExportMetaLine(reportMeta);
   metaCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.labelSize, color: { argb: COLORS.secondaryText }, bold: true };
@@ -84,6 +119,8 @@ export async function buildSurveysWorkbook(
     "Address",
     "Suite/Floor",
     "Type",
+    "Sublessor",
+    "Sublease Exp.",
     "Lease Type",
     "Available RSF",
     "Base Rent ($/SF/YR)",
@@ -119,6 +156,8 @@ export async function buildSurveysWorkbook(
       entry.address || "-",
       suiteFloor || "-",
       entry.occupancyType,
+      entry.sublessor || "-",
+      entry.subleaseExpirationDate || "-",
       entry.leaseType,
       entry.availableSqft,
       entry.baseRentPsfAnnual,
@@ -134,10 +173,10 @@ export async function buildSurveysWorkbook(
       cell.value = value as string | number;
       cell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.bodySize, color: { argb: COLORS.text } };
       cell.alignment = { horizontal: typeof value === "number" ? "right" : "left", vertical: "middle", wrapText: true };
-      if (idxCol === 5) cell.numFmt = NUM_FMT.integer;
-      if (idxCol === 6 || idxCol === 7) cell.numFmt = NUM_FMT.currency2;
-      if (idxCol === 9 || idxCol === 10) cell.numFmt = NUM_FMT.currency0;
-      if (idxCol === 8) cell.numFmt = NUM_FMT.integer;
+      if (idxCol === 7) cell.numFmt = NUM_FMT.integer;
+      if (idxCol === 8 || idxCol === 9) cell.numFmt = NUM_FMT.currency2;
+      if (idxCol === 10) cell.numFmt = NUM_FMT.integer;
+      if (idxCol === 11 || idxCol === 12) cell.numFmt = NUM_FMT.currency0;
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 0 ? "FFFFFFFF" : COLORS.mutedFill } };
       cell.border = {
         top: { style: "thin", color: { argb: COLORS.border } },
@@ -152,7 +191,7 @@ export async function buildSurveysWorkbook(
   applyExcelPageSetup(sheet, {
     landscape: true,
     lastRow: Math.max(row, headerRow + 2),
-    lastCol: 13,
+    lastCol: 15,
     repeatHeaderRow: headerRow,
   });
   const buffer = await workbook.xlsx.writeBuffer();
@@ -171,6 +210,8 @@ export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportB
         <td>${escapeHtml(entry.address || "-")}</td>
         <td>${escapeHtml(suiteFloor || "-")}</td>
         <td>${escapeHtml(entry.occupancyType)}</td>
+        <td>${escapeHtml(entry.sublessor || "-")}</td>
+        <td>${escapeHtml(entry.subleaseExpirationDate || "-")}</td>
         <td>${escapeHtml(entry.leaseType)}</td>
         <td style="text-align:right">${escapeHtml(entry.availableSqft.toLocaleString("en-US"))}</td>
         <td style="text-align:right">${escapeHtml(toCurrency(entry.baseRentPsfAnnual))}</td>
@@ -200,7 +241,7 @@ export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportB
     <body>
       <section class="page">
         <p class="title">Survey Comparison</p>
-        <p class="meta">${escapeHtml(reportMeta.brokerageName)} | ${escapeHtml(reportMeta.clientName)} | Report Date ${escapeHtml(reportMeta.reportDate)}</p>
+        <p class="meta">${escapeHtml(reportMeta.brokerageName)} | ${escapeHtml(reportMeta.clientName)} | Prepared by ${escapeHtml(reportMeta.preparedBy)} | Report Date ${escapeHtml(reportMeta.reportDate)}</p>
         <table>
           <thead>
             <tr>
@@ -208,6 +249,8 @@ export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportB
               <th>Address</th>
               <th>Suite/Floor</th>
               <th>Type</th>
+              <th>Sublessor</th>
+              <th>Sublease Exp.</th>
               <th>Lease Type</th>
               <th>RSF</th>
               <th>Base Rent</th>
@@ -226,25 +269,33 @@ export function printSurveysPdf(entries: SurveyEntry[], branding: SurveysExportB
 }
 
 export function buildSurveysShareLink(entries: SurveyEntry[], branding: SurveysExportBranding = {}): string {
-  const reportMeta = resolveExportBranding(branding);
-  const payload: SurveysSharePayload = {
-    version: 1,
-    generatedAtIso: new Date().toISOString(),
-    branding: {
-      brokerageName: reportMeta.brokerageName,
-      clientName: reportMeta.clientName,
-      reportDate: reportMeta.reportDate,
-      preparedBy: reportMeta.preparedBy,
-    },
-    entries,
-  };
-  const encoded = encodeSharePayload(payload);
-  return buildShareUrl("/surveys/share", encoded);
+  return buildPlatformShareLink(
+    "/surveys/share",
+    "surveys",
+    { entries: entries.map(toShareSafeEntry) },
+    branding,
+  );
 }
 
 export function parseSurveysShareData(encoded: string | null | undefined): SurveysSharePayload | null {
   const value = String(encoded || "").trim();
   if (!value) return null;
+  const envelope = parsePlatformShareData<{ entries: SurveyEntry[] }>(value, "surveys");
+  if (envelope && Array.isArray(envelope.payload.entries)) {
+    return {
+      version: 1,
+      generatedAtIso: envelope.generatedAtIso,
+      branding: {
+        brokerageName: envelope.branding.brokerageName,
+        clientName: envelope.branding.clientName,
+        reportDate: envelope.branding.reportDate,
+        preparedBy: envelope.branding.preparedBy,
+      },
+      entries: envelope.payload.entries,
+    };
+  }
+
+  // Backward compatibility for links generated before the unified share envelope.
   const parsed = decodeSharePayload<SurveysSharePayload>(value);
   if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.entries)) return null;
   return parsed;

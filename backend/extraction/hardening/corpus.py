@@ -12,6 +12,8 @@ DOC_FAMILIES = (
     "loi",
     "counter",
     "counterproposal",
+    "flyer",
+    "floorplan",
     "lease",
     "amendment",
     "redline",
@@ -244,6 +246,12 @@ def _render_doc_text(
     if truth.get("subtenant_name"):
         rows.append((_pick_label(rng, "subtenant_name"), truth["subtenant_name"]))
 
+    heading = f"{family.replace('_', ' ').title()} Summary"
+    if family == "flyer":
+        heading = "Marketing Flyer"
+    elif family == "floorplan":
+        heading = "Floor Plan / Stacking Plan"
+
     if style == "table_pipe":
         body = "\n".join(f"{k} | {v}" for k, v in rows)
     elif style == "broker_bullets":
@@ -257,7 +265,7 @@ def _render_doc_text(
         )
     else:
         body = (
-            f"{family.replace('_', ' ').title()} Summary\n"
+            f"{heading}\n"
             f"For the premises at {truth['property_name']}, the parties agree to the following business points.\n"
             + "\n".join(f"{k}: {v}" for k, v in rows)
         )

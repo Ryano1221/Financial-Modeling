@@ -59,6 +59,7 @@ export interface OriginalExtractedLeaseSnapshot {
 
 /** Backend Scenario schema (no id). */
 export interface ScenarioInput {
+  clientId?: string;
   name: string;
   document_type_detected?: string;
   building_name?: string;
@@ -362,6 +363,8 @@ export interface BackendPhaseInStep {
 export interface BackendCanonicalLease {
   scenario_id?: string;
   scenario_name?: string;
+  tenant_name?: string;
+  landlord_name?: string;
   premises_name?: string;
   address?: string;
   building_name?: string;
@@ -370,6 +373,7 @@ export interface BackendCanonicalLease {
   rsf: number;
   lease_type?: string;
   commencement_date: string;
+  rent_commencement_date?: string;
   expiration_date: string;
   term_months: number;
   free_rent_months: number;
@@ -389,6 +393,13 @@ export interface BackendCanonicalLease {
   parking_count?: number;
   parking_rate_monthly?: number;
   parking_sales_tax_rate?: number;
+  security_deposit_months?: number;
+  security_deposit?: string;
+  guaranty?: string;
+  options?: string;
+  notice_dates?: string;
+  renewal_options?: string;
+  termination_rights?: string;
   ti_allowance_psf?: number;
   ti_allowance_source_of_truth?: TiSourceOfTruth;
   ti_budget_total?: number;

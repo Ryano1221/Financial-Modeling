@@ -8,7 +8,17 @@ import {
   formatDateMmDdYyyy,
 } from "@/lib/export-design";
 import { downloadArrayBuffer as downloadArrayBufferShared, escapeHtml, openPrintWindow } from "@/lib/export-runtime";
-import type { ExistingObligation, SensitivityResult, SubleaseScenarioResult } from "./types";
+import {
+  buildPlatformShareLink,
+  parsePlatformShareData,
+  type PlatformShareEnvelope,
+} from "@/lib/platform-share";
+import type {
+  ExistingObligation,
+  SensitivityResult,
+  SubleaseRecoverySharePayload,
+  SubleaseScenarioResult,
+} from "./types";
 
 export interface SubleaseRecoveryExportBranding {
   brokerageName?: string | null;
@@ -18,6 +28,8 @@ export interface SubleaseRecoveryExportBranding {
   brokerageLogoDataUrl?: string | null;
   clientLogoDataUrl?: string | null;
 }
+
+export type SubleaseRecoveryShareEnvelope = PlatformShareEnvelope<SubleaseRecoverySharePayload>;
 
 interface ScenarioDisplaySummary {
   scenario: SubleaseScenarioResult["scenario"];
@@ -1400,4 +1412,50 @@ export function buildSubleaseRecoveryExportFileName(
     excelDescriptor: "Sublease Recovery Financial Analysis",
     pdfDescriptor: "Sublease Recovery Economic Presentation",
   });
+}
+
+export function buildSubleaseRecoveryShareLink(
+  existing: ExistingObligation,
+  results: SubleaseScenarioResult[],
+  branding: SubleaseRecoveryExportBranding = {},
+): string {
+  const payload: SubleaseRecoverySharePayload = {
+    existing: {
+      premises: existing.premises,
+      rsf: existing.rsf,
+      commencementDate: existing.commencementDate,
+      expirationDate: existing.expirationDate,
+      leaseType: existing.leaseType,
+    },
+    scenarios: results.map((result) => ({
+      scenarioName: result.summary.scenarioName,
+      subtenantName: result.scenario.subtenantName || "",
+      sourceType: result.scenario.sourceType,
+      sourceDocumentName: result.scenario.sourceDocumentName || "",
+      totalRemainingObligation: result.summary.totalRemainingObligation,
+      totalSubleaseRecovery: result.summary.totalSubleaseRecovery,
+      totalSubleaseCosts: result.summary.totalSubleaseCosts,
+      netSubleaseRecovery: result.summary.netSubleaseRecovery,
+      netObligation: result.summary.netObligation,
+      recoveryPercent: result.summary.recoveryPercent,
+      npv: result.summary.npv,
+    })),
+  };
+  return buildPlatformShareLink(
+    "/sublease-recovery/share",
+    "sublease-recovery",
+    payload,
+    branding,
+  );
+}
+
+export function parseSubleaseRecoveryShareData(
+  encoded: string | null | undefined,
+): SubleaseRecoveryShareEnvelope | null {
+  const parsed = parsePlatformShareData<SubleaseRecoverySharePayload>(
+    encoded,
+    "sublease-recovery",
+  );
+  if (!parsed || !parsed.payload || !Array.isArray(parsed.payload.scenarios)) return null;
+  return parsed;
 }

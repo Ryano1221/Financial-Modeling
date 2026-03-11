@@ -4,8 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
 import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
 import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
+import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
+import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
+import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import {
   buildCompletedLeaseAbstractFileName,
+  buildCompletedLeaseShareLink,
   buildCompletedLeaseAbstractWorkbook,
   downloadArrayBuffer,
   printCompletedLeaseAbstract,
@@ -18,6 +24,7 @@ import type {
 } from "@/lib/completed-leases/types";
 
 interface CompletedLeasesWorkspaceProps {
+  clientId: string;
   exportBranding?: CompletedLeaseExportBranding;
 }
 
@@ -44,6 +51,42 @@ function formatDate(value: string): string {
 function asNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function asText(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function formatRate(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  return `${value.toFixed(2)} $/SF/YR`;
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function getRentScheduleSummary(canonical: BackendCanonicalLease): string {
+  const steps = Array.isArray(canonical.rent_schedule) ? canonical.rent_schedule : [];
+  if (steps.length === 0) return "-";
+  return steps
+    .slice(0, 6)
+    .map((step) => {
+      const start = Math.max(0, Math.floor(Number(step.start_month) || 0)) + 1;
+      const end = Math.max(start, Math.floor(Number(step.end_month) || start - 1) + 1);
+      return `Months ${start}-${end}: ${formatRate(asNumber(step.rent_psf_annual))}`;
+    })
+    .join(" | ");
+}
+
+function estimateEscalationPct(canonical: BackendCanonicalLease): number {
+  const steps = Array.isArray(canonical.rent_schedule) ? canonical.rent_schedule : [];
+  if (steps.length < 2) return 0;
+  const first = asNumber(steps[0]?.rent_psf_annual);
+  const second = asNumber(steps[1]?.rent_psf_annual);
+  if (first <= 0 || second <= 0) return 0;
+  return Math.max(0, (second - first) / first);
 }
 
 function inferKind(fileName: string, normalize: NormalizerResponse): CompletedLeaseDocumentKind {
@@ -97,12 +140,11 @@ function buildControllingAbstract(
   selected: CompletedLeaseDocumentRecord,
   allDocuments: CompletedLeaseDocumentRecord[],
 ): CompletedLeaseAbstractView {
-  const sourceDocuments = [selected];
   if (selected.kind === "lease" || !selected.linkedLeaseId) {
     return {
       controllingCanonical: selected.canonical,
       controllingDocumentId: selected.id,
-      sourceDocuments,
+      sourceDocuments: [selected],
       overrideNotes: [],
     };
   }
@@ -112,20 +154,25 @@ function buildControllingAbstract(
     return {
       controllingCanonical: selected.canonical,
       controllingDocumentId: selected.id,
-      sourceDocuments,
+      sourceDocuments: [selected],
       overrideNotes: ["Linked base lease was not found. Using amendment values as controlling until relinked."],
     };
   }
 
-  sourceDocuments.unshift(base);
+  const linkedAmendments = allDocuments
+    .filter((doc) => doc.kind === "amendment" && doc.linkedLeaseId === base.id)
+    .sort((left, right) => left.uploadedAtIso.localeCompare(right.uploadedAtIso));
+
+  const sourceDocuments: CompletedLeaseDocumentRecord[] = [base, ...linkedAmendments];
   const merged: BackendCanonicalLease = {
     ...base.canonical,
-    notes: [base.canonical.notes, selected.canonical.notes].filter(Boolean).join("\n"),
+    notes: asText(base.canonical.notes),
   };
   const overrideNotes: string[] = [];
-  const amendment = selected.canonical;
 
   const scalarKeys: Array<keyof BackendCanonicalLease> = [
+    "tenant_name",
+    "landlord_name",
     "premises_name",
     "address",
     "building_name",
@@ -134,6 +181,7 @@ function buildControllingAbstract(
     "rsf",
     "lease_type",
     "commencement_date",
+    "rent_commencement_date",
     "expiration_date",
     "term_months",
     "free_rent_months",
@@ -146,40 +194,52 @@ function buildControllingAbstract(
     "parking_count",
     "parking_rate_monthly",
     "parking_sales_tax_rate",
+    "security_deposit_months",
+    "security_deposit",
+    "guaranty",
+    "options",
+    "notice_dates",
+    "renewal_options",
+    "termination_rights",
     "ti_allowance_psf",
     "ti_budget_total",
   ];
+  linkedAmendments.forEach((amendmentDoc) => {
+    const amendment = amendmentDoc.canonical;
+    scalarKeys.forEach((key) => {
+      const value = amendment[key];
+      const confidence = amendmentDoc.fieldConfidence[key as string];
+      if (!shouldApplyOverride(value, confidence, key)) return;
+      const previous = merged[key];
+      if (JSON.stringify(previous) === JSON.stringify(value)) return;
+      merged[key] = value as never;
+      overrideNotes.push(`${amendmentDoc.fileName} overrides ${key} (${String(previous ?? "-")} -> ${String(value ?? "-")}).`);
+    });
 
-  scalarKeys.forEach((key) => {
-    const value = amendment[key];
-    const confidence = selected.fieldConfidence[key as string];
-    if (!shouldApplyOverride(value, confidence, key)) return;
-    const previous = merged[key];
-    if (JSON.stringify(previous) === JSON.stringify(value)) return;
-    merged[key] = value as never;
-    overrideNotes.push(`Amendment overrides ${key} (${String(previous ?? "-")} → ${String(value ?? "-")}).`);
+    const mergedSchedule = mergeRentSchedules(merged.rent_schedule, amendment.rent_schedule);
+    if (mergedSchedule !== merged.rent_schedule) {
+      merged.rent_schedule = mergedSchedule;
+      overrideNotes.push(`${amendmentDoc.fileName} replaces base rent schedule.`);
+    }
+
+    if (Array.isArray(amendment.phase_in_schedule) && amendment.phase_in_schedule.length > 0) {
+      merged.phase_in_schedule = amendment.phase_in_schedule;
+      overrideNotes.push(`${amendmentDoc.fileName} overrides phase-in schedule.`);
+    }
+
+    if (Array.isArray(amendment.free_rent_periods) && amendment.free_rent_periods.length > 0) {
+      merged.free_rent_periods = amendment.free_rent_periods;
+      overrideNotes.push(`${amendmentDoc.fileName} overrides free-rent periods.`);
+    }
+
+    if (Array.isArray(amendment.parking_abatement_periods) && amendment.parking_abatement_periods.length > 0) {
+      merged.parking_abatement_periods = amendment.parking_abatement_periods;
+      overrideNotes.push(`${amendmentDoc.fileName} overrides parking abatements.`);
+    }
+
+    const notes = [asText(merged.notes), asText(amendment.notes)].filter(Boolean).join("\n");
+    merged.notes = notes || undefined;
   });
-
-  const mergedSchedule = mergeRentSchedules(base.canonical.rent_schedule, amendment.rent_schedule);
-  if (mergedSchedule !== base.canonical.rent_schedule) {
-    merged.rent_schedule = mergedSchedule;
-    overrideNotes.push("Amendment rent schedule replaced base lease schedule.");
-  }
-
-  if (Array.isArray(amendment.phase_in_schedule) && amendment.phase_in_schedule.length > 0) {
-    merged.phase_in_schedule = amendment.phase_in_schedule;
-    overrideNotes.push("Amendment phase-in schedule overrides base lease phase-in.");
-  }
-
-  if (Array.isArray(amendment.free_rent_periods) && amendment.free_rent_periods.length > 0) {
-    merged.free_rent_periods = amendment.free_rent_periods;
-    overrideNotes.push("Amendment free-rent periods override base lease abatements.");
-  }
-
-  if (Array.isArray(amendment.parking_abatement_periods) && amendment.parking_abatement_periods.length > 0) {
-    merged.parking_abatement_periods = amendment.parking_abatement_periods;
-    overrideNotes.push("Amendment parking abatements override base lease parking abatements.");
-  }
 
   return {
     controllingCanonical: merged,
@@ -189,9 +249,11 @@ function buildControllingAbstract(
   };
 }
 
-export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLeasesWorkspaceProps) {
+export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: CompletedLeasesWorkspaceProps) {
+  const { registerDocument, isAuthenticated } = useClientWorkspace();
   const [documents, setDocuments] = useState<CompletedLeaseDocumentRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [storageHydrated, setStorageHydrated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [status, setStatus] = useState("No files uploaded");
@@ -200,26 +262,80 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const globalDragDepthRef = useRef(0);
+  const scopedStorageKey = useMemo(
+    () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
+    [clientId],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string };
-      if (!Array.isArray(parsed.documents) || parsed.documents.length === 0) return;
-      setDocuments(parsed.documents);
-      setSelectedId(parsed.selectedId && parsed.documents.some((doc) => doc.id === parsed.selectedId) ? parsed.selectedId : parsed.documents[0].id);
-      setStatus(`Loaded ${parsed.documents.length} saved document${parsed.documents.length === 1 ? "" : "s"}.`);
-    } catch {
-      // ignore corrupted local state and continue
+    let cancelled = false;
+    setStorageHydrated(false);
+    setDocuments([]);
+    setSelectedId("");
+    setError("");
+    setStatus("No files uploaded");
+
+    const applyParsed = (parsed: { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string } | null) => {
+      if (!parsed || !Array.isArray(parsed.documents) || parsed.documents.length === 0) {
+        setStorageHydrated(true);
+        return;
+      }
+      const scopedDocs = parsed.documents.filter((doc) => doc.clientId === clientId || !doc.clientId).map((doc) => ({ ...doc, clientId }));
+      if (scopedDocs.length === 0) {
+        setStorageHydrated(true);
+        return;
+      }
+      setDocuments(scopedDocs);
+      setSelectedId(parsed.selectedId && scopedDocs.some((doc) => doc.id === parsed.selectedId) ? parsed.selectedId : scopedDocs[0].id);
+      setStatus(`Loaded ${scopedDocs.length} saved document${scopedDocs.length === 1 ? "" : "s"}.`);
+      setStorageHydrated(true);
+    };
+
+    async function hydrate() {
+      if (isAuthenticated) {
+        try {
+          const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
+          if (cancelled) return;
+          applyParsed((remote.value as { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string } | null) ?? null);
+          return;
+        } catch (error) {
+          console.warn("completed_leases_cloud_load_failed", error);
+          if (cancelled) return;
+          setStorageHydrated(true);
+          return;
+        }
+      }
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        applyParsed(raw ? (JSON.parse(raw) as { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string }) : null);
+      } catch {
+        setStorageHydrated(true);
+      }
     }
-  }, []);
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [scopedStorageKey, clientId, isAuthenticated]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || documents.length === 0) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ documents, selectedId }));
-  }, [documents, selectedId]);
+    if (typeof window === "undefined") return;
+    if (!storageHydrated) return;
+    if (isAuthenticated) {
+      const payload = documents.length === 0 ? null : { documents, selectedId };
+      void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
+        console.warn("completed_leases_cloud_save_failed", error);
+      });
+      return;
+    }
+    if (documents.length === 0) {
+      localStorage.removeItem(scopedStorageKey);
+      return;
+    }
+    localStorage.setItem(scopedStorageKey, JSON.stringify({ documents, selectedId }));
+  }, [documents, selectedId, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const selected = useMemo(
     () => documents.find((doc) => doc.id === selectedId) ?? documents[0] ?? null,
@@ -261,6 +377,45 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
     setDocuments((prev) => prev.map((doc) => (doc.id === docId ? { ...doc, ...patch } : doc)));
   }, []);
 
+  const addDocumentFromNormalize = useCallback(async (
+    input: {
+      fileName: string;
+      normalize: NormalizerResponse;
+      file?: File;
+      uploadedAtIso?: string;
+    },
+  ) => {
+    const kind = inferKind(input.fileName, input.normalize);
+    const record: CompletedLeaseDocumentRecord = {
+      id: nextId(),
+      clientId,
+      fileName: input.fileName,
+      uploadedAtIso: input.uploadedAtIso || toIsoDate(new Date()),
+      kind,
+      linkedLeaseId: kind === "amendment" ? leaseOptions[0]?.id : undefined,
+      canonical: input.normalize.canonical_lease,
+      fieldConfidence: input.normalize.field_confidence || {},
+      warnings: input.normalize.warnings || [],
+      extractionSummary: input.normalize.extraction_summary,
+      reviewTasks: input.normalize.review_tasks || [],
+      source: input.normalize,
+    };
+    setDocuments((prev) => [record, ...prev]);
+    setSelectedId(record.id);
+    if (input.file) {
+      await registerDocument({
+        clientId,
+        name: input.fileName,
+        file: input.file,
+        sourceModule: "completed-leases",
+        normalize: input.normalize,
+        parsed: true,
+        type: kind === "amendment" ? "amendments" : "leases",
+      });
+    }
+    return record;
+  }, [clientId, leaseOptions, registerDocument]);
+
   const parseAndAddDocument = useCallback(async (file: File) => {
     const name = String(file.name || "").toLowerCase();
     if (!name.endsWith(".pdf") && !name.endsWith(".docx") && !name.endsWith(".doc")) {
@@ -276,24 +431,13 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
       throw new Error(text || `Normalize request failed (${res.status}).`);
     }
     const normalize = (await res.json()) as NormalizerResponse;
-    const kind = inferKind(file.name, normalize);
-    const record: CompletedLeaseDocumentRecord = {
-      id: nextId(),
+    return await addDocumentFromNormalize({
       fileName: file.name,
+      normalize,
+      file,
       uploadedAtIso: toIsoDate(new Date()),
-      kind,
-      linkedLeaseId: kind === "amendment" ? leaseOptions[0]?.id : undefined,
-      canonical: normalize.canonical_lease,
-      fieldConfidence: normalize.field_confidence || {},
-      warnings: normalize.warnings || [],
-      extractionSummary: normalize.extraction_summary,
-      reviewTasks: normalize.review_tasks || [],
-      source: normalize,
-    };
-    setDocuments((prev) => [record, ...prev]);
-    setSelectedId(record.id);
-    return record;
-  }, [leaseOptions]);
+    });
+  }, [addDocumentFromNormalize]);
 
   const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
     const files = Array.from(incoming ?? []);
@@ -314,6 +458,32 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
       setLoading(false);
     }
   }, [parseAndAddDocument]);
+
+  const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
+    const snapshot = document.normalizeSnapshot;
+    if (!snapshot?.canonical_lease) {
+      setError("Selected document has no parsed payload. Upload this file through the Document Center first.");
+      return;
+    }
+    setError("");
+    const normalized: NormalizerResponse = {
+      canonical_lease: snapshot.canonical_lease,
+      option_variants: snapshot.option_variants || [],
+      confidence_score: Number(snapshot.confidence_score || 0),
+      field_confidence: snapshot.field_confidence || {},
+      missing_fields: [],
+      clarification_questions: [],
+      warnings: snapshot.warnings || [],
+      extraction_summary: snapshot.extraction_summary,
+      review_tasks: snapshot.review_tasks || [],
+    };
+    await addDocumentFromNormalize({
+      fileName: document.name,
+      normalize: normalized,
+      uploadedAtIso: toIsoDate(new Date()),
+    });
+    setStatus(`Imported ${document.name} from client document library.`);
+  }, [addDocumentFromNormalize]);
 
   const onExcelExport = useCallback(async () => {
     if (!controllingAbstract) return;
@@ -338,6 +508,18 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
     setError("");
     try {
       printCompletedLeaseAbstract(controllingAbstract, exportBranding);
+    } catch (err) {
+      setError(getDisplayErrorMessage(err));
+    }
+  }, [controllingAbstract, exportBranding]);
+
+  const onCopyShareLink = useCallback(async () => {
+    if (!controllingAbstract || typeof navigator === "undefined") return;
+    setError("");
+    try {
+      const link = buildCompletedLeaseShareLink(controllingAbstract, exportBranding);
+      await navigator.clipboard.writeText(link);
+      setStatus("Share link copied.");
     } catch (err) {
       setError(getDisplayErrorMessage(err));
     }
@@ -410,6 +592,14 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
           >
             Export PDF
           </button>
+          <button
+            type="button"
+            onClick={() => { void onCopyShareLink(); }}
+            disabled={!controllingAbstract}
+            className="btn-premium btn-premium-secondary disabled:opacity-50"
+          >
+            Copy Share Link
+          </button>
         </div>
       }
     >
@@ -463,6 +653,15 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
             }}
           />
           <p className="text-xs text-slate-400 mt-3">{loading ? "Processing documents..." : status}</p>
+          <div className="mt-3">
+            <ClientDocumentPicker
+              buttonLabel="Select Existing Lease/Amendment"
+              allowedTypes={["leases", "amendments", "redlines", "other"]}
+              onSelectDocument={(doc) => {
+                void onSelectExistingDocument(doc);
+              }}
+            />
+          </div>
           {error ? <p className="text-xs text-red-300 mt-2">{error}</p> : null}
         </PlatformPanel>
 
@@ -540,7 +739,7 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
             <p className="text-sm text-slate-400">Select a document to review extracted fields.</p>
           ) : (
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <label className="text-xs text-slate-400">
                   Kind
                   <select
@@ -597,6 +796,165 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
                     className="input-premium mt-1 !py-2"
                   />
                 </label>
+                <label className="text-xs text-slate-400">
+                  Tenant
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.tenant_name)}
+                    onChange={(e) => updateSelectedCanonical("tenant_name", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Landlord
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.landlord_name)}
+                    onChange={(e) => updateSelectedCanonical("landlord_name", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Building
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.building_name)}
+                    onChange={(e) => updateSelectedCanonical("building_name", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Address
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.address)}
+                    onChange={(e) => updateSelectedCanonical("address", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Suite
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.suite)}
+                    onChange={(e) => updateSelectedCanonical("suite", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Floor
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.floor)}
+                    onChange={(e) => updateSelectedCanonical("floor", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Rent Commencement
+                  <input
+                    type="date"
+                    value={asText(selected.canonical.rent_commencement_date)}
+                    onChange={(e) => updateSelectedCanonical("rent_commencement_date", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Term (months)
+                  <input
+                    type="number"
+                    value={asNumber(selected.canonical.term_months)}
+                    onChange={(e) => updateSelectedCanonical("term_months", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Free Rent (months)
+                  <input
+                    type="number"
+                    value={asNumber(selected.canonical.free_rent_months)}
+                    onChange={(e) => updateSelectedCanonical("free_rent_months", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  TI Allowance ($/SF)
+                  <input
+                    type="number"
+                    value={asNumber(selected.canonical.ti_allowance_psf)}
+                    onChange={(e) => updateSelectedCanonical("ti_allowance_psf", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Parking Rate (Monthly)
+                  <input
+                    type="number"
+                    value={asNumber(selected.canonical.parking_rate_monthly)}
+                    onChange={(e) => updateSelectedCanonical("parking_rate_monthly", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  OpEx Structure
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.expense_structure_type)}
+                    onChange={(e) => updateSelectedCanonical("expense_structure_type", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Base OpEx ($/SF/YR)
+                  <input
+                    type="number"
+                    value={asNumber(selected.canonical.opex_psf_year_1)}
+                    onChange={(e) => updateSelectedCanonical("opex_psf_year_1", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Deposit
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.security_deposit)}
+                    onChange={(e) => updateSelectedCanonical("security_deposit", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400">
+                  Guaranty
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.guaranty)}
+                    onChange={(e) => updateSelectedCanonical("guaranty", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400 md:col-span-2">
+                  Options
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.options || selected.canonical.renewal_options)}
+                    onChange={(e) => updateSelectedCanonical("options", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+                <label className="text-xs text-slate-400 md:col-span-2">
+                  Notice Dates
+                  <input
+                    type="text"
+                    value={asText(selected.canonical.notice_dates)}
+                    onChange={(e) => updateSelectedCanonical("notice_dates", e.target.value)}
+                    className="input-premium mt-1 !py-2"
+                  />
+                </label>
+              </div>
+
+              <div className="border border-white/10 bg-black/25 p-3">
+                <p className="text-xs text-slate-400 uppercase tracking-[0.08em] mb-2">Base Rent Schedule + Escalations</p>
+                <p className="text-xs text-slate-200">{getRentScheduleSummary(selected.canonical)}</p>
+                <p className="text-xs text-slate-400 mt-1">Estimated escalation: {formatPercent(estimateEscalationPct(selected.canonical))}</p>
               </div>
 
               {selected.extractionSummary ? (
@@ -632,6 +990,14 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
             <div className="space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Tenant</p>
+                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.tenant_name) || "-"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Landlord</p>
+                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.landlord_name) || "-"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
                   <p className="text-xs text-slate-400">Premises</p>
                   <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.premises_name || controllingAbstract.controllingCanonical.building_name || "-")}</p>
                 </div>
@@ -654,6 +1020,52 @@ export function CompletedLeasesWorkspace({ exportBranding = {} }: CompletedLease
                 <div className="border border-white/10 bg-black/20 p-2">
                   <p className="text-xs text-slate-400">Lease Type</p>
                   <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.lease_type || "-")}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Rent Commencement</p>
+                  <p className="text-sm text-white">{formatDate(asText(controllingAbstract.controllingCanonical.rent_commencement_date))}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Term (Months)</p>
+                  <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.term_months) || "-"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2 md:col-span-2">
+                  <p className="text-xs text-slate-400">Base Rent Schedule</p>
+                  <p className="text-sm text-white">{getRentScheduleSummary(controllingAbstract.controllingCanonical)}</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Escalations: {formatPercent(estimateEscalationPct(controllingAbstract.controllingCanonical))}
+                  </p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">OpEx Structure</p>
+                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.expense_structure_type) || "-"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Free Rent (Months)</p>
+                  <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.free_rent_months) || 0}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">TI Allowance ($/SF)</p>
+                  <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.ti_allowance_psf) || "-"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Parking</p>
+                  <p className="text-sm text-white">
+                    {asNumber(controllingAbstract.controllingCanonical.parking_count) || 0} spaces @ {asNumber(controllingAbstract.controllingCanonical.parking_rate_monthly) || 0}/mo
+                  </p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Deposit</p>
+                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.security_deposit) || "-"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2">
+                  <p className="text-xs text-slate-400">Guaranty</p>
+                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.guaranty) || "-"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-2 md:col-span-2">
+                  <p className="text-xs text-slate-400">Options / Notice Dates</p>
+                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.options || controllingAbstract.controllingCanonical.renewal_options) || "-"}</p>
+                  <p className="text-xs text-slate-400 mt-1">{asText(controllingAbstract.controllingCanonical.notice_dates) || "-"}</p>
                 </div>
               </div>
 

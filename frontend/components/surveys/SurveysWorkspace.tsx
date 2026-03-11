@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
 import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
+import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
+import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
+import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { computeSurveyMonthlyOccupancyCost, createManualSurveyEntryFromImage, mapNormalizeToSurveyEntry } from "@/lib/surveys/engine";
 import {
   buildSurveysExportFileName,
@@ -17,6 +22,7 @@ import type { SurveyEntry, SurveysExportBranding, SurveyLeaseType, SurveyOccupan
 const STORAGE_KEY = "surveys_module_entries_v1";
 
 interface SurveysWorkspaceProps {
+  clientId: string;
   exportBranding?: SurveysExportBranding;
 }
 
@@ -35,9 +41,11 @@ function formatIsoDate(iso: string): string {
   return `${m[2]}.${m[3]}.${m[1]}`;
 }
 
-export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps) {
+export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorkspaceProps) {
+  const { registerDocument, isAuthenticated } = useClientWorkspace();
   const [entries, setEntries] = useState<SurveyEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [storageHydrated, setStorageHydrated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [excelLoading, setExcelLoading] = useState(false);
   const [error, setError] = useState("");
@@ -46,30 +54,86 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
   const [globalDragActive, setGlobalDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const globalDragDepthRef = useRef(0);
+  const scopedStorageKey = useMemo(
+    () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
+    [clientId],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { entries?: SurveyEntry[]; selectedId?: string };
-      if (!Array.isArray(parsed.entries) || parsed.entries.length === 0) return;
-      setEntries(parsed.entries);
-      if (parsed.selectedId && parsed.entries.some((entry) => entry.id === parsed.selectedId)) {
+    let cancelled = false;
+    setStorageHydrated(false);
+    setEntries([]);
+    setSelectedId("");
+    setStatus("No survey files uploaded.");
+    setError("");
+
+    const applyParsed = (parsed: { entries?: SurveyEntry[]; selectedId?: string } | null) => {
+      if (!parsed || !Array.isArray(parsed.entries) || parsed.entries.length === 0) {
+        setStorageHydrated(true);
+        return;
+      }
+      const scopedEntries = parsed.entries
+        .filter((entry) => entry.clientId === clientId || !entry.clientId)
+        .map((entry) => ({ ...entry, clientId }));
+      if (scopedEntries.length === 0) {
+        setStorageHydrated(true);
+        return;
+      }
+      setEntries(scopedEntries);
+      if (parsed.selectedId && scopedEntries.some((entry) => entry.id === parsed.selectedId)) {
         setSelectedId(parsed.selectedId);
       } else {
-        setSelectedId(parsed.entries[0].id);
+        setSelectedId(scopedEntries[0].id);
       }
-      setStatus(`Loaded ${parsed.entries.length} saved survey entr${parsed.entries.length === 1 ? "y" : "ies"}.`);
-    } catch {
-      // ignore broken persisted state
+      setStatus(`Loaded ${scopedEntries.length} saved survey entr${scopedEntries.length === 1 ? "y" : "ies"}.`);
+      setStorageHydrated(true);
+    };
+
+    async function hydrate() {
+      if (isAuthenticated) {
+        try {
+          const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
+          if (cancelled) return;
+          applyParsed((remote.value as { entries?: SurveyEntry[]; selectedId?: string } | null) ?? null);
+          return;
+        } catch (error) {
+          console.warn("surveys_cloud_load_failed", error);
+          if (cancelled) return;
+          setStorageHydrated(true);
+          return;
+        }
+      }
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        applyParsed(raw ? (JSON.parse(raw) as { entries?: SurveyEntry[]; selectedId?: string }) : null);
+      } catch {
+        setStorageHydrated(true);
+      }
     }
-  }, []);
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [scopedStorageKey, clientId, isAuthenticated]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || entries.length === 0) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ entries, selectedId }));
-  }, [entries, selectedId]);
+    if (typeof window === "undefined") return;
+    if (!storageHydrated) return;
+    if (isAuthenticated) {
+      const payload = entries.length === 0 ? null : { entries, selectedId };
+      void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
+        console.warn("surveys_cloud_save_failed", error);
+      });
+      return;
+    }
+    if (entries.length === 0) {
+      localStorage.removeItem(scopedStorageKey);
+      return;
+    }
+    localStorage.setItem(scopedStorageKey, JSON.stringify({ entries, selectedId }));
+  }, [entries, selectedId, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const selected = useMemo(() => entries.find((entry) => entry.id === selectedId) ?? entries[0] ?? null, [entries, selectedId]);
 
@@ -78,11 +142,16 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
     [selected]
   );
 
-  const parseDocument = useCallback(async (file: File): Promise<SurveyEntry> => {
+  const addEntry = useCallback((entry: SurveyEntry) => {
+    setEntries((prev) => [entry, ...prev]);
+    setSelectedId(entry.id);
+  }, []);
+
+  const parseDocument = useCallback(async (file: File): Promise<{ entry: SurveyEntry; normalize: NormalizerResponse | null }> => {
     const lower = file.name.toLowerCase();
     const isDoc = lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".doc");
     const isImage = lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp");
-    if (isImage) return createManualSurveyEntryFromImage(file.name);
+    if (isImage) return { entry: createManualSurveyEntryFromImage(file.name, clientId), normalize: null };
     if (!isDoc) throw new Error(`Unsupported file type for ${file.name}. Use PDF, DOCX, DOC, PNG, JPG, or WEBP.`);
 
     const form = new FormData();
@@ -94,8 +163,8 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
       throw new Error(text || `Normalize request failed (${res.status}).`);
     }
     const normalize = (await res.json()) as NormalizerResponse;
-    return mapNormalizeToSurveyEntry(normalize, file.name);
-  }, []);
+    return { entry: mapNormalizeToSurveyEntry(normalize, file.name, clientId), normalize };
+  }, [clientId]);
 
   const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
     const files = Array.from(incoming ?? []);
@@ -106,9 +175,16 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
       let count = 0;
       for (const file of files) {
         setStatus(`Processing ${file.name}...`);
-        const entry = await parseDocument(file);
-        setEntries((prev) => [entry, ...prev]);
-        setSelectedId(entry.id);
+        const { entry, normalize } = await parseDocument(file);
+        addEntry(entry);
+        await registerDocument({
+          clientId,
+          name: file.name,
+          file,
+          sourceModule: "surveys",
+          normalize,
+          parsed: Boolean(normalize),
+        });
         count += 1;
       }
       setStatus(`Processed ${count} survey file${count === 1 ? "" : "s"}.`);
@@ -117,7 +193,39 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
     } finally {
       setLoading(false);
     }
-  }, [parseDocument]);
+  }, [parseDocument, registerDocument, clientId, addEntry]);
+
+  const onSelectExistingDocument = useCallback((document: ClientWorkspaceDocument) => {
+    try {
+      const snapshot = document.normalizeSnapshot;
+      if (snapshot?.canonical_lease) {
+        const normalized: NormalizerResponse = {
+          canonical_lease: snapshot.canonical_lease,
+          option_variants: snapshot.option_variants || [],
+          confidence_score: Number(snapshot.confidence_score || 0),
+          field_confidence: snapshot.field_confidence || {},
+          missing_fields: [],
+          clarification_questions: [],
+          warnings: snapshot.warnings || [],
+          extraction_summary: snapshot.extraction_summary,
+          review_tasks: snapshot.review_tasks || [],
+        };
+        const entry = mapNormalizeToSurveyEntry(normalized, document.name, clientId);
+        addEntry(entry);
+        setStatus(`Loaded ${document.name} from client document library.`);
+        setError("");
+        return;
+      }
+
+      // If the selected existing document has no parse snapshot, create a manual review entry.
+      const manual = createManualSurveyEntryFromImage(document.name, clientId);
+      addEntry(manual);
+      setStatus(`Added manual survey row from ${document.name}. Complete missing fields before export.`);
+      setError("");
+    } catch (err) {
+      setError(getDisplayErrorMessage(err));
+    }
+  }, [addEntry, clientId]);
 
   const updateSelected = useCallback((patch: Partial<SurveyEntry>) => {
     if (!selected) return;
@@ -289,6 +397,13 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
             }}
           />
           <p className="text-xs text-slate-400 mt-3">{loading ? "Processing..." : status}</p>
+          <div className="mt-3">
+            <ClientDocumentPicker
+              buttonLabel="Select Existing Survey Document"
+              allowedTypes={["surveys", "flyers", "floorplans", "other"]}
+              onSelectDocument={onSelectExistingDocument}
+            />
+          </div>
           {error ? <p className="text-xs text-red-300 mt-2">{error}</p> : null}
         </PlatformPanel>
 
@@ -300,7 +415,9 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
                   <th className="text-left py-2 pr-3 text-slate-300 font-medium">Building</th>
                   <th className="text-left py-2 pr-3 text-slate-300 font-medium">Address</th>
                   <th className="text-left py-2 pr-3 text-slate-300 font-medium">RSF</th>
-                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Type</th>
+                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Direct/Sublease</th>
+                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Sublessor</th>
+                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Sublease Exp.</th>
                   <th className="text-left py-2 pr-3 text-slate-300 font-medium">Lease</th>
                   <th className="text-left py-2 pr-3 text-slate-300 font-medium">Monthly Cost</th>
                   <th className="text-left py-2 text-slate-300 font-medium">Status</th>
@@ -309,7 +426,7 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
               <tbody>
                 {entries.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-6 text-slate-400">
+                    <td colSpan={9} className="py-6 text-slate-400">
                       No survey entries yet.
                     </td>
                   </tr>
@@ -331,6 +448,8 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
                         <td className="py-2 pr-3 text-slate-300">{entry.address || "-"}</td>
                         <td className="py-2 pr-3 text-slate-200">{asNumber(entry.availableSqft).toLocaleString("en-US")}</td>
                         <td className="py-2 pr-3 text-slate-200">{entry.occupancyType}</td>
+                        <td className="py-2 pr-3 text-slate-200">{entry.sublessor || "-"}</td>
+                        <td className="py-2 pr-3 text-slate-200">{entry.subleaseExpirationDate || "-"}</td>
                         <td className="py-2 pr-3 text-slate-200">{entry.leaseType}</td>
                         <td className="py-2 pr-3 text-slate-200">{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(cost.totalMonthly)}</td>
                         <td className="py-2 text-slate-200">{entry.needsReview ? "Needs Review" : "Ready"}</td>
@@ -547,4 +666,3 @@ export function SurveysWorkspace({ exportBranding = {} }: SurveysWorkspaceProps)
     </PlatformSection>
   );
 }
-

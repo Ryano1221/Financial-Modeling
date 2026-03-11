@@ -19,6 +19,7 @@ export interface ObligationCompany {
 
 export interface ObligationRecord {
   id: string;
+  clientId: string;
   companyId: string;
   title: string;
   buildingName: string;
@@ -46,6 +47,7 @@ export interface ObligationRecord {
 
 export interface ObligationDocumentRecord {
   id: string;
+  clientId: string;
   companyId: string;
   obligationId: string;
   fileName: string;
@@ -65,6 +67,8 @@ export interface ObligationPortfolioMetrics {
   totalAnnualObligation: number;
   expiringWithin12Months: number;
   upcomingNoticeWithin6Months: number;
+  upcomingRenewalWithin12Months: number;
+  upcomingTerminationWithin12Months: number;
   averageCompleteness: number;
 }
 
@@ -72,9 +76,12 @@ export interface ObligationTimelineBucket {
   year: number;
   expiringCount: number;
   noticeCount: number;
+  renewalCount: number;
+  terminationCount: number;
 }
 
 export interface ObligationStorageState {
+  clientId: string;
   companies: ObligationCompany[];
   obligations: ObligationRecord[];
   documents: ObligationDocumentRecord[];

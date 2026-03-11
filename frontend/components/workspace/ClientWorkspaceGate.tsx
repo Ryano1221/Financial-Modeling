@@ -11,10 +11,8 @@ export function ClientWorkspaceGate() {
   const { isAuthenticated, clients, activeClient, createClient, setActiveClient } = useClientWorkspace();
   const [name, setName] = useState("");
   const [companyType, setCompanyType] = useState("");
-  const [industry, setIndustry] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
-  const [brokerage, setBrokerage] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
 
@@ -66,20 +64,6 @@ export function ClientWorkspaceGate() {
           />
           <input
             type="text"
-            value={industry}
-            onChange={(e) => setIndustry(e.target.value)}
-            className="input-premium"
-            placeholder="Industry"
-          />
-          <input
-            type="text"
-            value={brokerage}
-            onChange={(e) => setBrokerage(e.target.value)}
-            className="input-premium"
-            placeholder="Brokerage"
-          />
-          <input
-            type="text"
             value={contactName}
             onChange={(e) => setContactName(e.target.value)}
             className="input-premium"
@@ -112,10 +96,8 @@ export function ClientWorkspaceGate() {
               const created = createClient({
                 name,
                 companyType,
-                industry,
                 contactName,
                 contactEmail,
-                brokerage,
                 notes,
               });
               if (!created) {
@@ -125,10 +107,8 @@ export function ClientWorkspaceGate() {
               setError("");
               setName("");
               setCompanyType("");
-              setIndustry("");
               setContactName("");
               setContactEmail("");
-              setBrokerage("");
               setNotes("");
             }}
           >

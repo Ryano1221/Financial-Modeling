@@ -4,6 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
 import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
+import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
+import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
+import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import {
   buildTimelineBuckets,
   computeObligationCompleteness,
@@ -51,6 +56,22 @@ function formatIsoDate(value: string): string {
   return `${m[2]}.${m[3]}.${m[1]}`;
 }
 
+function toNormalizerResponseFromSnapshot(document: ClientWorkspaceDocument): NormalizerResponse | null {
+  const snapshot = document.normalizeSnapshot;
+  if (!snapshot?.canonical_lease) return null;
+  return {
+    canonical_lease: snapshot.canonical_lease,
+    option_variants: snapshot.option_variants || [],
+    confidence_score: Number(snapshot.confidence_score || 0),
+    field_confidence: snapshot.field_confidence || {},
+    missing_fields: [],
+    clarification_questions: [],
+    warnings: snapshot.warnings || [],
+    extraction_summary: snapshot.extraction_summary,
+    review_tasks: snapshot.review_tasks || [],
+  };
+}
+
 function mergeObligation(existing: ObligationRecord, seed: ReturnType<typeof mapNormalizeToObligationSeed>): ObligationRecord {
   const nowIso = new Date().toISOString();
   const next: ObligationRecord = {
@@ -77,10 +98,15 @@ function mergeObligation(existing: ObligationRecord, seed: ReturnType<typeof map
   return next;
 }
 
-function createObligationFromSeed(companyId: string, seed: ReturnType<typeof mapNormalizeToObligationSeed>): ObligationRecord {
+function createObligationFromSeed(
+  clientId: string,
+  companyId: string,
+  seed: ReturnType<typeof mapNormalizeToObligationSeed>,
+): ObligationRecord {
   const nowIso = new Date().toISOString();
   const base: ObligationRecord = {
     id: nextId(),
+    clientId,
     companyId,
     title: seed.title,
     buildingName: seed.buildingName,
@@ -118,11 +144,13 @@ function kindChipClass(kind: string): string {
   return "bg-white/10 text-slate-100 border-white/30";
 }
 
-export function ObligationsWorkspace() {
+export function ObligationsWorkspace({ clientId }: { clientId: string }) {
+  const { registerDocument, isAuthenticated } = useClientWorkspace();
   const [companies, setCompanies] = useState<ObligationCompany[]>([]);
   const [activeCompanyId, setActiveCompanyId] = useState("");
   const [obligations, setObligations] = useState<ObligationRecord[]>([]);
   const [documents, setDocuments] = useState<ObligationDocumentRecord[]>([]);
+  const [storageHydrated, setStorageHydrated] = useState(false);
   const [selectedObligationId, setSelectedObligationId] = useState("");
   const [newCompanyName, setNewCompanyName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -132,18 +160,32 @@ export function ObligationsWorkspace() {
   const [globalDragActive, setGlobalDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const globalDragDepthRef = useRef(0);
+  const obligationsRef = useRef<ObligationRecord[]>([]);
+  const documentsRef = useRef<ObligationDocumentRecord[]>([]);
+  const scopedStorageKey = useMemo(
+    () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
+    [clientId],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
+    let cancelled = false;
+    setStorageHydrated(false);
+    setCompanies([]);
+    setObligations([]);
+    setDocuments([]);
+    setSelectedObligationId("");
+    setStatus("No obligation documents uploaded.");
+    setError("");
+
+    const applyParsed = (parsed: Partial<ObligationStorageState> | null) => {
+      if (!parsed) {
         const fallback = createDefaultCompany();
         setCompanies([fallback]);
         setActiveCompanyId(fallback.id);
+        setStorageHydrated(true);
         return;
       }
-      const parsed = JSON.parse(raw) as Partial<ObligationStorageState>;
       const loadedCompanies = Array.isArray(parsed.companies) && parsed.companies.length > 0
         ? parsed.companies
         : [createDefaultCompany()];
@@ -155,32 +197,80 @@ export function ObligationsWorkspace() {
       const nextSelected = asText(parsed.selectedObligationId) && loadedObligations.some((o) => o.id === parsed.selectedObligationId)
         ? asText(parsed.selectedObligationId)
         : (loadedObligations.find((o) => o.companyId === nextActive)?.id || "");
+      const scopedObligations = loadedObligations.map((item) => ({ ...item, clientId }));
+      const scopedDocuments = loadedDocuments.map((item) => ({ ...item, clientId }));
       setCompanies(loadedCompanies);
       setActiveCompanyId(nextActive);
-      setObligations(loadedObligations);
-      setDocuments(loadedDocuments);
+      setObligations(scopedObligations);
+      setDocuments(scopedDocuments);
+      obligationsRef.current = scopedObligations;
+      documentsRef.current = scopedDocuments;
       setSelectedObligationId(nextSelected);
-      if (loadedObligations.length > 0 || loadedDocuments.length > 0) {
-        setStatus(`Loaded ${loadedObligations.length} obligations and ${loadedDocuments.length} documents.`);
+      if (scopedObligations.length > 0 || scopedDocuments.length > 0) {
+        setStatus(`Loaded ${scopedObligations.length} obligations and ${scopedDocuments.length} documents.`);
       }
-    } catch {
-      const fallback = createDefaultCompany();
-      setCompanies([fallback]);
-      setActiveCompanyId(fallback.id);
+      setStorageHydrated(true);
+    };
+
+    async function hydrate() {
+      if (isAuthenticated) {
+        try {
+          const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
+          if (cancelled) return;
+          applyParsed((remote.value as Partial<ObligationStorageState> | null) ?? null);
+          return;
+        } catch (error) {
+          console.warn("obligations_cloud_load_failed", error);
+          if (cancelled) return;
+          applyParsed(null);
+          return;
+        }
+      }
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        applyParsed(raw ? (JSON.parse(raw) as Partial<ObligationStorageState>) : null);
+      } catch {
+        applyParsed(null);
+      }
     }
-  }, []);
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [scopedStorageKey, clientId, isAuthenticated]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || companies.length === 0) return;
+    obligationsRef.current = obligations;
+  }, [obligations]);
+
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!storageHydrated) return;
     const payload: ObligationStorageState = {
+      clientId,
       companies,
       obligations,
       documents,
       activeCompanyId,
       selectedObligationId,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [companies, obligations, documents, activeCompanyId, selectedObligationId]);
+    if (isAuthenticated) {
+      void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
+        console.warn("obligations_cloud_save_failed", error);
+      });
+      return;
+    }
+    if (companies.length === 0) {
+      localStorage.removeItem(scopedStorageKey);
+      return;
+    }
+    localStorage.setItem(scopedStorageKey, JSON.stringify(payload));
+  }, [clientId, companies, obligations, documents, activeCompanyId, selectedObligationId, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const activeCompany = useMemo(
     () => companies.find((company) => company.id === activeCompanyId) ?? companies[0] ?? null,
@@ -258,6 +348,87 @@ export function ObligationsWorkspace() {
     return (await res.json()) as NormalizerResponse;
   }, []);
 
+  const ingestNormalize = useCallback(async (
+    sourceName: string,
+    normalize: NormalizerResponse,
+    uploadedFile?: File,
+  ) => {
+    if (!activeCompanyId) return;
+    const seed = mapNormalizeToObligationSeed(normalize, sourceName);
+    const nowIso = new Date().toISOString();
+
+    const currentObligations = obligationsRef.current;
+    const matched = findMatchingObligation(currentObligations, activeCompanyId, seed);
+    let obligationId = "";
+    let nextBaseObligations: ObligationRecord[] = [];
+    if (matched) {
+      obligationId = matched.id;
+      nextBaseObligations = currentObligations.map((item) => (item.id === matched.id ? mergeObligation(item, seed) : item));
+    } else {
+      const created = createObligationFromSeed(clientId, activeCompanyId, seed);
+      obligationId = created.id;
+      nextBaseObligations = [created, ...currentObligations];
+    }
+
+    const currentDocs = documentsRef.current;
+    const existing = currentDocs.find((doc) => doc.companyId === activeCompanyId && doc.fileName === sourceName);
+    const nextDocRecord: ObligationDocumentRecord = {
+      id: existing?.id || nextId(),
+      clientId,
+      companyId: activeCompanyId,
+      obligationId,
+      fileName: sourceName,
+      kind: inferObligationDocumentKind(sourceName, normalize),
+      uploadedAtIso: nowIso,
+      confidenceScore: Math.max(0, Math.min(1, asNumber(normalize.confidence_score))),
+      reviewRequired: seed.reviewRequired,
+      parseWarnings: seed.parseWarnings,
+      extractionSummary: normalize.extraction_summary,
+      canonical: normalize.canonical_lease,
+    };
+    const nextDocs = existing
+      ? currentDocs.map((doc) => (doc.id === existing.id ? nextDocRecord : doc))
+      : [nextDocRecord, ...currentDocs];
+
+    const documentNamesByObligation = new Map<string, string[]>();
+    for (const doc of nextDocs) {
+      if (doc.companyId !== activeCompanyId) continue;
+      const bucket = documentNamesByObligation.get(doc.obligationId) || [];
+      bucket.push(doc.fileName);
+      documentNamesByObligation.set(doc.obligationId, bucket);
+    }
+
+    const nextObligations = nextBaseObligations.map((item) => {
+      if (item.companyId !== activeCompanyId) return item;
+      const docsForObligation = documentNamesByObligation.get(item.id) || [];
+      const changedDocs = docsForObligation.join("|") !== item.sourceDocumentIds.join("|");
+      if (!changedDocs && item.id !== obligationId) return item;
+      return {
+        ...item,
+        sourceDocumentIds: docsForObligation,
+        updatedAtIso: item.id === obligationId ? nowIso : item.updatedAtIso,
+      };
+    });
+
+    setDocuments(nextDocs);
+    setObligations(nextObligations);
+    documentsRef.current = nextDocs;
+    obligationsRef.current = nextObligations;
+
+    if (uploadedFile) {
+      await registerDocument({
+        clientId,
+        name: sourceName,
+        file: uploadedFile,
+        sourceModule: "obligations",
+        normalize,
+        parsed: true,
+      });
+    }
+
+    setSelectedObligationId(obligationId);
+  }, [activeCompanyId, clientId, registerDocument]);
+
   const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
     if (!activeCompanyId) return;
     const files = Array.from(incoming ?? []);
@@ -270,51 +441,7 @@ export function ObligationsWorkspace() {
       for (const file of files) {
         setStatus(`Processing ${file.name}...`);
         const normalize = await parseDocument(file);
-        const seed = mapNormalizeToObligationSeed(normalize, file.name);
-
-        let obligationId = "";
-        setObligations((prev) => {
-          const matched = findMatchingObligation(prev, activeCompanyId, seed);
-          if (!matched) {
-            const created = createObligationFromSeed(activeCompanyId, seed);
-            obligationId = created.id;
-            return [created, ...prev];
-          }
-          obligationId = matched.id;
-          return prev.map((item) => (item.id === matched.id ? mergeObligation(item, seed) : item));
-        });
-
-        if (!obligationId) {
-          const fallback = activeObligations[0];
-          obligationId = fallback?.id || "";
-        }
-
-        if (obligationId) {
-          setObligations((prev) =>
-            prev.map((item) => {
-              if (item.id !== obligationId) return item;
-              if (item.sourceDocumentIds.includes(file.name)) return item;
-              return { ...item, sourceDocumentIds: [file.name, ...item.sourceDocumentIds], updatedAtIso: new Date().toISOString() };
-            })
-          );
-
-          const doc: ObligationDocumentRecord = {
-            id: nextId(),
-            companyId: activeCompanyId,
-            obligationId,
-            fileName: file.name,
-            kind: inferObligationDocumentKind(file.name, normalize),
-            uploadedAtIso: new Date().toISOString(),
-            confidenceScore: Math.max(0, Math.min(1, asNumber(normalize.confidence_score))),
-            reviewRequired: seed.reviewRequired,
-            parseWarnings: seed.parseWarnings,
-            extractionSummary: normalize.extraction_summary,
-            canonical: normalize.canonical_lease,
-          };
-          setDocuments((prev) => [doc, ...prev]);
-          setSelectedObligationId(obligationId);
-        }
-
+        await ingestNormalize(file.name, normalize, file);
         processed += 1;
       }
       setStatus(`Processed ${processed} document${processed === 1 ? "" : "s"}.`);
@@ -323,7 +450,27 @@ export function ObligationsWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [activeCompanyId, parseDocument, activeObligations]);
+  }, [activeCompanyId, parseDocument, ingestNormalize]);
+
+  const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
+    const normalize = toNormalizerResponseFromSnapshot(document);
+    if (!normalize) {
+      setError("Selected document has no parsed payload. Upload this file through Document Center first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      setStatus(`Importing ${document.name} from client library...`);
+      await ingestNormalize(document.name, normalize);
+      setStatus(`Imported ${document.name} from client document library.`);
+    } catch (err) {
+      setError(getDisplayErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [ingestNormalize]);
 
   const isFileDragEvent = useCallback((event: DragEvent): boolean => {
     const dt = event.dataTransfer;
@@ -369,26 +516,29 @@ export function ObligationsWorkspace() {
   }, [isFileDragEvent, loading, processFiles]);
 
   const onReassignDocument = useCallback((documentId: string, nextObligationId: string) => {
-    const target = obligations.find((o) => o.id === nextObligationId);
+    const target = obligationsRef.current.find((o) => o.id === nextObligationId);
     if (!target || target.companyId !== activeCompanyId) return;
 
-    setDocuments((prev) => prev.map((doc) => (doc.id === documentId ? { ...doc, obligationId: nextObligationId } : doc)));
-
-    setObligations((prev) =>
-      prev.map((item) => {
-        if (item.companyId !== activeCompanyId) return item;
-        const docsForObligation = documents
-          .map((doc) => (doc.id === documentId ? { ...doc, obligationId: nextObligationId } : doc))
-          .filter((doc) => doc.companyId === activeCompanyId && doc.obligationId === item.id)
-          .map((doc) => doc.fileName);
-        return {
-          ...item,
-          sourceDocumentIds: docsForObligation,
-          updatedAtIso: new Date().toISOString(),
-        };
-      })
+    const nextDocs = documentsRef.current.map((doc) =>
+      doc.id === documentId ? { ...doc, obligationId: nextObligationId } : doc
     );
-  }, [obligations, documents, activeCompanyId]);
+    const nextObligations = obligationsRef.current.map((item) => {
+      if (item.companyId !== activeCompanyId) return item;
+      const docsForObligation = nextDocs
+        .filter((doc) => doc.companyId === activeCompanyId && doc.obligationId === item.id)
+        .map((doc) => doc.fileName);
+      return {
+        ...item,
+        sourceDocumentIds: docsForObligation,
+        updatedAtIso: new Date().toISOString(),
+      };
+    });
+
+    setDocuments(nextDocs);
+    setObligations(nextObligations);
+    documentsRef.current = nextDocs;
+    obligationsRef.current = nextObligations;
+  }, [activeCompanyId]);
 
   return (
     <PlatformSection
@@ -477,6 +627,15 @@ export function ObligationsWorkspace() {
             }}
           />
           <p className="text-xs text-slate-400 mt-3">{status}</p>
+          <div className="mt-3">
+            <ClientDocumentPicker
+              buttonLabel="Select Existing Obligation Document"
+              allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "sublease documents", "redlines", "other"]}
+              onSelectDocument={(doc) => {
+                void onSelectExistingDocument(doc);
+              }}
+            />
+          </div>
           {error ? <p className="text-xs text-red-300 mt-2">{error}</p> : null}
         </PlatformPanel>
 
@@ -500,7 +659,7 @@ export function ObligationsWorkspace() {
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-5 gap-3">
             <div className="border border-white/15 p-3 bg-black/20">
               <p className="text-xs text-slate-400">Expiring in 12 months</p>
               <p className="text-xl text-white mt-1">{formatInt(metrics.expiringWithin12Months)}</p>
@@ -510,35 +669,59 @@ export function ObligationsWorkspace() {
               <p className="text-xl text-white mt-1">{formatInt(metrics.upcomingNoticeWithin6Months)}</p>
             </div>
             <div className="border border-white/15 p-3 bg-black/20">
+              <p className="text-xs text-slate-400">Renewal in 12 months</p>
+              <p className="text-xl text-white mt-1">{formatInt(metrics.upcomingRenewalWithin12Months)}</p>
+            </div>
+            <div className="border border-white/15 p-3 bg-black/20">
+              <p className="text-xs text-slate-400">Termination in 12 months</p>
+              <p className="text-xl text-white mt-1">{formatInt(metrics.upcomingTerminationWithin12Months)}</p>
+            </div>
+            <div className="border border-white/15 p-3 bg-black/20">
               <p className="text-xs text-slate-400">Avg completeness</p>
               <p className="text-xl text-white mt-1">{metrics.averageCompleteness}%</p>
             </div>
           </div>
 
           <div className="mt-4 border border-white/15 p-3 bg-black/20">
-            <p className="heading-kicker mb-2">Expiration + notice timeline</p>
+            <p className="heading-kicker mb-2">Obligation event timeline</p>
             <div className="space-y-2">
               {timeline.map((bucket) => {
                 const maxValue = Math.max(
                   1,
-                  ...timeline.map((item) => Math.max(item.expiringCount, item.noticeCount))
+                  ...timeline.map((item) =>
+                    Math.max(item.expiringCount, item.noticeCount, item.renewalCount, item.terminationCount)
+                  )
                 );
-                const expireWidth = `${Math.round((bucket.expiringCount / maxValue) * 100)}%`;
-                const noticeWidth = `${Math.round((bucket.noticeCount / maxValue) * 100)}%`;
+                const widthForCount = (count: number): string => {
+                  if (count <= 0) return "0%";
+                  return `${Math.max(8, Math.round((count / maxValue) * 100))}%`;
+                };
+                const expireWidth = widthForCount(bucket.expiringCount);
+                const noticeWidth = widthForCount(bucket.noticeCount);
+                const renewalWidth = widthForCount(bucket.renewalCount);
+                const terminationWidth = widthForCount(bucket.terminationCount);
                 return (
-                  <div key={bucket.year} className="grid grid-cols-[70px_1fr_1fr] gap-2 items-center text-xs">
+                  <div key={bucket.year} className="grid grid-cols-[70px_1fr_1fr_1fr_1fr] gap-2 items-center text-xs">
                     <span className="text-slate-300">{bucket.year}</span>
-                    <div className="h-2 border border-cyan-300/40 bg-cyan-500/15">
+                    <div className="h-2 border border-cyan-300/40 bg-white/5">
                       <div className="h-full bg-cyan-300" style={{ width: expireWidth }} />
                     </div>
-                    <div className="h-2 border border-amber-300/40 bg-amber-500/15">
+                    <div className="h-2 border border-amber-300/40 bg-white/5">
                       <div className="h-full bg-amber-300" style={{ width: noticeWidth }} />
+                    </div>
+                    <div className="h-2 border border-emerald-300/40 bg-white/5">
+                      <div className="h-full bg-emerald-300" style={{ width: renewalWidth }} />
+                    </div>
+                    <div className="h-2 border border-fuchsia-300/40 bg-white/5">
+                      <div className="h-full bg-fuchsia-300" style={{ width: terminationWidth }} />
                     </div>
                   </div>
                 );
               })}
             </div>
-            <p className="text-[11px] text-slate-400 mt-2">Cyan bars = expirations. Amber bars = notice events.</p>
+            <p className="text-[11px] text-slate-400 mt-2">
+              Cyan = expirations. Amber = notices. Green = renewals. Fuchsia = termination rights.
+            </p>
           </div>
         </PlatformPanel>
 

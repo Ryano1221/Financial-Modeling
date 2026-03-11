@@ -7,11 +7,23 @@ import {
   buildPlatformExportFileName,
 } from "@/lib/export-design";
 import { downloadArrayBuffer as downloadArrayBufferShared, escapeHtml, openPrintWindow } from "@/lib/export-runtime";
+import {
+  buildPlatformShareLink,
+  parsePlatformShareData,
+  type PlatformShareEnvelope,
+} from "@/lib/platform-share";
 import type { BackendCanonicalLease } from "@/lib/types";
-import type { CompletedLeaseAbstractView, CompletedLeaseDocumentRecord, CompletedLeaseExportBranding } from "./types";
+import type {
+  CompletedLeaseAbstractView,
+  CompletedLeaseDocumentRecord,
+  CompletedLeaseExportBranding,
+  CompletedLeaseSharePayload,
+} from "./types";
 
 const COLORS = EXPORT_BRAND.excel.colors;
 const NUM_FMT = EXPORT_BRAND.excel.numberFormats;
+
+export type CompletedLeaseShareEnvelope = PlatformShareEnvelope<CompletedLeaseSharePayload>;
 
 function toDateLabel(value: string): string {
   const raw = String(value || "").trim();
@@ -56,25 +68,53 @@ function getEscalationPct(canonical: BackendCanonicalLease): number {
   return (second - first) / first;
 }
 
+function asText(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function rentScheduleSummary(canonical: BackendCanonicalLease): string {
+  const steps = Array.isArray(canonical.rent_schedule) ? canonical.rent_schedule : [];
+  if (steps.length === 0) return "-";
+  return steps
+    .slice(0, 8)
+    .map((step) => {
+      const start = Math.max(0, Math.floor(Number(step.start_month) || 0)) + 1;
+      const end = Math.max(start, Math.floor(Number(step.end_month) || start - 1) + 1);
+      const rate = toNumber(step.rent_psf_annual);
+      return `M${start}-${end}: ${rate > 0 ? `$${rate.toFixed(2)}/SF/YR` : "-"}`;
+    })
+    .join(" | ");
+}
+
 function abstractRows(canonical: BackendCanonicalLease): Array<{ label: string; value: string }> {
   const termMonths = toNumber(canonical.term_months) || monthDiffInclusive(canonical.commencement_date, canonical.expiration_date);
   const escalationPct = getEscalationPct(canonical);
   return [
+    { label: "Tenant", value: asText(canonical.tenant_name) || "-" },
+    { label: "Landlord", value: asText(canonical.landlord_name) || "-" },
     { label: "Premises", value: String(canonical.premises_name || canonical.building_name || "-") },
+    { label: "Building", value: String(canonical.building_name || "-") },
     { label: "Address", value: String(canonical.address || "-") },
     { label: "Suite / Floor", value: [canonical.suite, canonical.floor].filter(Boolean).join(" / ") || "-" },
     { label: "RSF", value: toNumber(canonical.rsf).toLocaleString("en-US") || "-" },
     { label: "Lease Type", value: String(canonical.lease_type || "-") },
     { label: "Commencement", value: toDateLabel(String(canonical.commencement_date || "")) },
+    { label: "Rent Commencement", value: toDateLabel(String(canonical.rent_commencement_date || "")) },
     { label: "Expiration", value: toDateLabel(String(canonical.expiration_date || "")) },
     { label: "Term (Months)", value: termMonths ? String(termMonths) : "-" },
     { label: "Base Rent ($/SF/YR)", value: getBaseRentYearOne(canonical) ? toCurrency(getBaseRentYearOne(canonical)) : "-" },
+    { label: "Base Rent Schedule", value: rentScheduleSummary(canonical) },
     { label: "Annual Base Rent Escalation", value: escalationPct ? `${(escalationPct * 100).toFixed(2)}%` : "-" },
     { label: "Free Rent (Months)", value: String(toNumber(canonical.free_rent_months) || 0) },
+    { label: "OpEx Structure", value: asText(canonical.expense_structure_type) || "-" },
     { label: "Base OpEx ($/SF/YR)", value: toNumber(canonical.opex_psf_year_1) ? toCurrency(toNumber(canonical.opex_psf_year_1)) : "-" },
     { label: "OpEx Escalation", value: toNumber(canonical.opex_growth_rate) ? `${(toNumber(canonical.opex_growth_rate) * 100).toFixed(2)}%` : "-" },
     { label: "Parking Spaces", value: String(toNumber(canonical.parking_count) || 0) },
     { label: "Parking Rate (Monthly)", value: toNumber(canonical.parking_rate_monthly) ? toCurrency(toNumber(canonical.parking_rate_monthly)) : "-" },
+    { label: "Deposit", value: asText(canonical.security_deposit) || "-" },
+    { label: "Guaranty", value: asText(canonical.guaranty) || "-" },
+    { label: "Options", value: asText(canonical.options || canonical.renewal_options) || "-" },
+    { label: "Notice Dates", value: asText(canonical.notice_dates) || "-" },
     { label: "TI Allowance ($/SF)", value: toNumber(canonical.ti_allowance_psf) ? toCurrency(toNumber(canonical.ti_allowance_psf)) : "-" },
     { label: "Discount Rate", value: `${(toNumber(canonical.discount_rate_annual || 0.08) * 100).toFixed(2)}%` },
     { label: "Notes", value: String(canonical.notes || "-") },
@@ -358,4 +398,41 @@ export function printCompletedLeaseAbstract(
 
 export function downloadArrayBuffer(arrayBuffer: ArrayBuffer, fileName: string, mimeType: string): void {
   downloadArrayBufferShared(arrayBuffer, fileName, mimeType);
+}
+
+export function buildCompletedLeaseShareLink(
+  abstract: CompletedLeaseAbstractView,
+  branding: CompletedLeaseExportBranding = {},
+): string {
+  const payload: CompletedLeaseSharePayload = {
+    title: "Completed Lease Abstract",
+    fields: abstractRows(abstract.controllingCanonical).map((row) => ({
+      label: row.label,
+      value: row.value,
+    })),
+    sourceDocuments: abstract.sourceDocuments.map((doc) => ({
+      kind: doc.kind,
+      fileName: doc.fileName,
+      uploadedAtIso: doc.uploadedAtIso,
+      controllingStatus: doc.id === abstract.controllingDocumentId ? "controlling" : "reference",
+    })),
+    overrideNotes: [...abstract.overrideNotes],
+  };
+  return buildPlatformShareLink(
+    "/completed-leases/share",
+    "completed-leases",
+    payload,
+    branding,
+  );
+}
+
+export function parseCompletedLeaseShareData(
+  encoded: string | null | undefined,
+): CompletedLeaseShareEnvelope | null {
+  const parsed = parsePlatformShareData<CompletedLeaseSharePayload>(
+    encoded,
+    "completed-leases",
+  );
+  if (!parsed || !Array.isArray(parsed.payload.fields) || !Array.isArray(parsed.payload.sourceDocuments)) return null;
+  return parsed;
 }

@@ -10,6 +10,7 @@ from .evaluation import (
     EvaluationReport,
     coverage_gap_families,
     evaluate_cases,
+    failure_density,
     f1_macro,
     report_grade,
     summarize_top_failure_modes,
@@ -72,6 +73,7 @@ def run_hardening_loop(
     macro_vals = [f1_macro(run.report) for run in runs]
     controlling_vals = [run.report.controlling_term_accuracy for run in runs]
     calibration_vals = [run.report.confidence_calibration_mae for run in runs]
+    failure_density_vals = [failure_density(run.report) for run in runs]
 
     aggregate = {
         "iterations": len(runs),
@@ -79,8 +81,11 @@ def run_hardening_loop(
         "macro_f1_mean": round(sum(macro_vals) / len(macro_vals), 4),
         "macro_f1_min": round(min(macro_vals), 4),
         "macro_f1_max": round(max(macro_vals), 4),
+        "error_rate_mean": round(1.0 - (sum(macro_vals) / len(macro_vals)), 4),
         "controlling_accuracy_mean": round(sum(controlling_vals) / len(controlling_vals), 4),
+        "controlling_error_rate_mean": round(1.0 - (sum(controlling_vals) / len(controlling_vals)), 4),
         "confidence_calibration_mae_mean": round(sum(calibration_vals) / len(calibration_vals), 4),
+        "failure_density_mean": round(sum(failure_density_vals) / len(failure_density_vals), 4),
         "grades": [report_grade(run.report) for run in runs],
         "coverage_gaps": sorted({fam for run in runs for fam in coverage_gap_families(run.report)}),
         "top_failure_modes": [
@@ -114,8 +119,11 @@ def build_markdown_summary(payload: dict[str, Any]) -> str:
         f"- Iterations: {agg.get('iterations')}",
         f"- Total cases evaluated: {agg.get('total_cases_evaluated')}",
         f"- Macro F1 (mean/min/max): {agg.get('macro_f1_mean')} / {agg.get('macro_f1_min')} / {agg.get('macro_f1_max')}",
+        f"- Error rate (mean): {agg.get('error_rate_mean')}",
         f"- Controlling-term accuracy (mean): {agg.get('controlling_accuracy_mean')}",
+        f"- Controlling-term error rate (mean): {agg.get('controlling_error_rate_mean')}",
         f"- Confidence calibration MAE (mean): {agg.get('confidence_calibration_mae_mean')}",
+        f"- Failure density (mean): {agg.get('failure_density_mean')}",
         f"- Run grades: {', '.join(agg.get('grades') or [])}",
     ]
 

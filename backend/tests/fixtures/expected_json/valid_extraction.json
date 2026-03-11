@@ -1,0 +1,74 @@
+{
+  "document": {
+    "doc_type": "lease",
+    "doc_role": "prime_lease",
+    "confidence": 0.9,
+    "evidence_spans": [
+      {
+        "page": 1,
+        "snippet": "Lease Agreement",
+        "bbox": null,
+        "source": "rule_classifier",
+        "source_confidence": 0.9
+      }
+    ]
+  },
+  "term": {
+    "commencement_date": "2026-01-01",
+    "expiration_date": "2026-12-31",
+    "rent_commencement_date": "2026-01-01",
+    "term_months": 11
+  },
+  "premises": {
+    "building_name": "Example Building",
+    "suite": "100",
+    "floor": null,
+    "address": "100 Main St",
+    "rsf": 10000
+  },
+  "rent_steps": [
+    {
+      "start_month": 0,
+      "end_month": 10,
+      "rate_psf_annual": 42.0,
+      "source": "table_parser",
+      "source_confidence": 0.8
+    }
+  ],
+  "abatements": [],
+  "opex": {
+    "mode": "nnn",
+    "base_psf_year_1": 10.0,
+    "growth_rate": 0.03,
+    "cues": ["nnn"]
+  },
+  "provenance": {
+    "term.term_months": [
+      {
+        "page": 1,
+        "snippet": "term 11 months",
+        "bbox": null,
+        "source": "pdf_text_regex",
+        "source_confidence": 0.8
+      }
+    ]
+  },
+  "review_tasks": [],
+  "evidence": [
+    {
+      "page": 1,
+      "snippet": "Lease Agreement",
+      "bbox": null,
+      "source": "rule_classifier",
+      "source_confidence": 0.9
+    }
+  ],
+  "confidence": {
+    "overall": 0.9,
+    "status": "green",
+    "export_allowed": true,
+    "validation_pass_rate": 1.0,
+    "reconcile_margin": 0.4
+  },
+  "export_allowed": true
+}

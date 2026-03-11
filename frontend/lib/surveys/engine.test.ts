@@ -78,4 +78,18 @@ describe("surveys/engine", () => {
     expect(manual.needsReview).toBe(true);
     expect(manual.reviewReasons.length).toBeGreaterThan(0);
   });
+
+  it("infers sublessor fields for sublease survey records", () => {
+    const normalize = makeNormalize({
+      extraction_summary: { document_type_detected: "sublease flyer" },
+      canonical_lease: {
+        ...makeNormalize().canonical_lease,
+        tenant_name: "Sublessor Co",
+      },
+    });
+    const entry = mapNormalizeToSurveyEntry(normalize, "sublease-flyer.pdf");
+    expect(entry.occupancyType).toBe("Sublease");
+    expect(entry.sublessor).toBe("Sublessor Co");
+    expect(entry.subleaseExpirationDate).toBe("2031-12-31");
+  });
 });

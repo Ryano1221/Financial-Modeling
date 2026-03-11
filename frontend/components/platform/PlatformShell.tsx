@@ -28,6 +28,26 @@ type PlatformPanelProps = {
   className?: string;
 };
 
+type PlatformDataTableProps = {
+  headers: string[];
+  children: ReactNode;
+  minWidthClassName?: string;
+};
+
+type PlatformStatusIndicatorProps = {
+  tone?: "neutral" | "success" | "warning" | "danger";
+  label: string;
+};
+
+type PlatformActionButtonProps = {
+  children: ReactNode;
+  variant?: "primary" | "secondary" | "success";
+  onClick?: () => void;
+  type?: "button" | "submit";
+  disabled?: boolean;
+  className?: string;
+};
+
 export function PlatformModuleTabs({
   tabs,
   activeId,
@@ -113,5 +133,123 @@ export function PlatformPanel({
       <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
       <div>{children}</div>
     </div>
+  );
+}
+
+export function PlatformCard({
+  kicker,
+  title,
+  children,
+  className = "",
+}: PlatformPanelProps) {
+  return (
+    <div className={`min-w-0 border border-white/15 bg-black/30 p-4 ${className}`.trim()}>
+      {kicker ? <p className="heading-kicker mb-2">{kicker}</p> : null}
+      <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+export function PlatformPageHeader({
+  kicker = "Workspace",
+  title,
+  description,
+  actions,
+}: Omit<PlatformSectionProps, "children">) {
+  return (
+    <div className="border border-white/15 bg-black/25 p-4 sm:p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="heading-kicker mb-2">{kicker}</p>
+          <h2 className="heading-section mb-2">{title}</h2>
+          {description ? <p className="text-sm text-slate-300 max-w-3xl">{description}</p> : null}
+        </div>
+        {actions ? <div className="shrink-0">{actions}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+export function PlatformDataTable({
+  headers,
+  children,
+  minWidthClassName = "min-w-[680px]",
+}: PlatformDataTableProps) {
+  return (
+    <div className="overflow-x-auto">
+      <table className={`w-full border-collapse text-sm ${minWidthClassName}`}>
+        <thead>
+          <tr className="border-b border-white/20">
+            {headers.map((header) => (
+              <th key={header} className="text-left py-2 pr-3 text-slate-300 font-medium">
+                {header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+export function PlatformUploadPanel({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="border border-white/15 bg-black/25 p-4">
+      <p className="heading-kicker mb-2">{title}</p>
+      <p className="text-sm text-slate-300 mb-3">{description}</p>
+      {children}
+    </div>
+  );
+}
+
+export function PlatformStatusIndicator({ tone = "neutral", label }: PlatformStatusIndicatorProps) {
+  const toneClass =
+    tone === "success"
+      ? "border-emerald-400/60 bg-emerald-500/15 text-emerald-100"
+      : tone === "warning"
+        ? "border-amber-400/60 bg-amber-500/15 text-amber-100"
+        : tone === "danger"
+          ? "border-red-400/60 bg-red-500/15 text-red-100"
+          : "border-white/25 bg-white/5 text-slate-200";
+  return (
+    <span className={`inline-flex items-center border px-2 py-1 text-xs ${toneClass}`}>
+      {label}
+    </span>
+  );
+}
+
+export function PlatformActionButton({
+  children,
+  variant = "secondary",
+  onClick,
+  type = "button",
+  disabled,
+  className = "",
+}: PlatformActionButtonProps) {
+  const variantClass =
+    variant === "primary"
+      ? "btn-premium-primary"
+      : variant === "success"
+        ? "btn-premium-success"
+        : "btn-premium-secondary";
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`btn-premium ${variantClass} disabled:opacity-50 ${className}`.trim()}
+    >
+      {children}
+    </button>
   );
 }

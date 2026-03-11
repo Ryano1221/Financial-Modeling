@@ -1,0 +1,17 @@
+# Build and dependency artifacts
+node_modules
+node_modules*
+.next
+
+# Local and test artifacts
+coverage
+playwright-report
+test-results
+
+# Environment and logs
+.env*
+*.log
+
+# Tooling artifacts
+tsconfig.tsbuildinfo
+.DS_Store

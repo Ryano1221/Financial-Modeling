@@ -48,8 +48,11 @@ def main() -> int:
     print(f"Iterations: {aggregate.get('iterations')}")
     print(f"Total evaluated: {aggregate.get('total_cases_evaluated')}")
     print(f"Macro F1 mean: {aggregate.get('macro_f1_mean')}")
+    print(f"Error rate mean: {aggregate.get('error_rate_mean')}")
     print(f"Controlling accuracy mean: {aggregate.get('controlling_accuracy_mean')}")
+    print(f"Controlling error rate mean: {aggregate.get('controlling_error_rate_mean')}")
     print(f"Confidence calibration MAE mean: {aggregate.get('confidence_calibration_mae_mean')}")
+    print(f"Failure density mean: {aggregate.get('failure_density_mean')}")
     print(f"JSON report: {paths['json']}")
     print(f"Markdown report: {paths['markdown']}")
     return 0

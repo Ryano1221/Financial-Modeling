@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ScenarioWithId } from "@/lib/types";
+import type { NormalizerResponse, ScenarioWithId } from "@/lib/types";
+import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
+import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
+import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import {
   buildExistingObligationFromScenario,
   buildSensitivity,
@@ -19,6 +24,7 @@ import {
 } from "@/lib/sublease-recovery/proposal-import";
 import {
   buildSubleaseRecoveryExportFileName,
+  buildSubleaseRecoveryShareLink,
   buildSubleaseRecoveryWorkbook,
   downloadArrayBuffer,
   printSubleaseRecoverySummary,
@@ -93,9 +99,14 @@ function scenarioDisplayTitle(scenario: SubleaseScenario): string {
   return subtenant ? `${scenario.name} · ${subtenant}` : scenario.name;
 }
 
-function normalizeStoredScenario(existing: ReturnType<typeof buildExistingObligationFromScenario>, scenario: SubleaseScenario): SubleaseScenario {
+function normalizeStoredScenario(
+  existing: ReturnType<typeof buildExistingObligationFromScenario>,
+  scenario: SubleaseScenario,
+  clientId: string,
+): SubleaseScenario {
   return {
     ...scenario,
+    clientId,
     subtenantName: String(scenario.subtenantName || "").trim(),
     subtenantLegalEntity: String(scenario.subtenantLegalEntity || "").trim(),
     dbaName: String(scenario.dbaName || "").trim(),
@@ -118,13 +129,19 @@ function normalizeStoredScenario(existing: ReturnType<typeof buildExistingObliga
 }
 
 interface SubleaseRecoveryAnalysisProps {
+  clientId: string;
   sourceScenario: ScenarioWithId | null;
   exportBranding?: SubleaseRecoveryExportBranding;
 }
 
-export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }: SubleaseRecoveryAnalysisProps) {
+export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBranding = {} }: SubleaseRecoveryAnalysisProps) {
+  const { registerDocument, isAuthenticated } = useClientWorkspace();
   const existing = useMemo(() => buildExistingObligationFromScenario(sourceScenario), [sourceScenario]);
   const existingKey = `${existing.premises}|${existing.commencementDate}|${existing.expirationDate}|${existing.rsf}`;
+  const scopedStorageKey = useMemo(
+    () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
+    [clientId],
+  );
 
   const [scenarios, setScenarios] = useState<SubleaseScenario[]>([]);
   const [activeScenarioId, setActiveScenarioId] = useState<string>("");
@@ -136,6 +153,9 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
   const [importError, setImportError] = useState<string>("");
   const [proposalDraft, setProposalDraft] = useState<ProposalImportDraft | null>(null);
   const [proposalFieldReview, setProposalFieldReview] = useState<ImportedProposalFieldReview[]>([]);
+  const [storageHydrated, setStorageHydrated] = useState(false);
+  const [shareStatus, setShareStatus] = useState("");
+  const [shareError, setShareError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [globalDragActive, setGlobalDragActive] = useState(false);
   const proposalFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -143,36 +163,89 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as { seed?: string; scenarios?: SubleaseScenario[] };
-        if (parsed.seed === scenarioSeed(existingKey) && Array.isArray(parsed.scenarios) && parsed.scenarios.length > 0) {
-          const restored = parsed.scenarios.map((scenario) => normalizeStoredScenario(existing, scenario));
-          setScenarios(restored);
-          setActiveScenarioId(restored[0].id);
-          setSaveStatus("Loaded saved scenarios");
-          return;
+    let cancelled = false;
+    setScenarios([]);
+    setActiveScenarioId("");
+    setProposalDraft(null);
+    setProposalFieldReview([]);
+    setImportStatus("");
+    setImportError("");
+    setStorageHydrated(false);
+
+    const applyDefaults = () => {
+      const defaults = defaultSubleaseScenarios(existing).map((scenario) => normalizeStoredScenario(existing, scenario, clientId));
+      setScenarios(defaults);
+      setActiveScenarioId(defaults[0]?.id || "");
+      setSaveStatus(isAuthenticated ? "Synced from account (no saved scenarios yet)" : "Seeded from existing obligation");
+      setStorageHydrated(true);
+    };
+
+    async function hydrate() {
+      if (isAuthenticated) {
+        try {
+          const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
+          if (cancelled) return;
+          const parsed = remote.value as { seed?: string; scenarios?: SubleaseScenario[] } | null;
+          if (parsed && parsed.seed === scenarioSeed(existingKey) && Array.isArray(parsed.scenarios) && parsed.scenarios.length > 0) {
+            const restored = parsed.scenarios.map((scenario) => normalizeStoredScenario(existing, scenario, clientId));
+            setScenarios(restored);
+            setActiveScenarioId(restored[0].id);
+            setSaveStatus("Loaded saved scenarios from account");
+            setStorageHydrated(true);
+            return;
+          }
+        } catch (error) {
+          console.warn("sublease_recovery_cloud_load_failed", error);
+          if (cancelled) return;
         }
+        applyDefaults();
+        return;
       }
-    } catch {
-      // ignore parse issues and reset from baseline
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { seed?: string; scenarios?: SubleaseScenario[] };
+          if (parsed.seed === scenarioSeed(existingKey) && Array.isArray(parsed.scenarios) && parsed.scenarios.length > 0) {
+            const restored = parsed.scenarios.map((scenario) => normalizeStoredScenario(existing, scenario, clientId));
+            setScenarios(restored);
+            setActiveScenarioId(restored[0].id);
+            setSaveStatus("Loaded saved scenarios");
+            setStorageHydrated(true);
+            return;
+          }
+        }
+      } catch {
+        // ignore parse issues and reset from baseline
+      }
+      applyDefaults();
     }
-    const defaults = defaultSubleaseScenarios(existing).map((scenario) => normalizeStoredScenario(existing, scenario));
-    setScenarios(defaults);
-    setActiveScenarioId(defaults[0]?.id || "");
-    setSaveStatus("Seeded from existing obligation");
-  }, [existingKey, existing]);
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [existingKey, existing, scopedStorageKey, clientId, isAuthenticated]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || scenarios.length === 0) return;
+    if (typeof window === "undefined") return;
+    if (!storageHydrated) return;
+    if (isAuthenticated) {
+      const payload = scenarios.length === 0 ? null : { seed: scenarioSeed(existingKey), scenarios };
+      void saveWorkspaceCloudSection(scopedStorageKey, payload)
+        .then(() => setSaveStatus(`Saved to account ${new Date().toLocaleTimeString()}`))
+        .catch(() => setSaveStatus("Unable to save to account"));
+      return;
+    }
+    if (scenarios.length === 0) {
+      localStorage.removeItem(scopedStorageKey);
+      return;
+    }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ seed: scenarioSeed(existingKey), scenarios }));
+      localStorage.setItem(scopedStorageKey, JSON.stringify({ seed: scenarioSeed(existingKey), scenarios }));
       setSaveStatus(`Saved ${new Date().toLocaleTimeString()}`);
     } catch {
       setSaveStatus("Unable to save in this browser");
     }
-  }, [scenarios, existingKey]);
+  }, [scenarios, existingKey, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const activeScenario = scenarios.find((scenario) => scenario.id === activeScenarioId) ?? scenarios[0] ?? null;
 
@@ -229,7 +302,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
   };
 
   const addScenario = () => {
-    const next = normalizeStoredScenario(existing, defaultSubleaseScenarios(existing)[0]);
+    const next = normalizeStoredScenario(existing, defaultSubleaseScenarios(existing)[0], clientId);
     const scenario: SubleaseScenario = {
       ...next,
       id: `custom-${Date.now().toString(36)}`,
@@ -257,7 +330,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
   };
 
   const resetScenarios = () => {
-    const defaults = defaultSubleaseScenarios(existing).map((scenario) => normalizeStoredScenario(existing, scenario));
+    const defaults = defaultSubleaseScenarios(existing).map((scenario) => normalizeStoredScenario(existing, scenario, clientId));
     setScenarios(defaults);
     setActiveScenarioId(defaults[0]?.id || "");
     setSaveStatus("Reset from existing obligation");
@@ -266,6 +339,8 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
   const exportExcel = async () => {
     if (results.length === 0 || !sensitivity) return;
     setExcelLoading(true);
+    setShareError("");
+    setShareStatus("");
     try {
       const buffer = await buildSubleaseRecoveryWorkbook(existing, results, sensitivity, exportBranding);
       downloadArrayBuffer(
@@ -281,12 +356,27 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
   const exportPdf = () => {
     if (results.length === 0) return;
     setPdfLoading(true);
+    setShareError("");
+    setShareStatus("");
     try {
       printSubleaseRecoverySummary(existing, results, sensitivity, exportBranding);
     } finally {
       setPdfLoading(false);
     }
   };
+
+  const onCopyShareLink = useCallback(async () => {
+    if (results.length === 0 || typeof navigator === "undefined") return;
+    setShareError("");
+    setShareStatus("");
+    try {
+      const link = buildSubleaseRecoveryShareLink(existing, results, exportBranding);
+      await navigator.clipboard.writeText(link);
+      setShareStatus("Share link copied.");
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : "Unable to copy share link.");
+    }
+  }, [existing, results, exportBranding]);
 
   const applyProposalFieldChange = (fieldKey: string, nextValue: string | number) => {
     setProposalFieldReview((prevFields) => {
@@ -356,6 +446,15 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
     setImportStatus(`Parsing ${file.name}...`);
     try {
       const normalized = await normalizeProposalUpload(file);
+      await registerDocument({
+        clientId,
+        name: file.name,
+        file,
+        sourceModule: "sublease-recovery",
+        normalize: normalized,
+        parsed: true,
+        type: "sublease documents",
+      });
       const draft = mapProposalToScenarioDraft(normalized, existing, file.name || "Uploaded proposal");
       setProposalDraft(draft);
       setProposalFieldReview(draft.fieldReview);
@@ -366,6 +465,31 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
     } finally {
       setImportLoading(false);
     }
+  }, [existing, registerDocument, clientId]);
+
+  const importFromExistingClientDocument = useCallback((document: ClientWorkspaceDocument) => {
+    const snapshot = document.normalizeSnapshot;
+    if (!snapshot?.canonical_lease) {
+      setImportError("Selected document is not parsed yet. Upload a parseable proposal or use a parsed file from the document center.");
+      setImportStatus("");
+      return;
+    }
+    const normalized: NormalizerResponse = {
+      canonical_lease: snapshot.canonical_lease,
+      option_variants: snapshot.option_variants || [],
+      confidence_score: Number(snapshot.confidence_score || 0),
+      field_confidence: snapshot.field_confidence || {},
+      missing_fields: [],
+      clarification_questions: [],
+      warnings: snapshot.warnings || [],
+      extraction_summary: snapshot.extraction_summary,
+      review_tasks: snapshot.review_tasks || [],
+    };
+    const draft = mapProposalToScenarioDraft(normalized, existing, document.name || "Client proposal");
+    setProposalDraft(draft);
+    setProposalFieldReview(draft.fieldReview);
+    setImportStatus(`Loaded proposal terms from ${document.name}. Review and approve below.`);
+    setImportError("");
   }, [existing]);
 
   const isFileDragEvent = useCallback((event: DragEvent): boolean => {
@@ -429,7 +553,7 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
         ...proposalDraft.reviewMeta,
         extractedFields: proposalFieldReview,
       },
-    });
+    }, clientId);
     setScenarios((prev) => {
       const existingIdx = prev.findIndex((item) => item.id === scenarioToSave.id);
       if (existingIdx >= 0) {
@@ -520,8 +644,13 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
           <button type="button" className="btn-premium btn-premium-secondary" onClick={exportPdf} disabled={pdfLoading || results.length === 0}>
             {pdfLoading ? "Preparing…" : "Export PDF Summary"}
           </button>
+          <button type="button" className="btn-premium btn-premium-secondary" onClick={() => { void onCopyShareLink(); }} disabled={results.length === 0}>
+            Copy Share Link
+          </button>
         </div>
       </div>
+      {shareStatus ? <p className="text-xs text-cyan-200 mb-3">{shareStatus}</p> : null}
+      {shareError ? <p className="text-xs text-rose-300 mb-3">{shareError}</p> : null}
 
       <div
         className={`
@@ -556,6 +685,13 @@ export function SubleaseRecoveryAnalysis({ sourceScenario, exportBranding = {} }
         <p className="text-xs text-slate-400 mt-2">Parsed terms are reviewed before a scenario is created.</p>
         {importStatus && <p className="text-xs text-cyan-200 mt-2">{importStatus}</p>}
         {importError && <p className="text-xs text-rose-300 mt-2">{importError}</p>}
+      </div>
+      <div className="mb-4">
+        <ClientDocumentPicker
+          buttonLabel="Select Existing Client Proposal"
+          allowedTypes={["proposals", "lois", "counters", "sublease documents", "other"]}
+          onSelectDocument={importFromExistingClientDocument}
+        />
       </div>
 
       {proposalDraft && (

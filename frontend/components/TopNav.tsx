@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -13,9 +14,15 @@ export function TopNav() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { ready, session, activeClient, activeClientId } = useClientWorkspace();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const searchParamsSnapshot = searchParams?.toString() || "";
 
-  // Keep exported report routes presentation-only (no app chrome).
-  if (pathname?.startsWith("/report")) return null;
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname, searchParamsSnapshot]);
+
+  // Keep exported report and share routes presentation-only (no app chrome).
+  if (pathname?.startsWith("/report") || pathname?.endsWith("/share")) return null;
 
   const rawModule = String(searchParams?.get("module") || "").trim().toLowerCase();
   const hasExplicitModule = rawModule.length > 0;
@@ -46,49 +53,120 @@ export function TopNav() {
               sizes="(max-width: 640px) 112px, 140px"
             />
           </Link>
-          <div className="flex items-center gap-2 min-w-0 overflow-x-auto whitespace-nowrap">
-            {showModuleNav
-              ? PLATFORM_MODULES.map((tab) => {
-                  const isActive = tab.id === activeModule;
-                  return (
-                    <Link
-                      key={tab.id}
-                      href={`/?module=${tab.id}`}
-                      className={`btn-premium text-xs sm:text-sm ${
-                        isActive ? "btn-premium-primary" : "btn-premium-secondary"
-                      }`}
-                    >
-                      {tab.label}
-                    </Link>
-                  );
-                })
-              : null}
-            {ready && session ? (
-              <Link
-                href={clientHref}
-                className={`btn-premium text-xs sm:text-sm ${
-                  clientTabActive ? "btn-premium-primary" : "btn-premium-secondary"
-                }`}
-              >
-                {clientLabel}
-              </Link>
-            ) : null}
-            {!ready ? null : session ? (
-              <Link href="/account" className="btn-premium btn-premium-secondary text-xs sm:text-sm">
-                Account
-              </Link>
-            ) : (
-              <>
-                <Link href="/account?mode=signin" className="btn-premium btn-premium-secondary text-xs sm:text-sm">
-                  Sign in
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              className="sm:hidden btn-premium btn-premium-secondary text-xs"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="top-nav-mobile-menu"
+              onClick={() => setMobileMenuOpen((prev) => !prev)}
+            >
+              {mobileMenuOpen ? "Close" : "Menu"}
+            </button>
+            <div className="hidden sm:flex items-center gap-2 min-w-0 overflow-x-auto whitespace-nowrap">
+              {showModuleNav
+                ? PLATFORM_MODULES.map((tab) => {
+                    const isActive = tab.id === activeModule;
+                    return (
+                      <Link
+                        key={tab.id}
+                        href={`/?module=${tab.id}`}
+                        className={`btn-premium text-xs sm:text-sm ${
+                          isActive ? "btn-premium-primary" : "btn-premium-secondary"
+                        }`}
+                      >
+                        {tab.label}
+                      </Link>
+                    );
+                  })
+                : null}
+              {ready && session ? (
+                <Link
+                  href={clientHref}
+                  className={`btn-premium text-xs sm:text-sm ${
+                    clientTabActive ? "btn-premium-primary" : "btn-premium-secondary"
+                  }`}
+                >
+                  {clientLabel}
                 </Link>
-                <Link href="/account?mode=signup" className="btn-premium btn-premium-primary text-xs sm:text-sm">
-                  Create account
+              ) : null}
+              {!ready ? null : session ? (
+                <Link href="/account" className="btn-premium btn-premium-secondary text-xs sm:text-sm">
+                  Account
                 </Link>
-              </>
-            )}
+              ) : (
+                <>
+                  <Link href="/account?mode=signin" className="btn-premium btn-premium-secondary text-xs sm:text-sm">
+                    Sign in
+                  </Link>
+                  <Link href="/account?mode=signup" className="btn-premium btn-premium-primary text-xs sm:text-sm">
+                    Create account
+                  </Link>
+                </>
+              )}
+            </div>
           </div>
         </div>
+        {mobileMenuOpen ? (
+          <div id="top-nav-mobile-menu" className="sm:hidden mt-3 border border-white/20 bg-black/95 p-2">
+            <div className="grid grid-cols-1 gap-2">
+              {showModuleNav
+                ? PLATFORM_MODULES.map((tab) => {
+                    const isActive = tab.id === activeModule;
+                    return (
+                      <Link
+                        key={tab.id}
+                        href={`/?module=${tab.id}`}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`btn-premium text-xs ${
+                          isActive ? "btn-premium-primary" : "btn-premium-secondary"
+                        }`}
+                      >
+                        {tab.label}
+                      </Link>
+                    );
+                  })
+                : null}
+              {ready && session ? (
+                <Link
+                  href={clientHref}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`btn-premium text-xs ${
+                    clientTabActive ? "btn-premium-primary" : "btn-premium-secondary"
+                  }`}
+                >
+                  {clientLabel}
+                </Link>
+              ) : null}
+              {!ready ? null : session ? (
+                <Link
+                  href="/account"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="btn-premium btn-premium-secondary text-xs"
+                >
+                  Account
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    href="/account?mode=signin"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="btn-premium btn-premium-secondary text-xs"
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    href="/account?mode=signup"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="btn-premium btn-premium-primary text-xs"
+                  >
+                    Create account
+                  </Link>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
     </header>
   );

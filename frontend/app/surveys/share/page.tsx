@@ -33,7 +33,7 @@ function SurveysShareContent() {
         <p className="heading-kicker mb-2">Survey Share</p>
         <h1 className="heading-section mb-1">Survey Comparison</h1>
         <p className="text-sm text-slate-300 mb-4">
-          {payload.branding.brokerageName} | {payload.branding.clientName} | Report Date {payload.branding.reportDate}
+          {payload.branding.brokerageName} | {payload.branding.clientName} | Prepared by {payload.branding.preparedBy} | Report Date {payload.branding.reportDate}
         </p>
 
         <div className="overflow-x-auto border border-white/15">
@@ -43,7 +43,9 @@ function SurveysShareContent() {
                 <th className="text-left py-2 px-2 text-slate-200 font-medium">Building</th>
                 <th className="text-left py-2 px-2 text-slate-200 font-medium">Address</th>
                 <th className="text-left py-2 px-2 text-slate-200 font-medium">Suite/Floor</th>
-                <th className="text-left py-2 px-2 text-slate-200 font-medium">Type</th>
+                <th className="text-left py-2 px-2 text-slate-200 font-medium">Direct/Sublease</th>
+                <th className="text-left py-2 px-2 text-slate-200 font-medium">Sublessor</th>
+                <th className="text-left py-2 px-2 text-slate-200 font-medium">Sublease Exp.</th>
                 <th className="text-left py-2 px-2 text-slate-200 font-medium">Lease Type</th>
                 <th className="text-left py-2 px-2 text-slate-200 font-medium">RSF</th>
                 <th className="text-left py-2 px-2 text-slate-200 font-medium">Base Rent</th>
@@ -62,6 +64,8 @@ function SurveysShareContent() {
                     <td className="py-2 px-2 text-slate-300">{entry.address || "-"}</td>
                     <td className="py-2 px-2 text-slate-300">{suiteFloor || "-"}</td>
                     <td className="py-2 px-2 text-slate-300">{entry.occupancyType}</td>
+                    <td className="py-2 px-2 text-slate-300">{entry.sublessor || "-"}</td>
+                    <td className="py-2 px-2 text-slate-300">{entry.subleaseExpirationDate || "-"}</td>
                     <td className="py-2 px-2 text-slate-300">{entry.leaseType}</td>
                     <td className="py-2 px-2 text-slate-200">{entry.availableSqft.toLocaleString("en-US")}</td>
                     <td className="py-2 px-2 text-slate-200">
@@ -104,4 +108,3 @@ export default function SurveysSharePage() {
     </Suspense>
   );
 }
-

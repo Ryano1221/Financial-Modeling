@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { fetchApi, CONNECTION_MESSAGE } from "@/lib/api";
 import { formatCurrencyPerSF, formatDateISO, formatMonths, formatPercent, formatRSF } from "@/lib/format";
 import type { LeaseExtraction, ScenarioInput, RentStep } from "@/lib/types";
 import { round0, syncTiFields } from "@/lib/ti";
+import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 
 function formatExtractedDisplay(key: string, value: unknown): string {
   if (value == null) return "—";
@@ -64,7 +66,13 @@ function extractionToScenario(ext: LeaseExtraction, edits: Record<string, string
 }
 
 export default function UploadPage() {
+  const { activeClientId, isAuthenticated, registerDocument } = useClientWorkspace();
   const router = useRouter();
+  const workspaceScopeId = activeClientId || (isAuthenticated ? "unselected" : "guest");
+  const pendingScenarioKey = useMemo(
+    () => makeClientScopedStorageKey(PENDING_SCENARIO_KEY, workspaceScopeId),
+    [workspaceScopeId],
+  );
   const [file, setFile] = useState<File | null>(null);
   const [extraction, setExtraction] = useState<LeaseExtraction | null>(null);
   const [loading, setLoading] = useState(false);
@@ -93,12 +101,20 @@ export default function UploadPage() {
       }
       const data: LeaseExtraction = await res.json();
       setExtraction(data);
+      await registerDocument({
+        clientId: workspaceScopeId,
+        name: file.name,
+        file,
+        sourceModule: "upload",
+        parsed: true,
+        type: "leases",
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : CONNECTION_MESSAGE);
     } finally {
       setLoading(false);
     }
-  }, [file]);
+  }, [file, registerDocument, workspaceScopeId]);
 
   const setEdit = useCallback((key: string, value: string | number) => {
     setEdits((prev) => ({ ...prev, [key]: value }));
@@ -108,12 +124,12 @@ export default function UploadPage() {
     if (!extraction) return;
     const scenario = extractionToScenario(extraction, edits);
     try {
-      sessionStorage.setItem(PENDING_SCENARIO_KEY, JSON.stringify(scenario));
+      sessionStorage.setItem(pendingScenarioKey, JSON.stringify(scenario));
       router.push("/");
     } catch (e) {
       setError("Could not save scenario");
     }
-  }, [extraction, edits, router]);
+  }, [extraction, edits, router, pendingScenarioKey]);
 
   return (
     <main className="app-container pt-24 pb-14 max-w-5xl">

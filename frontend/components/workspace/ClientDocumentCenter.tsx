@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
-import { CLIENT_DOCUMENT_TYPES, type ClientWorkspaceDocument } from "@/lib/workspace/types";
+import { CLIENT_DOCUMENT_TYPES } from "@/lib/workspace/types";
 import { getDisplayErrorMessage } from "@/lib/api";
 
 function asText(value: unknown): string {
@@ -25,12 +25,6 @@ function inDateRange(iso: string, startDate: string, endDate: string): boolean {
   return true;
 }
 
-function previewLabel(document: ClientWorkspaceDocument): string {
-  if (document.previewDataUrl) return "Preview available";
-  if (document.normalizeSnapshot?.canonical_lease) return "Parsed summary";
-  return "Preview unavailable";
-}
-
 export function ClientDocumentCenter() {
   const { activeClient, documents, registerDocument } = useClientWorkspace();
   const [loading, setLoading] = useState(false);
@@ -43,13 +37,7 @@ export function ClientDocumentCenter() {
   const [suiteFilter, setSuiteFilter] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [previewId, setPreviewId] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const selectedPreview = useMemo(
-    () => documents.find((doc) => doc.id === previewId) ?? null,
-    [documents, previewId],
-  );
 
   const filteredDocuments = useMemo(() => {
     const needle = asText(query).toLowerCase();
@@ -217,8 +205,7 @@ export function ClientDocumentCenter() {
           {error ? <p className="mt-1 text-xs text-red-300">{error}</p> : null}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mt-4">
-          <div className="lg:col-span-8 border border-white/15 bg-black/30 p-4">
+        <div className="mt-4 border border-white/15 bg-black/30 p-4">
             <p className="heading-kicker mb-2">Documents</p>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[860px] border-collapse text-sm">
@@ -229,36 +216,25 @@ export function ClientDocumentCenter() {
                     <th className="text-left py-2 pr-3 text-slate-300 font-medium">Building</th>
                     <th className="text-left py-2 pr-3 text-slate-300 font-medium">Suite</th>
                     <th className="text-left py-2 pr-3 text-slate-300 font-medium">Uploaded</th>
-                    <th className="text-left py-2 text-slate-300 font-medium">Preview</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredDocuments.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-6 text-slate-400">No documents match the current filters.</td>
+                      <td colSpan={5} className="py-6 text-slate-400">No documents match the current filters.</td>
                     </tr>
                   ) : (
                     filteredDocuments.map((doc) => {
-                      const selected = doc.id === selectedPreview?.id;
                       return (
                         <tr
                           key={doc.id}
-                          className={`border-b border-white/10 transition-colors ${selected ? "bg-cyan-500/10" : "hover:bg-white/5"}`}
+                          className="border-b border-white/10 transition-colors hover:bg-white/5"
                         >
                           <td className="py-2 pr-3 text-slate-100">{doc.name}</td>
                           <td className="py-2 pr-3 text-slate-300">{doc.type}</td>
                           <td className="py-2 pr-3 text-slate-300">{doc.building || "-"}</td>
                           <td className="py-2 pr-3 text-slate-300">{doc.suite || "-"}</td>
                           <td className="py-2 pr-3 text-slate-300">{formatDateTime(doc.uploadedAt)}</td>
-                          <td className="py-2">
-                            <button
-                              type="button"
-                              className="btn-premium btn-premium-secondary text-xs"
-                              onClick={() => setPreviewId(doc.id)}
-                            >
-                              View
-                            </button>
-                          </td>
                         </tr>
                       );
                     })
@@ -266,39 +242,6 @@ export function ClientDocumentCenter() {
                 </tbody>
               </table>
             </div>
-          </div>
-
-          <div className="lg:col-span-4 border border-white/15 bg-black/30 p-4">
-            <p className="heading-kicker mb-2">Preview</p>
-            {selectedPreview ? (
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm text-white">{selectedPreview.name}</p>
-                  <p className="text-xs text-slate-400">{previewLabel(selectedPreview)}</p>
-                </div>
-
-                {selectedPreview.previewDataUrl ? (
-                  selectedPreview.previewDataUrl.startsWith("data:image/") ? (
-                    <img src={selectedPreview.previewDataUrl} alt={selectedPreview.name} className="w-full border border-white/15" />
-                  ) : (
-                    <iframe src={selectedPreview.previewDataUrl} className="w-full h-64 border border-white/15 bg-black" title={selectedPreview.name} />
-                  )
-                ) : null}
-
-                {selectedPreview.normalizeSnapshot?.canonical_lease ? (
-                  <div className="border border-white/15 bg-black/20 p-3 text-xs text-slate-300 space-y-1">
-                    <p><span className="text-slate-400">Tenant:</span> {asText(selectedPreview.normalizeSnapshot.canonical_lease.tenant_name) || "-"}</p>
-                    <p><span className="text-slate-400">Landlord:</span> {asText(selectedPreview.normalizeSnapshot.canonical_lease.landlord_name) || "-"}</p>
-                    <p><span className="text-slate-400">Building:</span> {asText(selectedPreview.normalizeSnapshot.canonical_lease.building_name) || "-"}</p>
-                    <p><span className="text-slate-400">Address:</span> {asText(selectedPreview.normalizeSnapshot.canonical_lease.address) || "-"}</p>
-                    <p><span className="text-slate-400">Suite:</span> {asText(selectedPreview.normalizeSnapshot.canonical_lease.suite) || "-"}</p>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-sm text-slate-400">Select a document to preview.</p>
-            )}
-          </div>
         </div>
       </div>
     </section>

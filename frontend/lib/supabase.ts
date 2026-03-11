@@ -19,6 +19,26 @@ export interface SupabaseAuthSession {
   user: SupabaseAuthUser;
 }
 
+type SessionListener = (session: SupabaseAuthSession | null) => void;
+const sessionListeners = new Set<SessionListener>();
+
+function emitSession(session: SupabaseAuthSession | null): void {
+  sessionListeners.forEach((listener) => {
+    try {
+      listener(session);
+    } catch {
+      // Ignore subscriber exceptions so auth persistence is not blocked.
+    }
+  });
+}
+
+export function subscribeAuthSession(listener: SessionListener): () => void {
+  sessionListeners.add(listener);
+  return () => {
+    sessionListeners.delete(listener);
+  };
+}
+
 function getEnv(): { url: string; anonKey: string } {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
   const envAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
@@ -122,11 +142,13 @@ function persistSession(session: SupabaseAuthSession | null): void {
     clearAccessToken();
     setStoredRefreshToken(undefined);
     setStoredUser(null);
+    emitSession(null);
     return;
   }
   setAccessToken(session.access_token);
   setStoredRefreshToken(session.refresh_token);
   setStoredUser(session.user);
+  emitSession(session);
 }
 
 export async function signInWithPassword(

@@ -11,7 +11,7 @@ import time
 import traceback
 import uuid
 from calendar import monthrange
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 # Load .env from backend directory so OPENAI_API_KEY etc. are available
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -135,10 +135,14 @@ MAX_UPLOAD_LEASE_BYTES = int(os.environ.get("MAX_UPLOAD_LEASE_BYTES", str(15 * 1
 MAX_EXTRACTION_ARTIFACTS_BYTES = int(os.environ.get("MAX_EXTRACTION_ARTIFACTS_BYTES", str(8 * 1024 * 1024)))
 SAFE_OCR_MAX_PAGES = int(os.environ.get("SAFE_OCR_MAX_PAGES", "3"))
 SKIP_OCR_ABOVE_BYTES = int(os.environ.get("SKIP_OCR_ABOVE_BYTES", str(8 * 1024 * 1024)))
+MAX_WORKSPACE_STATE_BYTES = int(os.environ.get("MAX_WORKSPACE_STATE_BYTES", str(5 * 1024 * 1024)))
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip().rstrip("/")
 SUPABASE_ANON_KEY = (os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or "").strip()
 SUPABASE_SERVICE_ROLE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
 SUPABASE_LOGOS_BUCKET = (os.environ.get("SUPABASE_LOGOS_BUCKET") or "logos").strip() or "logos"
+SUPABASE_WORKSPACE_BUCKET = (
+    os.environ.get("SUPABASE_WORKSPACE_BUCKET") or os.environ.get("SUPABASE_LOGOS_BUCKET") or "logos"
+).strip() or "logos"
 DEFAULT_CREMODEL_BRAND_NAME = "The CRE Model"
 
 
@@ -193,6 +197,14 @@ def _public_branding_payload() -> dict[str, str | bool | None]:
 
 class UserSettingsUpdateRequest(BaseModel):
     brokerage_name: Optional[str] = None
+
+
+class UserWorkspaceStateUpdateRequest(BaseModel):
+    workspace_state: dict
+
+
+class UserWorkspaceSectionUpdateRequest(BaseModel):
+    value: Any = None
 
 
 class ContactSubmissionRequest(BaseModel):
@@ -484,6 +496,77 @@ def _storage_download_logo_bytes(object_path: str) -> tuple[bytes | None, str | 
     elif clean.lower().endswith(".jpg") or clean.lower().endswith(".jpeg"):
         content_type = "image/jpeg"
     return body, content_type
+
+
+def _workspace_state_object_path(user_id: str) -> str:
+    return f"workspace/{user_id}/state.json"
+
+
+def _sanitize_workspace_section_key(section_key: str) -> str:
+    key = str(section_key or "").strip()
+    if not key or len(key) > 120 or not re.fullmatch(r"[a-zA-Z0-9_.:-]+", key):
+        raise HTTPException(status_code=400, detail="Invalid workspace section key.")
+    return key
+
+
+def _storage_upload_workspace_state(user_id: str, workspace_state: dict) -> dict[str, str | int]:
+    try:
+        body = json.dumps(workspace_state, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Workspace payload must be valid JSON.") from exc
+
+    if len(body) > MAX_WORKSPACE_STATE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Workspace payload exceeds size limit ({MAX_WORKSPACE_STATE_BYTES} bytes).",
+        )
+
+    object_path = _workspace_state_object_path(user_id)
+    encoded = urllib_parse.quote(object_path, safe="/")
+    status, resp_body = _http_bytes_request(
+        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+        method="POST",
+        headers={
+            **_admin_headers(),
+            "content-type": "application/json",
+            "x-upsert": "true",
+        },
+        body=body,
+        timeout=30.0,
+    )
+    if status >= 400:
+        msg = resp_body.decode("utf-8", errors="ignore")[:300]
+        raise HTTPException(status_code=503, detail=f"Failed to save workspace state: {msg}")
+    return {"object_path": object_path, "bytes": len(body)}
+
+
+def _storage_download_workspace_state(user_id: str) -> tuple[dict | None, str | None]:
+    object_path = _workspace_state_object_path(user_id)
+    encoded = urllib_parse.quote(object_path, safe="/")
+    status, body = _http_bytes_request(
+        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+        method="GET",
+        headers=_admin_headers(),
+        timeout=30.0,
+    )
+    if status == 404:
+        return None, None
+    if status >= 400:
+        raise HTTPException(status_code=503, detail="Failed to load workspace state from cloud storage.")
+    if not body:
+        return None, None
+    try:
+        payload = json.loads(body.decode("utf-8", errors="ignore"))
+    except Exception:
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+
+    # Backward compatibility: support raw state dict and enveloped shape.
+    raw_state = payload.get("workspace_state") if isinstance(payload.get("workspace_state"), dict) else payload
+    workspace_state = raw_state if isinstance(raw_state, dict) else {}
+    updated_at = str(payload.get("updated_at") or "").strip() or None
+    return workspace_state, updated_at
 
 
 @lru_cache(maxsize=1)
@@ -848,6 +931,77 @@ def patch_user_settings(body: UserSettingsUpdateRequest, request: Request):
         "brokerage_name": settings.get("brokerage_name") or "",
         "brokerage_logo_url": settings.get("brokerage_logo_url") or "",
         "updated_at": settings.get("updated_at") or None,
+    }
+
+
+@app.get("/user-settings/workspace")
+def get_user_workspace_state(request: Request):
+    user = _require_supabase_user(request)
+    workspace_state, updated_at = _storage_download_workspace_state(user["id"])
+    if not isinstance(workspace_state, dict):
+        workspace_state = {
+            "clients": [],
+            "documents": [],
+            "activeClientId": None,
+        }
+    return {
+        "user_id": user["id"],
+        "workspace_state": workspace_state,
+        "updated_at": updated_at,
+    }
+
+
+@app.put("/user-settings/workspace")
+def put_user_workspace_state(body: UserWorkspaceStateUpdateRequest, request: Request):
+    user = _require_supabase_user(request)
+    workspace_state = body.workspace_state if isinstance(body.workspace_state, dict) else {}
+    updated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    envelope = {
+        "version": 1,
+        "updated_at": updated_at,
+        "workspace_state": workspace_state,
+    }
+    _storage_upload_workspace_state(user["id"], envelope)
+    return {
+        "user_id": user["id"],
+        "workspace_state": workspace_state,
+        "updated_at": updated_at,
+    }
+
+
+@app.get("/user-settings/workspace/section/{section_key}")
+def get_user_workspace_state_section(section_key: str, request: Request):
+    user = _require_supabase_user(request)
+    key = _sanitize_workspace_section_key(section_key)
+    workspace_state, updated_at = _storage_download_workspace_state(user["id"])
+    state = workspace_state if isinstance(workspace_state, dict) else {}
+    return {
+        "user_id": user["id"],
+        "section_key": key,
+        "value": state.get(key),
+        "updated_at": updated_at,
+    }
+
+
+@app.put("/user-settings/workspace/section/{section_key}")
+def put_user_workspace_state_section(section_key: str, body: UserWorkspaceSectionUpdateRequest, request: Request):
+    user = _require_supabase_user(request)
+    key = _sanitize_workspace_section_key(section_key)
+    workspace_state, _ = _storage_download_workspace_state(user["id"])
+    state = workspace_state if isinstance(workspace_state, dict) else {}
+    state[key] = body.value
+    updated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    envelope = {
+        "version": 1,
+        "updated_at": updated_at,
+        "workspace_state": state,
+    }
+    _storage_upload_workspace_state(user["id"], envelope)
+    return {
+        "user_id": user["id"],
+        "section_key": key,
+        "value": body.value,
+        "updated_at": updated_at,
     }
 
 
@@ -6926,6 +7080,8 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         "loi": 0,
         "proposal": 0,
         "counter": 0,
+        "flyer": 0,
+        "floorplan": 0,
         "subsublease": 0,
         "sublease": 0,
         "amendment": 0,
@@ -6938,6 +7094,18 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         ("loi", [r"\bloi\b", r"letter of intent"]),
         ("proposal", [r"\bproposal\b", r"economic proposal", r"business terms proposal"]),
         ("counter", [r"\bcounter\b", r"counter proposal", r"redline"]),
+        ("floorplan", [r"\bfloor\s*plan\b", r"\bfloorplan\b", r"\bstacking\s+plan\b", r"\btest\s+fit\b"]),
+        (
+            "flyer",
+            [
+                r"\bflyer\b",
+                r"marketing brochure",
+                r"property brochure",
+                r"space availability",
+                r"available suites",
+                r"asking rent",
+            ],
+        ),
         ("subsublease", [r"\bsub[- ]?sublease\b", r"\bsubsublease\b"]),
         ("sublease", [r"\bsublease\b", r"\bsublessor\b", r"\bsublessee\b"]),
         ("amendment", [r"\bamendment\b", r"first amendment", r"second amendment", r"addendum"]),
@@ -6982,6 +7150,18 @@ def _detect_document_type(text: str, filename: str = "") -> str:
     # Prefer more specific document types over generic lease if both appear.
     if score["counter"] > 0:
         return "counter_proposal"
+    if score["floorplan"] > 0:
+        return "floorplan"
+    if (
+        score["flyer"] > 0
+        and score["proposal"] == 0
+        and score["counter"] == 0
+        and score["sublease"] == 0
+        and score["subsublease"] == 0
+        and score["amendment"] == 0
+        and score["lease"] == 0
+    ):
+        return "flyer"
     if score["subsublease"] > 0:
         return "subsublease"
     if score["sublease"] > 0 and (sublease_strong_hits > 0 or score["sublease"] >= 3):
@@ -7011,6 +7191,8 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         "loi": "loi",
         "proposal": "proposal",
         "counter": "counter_proposal",
+        "flyer": "flyer",
+        "floorplan": "floorplan",
         "subsublease": "subsublease",
         "sublease": "sublease",
         "amendment": "amendment",

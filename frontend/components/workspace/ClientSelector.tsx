@@ -22,10 +22,8 @@ export function ClientSelector() {
   const [createForm, setCreateForm] = useState({
     name: "",
     companyType: "",
-    industry: "",
     contactName: "",
     contactEmail: "",
-    brokerage: "",
     notes: "",
   });
   const [createError, setCreateError] = useState("");
@@ -112,7 +110,6 @@ export function ClientSelector() {
                     <p className="text-sm">{client.name}</p>
                     <p className="text-[11px] text-slate-400">
                       {client.companyType || "Company"}
-                      {client.industry ? ` · ${client.industry}` : ""}
                     </p>
                   </button>
                 );
@@ -136,20 +133,6 @@ export function ClientSelector() {
                   value={createForm.companyType}
                   onChange={(e) => setCreateForm((prev) => ({ ...prev, companyType: e.target.value }))}
                   placeholder="Company type"
-                  className="input-premium"
-                />
-                <input
-                  type="text"
-                  value={createForm.industry}
-                  onChange={(e) => setCreateForm((prev) => ({ ...prev, industry: e.target.value }))}
-                  placeholder="Industry"
-                  className="input-premium"
-                />
-                <input
-                  type="text"
-                  value={createForm.brokerage}
-                  onChange={(e) => setCreateForm((prev) => ({ ...prev, brokerage: e.target.value }))}
-                  placeholder="Brokerage"
                   className="input-premium"
                 />
                 <input
@@ -192,10 +175,8 @@ export function ClientSelector() {
                     setCreateForm({
                       name: "",
                       companyType: "",
-                      industry: "",
                       contactName: "",
                       contactEmail: "",
-                      brokerage: "",
                       notes: "",
                     });
                     setOpen(false);

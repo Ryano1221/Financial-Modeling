@@ -37,10 +37,8 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
   const [createForm, setCreateForm] = useState({
     name: "",
     companyType: "",
-    industry: "",
     contactName: "",
     contactEmail: "",
-    brokerage: "",
     notes: "",
   });
   const [createError, setCreateError] = useState("");
@@ -150,7 +148,6 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
                         <p className="text-sm">{client.name}</p>
                         <p className="text-xs text-slate-400">
                           {client.companyType || "Company"}
-                          {client.industry ? ` · ${client.industry}` : ""}
                         </p>
                         <p className="text-xs text-slate-500 mt-1">
                           {client.contactName || "No contact"}
@@ -183,20 +180,6 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
               value={createForm.companyType}
               onChange={(event) => setCreateForm((prev) => ({ ...prev, companyType: event.target.value }))}
               placeholder="Company type"
-              className="input-premium"
-            />
-            <input
-              type="text"
-              value={createForm.industry}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, industry: event.target.value }))}
-              placeholder="Industry"
-              className="input-premium"
-            />
-            <input
-              type="text"
-              value={createForm.brokerage}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, brokerage: event.target.value }))}
-              placeholder="Brokerage"
               className="input-premium"
             />
             <input
@@ -234,10 +217,8 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
                 const created = createClient({
                   name,
                   companyType: createForm.companyType,
-                  industry: createForm.industry,
                   contactName: createForm.contactName,
                   contactEmail: createForm.contactEmail,
-                  brokerage: createForm.brokerage,
                   notes: createForm.notes,
                 });
                 if (!created) {
@@ -248,10 +229,8 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
                 setCreateForm({
                   name: "",
                   companyType: "",
-                  industry: "",
                   contactName: "",
                   contactEmail: "",
-                  brokerage: "",
                   notes: "",
                 });
                 router.push(`/client/${encodeURIComponent(created.id)}`);

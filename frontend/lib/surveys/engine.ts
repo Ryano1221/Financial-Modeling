@@ -31,6 +31,17 @@ function inferOccupancyType(normalize: NormalizerResponse, canonical: BackendCan
   return "Unknown";
 }
 
+function inferSublessor(canonical: BackendCanonicalLease, occupancyType: SurveyOccupancyType): string {
+  if (occupancyType !== "Sublease") return "";
+  const tenant = valueOrEmpty(canonical.tenant_name);
+  const landlord = valueOrEmpty(canonical.landlord_name);
+  const notes = valueOrEmpty(canonical.notes);
+  if (tenant) return tenant;
+  if (landlord) return landlord;
+  const match = notes.match(/sublessor[:\s]+([A-Za-z0-9&.,' -]{2,80})/i);
+  return match ? valueOrEmpty(match[1]) : "";
+}
+
 function firstAnnualRentPsf(canonical: BackendCanonicalLease): number {
   const firstStep = Array.isArray(canonical.rent_schedule) ? canonical.rent_schedule[0] : null;
   const value = Number(firstStep?.rent_psf_annual || 0);
@@ -46,10 +57,15 @@ function toNumber(raw: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-export function mapNormalizeToSurveyEntry(normalize: NormalizerResponse, sourceDocumentName: string): SurveyEntry {
+export function mapNormalizeToSurveyEntry(
+  normalize: NormalizerResponse,
+  sourceDocumentName: string,
+  clientId = "",
+): SurveyEntry {
   const canonical = normalize.canonical_lease;
   const leaseType = normalizeLeaseType(canonical.lease_type);
   const occupancyType = inferOccupancyType(normalize, canonical);
+  const inferredSublessor = inferSublessor(canonical, occupancyType);
   const fieldConfidence = normalize.field_confidence || {};
   const reviewTasks = normalize.review_tasks || [];
   const reviewReasons: string[] = [];
@@ -60,6 +76,7 @@ export function mapNormalizeToSurveyEntry(normalize: NormalizerResponse, sourceD
   if (firstAnnualRentPsf(canonical) <= 0) reviewReasons.push("Base rent missing.");
   if (leaseType === "Unknown") reviewReasons.push("Lease type ambiguous.");
   if (occupancyType === "Unknown") reviewReasons.push("Direct vs sublease type ambiguous.");
+  if (occupancyType === "Sublease" && !inferredSublessor) reviewReasons.push("Sublessor name missing.");
   if ((fieldConfidence.rsf ?? 1) < 0.6) reviewReasons.push("RSF confidence low.");
   if ((fieldConfidence.lease_type ?? 1) < 0.6) reviewReasons.push("Lease type confidence low.");
   if ((fieldConfidence.rent_schedule ?? 1) < 0.6 && (fieldConfidence.base_rent_psf ?? 1) < 0.6) {
@@ -69,6 +86,7 @@ export function mapNormalizeToSurveyEntry(normalize: NormalizerResponse, sourceD
 
   return {
     id: nextId(),
+    clientId,
     sourceDocumentName,
     sourceType: "parsed_document",
     uploadedAtIso: new Date().toISOString(),
@@ -81,7 +99,7 @@ export function mapNormalizeToSurveyEntry(normalize: NormalizerResponse, sourceD
     opexPsfAnnual: Math.max(0, toNumber(canonical.opex_psf_year_1, 0)),
     leaseType,
     occupancyType,
-    sublessor: "",
+    sublessor: inferredSublessor,
     subleaseExpirationDate: occupancyType === "Sublease" ? valueOrEmpty(canonical.expiration_date) : "",
     parkingSpaces: Math.max(0, Math.floor(toNumber(canonical.parking_count, 0))),
     parkingRateMonthlyPerSpace: Math.max(0, toNumber(canonical.parking_rate_monthly, 0)),
@@ -96,9 +114,10 @@ export function mapNormalizeToSurveyEntry(normalize: NormalizerResponse, sourceD
   };
 }
 
-export function createManualSurveyEntryFromImage(fileName: string): SurveyEntry {
+export function createManualSurveyEntryFromImage(fileName: string, clientId = ""): SurveyEntry {
   return {
     id: nextId(),
+    clientId,
     sourceDocumentName: fileName,
     sourceType: "manual_image",
     uploadedAtIso: new Date().toISOString(),
@@ -166,4 +185,3 @@ export function computeSurveyMonthlyOccupancyCost(entry: SurveyEntry): SurveyCos
     leaseTypeRule: leaseTypeRule(entry.leaseType),
   };
 }
-

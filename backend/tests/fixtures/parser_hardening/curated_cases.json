@@ -214,5 +214,65 @@
     },
     "controlling_fields": ["commencement_date", "expiration_date", "term_months", "rsf"],
     "tags": ["curated", "ocr-noise"]
+  },
+  {
+    "case_id": "curated-domain-place-flyer",
+    "family": "flyer",
+    "documents": [
+      {
+        "doc_id": "domain-flyer-v1",
+        "family": "flyer",
+        "role": "primary",
+        "as_of_date": "2026-05-10",
+        "text": "MARKETING FLYER\nProperty: Domain Place\nAddress: 11401 Domain Dr, Austin, TX\nAvailable Suite: Suite 600\nRentable Area: 22,473 square feet\nTerm Start: 07/01/2026\nTerm End: 06/30/2033\nTerm Length: 84 months\nAsking Rent: $54.50 / SF / YR\nOperating Expenses: $17.75 / SF",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 11, "rate_psf_annual": 54.5},
+          {"start_month": 12, "end_month": 23, "rate_psf_annual": 56.14},
+          {"start_month": 24, "end_month": 35, "rate_psf_annual": 57.82},
+          {"start_month": 36, "end_month": 47, "rate_psf_annual": 59.55},
+          {"start_month": 48, "end_month": 59, "rate_psf_annual": 61.34},
+          {"start_month": 60, "end_month": 71, "rate_psf_annual": 63.18},
+          {"start_month": 72, "end_month": 83, "rate_psf_annual": 65.08}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2026-07-01",
+      "expiration_date": "2033-06-30",
+      "term_months": 84,
+      "rsf": 22473,
+      "suite": "600",
+      "base_rent_psf": 54.5,
+      "op_ex_psf": 17.75
+    },
+    "controlling_fields": ["rsf", "suite", "base_rent_psf", "term_months"],
+    "tags": ["curated", "flyer", "survey-source"]
+  },
+  {
+    "case_id": "curated-eastlake-floorplan",
+    "family": "floorplan",
+    "documents": [
+      {
+        "doc_id": "eastlake-floorplan-v1",
+        "family": "floorplan",
+        "role": "primary",
+        "as_of_date": "2026-06-03",
+        "text": "FLOOR PLAN / STACKING PLAN\nBuilding: Eastlake Logistics Center\nFloor: 12\nSuite 1200\nRentable Square Feet: 13,750 RSF\nCommencement Date: 09/01/2026\nExpiration Date: 08/31/2031\nLease Term: 60 months\nMinimum Rent: $39.25 / SF",
+        "rent_steps": [
+          {"start_month": 0, "end_month": 59, "rate_psf_annual": 39.25}
+        ]
+      }
+    ],
+    "expected": {
+      "commencement_date": "2026-09-01",
+      "expiration_date": "2031-08-31",
+      "term_months": 60,
+      "rsf": 13750,
+      "suite": "1200",
+      "base_rent_psf": 39.25,
+      "op_ex_psf": null
+    },
+    "controlling_fields": ["rsf", "suite", "term_months", "base_rent_psf"],
+    "tags": ["curated", "floorplan", "survey-source"]
   }
 ]

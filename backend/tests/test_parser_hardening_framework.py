@@ -81,12 +81,14 @@ def test_curated_gold_regressions_score_strongly_on_controlling_fields() -> None
     resolved = resolve_cases(cases)
     report = evaluate_cases(cases=cases, resolved=resolved)
 
-    assert report.total_cases >= 6
+    assert report.total_cases >= 8
     assert report.controlling_term_accuracy >= 0.82
 
     by_case = {r.case_id: r for r in resolved}
     atx = by_case["curated-atx-tower-2026"]
     ibc = by_case["curated-ibc-bank-plaza-2026"]
+    flyer = by_case["curated-domain-place-flyer"]
+    floorplan = by_case["curated-eastlake-floorplan"]
 
     assert atx.predicted["term_months"] == 91
     assert str(atx.predicted["commencement_date"]) == "2026-10-01"
@@ -95,6 +97,10 @@ def test_curated_gold_regressions_score_strongly_on_controlling_fields() -> None
     assert ibc.predicted["term_months"] == 88
     assert str(ibc.predicted["expiration_date"]) == "2034-01-31"
     assert abs(float(ibc.predicted["base_rent_psf"] or 0.0) - 46.0) <= 0.1
+
+    assert abs(float(flyer.predicted["rsf"] or 0.0) - 22473.0) <= 1.0
+    assert str(flyer.predicted["suite"] or "").strip().endswith("600")
+    assert abs(float(floorplan.predicted["rsf"] or 0.0) - 13750.0) <= 1.0
 
 
 def test_hardening_loop_emits_metrics_and_failure_clusters() -> None:

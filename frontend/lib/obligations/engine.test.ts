@@ -41,6 +41,7 @@ function makeNormalize(overrides: Partial<NormalizerResponse> = {}): NormalizerR
 function makeObligation(overrides: Partial<ObligationRecord> = {}): ObligationRecord {
   return {
     id: "obl-1",
+    clientId: "client-1",
     companyId: "co-1",
     title: "400 W 6th St Suite 26-28",
     buildingName: "400 W 6th St",
@@ -78,6 +79,25 @@ describe("obligations/engine", () => {
     expect(seed.kind).toBe("proposal");
   });
 
+  it("extracts notice, renewal, and termination dates from canonical fields", () => {
+    const seed = mapNormalizeToObligationSeed(
+      makeNormalize({
+        canonical_lease: {
+          ...makeNormalize().canonical_lease,
+          notes: "",
+          notice_dates: "Notice deadline: September 15, 2035",
+          renewal_options: "Renewal election due on 2036-02-01",
+          termination_rights: "Termination right available 10/15/2036",
+        },
+      }),
+      "proposal.docx",
+    );
+
+    expect(seed.noticeDate).toBe("2035-09-15");
+    expect(seed.renewalDate).toBe("2036-02-01");
+    expect(seed.terminationRightDate).toBe("2036-10-15");
+  });
+
   it("infers document kinds with precedence", () => {
     expect(inferObligationDocumentKind("ATX Tower Lease Amendment 2.docx")).toBe("amendment");
     expect(inferObligationDocumentKind("Counter Proposal.pdf")).toBe("counter");
@@ -91,16 +111,34 @@ describe("obligations/engine", () => {
   });
 
   it("computes completeness and timeline metrics", () => {
-    const obligation = makeObligation();
+    const obligation = makeObligation({
+      expirationDate: "2036-05-31",
+      renewalDate: "2036-02-01",
+      terminationRightDate: "2036-03-15",
+    });
     const score = computeObligationCompleteness(obligation);
     expect(score).toBeGreaterThan(70);
 
     const portfolio = computePortfolioMetrics([obligation], 3, new Date("2035-08-01T00:00:00.000Z"));
     expect(portfolio.obligationCount).toBe(1);
     expect(portfolio.documentCount).toBe(3);
+    expect(portfolio.expiringWithin12Months).toBe(1);
+    expect(portfolio.upcomingNoticeWithin6Months).toBe(1);
+    expect(portfolio.upcomingRenewalWithin12Months).toBe(1);
+    expect(portfolio.upcomingTerminationWithin12Months).toBe(1);
 
     const timeline = buildTimelineBuckets([obligation], 2035);
     expect(timeline.find((row) => row.year === 2036)?.expiringCount).toBe(1);
     expect(timeline.find((row) => row.year === 2035)?.noticeCount).toBe(1);
+    expect(timeline.find((row) => row.year === 2036)?.renewalCount).toBe(1);
+    expect(timeline.find((row) => row.year === 2036)?.terminationCount).toBe(1);
+  });
+
+  it("extends timeline buckets to include far-dated events", () => {
+    const obligation = makeObligation({ expirationDate: "2036-05-31", noticeDate: "", renewalDate: "", terminationRightDate: "" });
+    const timeline = buildTimelineBuckets([obligation], 2026);
+    expect(timeline[0]?.year).toBe(2026);
+    expect(timeline[timeline.length - 1]?.year).toBe(2036);
+    expect(timeline.find((row) => row.year === 2036)?.expiringCount).toBe(1);
   });
 });

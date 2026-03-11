@@ -68,6 +68,7 @@ export interface ExistingObligation {
 
 export interface SubleaseScenario {
   id: string;
+  clientId?: string;
   name: string;
   subtenantName: string;
   subtenantLegalEntity?: string;
@@ -175,4 +176,31 @@ export interface SensitivityResult {
   commissionSensitivity: SensitivitySingleVariablePoint[];
   tiLegalSensitivity: SensitivitySingleVariablePoint[];
   opexSensitivity: SensitivitySingleVariablePoint[];
+}
+
+export interface SubleaseRecoveryShareExisting {
+  premises: string;
+  rsf: number;
+  commencementDate: string;
+  expirationDate: string;
+  leaseType: string;
+}
+
+export interface SubleaseRecoveryShareScenarioSummary {
+  scenarioName: string;
+  subtenantName: string;
+  sourceType: SubleaseScenarioSourceType;
+  sourceDocumentName: string;
+  totalRemainingObligation: number;
+  totalSubleaseRecovery: number;
+  totalSubleaseCosts: number;
+  netSubleaseRecovery: number;
+  netObligation: number;
+  recoveryPercent: number;
+  npv: number;
+}
+
+export interface SubleaseRecoverySharePayload {
+  existing: SubleaseRecoveryShareExisting;
+  scenarios: SubleaseRecoveryShareScenarioSummary[];
 }

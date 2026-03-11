@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getSession, type SupabaseAuthSession } from "@/lib/supabase";
+import { getSession, subscribeAuthSession, type SupabaseAuthSession } from "@/lib/supabase";
 import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import {
   ACTIVE_CLIENT_STORAGE_KEY,
@@ -18,6 +18,7 @@ import {
 } from "@/lib/workspace/storage";
 import { buildWorkspaceEntityGraph, type WorkspaceEntityGraph } from "@/lib/workspace/entities";
 import { inferWorkspaceDocumentType } from "@/lib/workspace/document-type";
+import { fetchWorkspaceCloudState, saveWorkspaceCloudState } from "@/lib/workspace/cloud";
 import type {
   ClientDocumentSourceModule,
   ClientDocumentType,
@@ -60,6 +61,12 @@ function asCanonical(normalize: unknown): BackendCanonicalLease | null {
   const maybe = (normalize as { canonical_lease?: unknown }).canonical_lease;
   if (!maybe || typeof maybe !== "object") return null;
   return maybe as BackendCanonicalLease;
+}
+
+function sameSession(a: SupabaseAuthSession | null, b: SupabaseAuthSession | null): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.access_token === b.access_token && a.user.id === b.user.id;
 }
 
 function toNormalizeSnapshot(
@@ -176,6 +183,48 @@ function parseStoredDocuments(raw: string | null): ClientWorkspaceDocument[] {
   }
 }
 
+function serializeWorkspaceStateForCloud(
+  clients: ClientWorkspaceClient[],
+  documents: ClientWorkspaceDocument[],
+  activeClientId: string | null,
+  options?: { includeSnapshots?: boolean },
+): Record<string, unknown> {
+  const includeSnapshots = options?.includeSnapshots !== false;
+  const serializedDocuments = documents.map((doc) => {
+    const baseDocument = {
+      id: doc.id,
+      clientId: doc.clientId,
+      name: doc.name,
+      type: doc.type,
+      building: doc.building,
+      address: doc.address,
+      suite: doc.suite,
+      parsed: doc.parsed,
+      uploadedBy: doc.uploadedBy,
+      uploadedAt: doc.uploadedAt,
+      sourceModule: doc.sourceModule,
+    } satisfies Omit<ClientWorkspaceDocument, "previewDataUrl" | "normalizeSnapshot">;
+    if (includeSnapshots && doc.normalizeSnapshot) {
+      return {
+        ...baseDocument,
+        normalizeSnapshot: doc.normalizeSnapshot,
+      };
+    }
+    return baseDocument;
+  });
+  return {
+    clients,
+    documents: serializedDocuments,
+    activeClientId: activeClientId || null,
+  };
+}
+
+function isWorkspacePayloadTooLargeError(error: unknown): boolean {
+  const message = String(error instanceof Error ? error.message : error || "").toLowerCase();
+  if (!message) return false;
+  return message.includes("exceeds size limit") || message.includes("workspace payload") || message.includes("413");
+}
+
 export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState<SupabaseAuthSession | null>(null);
@@ -187,10 +236,14 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     getSession()
       .then((next) => {
-        if (!cancelled) setSession(next);
+        if (!cancelled) {
+          setSession((prev) => (sameSession(prev, next) ? prev : next));
+        }
       })
       .catch(() => {
-        if (!cancelled) setSession(null);
+        if (!cancelled) {
+          setSession((prev) => (sameSession(prev, null) ? prev : null));
+        }
       });
     return () => {
       cancelled = true;
@@ -198,39 +251,151 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const loadedClients = parseStoredClients(window.localStorage.getItem(CLIENTS_STORAGE_KEY));
-    const loadedDocuments = parseStoredDocuments(window.localStorage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
-    const storedActiveId = asText(window.localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY));
-
-    setClients(loadedClients);
-    setAllDocuments(loadedDocuments);
-    if (storedActiveId && loadedClients.some((client) => client.id === storedActiveId)) {
-      setActiveClientId(storedActiveId);
-    } else {
-      setActiveClientId(loadedClients[0]?.id || null);
-    }
-    setReady(true);
+    return subscribeAuthSession((next) => {
+      setSession((prev) => (sameSession(prev, next) ? prev : next));
+    });
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+
+    const applyWorkspaceState = (state: Record<string, unknown> | null | undefined) => {
+      const clientsRaw = Array.isArray(state?.clients) ? state?.clients : [];
+      const documentsRaw = Array.isArray(state?.documents) ? state?.documents : [];
+      const activeRaw = asText(state?.activeClientId);
+      const loadedClients = parseStoredClients(JSON.stringify(clientsRaw));
+      const loadedDocuments = parseStoredDocuments(JSON.stringify(documentsRaw));
+      const resolvedActive =
+        activeRaw && loadedClients.some((client) => client.id === activeRaw)
+          ? activeRaw
+          : (loadedClients[0]?.id || null);
+      setClients(loadedClients);
+      setAllDocuments(loadedDocuments);
+      setActiveClientId(resolvedActive);
+    };
+
+    const applyLocalFallback = () => {
+      const loadedClients = parseStoredClients(window.localStorage.getItem(CLIENTS_STORAGE_KEY));
+      const loadedDocuments = parseStoredDocuments(window.localStorage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
+      const storedActiveId = asText(window.localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY));
+      setClients(loadedClients);
+      setAllDocuments(loadedDocuments);
+      if (storedActiveId && loadedClients.some((client) => client.id === storedActiveId)) {
+        setActiveClientId(storedActiveId);
+      } else {
+        setActiveClientId(loadedClients[0]?.id || null);
+      }
+    };
+
+    async function hydrate() {
+      setReady(false);
+      if (session) {
+        try {
+          const remote = await fetchWorkspaceCloudState();
+          if (cancelled) return;
+          const workspaceState =
+            remote.workspace_state && typeof remote.workspace_state === "object"
+              ? remote.workspace_state
+              : {};
+          applyWorkspaceState(workspaceState);
+          try {
+            // Signed-in mode should not rely on device-local storage.
+            window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
+            window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
+            window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+          } catch {
+            // ignore localStorage errors
+          }
+          setReady(true);
+          return;
+        } catch (error) {
+          console.warn("workspace_cloud_load_failed", error);
+          if (cancelled) return;
+          // Signed-in users should always bind to cloud account data, never local device state.
+          applyWorkspaceState({
+            clients: [],
+            documents: [],
+            activeClientId: null,
+          });
+          setReady(true);
+          return;
+        }
+      }
+      applyLocalFallback();
+      setReady(true);
+    }
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    if (session) {
+      window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
+      return;
+    }
     window.localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(clients));
-  }, [ready, clients]);
+  }, [ready, clients, session]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    if (session) {
+      window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
+      return;
+    }
     window.localStorage.setItem(DOCUMENT_LIBRARY_STORAGE_KEY, JSON.stringify(allDocuments));
-  }, [ready, allDocuments]);
+  }, [ready, allDocuments, session]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    if (session) {
+      window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+      return;
+    }
     if (activeClientId) {
       window.localStorage.setItem(ACTIVE_CLIENT_STORAGE_KEY, activeClientId);
     } else {
       window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
     }
-  }, [ready, activeClientId]);
+  }, [ready, activeClientId, session]);
+
+  useEffect(() => {
+    if (!ready || !session) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      const workspaceState = serializeWorkspaceStateForCloud(clients, allDocuments, activeClientId, {
+        includeSnapshots: true,
+      });
+      void saveWorkspaceCloudState(workspaceState).catch(async (error) => {
+        if (cancelled) return;
+        if (isWorkspacePayloadTooLargeError(error)) {
+          const compactState = serializeWorkspaceStateForCloud(clients, allDocuments, activeClientId, {
+            includeSnapshots: false,
+          });
+          try {
+            await saveWorkspaceCloudState(compactState);
+            if (!cancelled) {
+              console.warn("workspace_cloud_save_compacted", "Saved compact workspace payload without normalize snapshots.");
+            }
+            return;
+          } catch (compactError) {
+            if (cancelled) return;
+            console.warn("workspace_cloud_save_failed_compact", compactError);
+            return;
+          }
+        }
+        console.warn("workspace_cloud_save_failed", error);
+      });
+    }, 500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [ready, session, clients, allDocuments, activeClientId]);
 
   useEffect(() => {
     if (!ready) return;

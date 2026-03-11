@@ -13,6 +13,7 @@ export interface CompletedLeaseExportBranding {
 
 export interface CompletedLeaseDocumentRecord {
   id: string;
+  clientId: string;
   fileName: string;
   uploadedAtIso: string;
   kind: CompletedLeaseDocumentKind;
@@ -32,3 +33,21 @@ export interface CompletedLeaseAbstractView {
   overrideNotes: string[];
 }
 
+export interface CompletedLeaseShareField {
+  label: string;
+  value: string;
+}
+
+export interface CompletedLeaseShareSourceDocument {
+  kind: CompletedLeaseDocumentKind;
+  fileName: string;
+  uploadedAtIso: string;
+  controllingStatus: "controlling" | "reference";
+}
+
+export interface CompletedLeaseSharePayload {
+  title: string;
+  fields: CompletedLeaseShareField[];
+  sourceDocuments: CompletedLeaseShareSourceDocument[];
+  overrideNotes: string[];
+}

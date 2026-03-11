@@ -63,6 +63,47 @@ function parseAmbiguousDateToken(rawToken: string): string {
   return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}-${String(parsed.getUTCDate()).padStart(2, "0")}`;
 }
 
+function extractFirstDateInText(rawText: string): string {
+  const text = asText(rawText);
+  if (!text) return "";
+
+  const numericMatches = text.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2})\b/g) || [];
+  for (const token of numericMatches) {
+    const normalized = parseAmbiguousDateToken(token);
+    if (normalized) return normalized;
+  }
+
+  const longMatches = text.match(/\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},?\s+\d{2,4}\b/gi) || [];
+  for (const token of longMatches) {
+    const normalized = parseAmbiguousDateToken(token);
+    if (normalized) return normalized;
+  }
+
+  return "";
+}
+
+function extractDateFromUnknown(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return extractFirstDateInText(value);
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const normalized = extractDateFromUnknown(entry);
+      if (normalized) return normalized;
+    }
+    return "";
+  }
+
+  if (typeof value === "object") {
+    for (const entry of Object.values(value as Record<string, unknown>)) {
+      const normalized = extractDateFromUnknown(entry);
+      if (normalized) return normalized;
+    }
+  }
+
+  return "";
+}
+
 function extractKeywordDate(notes: string, keywords: string[]): string {
   if (!notes) return "";
   const lower = notes.toLowerCase();
@@ -70,11 +111,8 @@ function extractKeywordDate(notes: string, keywords: string[]): string {
     const idx = lower.indexOf(keyword);
     if (idx < 0) continue;
     const tail = notes.slice(idx, idx + 100);
-    const dateMatch = tail.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2})\b/);
-    if (dateMatch) {
-      const normalized = parseAmbiguousDateToken(dateMatch[1]);
-      if (normalized) return normalized;
-    }
+    const normalized = extractFirstDateInText(tail);
+    if (normalized) return normalized;
   }
   return "";
 }
@@ -98,6 +136,7 @@ export function inferObligationDocumentKind(fileName: string, normalize?: Normal
 
 export function mapNormalizeToObligationSeed(normalize: NormalizerResponse, sourceFileName: string) {
   const canonical = normalize.canonical_lease;
+  const canonicalRecord = canonical as Record<string, unknown>;
   const notes = asText(canonical.notes);
   const building = asText(canonical.building_name || canonical.premises_name);
   const suite = asText(canonical.suite || canonical.floor);
@@ -107,10 +146,27 @@ export function mapNormalizeToObligationSeed(normalize: NormalizerResponse, sour
   const leaseType = asText(canonical.lease_type || "Unknown");
   const commencementDate = asText(canonical.commencement_date);
   const expirationDate = asText(canonical.expiration_date);
-  const rentCommencementDate = extractKeywordDate(notes, ["rent commencement", "rental commencement", "commencement"]) || commencementDate;
-  const noticeDate = extractKeywordDate(notes, ["notice", "notification"]);
-  const renewalDate = extractKeywordDate(notes, ["renewal", "option to renew"]);
-  const terminationRightDate = extractKeywordDate(notes, ["termination", "terminate"]);
+  const rentCommencementDate = asText(canonical.rent_commencement_date)
+    || extractKeywordDate(notes, ["rent commencement", "rental commencement", "commencement"])
+    || commencementDate;
+  const noticeDate = extractDateFromUnknown(
+    canonicalRecord.notice_dates
+    ?? canonicalRecord.notice_date
+    ?? canonicalRecord.notice_deadline
+    ?? canonicalRecord.notice_terms
+  ) || extractKeywordDate(notes, ["notice", "notification"]);
+  const renewalDate = extractDateFromUnknown(
+    canonicalRecord.renewal_options
+    ?? canonicalRecord.renewal_option
+    ?? canonicalRecord.renewal_rights
+    ?? canonicalRecord.options
+  ) || extractKeywordDate(notes, ["renewal", "option to renew"]);
+  const terminationRightDate = extractDateFromUnknown(
+    canonicalRecord.termination_rights
+    ?? canonicalRecord.termination_clauses
+    ?? canonicalRecord.termination_option
+    ?? canonicalRecord.termination_options
+  ) || extractKeywordDate(notes, ["termination", "terminate"]);
   const annualObligation = annualBaseFromSchedule(canonical)
     + (Math.max(0, asNumber(canonical.opex_psf_year_1)) * rsf)
     + ((Math.max(0, asNumber(canonical.parking_count)) * Math.max(0, asNumber(canonical.parking_rate_monthly))) * 12);
@@ -209,6 +265,8 @@ export function computePortfolioMetrics(
   let totalAnnual = 0;
   let expiringWithin12Months = 0;
   let upcomingNoticeWithin6Months = 0;
+  let upcomingRenewalWithin12Months = 0;
+  let upcomingTerminationWithin12Months = 0;
   let completenessTotal = 0;
 
   for (const item of obligations) {
@@ -221,6 +279,12 @@ export function computePortfolioMetrics(
 
     const notice = fromIsoDate(item.noticeDate);
     if (notice && notice >= today && notice <= sixMonthsAhead) upcomingNoticeWithin6Months += 1;
+
+    const renewal = fromIsoDate(item.renewalDate);
+    if (renewal && renewal >= today && renewal <= oneYearAhead) upcomingRenewalWithin12Months += 1;
+
+    const termination = fromIsoDate(item.terminationRightDate);
+    if (termination && termination >= today && termination <= oneYearAhead) upcomingTerminationWithin12Months += 1;
   }
 
   return {
@@ -230,21 +294,41 @@ export function computePortfolioMetrics(
     totalAnnualObligation: totalAnnual,
     expiringWithin12Months,
     upcomingNoticeWithin6Months,
+    upcomingRenewalWithin12Months,
+    upcomingTerminationWithin12Months,
     averageCompleteness: obligations.length > 0 ? Math.round(completenessTotal / obligations.length) : 0,
   };
 }
 
 export function buildTimelineBuckets(obligations: ObligationRecord[], currentYear = new Date().getUTCFullYear()): ObligationTimelineBucket[] {
-  const years = Array.from({ length: 6 }, (_, idx) => currentYear + idx);
+  const minimumEndYear = currentYear + 5;
+  const maximumYears = 20;
+
+  let maxEventYear = minimumEndYear;
+  for (const item of obligations) {
+    for (const dt of [fromIsoDate(item.expirationDate), fromIsoDate(item.noticeDate), fromIsoDate(item.renewalDate), fromIsoDate(item.terminationRightDate)]) {
+      if (!dt) continue;
+      maxEventYear = Math.max(maxEventYear, dt.getUTCFullYear());
+    }
+  }
+
+  const cappedEndYear = Math.min(maxEventYear, currentYear + maximumYears - 1);
+  const years = Array.from({ length: cappedEndYear - currentYear + 1 }, (_, idx) => currentYear + idx);
   return years.map((year) => {
     let expiringCount = 0;
     let noticeCount = 0;
+    let renewalCount = 0;
+    let terminationCount = 0;
     for (const item of obligations) {
       const expiry = fromIsoDate(item.expirationDate);
       if (expiry && expiry.getUTCFullYear() === year) expiringCount += 1;
       const notice = fromIsoDate(item.noticeDate);
       if (notice && notice.getUTCFullYear() === year) noticeCount += 1;
+      const renewal = fromIsoDate(item.renewalDate);
+      if (renewal && renewal.getUTCFullYear() === year) renewalCount += 1;
+      const termination = fromIsoDate(item.terminationRightDate);
+      if (termination && termination.getUTCFullYear() === year) terminationCount += 1;
     }
-    return { year, expiringCount, noticeCount };
+    return { year, expiringCount, noticeCount, renewalCount, terminationCount };
   });
 }

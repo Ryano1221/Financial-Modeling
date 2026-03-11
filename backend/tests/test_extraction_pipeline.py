@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from extraction.normalize import NormalizedDocument, PageData
+from extraction.classify import classify_document
 from extraction.regex import mine_candidates
 from extraction.reconcile import reconcile
 from extraction.schema import validate_canonical_extraction
@@ -239,3 +240,39 @@ def test_dict_normalizer_maps_full_service_variants() -> None:
         }
     )
     assert lease.lease_type == LeaseType.FULL_SERVICE
+
+
+def test_rule_classifier_detects_flyer_and_floorplan() -> None:
+    flyer = NormalizedDocument(
+        sha256="flyer",
+        filename="domain-flyer.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text="Marketing Flyer\nProperty Highlights\nAvailable suites and asking rent listed below.",
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text="Marketing flyer for available suites.",
+    )
+    floorplan = NormalizedDocument(
+        sha256="floorplan",
+        filename="tower-floorplan.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text="Floor Plan / Stacking Plan\nLevel 15 layout with Suite 1550 and Suite 1560.",
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text="Floor plan and stacking plan details.",
+    )
+
+    assert classify_document(flyer).get("doc_type") == "flyer"
+    assert classify_document(floorplan).get("doc_type") == "floorplan"

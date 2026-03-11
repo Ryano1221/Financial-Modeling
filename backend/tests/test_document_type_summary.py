@@ -41,6 +41,16 @@ def test_detect_document_type_across_five_plus_formats() -> None:
             "counter_proposal",
         ),
         (
+            "MARKETING FLYER\nProperty Highlights\nAvailable Suites and asking rent by floor are listed below.",
+            "domain-place-flyer.pdf",
+            "flyer",
+        ),
+        (
+            "FLOOR PLAN / STACKING PLAN\nLevel 15 outlines suites 1500-1590 with usable and rentable square footage.",
+            "atx-tower-floorplan.pdf",
+            "floorplan",
+        ),
+        (
             "FIRST AMENDMENT TO LEASE\nThis Amendment modifies the Premises and extends the Term.",
             "first-amendment.pdf",
             "amendment",
