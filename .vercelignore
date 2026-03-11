@@ -1,0 +1,19 @@
+# Local virtual environments and modules
+.venv
+node_modules
+frontend/node_modules_corrupt_*
+
+# Local caches and generated artifacts
+backend/cache
+tmp
+*.tsbuildinfo
+
+# Local scratch/test documents
+tmp-*.docx
+tmp-*.pdf
+lease-comparison (*.xlsx)
+lease-comparison*.xlsx
+
+# Editor and OS artifacts
+.cursor
+.DS_Store
