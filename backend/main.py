@@ -1265,17 +1265,30 @@ _LEASE_TYPE_MAP = {
 }
 
 
-def _normalize_lease_type_body(value: str | None) -> str:
-    """Accept lowercase and map to enum value so /compute-canonical never 422s on casing."""
-    if value is None or not str(value).strip():
-        return "NNN"
+def _canonicalize_lease_type_label(value: object) -> str:
+    """Return canonical lease-type label when recognizable, else empty string."""
+    if value is None:
+        return ""
     s = str(value).strip()
+    if not s:
+        return ""
     key = s.lower().replace("-", " ").replace("_", " ")
     if key in _LEASE_TYPE_MAP:
         return _LEASE_TYPE_MAP[key]
     if s in ("NNN", "Gross", "Modified Gross", "Absolute NNN", "Full Service"):
         return s
-    return "NNN"
+    return ""
+
+
+def _is_full_service_lease_type(value: object) -> bool:
+    normalized = _canonicalize_lease_type_label(value).strip().lower()
+    return normalized in {"full service", "gross"}
+
+
+def _normalize_lease_type_body(value: str | None) -> str:
+    """Accept lowercase and map to enum value so /compute-canonical never 422s on casing."""
+    normalized = _canonicalize_lease_type_label(value)
+    return normalized or "NNN"
 
 
 @app.post("/compute-canonical", response_model=CanonicalComputeResponse)
@@ -1840,7 +1853,7 @@ def _normalize_suite_candidate(raw: str) -> str:
             "landlord", "tenant", "lease", "premises", "building", "property",
             "office", "floor", "term", "year", "month", "rent", "address",
             "located", "option", "renewal", "expiration", "commencement",
-            "in", "at", "on",
+            "in", "at", "on", "as",
             "to", "and", "or", "of", "by",
         }:
             return ""
@@ -6323,18 +6336,28 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if not hints["building_name"] and hints.get("address"):
         hints["building_name"] = str(hints["address"])
 
-    # Lease type: "lease type is NNN" / "lease type: Gross"
+    # Lease type: explicit labels first, then context-based inference.
     lease_type_pat = re.compile(
-        r"(?i)\blease\s+type\s*[:\s]+(NNN|Gross|Modified\s+Gross|Absolute\s+NNN|Full\s+Service)\b",
+        r"(?i)\blease\s+type\s*[:\s]+"
+        r"(NNN|Gross|Modified\s+Gross|Absolute\s+NNN|Full\s+Service(?:\s+Gross)?|FSG)\b",
         re.I,
     )
     m = lease_type_pat.search(text)
     if m:
-        hints["lease_type"] = re.sub(r"\s+", " ", m.group(1).strip())
-    elif re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", text):
-        hints["lease_type"] = "NNN"
-    elif re.search(r"(?i)\b(?:base\s+annual\s+)?net\s+rental\s+rate\b|\bnet\s+rent(?:al)?\b", text):
-        hints["lease_type"] = "NNN"
+        lease_type_value = _canonicalize_lease_type_label(re.sub(r"\s+", " ", m.group(1).strip()))
+        if lease_type_value:
+            hints["lease_type"] = lease_type_value
+    if not hints.get("lease_type"):
+        has_full_service_cue = bool(
+            re.search(r"(?i)\b(?:full[\s-]*service(?:\s+gross)?|fsg|gross\s+lease)\b", text)
+        )
+        has_modified_gross_cue = bool(re.search(r"(?i)\b(?:modified\s+gross|base\s+year|expense\s+stop)\b", text))
+        if has_full_service_cue and not has_modified_gross_cue:
+            hints["lease_type"] = "Full Service"
+        elif re.search(r"(?i)\b(?:n\.?\s*n\.?\s*n\.?|nnn)\b", text):
+            hints["lease_type"] = "NNN"
+        elif re.search(r"(?i)\b(?:base\s+annual\s+)?net\s+rental\s+rate\b|\bnet\s+rent(?:al)?\b", text):
+            hints["lease_type"] = "NNN"
 
     # Parking ratio and economics
     parking_ratio_evidence = False
@@ -6560,6 +6583,11 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         hints["opex_psf_year_1"] = hinted_opex
     if hinted_opex_year is not None:
         hints["opex_source_year"] = hinted_opex_year
+    if _is_full_service_lease_type(hints.get("lease_type")):
+        # Do not carry passthrough OpEx economics on full-service gross leases.
+        hints["opex_psf_year_1"] = 0.0
+        hints["opex_source_year"] = None
+        hints["opex_by_calendar_year"] = {}
 
     return hints
 
@@ -8539,6 +8567,11 @@ def _normalize_impl(
                             "rent_psf_annual": 0.0,
                         }
                     ]
+                fallback_lease_type = _canonicalize_lease_type_label(extracted_hints.get("lease_type"))
+                hinted_opex_fallback = _coerce_float_token(extracted_hints.get("opex_psf_year_1"), 0.0) or 0.0
+                if not fallback_lease_type:
+                    fallback_lease_type = "NNN" if hinted_opex_fallback > 0 else "Full Service"
+                fallback_is_full_service = _is_full_service_lease_type(fallback_lease_type)
                 fallback_payload = {
                     "scenario_name": fallback_name,
                     "building_name": fallback_building,
@@ -8551,10 +8584,11 @@ def _normalize_impl(
                     "expiration_date": fallback_exp,
                     "term_months": fallback_term,
                     "rent_schedule": fallback_rent_schedule,
+                    "lease_type": fallback_lease_type,
                     "expense_structure_type": "nnn",
-                    "opex_psf_year_1": 0.0,
+                    "opex_psf_year_1": 0.0 if fallback_is_full_service else float(hinted_opex_fallback),
                     "expense_stop_psf": 0.0,
-                    "opex_growth_rate": 0.03,
+                    "opex_growth_rate": 0.0,
                     "discount_rate_annual": 0.08,
                 }
                 if isinstance(extracted_hints.get("phase_in_schedule"), list) and extracted_hints["phase_in_schedule"]:
@@ -8797,6 +8831,11 @@ def _normalize_impl(
                     updates["scenario_name"] = location_label
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
+            effective_lease_type_for_opex = updates.get(
+                "lease_type",
+                canonical.lease_type.value if hasattr(canonical.lease_type, "value") else canonical.lease_type,
+            )
+            is_full_service_lease = _is_full_service_lease_type(effective_lease_type_for_opex)
 
             hinted_opex = _coerce_float_token(extracted_hints.get("opex_psf_year_1"), 0.0)
             hinted_opex_by_year_raw = extracted_hints.get("opex_by_calendar_year")
@@ -8809,13 +8848,24 @@ def _normalize_impl(
                         continue
                     if 1900 <= y_i <= 2200 and v_f >= 0:
                         hinted_opex_by_year[int(y_i)] = float(round(v_f, 4))
-            if hinted_opex_by_year:
+            if is_full_service_lease:
+                if hinted_opex > 0 or hinted_opex_by_year:
+                    warnings.append(
+                        "Ignored OpEx passthrough values because lease type is full-service gross."
+                    )
+                updates["opex_psf_year_1"] = 0.0
+                updates["expense_stop_psf"] = 0.0
+                updates["opex_growth_rate"] = 0.0
+                updates["opex_by_calendar_year"] = {}
+                hinted_opex = 0.0
+                hinted_opex_by_year = {}
+            elif hinted_opex_by_year:
                 updates["opex_by_calendar_year"] = dict(sorted(hinted_opex_by_year.items()))
             if hinted_opex > 0:
                 updates["opex_psf_year_1"] = hinted_opex
                 if _coerce_float_token(canonical.expense_stop_psf, 0.0) <= 0:
                     updates["expense_stop_psf"] = hinted_opex
-            elif doc_type_hint in {"amendment", "lease"}:
+            elif not is_full_service_lease and doc_type_hint in {"amendment", "lease"}:
                 existing_opex = _coerce_float_token(updates.get("opex_psf_year_1", canonical.opex_psf_year_1), 0.0) or 0.0
                 opex_has_explicit_evidence = bool(
                     re.search(r"(?i)\b(?:operating\s+expenses?|opex|cam|common\s+area\s+maintenance)\b", text)
@@ -8824,7 +8874,7 @@ def _normalize_impl(
                     warnings.append(
                         "OpEx was not explicitly stated in this document; retained inferred OpEx value."
                     )
-            opex_source_year = _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
+            opex_source_year = 0 if is_full_service_lease else _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
             commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
             commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0
             effective_opex_growth = _coerce_float_token(
@@ -8886,6 +8936,8 @@ def _normalize_impl(
                 _coerce_float_token(canonical.opex_psf_year_1, 0.0),
             ) or 0.0
             if (
+                not is_full_service_lease
+                and
                 not opex_rollforward_applied
                 and effective_opex_after_table > 0
                 and commencement_year > today_year

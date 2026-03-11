@@ -1167,6 +1167,18 @@ def test_extract_hints_parses_building_table_and_net_rental_response_dates() -> 
     assert hints["free_rent_end_month"] == 3
 
 
+def test_extract_hints_detects_fsg_and_zeros_opex_passthrough() -> None:
+    text = (
+        "LEASE TYPE: FSG\n"
+        "BASE RENT: $33.50/SF full service gross.\n"
+        "OPERATING EXPENSES: included in gross rent.\n"
+    )
+    hints = main._extract_lease_hints(text, "analysis.pdf", "test-rid")
+    assert hints["lease_type"] == "Full Service"
+    assert hints["opex_psf_year_1"] == 0.0
+    assert hints["opex_by_calendar_year"] == {}
+
+
 def test_extract_hints_al1_primary_lease_term_prefers_150_month_term_over_rent_commencement_months() -> None:
     text = (
         "PREMISES: Approximately 205,072 rentable square feet.\n"

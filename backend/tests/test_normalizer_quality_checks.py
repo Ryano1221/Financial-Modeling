@@ -663,3 +663,61 @@ def test_normalize_impl_applies_mixed_and_distributed_option_abatements(monkeypa
         (24, 25, "base"),
         (36, 36, "base"),
     ]
+
+
+def test_normalize_impl_full_service_forces_zero_opex_when_hints_conflict(monkeypatch) -> None:
+    text = (
+        "LEASE TYPE: FSG\n"
+        "COMMENCEMENT DATE: March 1, 2026\n"
+        "LEASE TERM: Through December 31, 2026.\n"
+        "BASE RENT: $33.50 per RSF full service gross.\n"
+        "OPERATING EXPENSES: Estimated at $16.32/SF.\n"
+    )
+    monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: (text, "docx"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "counter_proposal")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Centre I Suite 201",
+                rsf=2175.0,
+                commencement=date(2026, 3, 1),
+                expiration=date(2026, 12, 31),
+                rent_steps=[RentStep(start=0, end=9, rate_psf_yr=33.5)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.FULL_SERVICE,
+                base_opex_psf_yr=16.32,
+                base_year_opex_psf_yr=16.32,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"opex_mode": 0.8},
+            warnings=[],
+            source="docx",
+            text_length=len(text),
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="centre1-fsg-counter.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+    canonical = result.canonical_lease
+
+    lease_type_value = canonical.lease_type.value if hasattr(canonical.lease_type, "value") else str(canonical.lease_type)
+    assert lease_type_value == "Full Service"
+    assert canonical.opex_psf_year_1 == 0.0
+    assert canonical.expense_stop_psf == 0.0
+    assert canonical.opex_growth_rate == 0.0

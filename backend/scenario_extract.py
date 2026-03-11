@@ -2861,7 +2861,25 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     Deterministic fallback when LLM extraction is unavailable.
     Returns scenario dict compatible with Scenario model + confidence + warnings.
     """
-    opex_mode = _detect_opex_mode_from_text(text) or "nnn"
+    detected_opex_mode = _detect_opex_mode_from_text(text)
+    inferred_prefill_mode = str(prefill.get("opex_mode") or "").strip().lower()
+    hinted_base_opex = float(
+        _coerce_float_token(
+            prefill.get("base_opex_psf_yr"),
+            _coerce_float_token(prefill.get("base_year_opex_psf_yr"), 0.0),
+        )
+        or 0.0
+    )
+    if detected_opex_mode in {"nnn", "base_year", "full_service"}:
+        opex_mode = detected_opex_mode
+    elif inferred_prefill_mode in {"nnn", "base_year", "full_service"}:
+        opex_mode = inferred_prefill_mode
+    elif hinted_base_opex > 0:
+        # Positive OpEx evidence implies passthrough economics; don't treat as full-service.
+        opex_mode = "nnn"
+    else:
+        # Conservative fallback when no reliable expense-structure signal exists.
+        opex_mode = "full_service"
     rsf = float(prefill.get("rsf", 10000.0) or 10000.0)
     rate = float(prefill.get("rate_psf_yr", 0.0) or 0.0)
     commencement = str(prefill.get("commencement") or "2026-01-01")
@@ -2887,14 +2905,24 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
         "free_rent_months": int(prefill.get("free_rent_months", 0) or 0),
         "ti_allowance_psf": float(prefill.get("ti_allowance_psf", 0.0) or 0.0),
         "opex_mode": opex_mode,
-        "base_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 10.0) or 10.0),
-        "base_year_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 10.0) or 10.0),
-        "opex_growth": 0.03,
+        "base_opex_psf_yr": float(prefill.get("base_opex_psf_yr", 0.0) or 0.0),
+        "base_year_opex_psf_yr": float(
+            prefill.get(
+                "base_year_opex_psf_yr",
+                prefill.get("base_opex_psf_yr", 0.0),
+            )
+            or 0.0
+        ),
+        "opex_growth": float(prefill.get("opex_growth", 0.0) or 0.0),
         "discount_rate_annual": 0.08,
         "parking_spaces": int(prefill.get("parking_spaces", 0) or 0),
         "parking_cost_monthly_per_space": float(prefill.get("parking_cost_monthly_per_space", 0.0) or 0.0),
         "parking_sales_tax_rate": 0.0825,
     }
+    if opex_mode == "full_service":
+        scenario["base_opex_psf_yr"] = 0.0
+        scenario["base_year_opex_psf_yr"] = 0.0
+        scenario["opex_growth"] = 0.0
 
     confidence = {
         "rsf": 0.7 if "rsf" in prefill else 0.0,
@@ -3071,12 +3099,22 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
         if inferred_opex in {"nnn", "base_year", "full_service"}:
             scenario["opex_mode"] = inferred_opex
             warnings.append("Opex mode inferred from lease structure language in the document.")
-        else:
+        elif (
+            _coerce_float_token(
+                scenario.get("base_opex_psf_yr"),
+                _coerce_float_token((prefill or {}).get("base_opex_psf_yr"), 0.0),
+            )
+            or 0.0
+        ) > 0:
             scenario["opex_mode"] = "nnn"
-            warnings.append("Opex mode missing; default NNN applied.")
-    scenario.setdefault("base_opex_psf_yr", 10.0)
-    scenario.setdefault("base_year_opex_psf_yr", 10.0)
-    scenario.setdefault("opex_growth", 0.03)
+            warnings.append("Opex mode inferred as NNN from explicit OpEx amounts in the document.")
+        else:
+            # Conservative fallback: avoid inventing NNN passthrough economics when mode is unknown.
+            scenario["opex_mode"] = "full_service"
+            warnings.append("Opex mode missing; default full-service gross applied. Review lease type.")
+    scenario.setdefault("base_opex_psf_yr", 0.0)
+    scenario.setdefault("base_year_opex_psf_yr", 0.0)
+    scenario.setdefault("opex_growth", 0.0)
     scenario.setdefault("discount_rate_annual", 0.08)
     scenario.setdefault("parking_spaces", 0)
     scenario.setdefault("parking_cost_monthly_per_space", 0.0)
@@ -3091,7 +3129,7 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
     # model_validate requires these numeric fields to be real numbers, not None.
     scenario["free_rent_months"] = max(0, int(_coerce_int_token(scenario.get("free_rent_months"), 0) or 0))
     scenario["ti_allowance_psf"] = max(0.0, float(_coerce_float_token(scenario.get("ti_allowance_psf"), 0.0) or 0.0))
-    scenario["base_opex_psf_yr"] = max(0.0, float(_coerce_float_token(scenario.get("base_opex_psf_yr"), 10.0) or 10.0))
+    scenario["base_opex_psf_yr"] = max(0.0, float(_coerce_float_token(scenario.get("base_opex_psf_yr"), 0.0) or 0.0))
     scenario["base_year_opex_psf_yr"] = max(
         0.0,
         float(
@@ -3102,7 +3140,11 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
             or scenario["base_opex_psf_yr"]
         ),
     )
-    scenario["opex_growth"] = max(0.0, float(_coerce_float_token(scenario.get("opex_growth"), 0.03) or 0.03))
+    scenario["opex_growth"] = max(0.0, float(_coerce_float_token(scenario.get("opex_growth"), 0.0) or 0.0))
+    if scenario.get("opex_mode") == "full_service":
+        scenario["base_opex_psf_yr"] = 0.0
+        scenario["base_year_opex_psf_yr"] = 0.0
+        scenario["opex_growth"] = 0.0
     scenario["discount_rate_annual"] = max(0.0, float(_coerce_float_token(scenario.get("discount_rate_annual"), 0.08) or 0.08))
     scenario["parking_spaces"] = max(0, int(_coerce_int_token(scenario.get("parking_spaces"), 0) or 0))
     scenario["parking_cost_monthly_per_space"] = max(
@@ -3154,10 +3196,10 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
             rent_steps=[RentStep(start=0, end=59, rate_psf_yr=0.0)],
             free_rent_months=0,
             ti_allowance_psf=0.0,
-            opex_mode=OpexMode.NNN,
-            base_opex_psf_yr=10.0,
-            base_year_opex_psf_yr=10.0,
-            opex_growth=0.03,
+            opex_mode=OpexMode.FULL_SERVICE,
+            base_opex_psf_yr=0.0,
+            base_year_opex_psf_yr=0.0,
+            opex_growth=0.0,
             discount_rate_annual=0.08,
         )
         return ExtractionResponse(
