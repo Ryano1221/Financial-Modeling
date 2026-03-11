@@ -51,7 +51,7 @@ def test_extract_hints_basic_info_table_prefers_subject_suite_and_term_over_exhi
         "BASIC LEASE INFORMATION Preamble Date of Lease: January 1, 2022 "
         "Preamble Building: Centre One Office Building 3103 Bee Caves Rd. Rollingwood, TX 78746 "
         "Section 1.1(a) Premises: Suite 201 Section 1.1(a) Net Rentable Square Feet of Premises: "
-        "approximately 2,175 net rentable square feet. Section 2.1 Lease Term: Expires at 11:59 p.m. "
+        "approximately 2,175 RSF. Section 2.1 Lease Term: Expires at 11:59 p.m. "
         "local time on the last day of December, 2026. Section 2.2 Lease Commencement Date: "
         "The later of January 1, 2022 or the date on which Landlord substantially completes the Tenant "
         "Improvement Work in the Premises in accordance with Exhibit E.\n"

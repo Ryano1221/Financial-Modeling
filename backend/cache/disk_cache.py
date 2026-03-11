@@ -16,6 +16,7 @@ _CACHE_DIR = Path(__file__).resolve().parent
 EXTRACTION_CACHE_DIR = _CACHE_DIR / "extraction"
 REPORT_CACHE_DIR = _CACHE_DIR / "reports"
 REPORT_DECK_CACHE_DIR = _CACHE_DIR / "report_decks"
+EXTRACTION_CACHE_VERSION = "2026-03-11-parser-v2"
 
 
 def _ensure_dir(d: Path) -> None:
@@ -25,7 +26,8 @@ def _ensure_dir(d: Path) -> None:
 def _extraction_key(file_bytes: bytes, force_ocr: bool | str) -> str:
     """force_ocr: True, False, or 'auto' for auto-OCR decision."""
     h = hashlib.sha256(file_bytes).hexdigest()
-    return hashlib.sha256((h + "|" + str(force_ocr)).encode()).hexdigest()
+    cache_material = f"{EXTRACTION_CACHE_VERSION}|{h}|{force_ocr}"
+    return hashlib.sha256(cache_material.encode()).hexdigest()
 
 
 def get_cached_extraction(file_bytes: bytes, force_ocr: bool | str) -> dict[str, Any] | None:
