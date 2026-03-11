@@ -2437,7 +2437,7 @@ function HomeContent() {
         if (activePlatformModule === "completed-leases") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter />
+          <ClientDocumentCenter showDropZone={false} />
           <CompletedLeasesWorkspace
             clientId={workspaceScopeId}
             exportBranding={{

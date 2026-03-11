@@ -42,6 +42,43 @@ def test_suite_parser_keeps_alphanumeric_suite_values() -> None:
     assert main._extract_suite_from_text(text) == "11C"
 
 
+def test_floor_normalizer_rejects_preposition_tokens() -> None:
+    assert main._normalize_floor_candidate("on") == ""
+
+
+def test_extract_hints_basic_info_table_prefers_subject_suite_and_term_over_exhibit_noise() -> None:
+    text = (
+        "BASIC LEASE INFORMATION Preamble Date of Lease: January 1, 2022 "
+        "Preamble Building: Centre One Office Building 3103 Bee Caves Rd. Rollingwood, TX 78746 "
+        "Section 1.1(a) Premises: Suite 201 Section 1.1(a) Net Rentable Square Feet of Premises: "
+        "approximately 2,175 net rentable square feet. Section 2.1 Lease Term: Expires at 11:59 p.m. "
+        "local time on the last day of December, 2026. Section 2.2 Lease Commencement Date: "
+        "The later of January 1, 2022 or the date on which Landlord substantially completes the Tenant "
+        "Improvement Work in the Premises in accordance with Exhibit E.\n"
+        "Term and upon the terms, conditions, covenants and agreements herein provided, Suite 201, "
+        "located on the first (1st) floor of the Building.\n"
+        "Concurrently with the signing of this Lease, Tenant shall pay to Landlord a sum equal to one (1) "
+        "month's Fixed Monthly Rent.\n"
+        "Section 7 Number of Parking Space for Tenant/Tenant Employees: 8 spaces.\n"
+        "EXHIBIT E WORK LETTER Landlord will perform the following at its sole cost: Signage, interior "
+        "doors in suite, doors in Suite 135, and devising walls between 201 (Tenant) and Suite 200 "
+        "(available for Lease).\n"
+        "EXHIBIT B CERTIFICATE OF LEASE COMMENCEMENT DATE AND EXPIRATION OF LEASE TERM: "
+        "Lease Term shall expire on December 31, 2026.\n"
+    )
+    hints = main._extract_lease_hints(text, "centre-one-lease.pdf", "test-rid")
+
+    assert hints["building_name"] == "Centre One Office Building"
+    assert hints["suite"] == "201"
+    assert hints["floor"] != "ON"
+    assert hints["rsf"] == 2175.0
+    assert str(hints["commencement_date"]) == "2022-01-01"
+    assert str(hints["expiration_date"]) == "2026-12-31"
+    assert hints["term_months"] == 60
+    assert hints["parking_count"] == 8
+    assert 3.0 < float(hints["parking_ratio"] or 0.0) < 4.0
+
+
 def test_extract_hints_multiline_located_at_suite_building_clause() -> None:
     text = (
         "Landlord leases to Tenant approximately 3,200 rentable square feet (\"RSF\") located at Suite 110,\n"

@@ -25,7 +25,11 @@ function inDateRange(iso: string, startDate: string, endDate: string): boolean {
   return true;
 }
 
-export function ClientDocumentCenter() {
+interface ClientDocumentCenterProps {
+  showDropZone?: boolean;
+}
+
+export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCenterProps) {
   const { activeClient, documents, registerDocument } = useClientWorkspace();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("No documents uploaded for this client.");
@@ -38,6 +42,42 @@ export function ClientDocumentCenter() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const triggerDownloadFromDataUrl = useCallback(async (fileName: string, dataUrl: string): Promise<void> => {
+    const safeName = asText(fileName) || "document";
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = safeName;
+    link.rel = "noopener noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }, []);
+
+  const openDocument = useCallback(async (docId: string) => {
+    const target = documents.find((doc) => doc.id === docId);
+    if (!target) return;
+    if (!target.previewDataUrl) {
+      setError("This document is indexed, but opening is only available for files with a generated preview.");
+      return;
+    }
+    const opened = window.open(target.previewDataUrl, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      try {
+        await triggerDownloadFromDataUrl(target.name, target.previewDataUrl);
+        setError("Popup was blocked, so the document was downloaded instead.");
+        return;
+      } catch {
+        setError("Browser blocked opening the document and download fallback failed. Try uploading again.");
+        return;
+      }
+    }
+    setError("");
+  }, [documents, triggerDownloadFromDataUrl]);
 
   const filteredDocuments = useMemo(() => {
     const needle = asText(query).toLowerCase();
@@ -112,36 +152,38 @@ export function ClientDocumentCenter() {
             </button>
           </div>
 
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={(event) => {
-              event.preventDefault();
-              setDragOver(false);
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragOver(false);
-              void processFiles(event.dataTransfer.files);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
+          {showDropZone ? (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(event) => {
                 event.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-            className={`mt-4 cursor-pointer border border-dashed px-4 py-8 text-center transition-colors ${
-              dragOver ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
-            }`}
-          >
-            <p className="heading-kicker mb-2">Drag and drop upload</p>
-            <p className="text-sm text-slate-200">Supports bulk files. Parseable files are automatically classified and indexed.</p>
-          </div>
+                setDragOver(true);
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                setDragOver(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragOver(false);
+                void processFiles(event.dataTransfer.files);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              className={`mt-4 cursor-pointer border border-dashed px-4 py-8 text-center transition-colors ${
+                dragOver ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
+              }`}
+            >
+              <p className="heading-kicker mb-2">Drag and drop upload</p>
+              <p className="text-sm text-slate-200">Supports bulk files. Parseable files are automatically classified and indexed.</p>
+            </div>
+          ) : null}
           <input
             ref={fileInputRef}
             type="file"
@@ -216,12 +258,13 @@ export function ClientDocumentCenter() {
                     <th className="text-left py-2 pr-3 text-slate-300 font-medium">Building</th>
                     <th className="text-left py-2 pr-3 text-slate-300 font-medium">Suite</th>
                     <th className="text-left py-2 pr-3 text-slate-300 font-medium">Uploaded</th>
+                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Open</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredDocuments.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-6 text-slate-400">No documents match the current filters.</td>
+                      <td colSpan={6} className="py-6 text-slate-400">No documents match the current filters.</td>
                     </tr>
                   ) : (
                     filteredDocuments.map((doc) => {
@@ -235,6 +278,17 @@ export function ClientDocumentCenter() {
                           <td className="py-2 pr-3 text-slate-300">{doc.building || "-"}</td>
                           <td className="py-2 pr-3 text-slate-300">{doc.suite || "-"}</td>
                           <td className="py-2 pr-3 text-slate-300">{formatDateTime(doc.uploadedAt)}</td>
+                          <td className="py-2 pr-3 text-slate-300">
+                            <button
+                              type="button"
+                              className="btn-premium btn-premium-secondary text-xs"
+                              onClick={() => {
+                                void openDocument(doc.id);
+                              }}
+                            >
+                              Open
+                            </button>
+                          </td>
                         </tr>
                       );
                     })

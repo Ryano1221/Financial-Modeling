@@ -1841,6 +1841,7 @@ def _normalize_suite_candidate(raw: str) -> str:
             "office", "floor", "term", "year", "month", "rent", "address",
             "located", "option", "renewal", "expiration", "commencement",
             "in", "at", "on",
+            "to", "and", "or", "of", "by",
         }:
             return ""
         if re.fullmatch(
@@ -1909,7 +1910,7 @@ def _normalize_floor_candidate(raw: str) -> str:
     if not token_match:
         return ""
     token = token_match.group(1)
-    if token.lower() in {"of", "the"}:
+    if token.lower() in {"of", "the", "on", "in", "at", "to", "and", "for", "by"}:
         return ""
     if "-" in token and not re.search(r"\d", token):
         return ""
@@ -2041,9 +2042,22 @@ def _extract_suite_from_text(text: str) -> str:
 
     # Prefer explicit multi-suite expressions such as "Suite 100, 200, and 300".
     multi_suite_candidates: list[tuple[int, int, str]] = []
+    multi_suite_noise_tokens = (
+        "exhibit",
+        "work letter",
+        "signage",
+        "directory",
+        "entry door",
+        "door signage",
+        "landlord will perform",
+        "professionally cleaned",
+        "construction documents",
+    )
     for idx, line in enumerate(lines[:320]):
         low = line.lower()
         if any(tok in low for tok in ("attn:", "attention:", "address for notices", "dear ", "re:")) and "premises" not in low:
+            continue
+        if any(tok in low for tok in multi_suite_noise_tokens):
             continue
         numbers: list[str] = []
         if "suite" in low:
@@ -2097,7 +2111,8 @@ def _extract_suite_from_text(text: str) -> str:
         multi_suite_candidates.append((score, idx, candidate))
     if multi_suite_candidates:
         multi_suite_candidates.sort(key=lambda row: (-row[0], row[1], -len(row[2])))
-        return multi_suite_candidates[0][2]
+        if multi_suite_candidates[0][0] >= 17:
+            return multi_suite_candidates[0][2]
 
     # Table exports may emit reversed suite tokens, e.g. "PREMISES | 245 Suite".
     reversed_suite_patterns = [
@@ -2525,6 +2540,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     v = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)^.*?\bas\s+a\s+tenant\s+at\s+", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\bhttps?://\S+", "", v).strip(" ,.;:-")
+    v = re.split(r"(?i)\bsection\s+\d{1,2}(?:\.\d+)?(?:\([a-z]\))?\b", v, maxsplit=1)[0].strip(" ,.;:-")
     v = re.sub(r"(?i)\s+located\s+at\s+\d[\dA-Za-z .,'-]{3,160}(?:\.\s*.*)?$", "", v).strip(" ,.;:-")
     # "Summit at Lantana 7171 Southwest Parkway" -> "Summit at Lantana".
     if not re.match(r"^\d", v) and " - " not in v:
@@ -2540,6 +2556,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
         "",
         v,
     ).strip(" ,.;:-")
+    v = re.split(r"(?i)\bthe\s+land\s+on\s+which\s+the\s+building\s+is\b", v, maxsplit=1)[0].strip(" ,.;:-")
     v = re.split(r"(?i)\b(?:it is understood and agreed|provided that|subject to|for the avoidance of doubt|shall refer to)\b", v, maxsplit=1)[0].strip(" ,.;:-")
     v = re.split(r"(?i)\b(?:additional information|can be found at|all other signage)\b", v, maxsplit=1)[0].strip(" ,.;:-")
     v = re.sub(r"(?i)\s+under\s+the\s+proposed\s+business\s+points.*$", "", v).strip(" ,.;:-")
@@ -2589,6 +2606,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
             "term of",
             "proposal",
             "counterproposal",
+            "the land on which the building is",
         )
     ):
         return ""
@@ -2611,6 +2629,7 @@ def _extract_building_name_from_text(text: str, suite_hint: str = "", address_hi
     patterns: list[tuple[re.Pattern[str], int]] = [
         (re.compile(r"(?i)^\s*building\s*:\s*\|\s*([^|\n,;]{2,120})"), 16),
         (re.compile(r"(?i)^\s*building\s*:\s*([^|\n,;]{2,120})"), 15),
+        (re.compile(r"(?i)\bbuilding\s*:\s*([A-Za-z0-9][^\n]{2,180})"), 14),
         (re.compile(rf"(?i)\blease\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' .\-/]{{2,80}}?)(?:\s+in\s+[A-Za-z][A-Za-z .'-]{{1,40}}(?:,\s*{state_token})?)?(?:\s+under\b|[.,;:\n]|$)"), 12),
         (re.compile(rf"(?i)\bfor\s+office\s+space\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{{2,80}}?)(?:\s+in\s+[A-Za-z][A-Za-z .'-]{{1,40}}(?:,\s*{state_token})?)?(?:[.,;:\n]|$)"), 11),
         (re.compile(rf"(?i)\bas\s+a\s+tenant\s+at\s+([A-Za-z0-9][A-Za-z0-9&' \-/]{{2,80}}?)(?:\s+in\s+[A-Za-z][A-Za-z .'-]{{1,40}}(?:,\s*{state_token})?)?(?:[.,;:\n]|$)"), 11),
@@ -3031,6 +3050,25 @@ def _extract_last_date_token(text: str) -> Optional[date]:
     return None
 
 
+def _parse_month_year_token_as_last_day(value: str) -> Optional[date]:
+    token = " ".join((value or "").split()).strip(" ,.;:-")
+    if not token:
+        return None
+    token = re.sub(r"(?i)^(?:the\s+)?(?:last\s+day\s+of|end\s+of)\s+", "", token).strip(" ,.;:-")
+    parse_formats = ("%B, %Y", "%B %Y", "%b, %Y", "%b %Y")
+    parsed: Optional[datetime] = None
+    for fmt in parse_formats:
+        try:
+            parsed = datetime.strptime(token, fmt)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        return None
+    last_day = monthrange(parsed.year, parsed.month)[1]
+    return date(parsed.year, parsed.month, last_day)
+
+
 def _extract_best_commencement_date_from_clause(text: str) -> Optional[date]:
     if not text:
         return None
@@ -3192,6 +3230,18 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
         if (
             re.search(r"(?i)\bmonth\s+\d{1,3}\b", low)
             and any(tok in low for tok in ("escalat", "increase", "base rent", "rental rate"))
+        ):
+            return True
+        if any(
+            tok in low
+            for tok in (
+                "fixed monthly rent",
+                "monthly rent",
+                "monthly installment",
+                "security deposit",
+                "installment",
+                "per month",
+            )
         ):
             return True
         if any(
@@ -3464,6 +3514,32 @@ def _is_non_term_expiration_context(context: str) -> bool:
         return True
     if any(token in low for token in proposal_tokens):
         return not explicit_lease_expiration
+    return False
+
+
+def _is_non_term_date_range_context(context: str) -> bool:
+    low = (context or "").lower()
+    if not low:
+        return False
+    if any(
+        token in low
+        for token in (
+            "fixed annual rent",
+            "annual fixed rent",
+            "fixed monthly rent",
+            "monthly installment",
+            "rent schedule",
+            "lease year",
+            "operating year",
+            "per month",
+        )
+    ):
+        return True
+    if (
+        re.search(r"(?i)\b(?:base\s+rent|rent)\b", low)
+        and not re.search(r"(?i)\b(?:lease\s+term|commenc(?:ement|ing)|expir(?:ation|e|ing)|ending\s+on)\b", low)
+    ):
+        return True
     return False
 
 
@@ -5333,6 +5409,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
             if _is_historical_recital_context(local):
                 continue
+            if _is_non_term_date_range_context(local):
+                continue
             comm_d = _parse_lease_date(m.group(1))
             exp_d = _parse_lease_date(m.group(2))
             if comm_d and exp_d and exp_d > comm_d:
@@ -5406,6 +5484,26 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             d = _extract_first_date_token(candidate_text)
             if d:
                 term_candidates["expiration"] = d
+                break
+
+    if term_candidates["expiration"] is None:
+        month_year_token = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*,?\s*\d{4}"
+        expiration_month_year_patterns = [
+            rf"(?i)\b(?:lease\s+term|term)\b[^\n]{{0,200}}\b(?:expire|expires|expiration)\b[^\n]{{0,80}}\b(?:last\s+day\s+of|end\s+of)?\s*({month_year_token})\b",
+            rf"(?i)\b(?:lease\s+term|term)\b[^\n]{{0,200}}\bon\s+the\s+last\s+day\s+of\s+({month_year_token})\b",
+        ]
+        for pat in expiration_month_year_patterns:
+            for m in re.finditer(pat, text):
+                local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
+                if _is_non_term_expiration_context(local):
+                    continue
+                if _is_historical_recital_context(local):
+                    continue
+                d = _parse_month_year_token_as_last_day(m.group(1))
+                if d:
+                    term_candidates["expiration"] = d
+                    break
+            if term_candidates["expiration"] is not None:
                 break
 
     # Some scanned/basic-provisions tables place the date on following lines.
@@ -5515,14 +5613,25 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             term_from_text is not None
             and (term_from_dates <= 0 or abs(int(term_from_dates) - int(term_from_text)) >= 6)
         ):
-            hints["term_months"] = int(term_from_text)
-            try:
-                hints["expiration_date"] = _expiration_from_term_months(
-                    hints["commencement_date"],
-                    int(term_from_text),
-                )
-            except Exception:
-                pass
+            should_override_with_term_text = True
+            if (
+                term_from_dates >= 24
+                and term_from_text is not None
+                and int(term_from_text) <= 12
+                and abs(int(term_from_dates) - int(term_from_text)) >= 12
+            ):
+                should_override_with_term_text = False
+            if should_override_with_term_text:
+                hints["term_months"] = int(term_from_text)
+                try:
+                    hints["expiration_date"] = _expiration_from_term_months(
+                        hints["commencement_date"],
+                        int(term_from_text),
+                    )
+                except Exception:
+                    pass
+            else:
+                hints["term_months"] = term_from_dates
         elif hints["expiration_date"] is not None:
             hints["term_months"] = term_from_dates
     elif hints["commencement_date"] and hints.get("term_months"):
@@ -6269,6 +6378,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             parking_ratio_evidence = True
 
     parking_count_patterns = [
+        r"(?i)\bnumber\s+of\s+parking\s+spaces?\b[^\n:]{0,120}[:\-]?\s*(\d{1,4})(?!\.\d)\b",
         r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})(?!\.\d)\b",
         r"(?i)(?<![\d.])(\d{1,4})(?!\.\d)\s+(?:reserved|unreserved|covered|surface|garage)?\s*parking\s+spaces?\b",
         r"(?i)\bentitled\s+to\s+(\d{1,4})(?!\.\d)\s+(?:parking\s+)?spaces?\b",
@@ -6286,9 +6396,11 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             trailing = text[m.end(): min(len(text), m.end() + 64)].lower()
             if re.search(r"(?i)\b(?:per|\/)\s*(?:every\s*)?1,?000\b", trailing):
                 continue
+            if re.search(r"(?i)\bper\s+\d{1,5}\s*(?:square\s*feet|rsf|sf)\b", trailing):
+                continue
             local = text[max(0, m.start() - 90): min(len(text), m.end() + 110)].lower()
             score = 1
-            if any(tok in local for tok in ("entitled", "allotted", "total # paid spaces", "total paid spaces", "# reserved", "# unreserved")):
+            if any(tok in local for tok in ("entitled", "allotted", "right to use", "total # paid spaces", "total paid spaces", "# reserved", "# unreserved")):
                 score += 4
             if any(tok in local for tok in ("reserved", "unreserved", "garage", "surface", "covered")):
                 score += 2
@@ -6400,15 +6512,23 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     ) or 0.0
 
     existing_ratio = _coerce_float_token(hints.get("parking_ratio"), 0.0) or 0.0
+    existing_count = _coerce_int_token(hints.get("parking_count"), 0) or 0
     if prefill_parking_ratio > 0 and existing_ratio <= 0:
-        hints["parking_ratio"] = float(prefill_parking_ratio)
-        parking_ratio_evidence = True
+        should_accept_prefill_ratio = existing_count <= 0 or not parking_count_evidence
+        if not should_accept_prefill_ratio and existing_count > 0:
+            derived_ratio_from_count = _parking_ratio_per_1000_from_count(existing_count, hints.get("rsf"))
+            if derived_ratio_from_count > 0:
+                ratio_delta = abs(float(prefill_parking_ratio) - float(derived_ratio_from_count))
+                ratio_den = max(float(prefill_parking_ratio), float(derived_ratio_from_count), 0.01)
+                should_accept_prefill_ratio = (ratio_delta / ratio_den) <= 0.35
+        if should_accept_prefill_ratio:
+            hints["parking_ratio"] = float(prefill_parking_ratio)
+            parking_ratio_evidence = True
 
     existing_rate = _coerce_float_token(hints.get("parking_rate_monthly"), 0.0) or 0.0
     if prefill_parking_rate > 0 and existing_rate <= 0:
         hints["parking_rate_monthly"] = float(prefill_parking_rate)
 
-    existing_count = _coerce_int_token(hints.get("parking_count"), 0) or 0
     if prefill_parking_count > 0 and (
         existing_count <= 0 or prefill_parking_count >= int(round(existing_count * 1.5))
     ):

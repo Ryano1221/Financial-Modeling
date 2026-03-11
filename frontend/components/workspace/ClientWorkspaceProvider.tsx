@@ -114,7 +114,8 @@ async function maybeBuildPreview(file?: File | null): Promise<string | undefined
   const fileName = asText(file.name).toLowerCase();
   const canPreview = file.type.startsWith("image/") || file.type === "application/pdf" || fileName.endsWith(".pdf");
   if (!canPreview) return undefined;
-  if (file.size > 2_500_000) return undefined;
+  const previewSizeLimit = file.type === "application/pdf" || fileName.endsWith(".pdf") ? 12_000_000 : 2_500_000;
+  if (file.size > previewSizeLimit) return undefined;
   try {
     return await readDataUrl(file);
   } catch {
@@ -246,6 +247,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>("idle");
   const [cloudSyncMessage, setCloudSyncMessage] = useState("Cloud sync ready.");
   const [cloudLastSyncedAt, setCloudLastSyncedAt] = useState<string | null>(null);
+  const [cloudLocalFallback, setCloudLocalFallback] = useState(false);
   const [clients, setClients] = useState<ClientWorkspaceClient[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [allDocuments, setAllDocuments] = useState<ClientWorkspaceDocument[]>([]);
@@ -316,6 +318,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     async function hydrate() {
       setReady(false);
       if (session) {
+        setCloudLocalFallback(false);
         setCloudSyncStatus("idle");
         setCloudSyncMessage("Loading cloud workspace...");
         try {
@@ -326,6 +329,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
               ? remote.workspace_state
               : {};
           applyWorkspaceState(workspaceState);
+          setCloudLocalFallback(false);
           setCloudSyncStatus("synced");
           setCloudSyncMessage("Cloud workspace loaded.");
           setCloudLastSyncedAt(asText(remote.updated_at) || null);
@@ -347,18 +351,16 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             void signOut();
             return;
           }
-          setCloudSyncStatus("error");
-          setCloudSyncMessage(message || "Cloud workspace load failed.");
-          // Signed-in users should always bind to cloud account data, never local device state.
-          applyWorkspaceState({
-            clients: [],
-            documents: [],
-            activeClientId: null,
-          });
+          setCloudLocalFallback(true);
+          applyLocalFallback();
+          setCloudSyncStatus("local");
+          setCloudSyncMessage(message || "Cloud unavailable. Using local device workspace.");
+          setCloudLastSyncedAt(null);
           setReady(true);
           return;
         }
       }
+      setCloudLocalFallback(false);
       applyLocalFallback();
       setCloudSyncStatus("local");
       setCloudSyncMessage("Local device only (sign in for cloud sync).");
@@ -374,25 +376,25 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
-    if (session) {
+    if (session && !cloudLocalFallback) {
       window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
       return;
     }
     window.localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(clients));
-  }, [ready, clients, session]);
+  }, [ready, clients, session, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
-    if (session) {
+    if (session && !cloudLocalFallback) {
       window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
       return;
     }
     window.localStorage.setItem(DOCUMENT_LIBRARY_STORAGE_KEY, JSON.stringify(allDocuments));
-  }, [ready, allDocuments, session]);
+  }, [ready, allDocuments, session, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
-    if (session) {
+    if (session && !cloudLocalFallback) {
       window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
       return;
     }
@@ -401,10 +403,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     } else {
       window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
     }
-  }, [ready, activeClientId, session]);
+  }, [ready, activeClientId, session, cloudLocalFallback]);
 
   useEffect(() => {
-    if (!ready || !session) return;
+    if (!ready || !session || cloudLocalFallback) return;
     let cancelled = false;
     setCloudSyncStatus("saving");
     setCloudSyncMessage("Syncing to cloud...");
@@ -416,6 +418,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         try {
           const saved = await saveWorkspaceCloudState(workspaceState);
           if (cancelled) return;
+          setCloudLocalFallback(false);
           setCloudSyncStatus("synced");
           setCloudSyncMessage("Synced to cloud.");
           setCloudLastSyncedAt(asText(saved.updated_at) || new Date().toISOString());
@@ -429,6 +432,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             try {
               const savedCompact = await saveWorkspaceCloudState(compactState);
               if (cancelled) return;
+              setCloudLocalFallback(false);
               setCloudSyncStatus("synced");
               setCloudSyncMessage("Synced to cloud (compact mode).");
               setCloudLastSyncedAt(asText(savedCompact.updated_at) || new Date().toISOString());
@@ -437,15 +441,17 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             } catch (compactError) {
               if (cancelled) return;
               const compactMessage = String(compactError instanceof Error ? compactError.message : compactError || "").trim();
-              setCloudSyncStatus("error");
-              setCloudSyncMessage(compactMessage || "Cloud sync failed.");
+              setCloudLocalFallback(true);
+              setCloudSyncStatus("local");
+              setCloudSyncMessage(compactMessage || "Cloud sync failed. Using local workspace.");
               console.warn("workspace_cloud_save_failed_compact", compactError);
               return;
             }
           }
           const message = String(error instanceof Error ? error.message : error || "").trim();
-          setCloudSyncStatus("error");
-          setCloudSyncMessage(message || "Cloud sync failed.");
+          setCloudLocalFallback(true);
+          setCloudSyncStatus("local");
+          setCloudSyncMessage(message || "Cloud sync failed. Using local workspace.");
           console.warn("workspace_cloud_save_failed", error);
         }
       })();
@@ -454,7 +460,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [ready, session, clients, allDocuments, activeClientId]);
+  }, [ready, session, clients, allDocuments, activeClientId, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready) return;

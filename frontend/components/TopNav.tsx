@@ -55,12 +55,13 @@ export function TopNav() {
     if (!session) return "";
     if (cloudSyncStatus === "saving") return "Syncing...";
     if (cloudSyncStatus === "error") return "Sync error";
+    if (cloudSyncStatus === "local") return "Local mode";
     if (cloudSyncStatus === "synced") return syncTime ? `Synced ${syncTime}` : "Synced";
     return "Cloud ready";
   })();
   const cloudSyncClass = cloudSyncStatus === "error"
     ? "text-red-300"
-    : cloudSyncStatus === "saving"
+    : cloudSyncStatus === "saving" || cloudSyncStatus === "local"
       ? "text-amber-200"
       : "text-emerald-300";
 
