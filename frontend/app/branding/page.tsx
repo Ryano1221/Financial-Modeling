@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AuthPanel } from "@/components/AuthPanel";
 import { BrandingLogoUploader } from "@/components/BrandingLogoUploader";
-import { getSession, signOut, type SupabaseAuthSession } from "@/lib/supabase";
+import { signOut } from "@/lib/supabase";
+import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import {
   deleteUserBrandingLogo,
   fetchUserBranding,
@@ -13,8 +14,7 @@ import {
 } from "@/lib/user-settings";
 
 export default function BrandingPage() {
-  const [session, setSession] = useState<SupabaseAuthSession | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const { ready, session } = useClientWorkspace();
   const [branding, setBranding] = useState<UserBrandingResponse | null>(null);
   const [brokerageName, setBrokerageName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -36,27 +36,11 @@ export default function BrandingPage() {
   }, [session]);
 
   useEffect(() => {
-    let cancelled = false;
-    getSession()
-      .then((next) => {
-        if (cancelled) return;
-        setSession(next);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setAuthLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!session) return;
     void load();
   }, [session, load]);
 
-  if (authLoading) {
+  if (!ready) {
     return (
       <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
         <p className="text-sm text-slate-300">Loading account…</p>
@@ -65,7 +49,7 @@ export default function BrandingPage() {
   }
 
   if (!session) {
-    return <AuthPanel onAuthed={(next) => setSession(next)} />;
+    return <AuthPanel onAuthed={() => {}} />;
   }
 
   return (
@@ -79,7 +63,7 @@ export default function BrandingPage() {
           <button
             type="button"
             className="btn-premium btn-premium-secondary"
-            onClick={() => void signOut().then(() => setSession(null))}
+            onClick={() => void signOut()}
           >
             Sign out
           </button>

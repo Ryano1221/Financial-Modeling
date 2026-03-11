@@ -8,7 +8,7 @@ function asText(value: unknown): string {
 }
 
 export function ClientWorkspaceGate() {
-  const { isAuthenticated, clients, activeClient, createClient, setActiveClient } = useClientWorkspace();
+  const { ready, isAuthenticated, clients, activeClient, createClient, setActiveClient } = useClientWorkspace();
   const [name, setName] = useState("");
   const [companyType, setCompanyType] = useState("");
   const [contactName, setContactName] = useState("");
@@ -16,7 +16,7 @@ export function ClientWorkspaceGate() {
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
 
-  const needsSelection = useMemo(() => isAuthenticated && !activeClient, [isAuthenticated, activeClient]);
+  const needsSelection = useMemo(() => ready && isAuthenticated && !activeClient, [ready, isAuthenticated, activeClient]);
   if (!needsSelection) return null;
 
   return (

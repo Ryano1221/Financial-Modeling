@@ -567,13 +567,16 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
 function HomeContent() {
   const searchParams = useSearchParams();
   const {
+    ready: workspaceReady,
     session: authSession,
     isAuthenticated,
     activeClient,
     activeClientId,
     registerDocument,
   } = useClientWorkspace();
-  const workspaceScopeId = activeClientId || (isAuthenticated ? "unselected" : "guest");
+  const workspaceScopeId = workspaceReady
+    ? (activeClientId || (isAuthenticated ? "unselected" : "guest"))
+    : "boot";
   const scenariosStorageKey = useMemo(
     () => makeClientScopedStorageKey(SCENARIOS_STATE_KEY, workspaceScopeId),
     [workspaceScopeId],
@@ -656,6 +659,7 @@ function HomeContent() {
 
   const [hasRestored, setHasRestored] = useState(false);
   useEffect(() => {
+    if (!workspaceReady) return;
     setScenarios([]);
     setSelectedId(null);
     setResults({});
@@ -663,10 +667,10 @@ function HomeContent() {
     setIncludedInSummary({});
     computeRequestEpochRef.current = {};
     setHasRestored(false);
-  }, [scenariosStorageKey]);
+  }, [scenariosStorageKey, workspaceReady]);
 
   useEffect(() => {
-    if (hasRestored || typeof window === "undefined") return;
+    if (!workspaceReady || hasRestored || typeof window === "undefined") return;
     try {
       const raw = localStorage.getItem(scenariosStorageKey);
       if (!raw) {
@@ -686,10 +690,10 @@ function HomeContent() {
     } catch {
       setHasRestored(true);
     }
-  }, [hasRestored, scenariosStorageKey, workspaceScopeId]);
+  }, [hasRestored, scenariosStorageKey, workspaceScopeId, workspaceReady]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !hasRestored) return;
+    if (!workspaceReady || typeof window === "undefined" || !hasRestored) return;
     const included: Record<string, boolean> = {};
     scenarios.forEach((s) => {
       included[s.id] = includedInSummary[s.id] !== false;
@@ -702,10 +706,10 @@ function HomeContent() {
     } catch {
       // ignore
     }
-  }, [scenarios, includedInSummary, hasRestored, scenariosStorageKey]);
+  }, [scenarios, includedInSummary, hasRestored, scenariosStorageKey, workspaceReady]);
 
   useEffect(() => {
-    if (!hasRestored) return;
+    if (!workspaceReady || !hasRestored) return;
     setScenarios((prev) => {
       let changed = false;
       const next = prev.map((s) => {
@@ -725,7 +729,7 @@ function HomeContent() {
       });
       return changed ? next : prev;
     });
-  }, [hasRestored]);
+  }, [hasRestored, workspaceReady]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !isProduction || scenarios.length === 0) return;
@@ -762,7 +766,7 @@ function HomeContent() {
   }, [scenarios, isProduction, canonicalComputeCache]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!workspaceReady || typeof window === "undefined") return;
     setBrandId("default");
     try {
       const s = localStorage.getItem(brandStorageKey);
@@ -770,13 +774,13 @@ function HomeContent() {
     } catch {
       // ignore localStorage failures
     }
-  }, [brandStorageKey]);
+  }, [brandStorageKey, workspaceReady]);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && brandId) {
+    if (workspaceReady && typeof window !== "undefined" && brandId) {
       localStorage.setItem(brandStorageKey, brandId);
     }
-  }, [brandId, brandStorageKey]);
+  }, [brandId, brandStorageKey, workspaceReady]);
 
   const loadOrganizationBranding = useCallback(async () => {
     if (!authSession) {
@@ -818,7 +822,7 @@ function HomeContent() {
   }, [defaultPreparedByFromAuth]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!workspaceReady || typeof window === "undefined") return;
     setReportMeta({
       prepared_for: activeClient?.name || "",
       prepared_by: "",
@@ -856,10 +860,10 @@ function HomeContent() {
     } catch {
       // ignore parse errors
     }
-  }, [reportMetaStorageKey, activeClient?.name]);
+  }, [reportMetaStorageKey, activeClient?.name, workspaceReady]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!workspaceReady || typeof window === "undefined") return;
     try {
       localStorage.setItem(
         reportMetaStorageKey,
@@ -872,7 +876,7 @@ function HomeContent() {
     } catch {
       // ignore storage limits
     }
-  }, [reportMetaStorageKey, reportMeta, clientLogoDataUrl, clientLogoFileName]);
+  }, [reportMetaStorageKey, reportMeta, clientLogoDataUrl, clientLogoFileName, workspaceReady]);
 
   const uploadClientLogo = useCallback(async (file: File) => {
     if (!authSession) {
@@ -1111,6 +1115,7 @@ function HomeContent() {
   }, [handleNormalizeSuccess]);
 
   useEffect(() => {
+    if (!workspaceReady) return;
     try {
       const raw = sessionStorage.getItem(pendingScenarioKey);
       if (!raw) return;
@@ -1122,7 +1127,7 @@ function HomeContent() {
     } catch {
       // ignore invalid or missing
     }
-  }, [workspaceScopeId, pendingScenarioKey]);
+  }, [workspaceScopeId, pendingScenarioKey, workspaceReady]);
 
   const addScenario = useCallback(() => {
     const newScenario: ScenarioWithId = normalizeScenarioEconomics({
@@ -2486,7 +2491,7 @@ function HomeContent() {
         return (
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
             <ClientDocumentCenter />
-            <ObligationsWorkspace clientId={workspaceScopeId} />
+            <ObligationsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
           </main>
         );
       })() : null}

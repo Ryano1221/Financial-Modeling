@@ -2,6 +2,9 @@ import { clearAccessToken, getAccessToken, setAccessToken } from "./auth-token";
 
 const REFRESH_TOKEN_KEY = "thecremodel_supabase_refresh_token";
 const USER_KEY = "thecremodel_supabase_user";
+const SESSION_LAST_ACTIVE_AT_KEY = "thecremodel_supabase_session_last_active_at";
+const MAX_PERSIST_DAYS = 30;
+const MAX_PERSIST_AGE_MS = MAX_PERSIST_DAYS * 24 * 60 * 60 * 1000;
 const DEFAULT_SUPABASE_URL = "https://stvfubfpwwlsigfugnem.supabase.co";
 const DEFAULT_SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN0dmZ1YmZwd3dsc2lnZnVnbmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1OTczMjcsImV4cCI6MjA4NzE3MzMyN30.DqdAOU90YUSkqT1EsDwKPT7JAjuUxapzfUhr58g1sn0";
@@ -78,6 +81,29 @@ function setStoredUser(user: SupabaseAuthUser | null): void {
   window.localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
+function setStoredSessionLastActiveAt(value: number | null): void {
+  if (!canUseStorage()) return;
+  if (!value || !Number.isFinite(value) || value <= 0) {
+    window.localStorage.removeItem(SESSION_LAST_ACTIVE_AT_KEY);
+    return;
+  }
+  window.localStorage.setItem(SESSION_LAST_ACTIVE_AT_KEY, String(Math.floor(value)));
+}
+
+function getStoredSessionLastActiveAt(): number | null {
+  if (!canUseStorage()) return null;
+  const raw = window.localStorage.getItem(SESSION_LAST_ACTIVE_AT_KEY);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function isPersistedSessionExpired(): boolean {
+  const ts = getStoredSessionLastActiveAt();
+  if (!ts) return false;
+  return (Date.now() - ts) > MAX_PERSIST_AGE_MS;
+}
+
 function getStoredUser(): SupabaseAuthUser | null {
   if (!canUseStorage()) return null;
   const raw = window.localStorage.getItem(USER_KEY);
@@ -142,13 +168,28 @@ function persistSession(session: SupabaseAuthSession | null): void {
     clearAccessToken();
     setStoredRefreshToken(undefined);
     setStoredUser(null);
+    setStoredSessionLastActiveAt(null);
     emitSession(null);
     return;
   }
   setAccessToken(session.access_token);
   setStoredRefreshToken(session.refresh_token);
   setStoredUser(session.user);
+  setStoredSessionLastActiveAt(Date.now());
   emitSession(session);
+}
+
+export function getSessionFromStorage(): SupabaseAuthSession | null {
+  const token = getAccessToken();
+  const user = getStoredUser();
+  if (!token || !user) return null;
+  if (isPersistedSessionExpired()) return null;
+  const refresh = getStoredRefreshToken() || undefined;
+  return {
+    access_token: token,
+    refresh_token: refresh,
+    user,
+  };
 }
 
 export async function signInWithPassword(
@@ -232,32 +273,49 @@ export async function refreshSession(refreshToken: string): Promise<SupabaseAuth
 }
 
 export async function getSession(): Promise<SupabaseAuthSession | null> {
+  if (isPersistedSessionExpired()) {
+    persistSession(null);
+    return null;
+  }
   const token = getAccessToken();
+  let userLookupFailed = false;
+  let tokenRejected = false;
+
   if (token) {
-    const userRes = await requestSupabase("/auth/v1/user", { method: "GET", token });
-    if (userRes.ok) {
-      const userPayload = (await userRes.json()) as Record<string, unknown>;
-      const userId = String(userPayload.id || "").trim();
-      if (userId) {
-        const metadata =
-          userPayload.user_metadata && typeof userPayload.user_metadata === "object"
-            ? (userPayload.user_metadata as Record<string, unknown>)
-            : {};
-        const nameCandidate = [
-          metadata.full_name,
-          metadata.name,
-          metadata.display_name,
-        ].find((value) => typeof value === "string" && String(value).trim().length > 0);
-        const user: SupabaseAuthUser = {
-          id: userId,
-          email: typeof userPayload.email === "string" ? userPayload.email : null,
-          name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
-        };
-        const refresh = getStoredRefreshToken() || undefined;
-        const session: SupabaseAuthSession = { access_token: token, refresh_token: refresh, user };
-        setStoredUser(user);
-        return session;
+    try {
+      const userRes = await requestSupabase("/auth/v1/user", { method: "GET", token });
+      if (userRes.ok) {
+        const userPayload = (await userRes.json()) as Record<string, unknown>;
+        const userId = String(userPayload.id || "").trim();
+        if (userId) {
+          const metadata =
+            userPayload.user_metadata && typeof userPayload.user_metadata === "object"
+              ? (userPayload.user_metadata as Record<string, unknown>)
+              : {};
+          const nameCandidate = [
+            metadata.full_name,
+            metadata.name,
+            metadata.display_name,
+          ].find((value) => typeof value === "string" && String(value).trim().length > 0);
+          const user: SupabaseAuthUser = {
+            id: userId,
+            email: typeof userPayload.email === "string" ? userPayload.email : null,
+            name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
+          };
+          const refresh = getStoredRefreshToken() || undefined;
+          const session: SupabaseAuthSession = { access_token: token, refresh_token: refresh, user };
+          setStoredUser(user);
+          setStoredSessionLastActiveAt(Date.now());
+          return session;
+        }
       }
+      if (userRes.status === 401 || userRes.status === 403) {
+        tokenRejected = true;
+      } else {
+        userLookupFailed = true;
+      }
+    } catch {
+      userLookupFailed = true;
     }
   }
 
@@ -268,7 +326,8 @@ export async function getSession(): Promise<SupabaseAuthSession | null> {
   }
 
   const storedUser = getStoredUser();
-  if (storedUser && token) {
+  if (storedUser && token && userLookupFailed && !tokenRejected) {
+    setStoredSessionLastActiveAt(Date.now());
     return { access_token: token, refresh_token: refresh || undefined, user: storedUser };
   }
   persistSession(null);

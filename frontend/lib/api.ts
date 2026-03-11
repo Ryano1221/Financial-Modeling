@@ -6,7 +6,7 @@ import { getBackendBaseUrl } from "./backend";
 import { getAccessToken } from "./auth-token";
 
 const DEFAULT_TIMEOUT_MS = 300000; // 5 min for Render cold start + extraction
-const NORMALIZE_TIMEOUT_MS = 180000; // 3 min for /normalize only
+const NORMALIZE_TIMEOUT_MS = 300000; // 5 min for /normalize to handle large/scanned lease docs
 const NORMALIZE_TIMEOUT_MESSAGE = "Backend took too long. Check Render logs for normalize request id.";
 const FRIENDLY_MESSAGE = "We're having trouble connecting right now. Please try again.";
 
@@ -46,10 +46,59 @@ const FORBIDDEN_IN_ERROR = [
   ".tsx:",
 ];
 
+function parseBackendErrorText(raw: string): string {
+  const clean = String(raw || "").trim();
+  if (!clean) return "";
+  try {
+    const parsed = JSON.parse(clean) as { detail?: unknown; message?: unknown; error?: unknown; details?: unknown };
+    if (typeof parsed.detail === "string" && parsed.detail.trim()) return parsed.detail.trim();
+    if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message.trim();
+    if (typeof parsed.details === "string" && parsed.details.trim()) return parsed.details.trim();
+    if (typeof parsed.error === "string" && parsed.error.trim()) return parsed.error.trim();
+  } catch {
+    // Non-JSON error body; use raw text.
+  }
+  return clean;
+}
+
+function getSafeKnownErrorMessage(raw: string): string | null {
+  const normalized = parseBackendErrorText(raw);
+  const lower = normalized.toLowerCase();
+
+  if (lower.includes("file too large for normalization") || lower.includes("limit is 20971520 bytes")) {
+    return "This file is too large to process here. Upload a lease file under 20MB.";
+  }
+  if (lower.includes("file must be pdf")) {
+    return "Only PDF files are allowed for this upload.";
+  }
+  if (lower.includes("file must be docx or doc")) {
+    return "Only DOCX or DOC files are allowed for this upload.";
+  }
+  if (lower.includes("empty file")) {
+    return "This file appears empty. Please choose a valid lease document.";
+  }
+  if (lower.includes("file required for pdf/word")) {
+    return "Please attach a lease file before submitting.";
+  }
+  if (lower.includes("generated analysis/report pdf")) {
+    return "This looks like a generated report, not a source lease. Upload the original lease/proposal/amendment.";
+  }
+  if (lower.includes("backend took too long") || lower.includes("upstream timeout")) {
+    return "This file took too long to process. Try again, or upload a smaller/cleaner copy.";
+  }
+  if (lower.includes("session expired")) {
+    return "Session expired. Please sign in again.";
+  }
+  return null;
+}
+
 /** Return a safe user-facing message: never expose URLs, CLI, or stack traces. */
 export function getDisplayErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const known = getSafeKnownErrorMessage(raw);
+  if (known) return known;
   if (process.env.NODE_ENV === "production") return USER_FACING_ERROR_MESSAGE;
-  const msg = error instanceof Error ? error.message : String(error);
+  const msg = parseBackendErrorText(raw);
   const lower = msg.toLowerCase();
   if (FORBIDDEN_IN_ERROR.some((f) => lower.includes(f.toLowerCase()))) return USER_FACING_ERROR_MESSAGE;
   return msg || USER_FACING_ERROR_MESSAGE;

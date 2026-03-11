@@ -144,8 +144,10 @@ function kindChipClass(kind: string): string {
   return "bg-white/10 text-slate-100 border-white/30";
 }
 
-export function ObligationsWorkspace({ clientId }: { clientId: string }) {
+export function ObligationsWorkspace({ clientId, clientName }: { clientId: string; clientName?: string | null }) {
   const { registerDocument, isAuthenticated } = useClientWorkspace();
+  const resolvedClientName = asText(clientName);
+  const defaultCompanyName = resolvedClientName || "Default Portfolio";
   const [companies, setCompanies] = useState<ObligationCompany[]>([]);
   const [activeCompanyId, setActiveCompanyId] = useState("");
   const [obligations, setObligations] = useState<ObligationRecord[]>([]);
@@ -158,6 +160,7 @@ export function ObligationsWorkspace({ clientId }: { clientId: string }) {
   const [status, setStatus] = useState("No obligation documents uploaded.");
   const [dragOver, setDragOver] = useState(false);
   const [globalDragActive, setGlobalDragActive] = useState(false);
+  const [editingPanelsOpen, setEditingPanelsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const globalDragDepthRef = useRef(0);
   const obligationsRef = useRef<ObligationRecord[]>([]);
@@ -180,15 +183,24 @@ export function ObligationsWorkspace({ clientId }: { clientId: string }) {
 
     const applyParsed = (parsed: Partial<ObligationStorageState> | null) => {
       if (!parsed) {
-        const fallback = createDefaultCompany();
+        const fallback = createDefaultCompany(defaultCompanyName);
         setCompanies([fallback]);
         setActiveCompanyId(fallback.id);
         setStorageHydrated(true);
         return;
       }
-      const loadedCompanies = Array.isArray(parsed.companies) && parsed.companies.length > 0
+      const rawCompanies = Array.isArray(parsed.companies) && parsed.companies.length > 0
         ? parsed.companies
-        : [createDefaultCompany()];
+        : [createDefaultCompany(defaultCompanyName)];
+      const loadedCompanies = resolvedClientName
+        ? rawCompanies.map((company, idx) => {
+            const looksDefault = asText(company.name).toLowerCase() === "default portfolio";
+            if (rawCompanies.length === 1 && idx === 0 && looksDefault) {
+              return { ...company, name: resolvedClientName };
+            }
+            return company;
+          })
+        : rawCompanies;
       const nextActive = asText(parsed.activeCompanyId) && loadedCompanies.some((c) => c.id === parsed.activeCompanyId)
         ? asText(parsed.activeCompanyId)
         : loadedCompanies[0].id;
@@ -238,7 +250,7 @@ export function ObligationsWorkspace({ clientId }: { clientId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [scopedStorageKey, clientId, isAuthenticated]);
+  }, [scopedStorageKey, clientId, isAuthenticated, defaultCompanyName, resolvedClientName]);
 
   useEffect(() => {
     obligationsRef.current = obligations;
@@ -546,14 +558,23 @@ export function ObligationsWorkspace({ clientId }: { clientId: string }) {
       title="Portfolio Obligation Command Center"
       description="Store company obligations, associate documents, and track expirations, notices, and risk from one workspace."
       actions={
-        <button
-          type="button"
-          className="btn-premium btn-premium-secondary"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={loading || !activeCompanyId}
-        >
-          {loading ? "Processing..." : "Upload Obligation Docs"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={`btn-premium ${editingPanelsOpen ? "btn-premium-primary" : "btn-premium-secondary"}`}
+            onClick={() => setEditingPanelsOpen((prev) => !prev)}
+          >
+            {editingPanelsOpen ? "Close Obligation Editor" : "Edit Obligation Details"}
+          </button>
+          <button
+            type="button"
+            className="btn-premium btn-premium-secondary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading || !activeCompanyId}
+          >
+            {loading ? "Processing..." : "Upload Obligation Docs"}
+          </button>
+        </div>
       }
     >
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
@@ -725,7 +746,11 @@ export function ObligationsWorkspace({ clientId }: { clientId: string }) {
           </div>
         </PlatformPanel>
 
-        <PlatformPanel kicker="Obligations" title="Obligation Repository" className="xl:col-span-8">
+        <PlatformPanel
+          kicker="Obligations"
+          title="Obligation Repository"
+          className={editingPanelsOpen ? "xl:col-span-8" : "xl:col-span-12"}
+        >
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
@@ -769,7 +794,11 @@ export function ObligationsWorkspace({ clientId }: { clientId: string }) {
           </div>
         </PlatformPanel>
 
-        <PlatformPanel kicker="Documents" title="Document Associations" className="xl:col-span-4">
+        <PlatformPanel
+          kicker="Documents"
+          title="Document Associations"
+          className={editingPanelsOpen ? "xl:col-span-4" : "hidden"}
+        >
           <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
             {activeDocuments.length === 0 ? (
               <p className="text-sm text-slate-400">No documents uploaded for this company yet.</p>
@@ -805,7 +834,11 @@ export function ObligationsWorkspace({ clientId }: { clientId: string }) {
           </div>
         </PlatformPanel>
 
-        <PlatformPanel kicker="Obligation Detail" title={selectedObligation ? selectedObligation.title : "Select an obligation"} className="xl:col-span-12">
+        <PlatformPanel
+          kicker="Obligation Detail"
+          title={selectedObligation ? selectedObligation.title : "Select an obligation"}
+          className={editingPanelsOpen ? "xl:col-span-12" : "hidden"}
+        >
           {!selectedObligation ? (
             <p className="text-sm text-slate-400">Select an obligation from the repository to review and edit details.</p>
           ) : (

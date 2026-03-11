@@ -9,7 +9,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getSession, subscribeAuthSession, type SupabaseAuthSession } from "@/lib/supabase";
+import {
+  getSession,
+  getSessionFromStorage,
+  signOut,
+  subscribeAuthSession,
+  type SupabaseAuthSession,
+} from "@/lib/supabase";
 import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import {
   ACTIVE_CLIENT_STORAGE_KEY,
@@ -29,10 +35,15 @@ import type {
   RegisterClientDocumentInput,
 } from "@/lib/workspace/types";
 
+type CloudSyncStatus = "local" | "idle" | "saving" | "synced" | "error";
+
 interface ClientWorkspaceContextValue {
   ready: boolean;
   session: SupabaseAuthSession | null;
   isAuthenticated: boolean;
+  cloudSyncStatus: CloudSyncStatus;
+  cloudSyncMessage: string;
+  cloudLastSyncedAt: string | null;
   clients: ClientWorkspaceClient[];
   activeClientId: string | null;
   activeClient: ClientWorkspaceClient | null;
@@ -227,7 +238,14 @@ function isWorkspacePayloadTooLargeError(error: unknown): boolean {
 
 export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [session, setSession] = useState<SupabaseAuthSession | null>(null);
+  const [session, setSession] = useState<SupabaseAuthSession | null>(() => getSessionFromStorage());
+  const [authResolved, setAuthResolved] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return Boolean(getSessionFromStorage());
+  });
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>("idle");
+  const [cloudSyncMessage, setCloudSyncMessage] = useState("Cloud sync ready.");
+  const [cloudLastSyncedAt, setCloudLastSyncedAt] = useState<string | null>(null);
   const [clients, setClients] = useState<ClientWorkspaceClient[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [allDocuments, setAllDocuments] = useState<ClientWorkspaceDocument[]>([]);
@@ -244,6 +262,11 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           setSession((prev) => (sameSession(prev, null) ? prev : null));
         }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthResolved(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -253,11 +276,13 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return subscribeAuthSession((next) => {
       setSession((prev) => (sameSession(prev, next) ? prev : next));
+      setAuthResolved(true);
     });
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!authResolved) return;
     let cancelled = false;
 
     const applyWorkspaceState = (state: Record<string, unknown> | null | undefined) => {
@@ -291,6 +316,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     async function hydrate() {
       setReady(false);
       if (session) {
+        setCloudSyncStatus("idle");
+        setCloudSyncMessage("Loading cloud workspace...");
         try {
           const remote = await fetchWorkspaceCloudState();
           if (cancelled) return;
@@ -299,6 +326,9 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
               ? remote.workspace_state
               : {};
           applyWorkspaceState(workspaceState);
+          setCloudSyncStatus("synced");
+          setCloudSyncMessage("Cloud workspace loaded.");
+          setCloudLastSyncedAt(asText(remote.updated_at) || null);
           try {
             // Signed-in mode should not rely on device-local storage.
             window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
@@ -312,6 +342,13 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         } catch (error) {
           console.warn("workspace_cloud_load_failed", error);
           if (cancelled) return;
+          const message = String(error instanceof Error ? error.message : error || "").trim();
+          if (message.toLowerCase().includes("session expired")) {
+            void signOut();
+            return;
+          }
+          setCloudSyncStatus("error");
+          setCloudSyncMessage(message || "Cloud workspace load failed.");
           // Signed-in users should always bind to cloud account data, never local device state.
           applyWorkspaceState({
             clients: [],
@@ -323,6 +360,9 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
       applyLocalFallback();
+      setCloudSyncStatus("local");
+      setCloudSyncMessage("Local device only (sign in for cloud sync).");
+      setCloudLastSyncedAt(null);
       setReady(true);
     }
 
@@ -330,7 +370,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, [session, authResolved]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
@@ -366,30 +406,49 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready || !session) return;
     let cancelled = false;
+    setCloudSyncStatus("saving");
+    setCloudSyncMessage("Syncing to cloud...");
     const handle = window.setTimeout(() => {
       const workspaceState = serializeWorkspaceStateForCloud(clients, allDocuments, activeClientId, {
         includeSnapshots: true,
       });
-      void saveWorkspaceCloudState(workspaceState).catch(async (error) => {
-        if (cancelled) return;
-        if (isWorkspacePayloadTooLargeError(error)) {
-          const compactState = serializeWorkspaceStateForCloud(clients, allDocuments, activeClientId, {
-            includeSnapshots: false,
-          });
-          try {
-            await saveWorkspaceCloudState(compactState);
-            if (!cancelled) {
+      void (async () => {
+        try {
+          const saved = await saveWorkspaceCloudState(workspaceState);
+          if (cancelled) return;
+          setCloudSyncStatus("synced");
+          setCloudSyncMessage("Synced to cloud.");
+          setCloudLastSyncedAt(asText(saved.updated_at) || new Date().toISOString());
+          return;
+        } catch (error) {
+          if (cancelled) return;
+          if (isWorkspacePayloadTooLargeError(error)) {
+            const compactState = serializeWorkspaceStateForCloud(clients, allDocuments, activeClientId, {
+              includeSnapshots: false,
+            });
+            try {
+              const savedCompact = await saveWorkspaceCloudState(compactState);
+              if (cancelled) return;
+              setCloudSyncStatus("synced");
+              setCloudSyncMessage("Synced to cloud (compact mode).");
+              setCloudLastSyncedAt(asText(savedCompact.updated_at) || new Date().toISOString());
               console.warn("workspace_cloud_save_compacted", "Saved compact workspace payload without normalize snapshots.");
+              return;
+            } catch (compactError) {
+              if (cancelled) return;
+              const compactMessage = String(compactError instanceof Error ? compactError.message : compactError || "").trim();
+              setCloudSyncStatus("error");
+              setCloudSyncMessage(compactMessage || "Cloud sync failed.");
+              console.warn("workspace_cloud_save_failed_compact", compactError);
+              return;
             }
-            return;
-          } catch (compactError) {
-            if (cancelled) return;
-            console.warn("workspace_cloud_save_failed_compact", compactError);
-            return;
           }
+          const message = String(error instanceof Error ? error.message : error || "").trim();
+          setCloudSyncStatus("error");
+          setCloudSyncMessage(message || "Cloud sync failed.");
+          console.warn("workspace_cloud_save_failed", error);
         }
-        console.warn("workspace_cloud_save_failed", error);
-      });
+      })();
     }, 500);
     return () => {
       cancelled = true;
@@ -487,6 +546,9 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       ready,
       session,
       isAuthenticated: Boolean(session),
+      cloudSyncStatus,
+      cloudSyncMessage,
+      cloudLastSyncedAt,
       clients,
       activeClientId,
       activeClient,
@@ -502,6 +564,9 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     [
       ready,
       session,
+      cloudSyncStatus,
+      cloudSyncMessage,
+      cloudLastSyncedAt,
       clients,
       activeClientId,
       activeClient,
