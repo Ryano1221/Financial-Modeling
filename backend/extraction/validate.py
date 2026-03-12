@@ -292,6 +292,41 @@ def _validate_opex(opex: dict[str, Any], evidence: list[dict[str, Any]], review_
     return True
 
 
+def _collect_missing_information(extraction: dict[str, Any], review_tasks: list[dict[str, Any]]) -> list[str]:
+    missing: list[str] = []
+
+    checks = [
+        ("term.commencement_date", extraction.get("term", {}).get("commencement_date"), "Commencement date is missing."),
+        ("term.expiration_date", extraction.get("term", {}).get("expiration_date"), "Expiration date is missing."),
+        ("term.term_months", extraction.get("term", {}).get("term_months"), "Lease term is missing."),
+        ("premises.rsf", extraction.get("premises", {}).get("rsf"), "Premises RSF is missing."),
+        ("opex.mode", extraction.get("opex", {}).get("mode"), "Lease type / OpEx mode is missing or unresolved."),
+        ("tenant_improvements.ti_allowance_psf", extraction.get("tenant_improvements", {}).get("ti_allowance_psf"), "TI allowance per RSF is missing."),
+        ("parking.ratio_per_1000_rsf", extraction.get("parking", {}).get("ratio_per_1000_rsf"), "Parking ratio is missing."),
+        ("parking.rate_monthly_per_space", extraction.get("parking", {}).get("rate_monthly_per_space"), "Parking rate is missing."),
+        ("rights_options.renewal_option", extraction.get("rights_options", {}).get("renewal_option"), "Renewal option terms are missing."),
+    ]
+
+    seen_codes = {str(t.get("issue_code") or "") for t in review_tasks}
+    for field_path, value, message in checks:
+        empty = value in (None, "", []) or (field_path == "premises.rsf" and float(value or 0) <= 0)
+        if not empty:
+            continue
+        missing.append(field_path)
+        code = f"MISSING_{field_path.upper().replace('.', '_')}"
+        if code in seen_codes:
+            continue
+        review_tasks.append(
+            _make_task(
+                field_path,
+                "warn",
+                code,
+                message,
+            )
+        )
+    return missing
+
+
 def _compute_overall_confidence(
     source_quality: float,
     validation_pass_rate: float,
@@ -330,6 +365,9 @@ def validate_extraction(
     checks.append(_validate_abatement_scope(abatements, review_tasks))
     checks.append(_validate_abatement_classification(abatements, abatement_analysis, review_tasks))
     checks.append(_validate_opex(opex, evidence, review_tasks))
+
+    missing_information = _collect_missing_information(extraction, review_tasks)
+    extraction["missing_information"] = missing_information
 
     pass_rate = sum(1 for c in checks if c) / max(1, len(checks))
     has_blockers = any(str(t.get("severity") or "") == "blocker" for t in review_tasks)

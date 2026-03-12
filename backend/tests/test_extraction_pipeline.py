@@ -242,6 +242,71 @@ def test_dict_normalizer_maps_full_service_variants() -> None:
     assert lease.lease_type == LeaseType.FULL_SERVICE
 
 
+def test_reconcile_extracts_ti_parking_and_rights_into_structured_output() -> None:
+    normalized = NormalizedDocument(
+        sha256="cre-rich",
+        filename="proposal.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text=(
+                    "Tenant Improvement Allowance: $80.00 per RSF.\n"
+                    "Parking: 3.5 / 1,000 RSF at $225 per space per month.\n"
+                    "Renewal Option: 1 x 5 year option at FMV.\n"
+                    "The first 6 months of free rent shall be abated."
+                ),
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text="rich proposal text",
+    )
+    candidates = mine_candidates(normalized)
+    reconciled = reconcile(regex_candidates=candidates, rent_step_candidates=[], llm_output=None)
+    resolved = reconciled.get("resolved") or {}
+
+    assert (resolved.get("tenant_improvements") or {}).get("ti_allowance_psf") == 80.0
+    assert (resolved.get("parking") or {}).get("ratio_per_1000_rsf") == 3.5
+    assert (resolved.get("parking") or {}).get("rate_monthly_per_space") == 225.0
+    assert (resolved.get("rights_options") or {}).get("renewal_option") == "Renewal Option: 1 x 5 year option at FMV."
+    assert (resolved.get("concessions") or {}).get("free_rent_months") == 6
+
+
+def test_validate_extraction_reports_missing_information_for_model_ready_fields() -> None:
+    extraction = {
+        "document": {"doc_type": "proposal", "doc_role": "proposal", "confidence": 0.9, "evidence_spans": []},
+        "term": {
+            "commencement_date": None,
+            "expiration_date": None,
+            "rent_commencement_date": None,
+            "term_months": 60,
+        },
+        "premises": {"building_name": "A", "suite": "100", "floor": None, "address": "A", "rsf": 1000},
+        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 40.0}],
+        "abatements": [],
+        "abatement_analysis": {"classification": "none", "phase_in_detected": False, "phase_in_confidence": 0.0, "scope": None},
+        "concessions": {},
+        "tenant_improvements": {},
+        "parking": {},
+        "rights_options": {},
+        "opex": {"mode": "nnn", "base_psf_year_1": 10.0, "growth_rate": 0.03, "cues": ["nnn"]},
+        "provenance": {},
+        "review_tasks": [],
+        "evidence": [{"source": "pdf_text_regex", "source_confidence": 0.9, "snippet": "NNN", "page": 1, "bbox": None}],
+        "confidence": {"overall": 0.5, "status": "yellow", "export_allowed": True},
+        "export_allowed": True,
+    }
+    result = validate_extraction(extraction, source_quality=0.8, reconcile_margin=0.5)
+    missing = set(result.get("missing_information") or [])
+    assert "term.commencement_date" in missing
+    assert "tenant_improvements.ti_allowance_psf" in missing
+    assert "parking.ratio_per_1000_rsf" in missing
+    issue_codes = {t.get("issue_code") for t in result.get("review_tasks") or []}
+    assert "MISSING_TENANT_IMPROVEMENTS_TI_ALLOWANCE_PSF" in issue_codes
+
+
 def test_rule_classifier_detects_flyer_and_floorplan() -> None:
     flyer = NormalizedDocument(
         sha256="flyer",

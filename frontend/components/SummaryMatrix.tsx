@@ -305,10 +305,10 @@ export function SummaryMatrix({
                     <dd className="text-slate-200">
                       {notesCell ? (
                         noteBullets.length > 0 ? (
-                          <ul className="list-disc pl-5 space-y-1">
-                            {noteBullets.map((item, index) => (
-                              <li key={`matrix-mobile-${r.scenarioId}-${index}`} className="break-words whitespace-normal">
-                                {item}
+                          <ul className="list-disc pl-4 space-y-1">
+                            {noteBullets.map((note, idx) => (
+                              <li key={`matrix-mobile-note-${r.scenarioId}-${idx}`} className="whitespace-normal break-words">
+                                {note}
                               </li>
                             ))}
                           </ul>
@@ -352,7 +352,7 @@ export function SummaryMatrix({
                   const value = (r.metrics as OptionMetrics)[key];
                   const formatted = getMatrixCellValue(key, r.scenarioId, value);
                   const notesCell = key === "notes";
-                  const leftAlignCell = notesCell || key === "commissionBasis";
+                  const leftAlignCell = key === "commissionBasis" || notesCell;
                   const noteBullets = notesCell ? getNotes(formatted, r.metrics as OptionMetrics) : [];
                   return (
                     <td
@@ -361,10 +361,10 @@ export function SummaryMatrix({
                     >
                       {notesCell ? (
                         noteBullets.length > 0 ? (
-                          <ul className="list-disc pl-5 space-y-1">
-                            {noteBullets.map((item, index) => (
-                              <li key={`${r.scenarioId}-${index}`} className="break-words whitespace-normal">
-                                {item}
+                          <ul className="list-disc pl-4 space-y-1">
+                            {noteBullets.map((note, idx) => (
+                              <li key={`matrix-note-${r.scenarioId}-${idx}`} className="whitespace-normal break-words">
+                                {note}
                               </li>
                             ))}
                           </ul>

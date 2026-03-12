@@ -80,6 +80,7 @@ import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/Subleas
 import { CompletedLeasesWorkspace } from "@/components/completed-leases/CompletedLeasesWorkspace";
 import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
 import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
+import { DealsWorkspace } from "@/components/deals/DealsWorkspace";
 import { buildPlatformExportFileName } from "@/lib/export-design";
 import { downloadBlob as downloadBlobFile } from "@/lib/export-runtime";
 import { buildFinancialAnalysesShareLink } from "@/lib/financial-analyses/share";
@@ -88,6 +89,8 @@ import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { ClientWorkspaceGate } from "@/components/workspace/ClientWorkspaceGate";
 import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCenter";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
+import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCenter";
+import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
@@ -423,16 +426,6 @@ function normalizeScenarioEconomics<T extends ScenarioInput | ScenarioWithId>(sc
   ) as T;
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  await file.arrayBuffer(); // Touch the file first so file read failures reject early.
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Unable to read file."));
-    reader.readAsDataURL(file);
-  });
-}
-
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -572,8 +565,11 @@ function HomeContent() {
     isAuthenticated,
     activeClient,
     activeClientId,
+    allDeals,
+    allDocuments,
     registerDocument,
   } = useClientWorkspace();
+  const { runAiCommand, suggestPlan } = useBrokerOs();
   const workspaceScopeId = workspaceReady
     ? (activeClientId || (isAuthenticated ? "unselected" : "guest"))
     : "boot";
@@ -630,12 +626,16 @@ function HomeContent() {
   const [brandingLoading, setBrandingLoading] = useState(false);
   const [clientLogoDataUrl, setClientLogoDataUrl] = useState<string | null>(null);
   const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
-  const [clientLogoUploading, setClientLogoUploading] = useState(false);
-  const [clientLogoError, setClientLogoError] = useState<string | null>(null);
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
   const computeRequestEpochRef = useRef<Record<string, number>>({});
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
+  const [heroAiPrompt, setHeroAiPrompt] = useState(
+    "Run a sublease recovery using the Austin obligation and these three proposals.",
+  );
+  const [heroAiRunning, setHeroAiRunning] = useState(false);
+  const [heroAiStatus, setHeroAiStatus] = useState<string | null>(null);
+  const [heroAiError, setHeroAiError] = useState<string | null>(null);
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
   const rawModuleParam = String(searchParams?.get("module") || "").trim().toLowerCase();
 
@@ -807,7 +807,6 @@ function HomeContent() {
       setBrokerageName("");
       setClientLogoDataUrl(null);
       setClientLogoFileName(null);
-      setClientLogoError(null);
       return;
     }
     void loadOrganizationBranding();
@@ -830,8 +829,8 @@ function HomeContent() {
       market: "",
       submarket: "",
     });
-    setClientLogoDataUrl(null);
-    setClientLogoFileName(null);
+    setClientLogoDataUrl(activeClient?.logoDataUrl || null);
+    setClientLogoFileName(activeClient?.logoFileName || null);
     try {
       const raw = localStorage.getItem(reportMetaStorageKey);
       if (!raw) return;
@@ -855,12 +854,12 @@ function HomeContent() {
           submarket: String(parsed.reportMeta.submarket || "").trim(),
         });
       }
-      setClientLogoDataUrl(parsed.clientLogoDataUrl || null);
-      setClientLogoFileName(parsed.clientLogoFileName || null);
+      setClientLogoDataUrl(parsed.clientLogoDataUrl || activeClient?.logoDataUrl || null);
+      setClientLogoFileName(parsed.clientLogoFileName || activeClient?.logoFileName || null);
     } catch {
       // ignore parse errors
     }
-  }, [reportMetaStorageKey, activeClient?.name, workspaceReady]);
+  }, [reportMetaStorageKey, activeClient?.name, activeClient?.logoDataUrl, activeClient?.logoFileName, workspaceReady]);
 
   useEffect(() => {
     if (!workspaceReady || typeof window === "undefined") return;
@@ -877,39 +876,6 @@ function HomeContent() {
       // ignore storage limits
     }
   }, [reportMetaStorageKey, reportMeta, clientLogoDataUrl, clientLogoFileName, workspaceReady]);
-
-  const uploadClientLogo = useCallback(async (file: File) => {
-    if (!authSession) {
-      setClientLogoError("Sign in to upload a client logo.");
-      return;
-    }
-    const mime = (file.type || "").toLowerCase();
-    if (!["image/png", "image/jpeg", "image/jpg", "image/svg+xml"].includes(mime)) {
-      setClientLogoError("Client logo must be PNG, SVG, or JPG.");
-      return;
-    }
-    if (file.size > 1_500_000) {
-      setClientLogoError("Client logo must be 1.5MB or smaller.");
-      return;
-    }
-    setClientLogoUploading(true);
-    setClientLogoError(null);
-    try {
-      const dataUrl = await fileToDataUrl(file);
-      setClientLogoDataUrl(dataUrl || null);
-      setClientLogoFileName(file.name || null);
-    } catch (err) {
-      setClientLogoError(getDisplayErrorMessage(err));
-    } finally {
-      setClientLogoUploading(false);
-    }
-  }, [authSession]);
-
-  const clearClientLogo = useCallback(() => {
-    setClientLogoDataUrl(null);
-    setClientLogoFileName(null);
-    setClientLogoError(null);
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1355,6 +1321,9 @@ function HomeContent() {
       confidential: true,
     };
   }, [reportMeta, defaultPreparedByFromAuth, inferredReportLocation.market, inferredReportLocation.submarket]);
+
+  const settingsHref = authSession ? "/account" : "/account?mode=signin";
+  const settingsCtaLabel = authSession ? "Open Settings" : "Sign In To Open Settings";
 
   const buildExportFileName = useCallback(
     (kind: "xlsx" | "pdf", meta: ReportMeta): string => {
@@ -1826,6 +1795,67 @@ function HomeContent() {
         Number.isFinite(row.total_obligation)
     );
 
+  const scopedDeals = useMemo(
+    () => (activeClientId ? allDeals.filter((deal) => deal.clientId === activeClientId) : allDeals),
+    [allDeals, activeClientId],
+  );
+  const scopedDocuments = useMemo(
+    () => (activeClientId ? allDocuments.filter((doc) => doc.clientId === activeClientId) : allDocuments),
+    [allDocuments, activeClientId],
+  );
+  const activeDealsCount = useMemo(
+    () => scopedDeals.filter((deal) => deal.status !== "won" && deal.status !== "lost").length,
+    [scopedDeals],
+  );
+  const parsedDocumentsCount = useMemo(
+    () => scopedDocuments.filter((doc) => doc.parsed).length,
+    [scopedDocuments],
+  );
+  const hasScenarioErrors = useMemo(
+    () => scenarios.some((scenario) => {
+      const row = results[scenario.id];
+      return Boolean(row && typeof row === "object" && "error" in row);
+    }),
+    [scenarios, results],
+  );
+  const workflowCoverageCount = useMemo(() => {
+    const hasAnalyses = scenarios.length > 0;
+    const hasSurveys = scopedDocuments.some((doc) => doc.type === "surveys" || doc.type === "flyers" || doc.type === "floorplans");
+    const hasCompletedLeases = scopedDocuments.some((doc) => doc.type === "leases" || doc.type === "amendments" || doc.type === "abstracts");
+    const hasSublease = scopedDocuments.some((doc) => doc.type === "proposals" || doc.type === "lois" || doc.type === "counters" || doc.type === "sublease documents");
+    const hasDeals = activeDealsCount > 0;
+    return [hasAnalyses, hasSurveys, hasCompletedLeases, hasSublease, hasDeals].filter(Boolean).length;
+  }, [scenarios.length, scopedDocuments, activeDealsCount]);
+  const workspaceStatus = useMemo(() => {
+    if (heroAiRunning || exportExcelLoading || exportPdfLoading) return "In Progress";
+    if (extractError || heroAiError || hasScenarioErrors) return "Needs Review";
+    if (activeDealsCount > 0 || scenarios.length > 0 || scopedDocuments.length > 0) return "In Progress";
+    return "Ready";
+  }, [
+    heroAiRunning,
+    exportExcelLoading,
+    exportPdfLoading,
+    extractError,
+    heroAiError,
+    hasScenarioErrors,
+    activeDealsCount,
+    scenarios.length,
+    scopedDocuments.length,
+  ]);
+  const heroPipelineActions = useMemo(
+    () => [
+      { label: "UPLOAD", value: `${scopedDocuments.length}`, active: scopedDocuments.length > 0 },
+      { label: "EXTRACT", value: `${parsedDocumentsCount}`, active: parsedDocumentsCount > 0 },
+      { label: "ANALYZE", value: `${scenarios.length}`, active: scenarios.length > 0 },
+      { label: "TRACK", value: `${activeDealsCount}`, active: activeDealsCount > 0 },
+    ],
+    [scopedDocuments.length, parsedDocumentsCount, scenarios.length, activeDealsCount],
+  );
+  const heroAiPlan = useMemo(
+    () => suggestPlan(heroAiPrompt),
+    [heroAiPrompt, suggestPlan],
+  );
+
   const resultErrors = scenarios
     .map((s) => {
       const r = results[s.id];
@@ -1840,8 +1870,14 @@ function HomeContent() {
       .filter((v) => Number.isFinite(v) && v > 0)
       .slice(0, 8);
     if (values.length >= 2) return values;
-    return [780000, 820000, 760000, 805000, 790000];
-  }, [chartData]);
+    const base =
+      240
+      + (scopedDocuments.length * 28)
+      + (parsedDocumentsCount * 18)
+      + (activeDealsCount * 36)
+      + (scenarios.length * 42);
+    return [base * 0.92, base * 0.99, base * 0.95, base * 1.04, base];
+  }, [chartData, scopedDocuments.length, parsedDocumentsCount, activeDealsCount, scenarios.length]);
   const heroSparklinePoints = useMemo(() => {
     const min = Math.min(...heroSparklineValues);
     const max = Math.max(...heroSparklineValues);
@@ -1855,6 +1891,41 @@ function HomeContent() {
       })
       .join(" ");
   }, [heroSparklineValues]);
+  const runHeroAiCommand = useCallback(async () => {
+    const command = heroAiPrompt.trim();
+    if (!command) {
+      setHeroAiError("Enter an AI command.");
+      return;
+    }
+    if (!authSession || !activeClientId) {
+      setHeroAiError("Sign in and select a client workspace to run AI workflows.");
+      setHeroAiStatus(null);
+      return;
+    }
+    setHeroAiRunning(true);
+    setHeroAiError(null);
+    setHeroAiStatus(null);
+    try {
+      const result = await runAiCommand(command);
+      const successCount = result.results.filter((item) => item.ok).length;
+      const failureCount = result.results.length - successCount;
+      setHeroAiStatus(
+        [
+          `Intent: ${result.resolvedIntent}`,
+          `${successCount} action${successCount === 1 ? "" : "s"} completed`,
+          failureCount > 0 ? `${failureCount} action${failureCount === 1 ? "" : "s"} need review` : "No failures",
+        ].join(" · "),
+      );
+    } catch (error) {
+      setHeroAiError(getDisplayErrorMessage(error));
+    } finally {
+      setHeroAiRunning(false);
+    }
+  }, [heroAiPrompt, authSession, activeClientId, runAiCommand]);
+  const openWorkspaceHref = authSession ? "/?module=deals" : "/account?mode=signin";
+  const heroClientName = activeClient?.name || coverMetaPreview.prepared_for || "Client Workspace";
+  const heroPreparedBy = coverMetaPreview.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
+  const heroCapabilitiesLabel = "Financial Analyses • Surveys • Lease Abstracts • Deals • Obligations • AI Workflows";
   const showHomeHero = rawModuleParam.length === 0;
   const topNavOffsetClass = "pt-24 sm:pt-28";
   const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === DEFAULT_PLATFORM_MODULE_ID;
@@ -1865,7 +1936,7 @@ function HomeContent() {
     return (
       <main className={`relative z-10 app-container ${topNavOffsetClass} pb-14 md:pb-20`}>
         <section className="scroll-mt-24 bg-grid mt-6">
-          <div className="mx-auto w-full max-w-6xl">
+          <div className="mx-auto w-full max-w-[96vw]">
             <ClientWorkspaceGate />
           </div>
         </section>
@@ -1882,54 +1953,106 @@ function HomeContent() {
               <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
                 <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25">
                   <p className="heading-kicker mb-4">Platform</p>
-                  <h1 className="heading-display max-w-3xl">
-                    The Commercial Real Estate Model
+                  <h1 className="heading-display max-w-4xl leading-[0.94]">
+                    The Commercial Real Estate
+                    <br />
+                    Operating System
                   </h1>
 
                   <p className="body-lead mt-6 max-w-xl">
-                    Transform any lease into a structured, branded financial analysis in minutes.
-                    Built for brokerages, investment firms, and enterprise real estate teams.
+                    Transform documents, deals, and obligations into structured insights in minutes. Built for leasing
+                    brokers, investment firms, and enterprise real estate teams.
                   </p>
+                  <div className="mt-5 border border-white/20 bg-black/30 px-3 py-2 text-xs sm:text-sm text-slate-200">
+                    {heroCapabilitiesLabel}
+                  </div>
 
                   <div className="flex gap-3 sm:gap-4 mt-8 flex-wrap">
                     <Link
-                      href="/example"
+                      href={openWorkspaceHref}
                       className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
                     >
-                      View Example Report
+                      Open Workspace
                     </Link>
 
                     <Link
-                      href="/?module=financial-analyses#extract"
+                      href="/example"
                       className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
                     >
-                      Try It Live
+                      View Platform Demo
                     </Link>
+                  </div>
+
+                  <div className="mt-7 border border-white/20 bg-black/35 p-3 sm:p-4">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p className="heading-kicker">Ask AI</p>
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-300">orchestration layer</p>
+                    </div>
+                    <form
+                      className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void runHeroAiCommand();
+                      }}
+                    >
+                      <input
+                        value={heroAiPrompt}
+                        onChange={(event) => setHeroAiPrompt(event.target.value)}
+                        className="input-premium !py-2.5"
+                        placeholder="Run a sublease recovery using the Austin obligation and these three proposals."
+                      />
+                      <button
+                        type="submit"
+                        className="btn-premium btn-premium-secondary w-full sm:w-auto"
+                        disabled={heroAiRunning}
+                      >
+                        {heroAiRunning ? "Running..." : "Run Workflow"}
+                      </button>
+                    </form>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {heroAiPlan.toolCalls.slice(0, 4).map((call, index) => (
+                        <span
+                          key={`${call.tool}-${index}`}
+                          className="border border-white/20 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-slate-300"
+                        >
+                          {call.tool}
+                        </span>
+                      ))}
+                    </div>
+                    {heroAiStatus ? <p className="mt-2 text-xs text-cyan-200">{heroAiStatus}</p> : null}
+                    {heroAiError ? <p className="mt-2 text-xs text-red-300">{heroAiError}</p> : null}
                   </div>
                 </div>
                 <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] flex">
                   <div className="border border-white/25 bg-black/65 p-2 sm:p-3 flex-1 min-h-[280px]">
                     <div className="grid grid-cols-12 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 h-full">
-                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
+                      <div className="col-span-6 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
+                        <p className="heading-kicker mb-1">Client</p>
+                        <p className="text-sm sm:text-base tracking-tight text-white leading-tight truncate">{heroClientName}</p>
+                      </div>
+                      <div className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
+                        <p className="heading-kicker mb-1">Active Deals</p>
+                        <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{activeDealsCount}</p>
+                      </div>
+                      <div className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
                         <p className="heading-kicker mb-1">Scenarios</p>
-                        <p className="text-3xl sm:text-4xl tracking-tight text-white leading-none">{Math.max(1, scenarios.length)}</p>
+                        <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{scenarios.length}</p>
                       </div>
-                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
-                        <p className="heading-kicker mb-1">Status</p>
-                        <p className="text-lg text-white/90 leading-tight">{(exportExcelLoading || exportPdfLoading) ? "Running" : "Ready"}</p>
-                      </div>
-                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
-                        <p className="heading-kicker mb-1">Brokerage</p>
-                        <p className="text-sm text-white/90 leading-tight truncate">{brokerageName || CRE_DEFAULT_BROKERAGE_NAME}</p>
+                      <div className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.06)" }}>
+                        <p className="heading-kicker mb-1">Documents</p>
+                        <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{scopedDocuments.length}</p>
                       </div>
 
                       <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
-                        <p className="heading-kicker mb-1">Prepared for</p>
-                        <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_for || "Client"}</p>
+                        <p className="heading-kicker mb-1">Status</p>
+                        <p className="inline-flex items-center gap-1.5 text-sm text-white/90 leading-tight">
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse" />
+                          {workspaceStatus}
+                        </p>
                       </div>
                       <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
                         <p className="heading-kicker mb-1">Prepared by</p>
-                        <p className="text-sm text-white/90 leading-tight truncate">{coverMetaPreview.prepared_by || CRE_DEFAULT_PREPARED_BY}</p>
+                        <p className="text-sm text-white/90 leading-tight truncate">{heroPreparedBy}</p>
                       </div>
                       <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
                         <p className="heading-kicker mb-1">Report date</p>
@@ -1938,8 +2061,8 @@ function HomeContent() {
 
                       <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-between min-h-[132px]" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
                         <div className="flex items-center justify-between mb-2">
-                          <p className="heading-kicker">NPV trend</p>
-                          <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live profile</p>
+                          <p className="heading-kicker">Portfolio trend</p>
+                          <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live system</p>
                         </div>
                         <svg viewBox="0 0 260 70" className="w-full h-20 sm:h-24">
                           <polyline
@@ -1961,12 +2084,21 @@ function HomeContent() {
                         </svg>
                       </div>
                       <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
-                        <p className="heading-kicker mb-2">Document pipeline</p>
-                        <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] text-white/80 h-full content-center">
-                          <span className="border border-white/20 px-2 py-1 text-center">Upload</span>
-                          <span className="border border-white/20 px-2 py-1 text-center">Extract</span>
-                          <span className="border border-white/20 px-2 py-1 text-center">Compare</span>
+                        <p className="heading-kicker mb-2">Workflow actions</p>
+                        <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] h-full content-center">
+                          {heroPipelineActions.map((action) => (
+                            <div
+                              key={action.label}
+                              className={`border px-2 py-1 flex items-center justify-between ${
+                                action.active ? "border-cyan-300/60 bg-cyan-500/10 text-cyan-100" : "border-white/20 text-white/80"
+                              }`}
+                            >
+                              <span>{action.label}</span>
+                              <span>{action.value}</span>
+                            </div>
+                          ))}
                         </div>
+                        <p className="text-[10px] text-slate-400 mt-2">{parsedDocumentsCount} parsed · {workflowCoverageCount} workflows active</p>
                       </div>
                     </div>
                   </div>
@@ -1975,13 +2107,18 @@ function HomeContent() {
             </div>
           </section>
 
-          <FeatureTiles />
+          <FeatureTiles
+            documentCount={scopedDocuments.length}
+            workflowCount={workflowCoverageCount}
+            insightCount={Math.max(1, chartData.length + parsedDocumentsCount)}
+            activeClientName={heroClientName}
+          />
         </>
       ) : null}
 
       {!showHomeHero && moduleHasDedicatedTopTabs ? (
         <section className={`relative z-10 app-container ${tabTopOffsetClass}`}>
-          <div className="mx-auto w-full max-w-6xl">
+          <div className="mx-auto w-full max-w-[96vw]">
             <PlatformModuleTabs
               tabs={FINANCIAL_ANALYSES_TOOL_TABS}
               activeId={activeTopTab}
@@ -2000,25 +2137,42 @@ function HomeContent() {
       <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
         <ClientDocumentCenter />
         <section id="extract" className="scroll-mt-24 bg-grid">
-        <div className="mx-auto w-full max-w-6xl space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
+        <div className="mx-auto w-full max-w-[96vw] space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
           <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
-            <div className="mx-auto w-full max-w-[760px] text-center">
-              <h2 className="heading-section mb-3">Upload and Extract</h2>
+            <div className="mx-auto w-full max-w-[1800px] text-center">
+              <h2 className="heading-section mb-3">Extract From Client Documents</h2>
+              <p className="text-sm text-slate-300 mb-3">
+                Use the single upload entry in Document Center above, or drop files anywhere on this screen.
+              </p>
               <ExtractUpload
                 showAdvancedOptions={showDiagnostics}
+                showInlineDropZone={false}
+                onPersistDocument={async ({ file, normalize, parsed }) => {
+                  if (!activeClientId) return;
+                  await registerDocument({
+                    clientId: activeClientId,
+                    name: file.name,
+                    file,
+                    sourceModule: "financial-analyses",
+                    normalize,
+                    parsed,
+                  });
+                }}
                 onSuccess={(data, context) =>
                   handleNormalizeSuccess(data, {
                     name: context?.fileName,
                     file: context?.file,
                     sourceModule: "financial-analyses",
+                    skipDocumentRegister: true,
                   })
                 }
                 onError={handleExtractError}
               />
               {activeClient ? (
-                <div className="mt-3 text-left">
+                <div className="mt-3">
                   <ClientDocumentPicker
                     buttonLabel="Select Existing Client Document"
+                    buttonAlign="center"
                     allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
                     onSelectDocument={handleExistingDocumentSelection}
                   />
@@ -2083,110 +2237,21 @@ function HomeContent() {
             </div>
           )}
           <div className="mb-5 border border-slate-300/20 bg-slate-950/30 p-4">
-            <p className="heading-kicker mb-2">Brokerage branding</p>
+            <p className="heading-kicker mb-2">Report + Branding Settings</p>
             <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
               <div>
-                <p className="text-xs text-slate-400">Brokerage name</p>
-                <p className="mt-1 text-sm text-white">{brokerageName || "The CRE Model"}</p>
-                <p className="mt-1 text-xs text-slate-400">
-                  Brokerage logo: {organizationBranding?.has_logo ? "Saved" : "Using The CRE Model default"}
+                <p className="text-sm text-slate-200">
+                  Use account dashboard/settings to manage brokerage branding, and client cover assets.
                 </p>
                 <p className="mt-2 text-xs text-slate-400">
-                  Brokerage name and logo are editable only in Account.
+                  Brokerage: {brokerageName || "The CRE Model"} · Prepared for: {reportMeta.prepared_for.trim() || "Client"}
                 </p>
               </div>
-              {authSession ? (
-                <a href="/branding" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                  Manage brokerage branding
-                </a>
-              ) : (
-                <a href="/account?mode=signin" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                  Sign in to manage branding
-                </a>
-              )}
+              <a href={settingsHref} className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                {settingsCtaLabel}
+              </a>
             </div>
-            {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading brokerage branding…</p>}
-          </div>
-          <div className="mb-5 border-t border-slate-300/20 pt-4">
-            <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
-            <div className="mb-3">
-              <ClientLogoUploader
-                logoDataUrl={clientLogoDataUrl}
-                fileName={clientLogoFileName}
-                uploading={clientLogoUploading}
-                disabled={!authSession}
-                disabledMessage="Sign in to upload a client logo."
-                error={clientLogoError}
-                onUpload={uploadClientLogo}
-                onClear={clearClientLogo}
-              />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="block">
-                <span className="text-xs text-slate-400">Prepared for</span>
-                <input
-                  type="text"
-                  value={reportMeta.prepared_for}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
-                  className="input-premium mt-1 disabled:opacity-60"
-                  placeholder="Client"
-                  disabled={!authSession}
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs text-slate-400">Prepared by</span>
-                <input
-                  type="text"
-                  value={reportMeta.prepared_by}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
-                  className="input-premium mt-1 disabled:opacity-60"
-                  placeholder={CRE_DEFAULT_PREPARED_BY}
-                  disabled={!authSession}
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs text-slate-400">Report date</span>
-                <input
-                  type="text"
-                  value={reportMeta.report_date}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
-                  onBlur={(e) =>
-                    setReportMeta((prev) => ({
-                      ...prev,
-                      report_date: normalizeDateMmDdYyyy(e.target.value),
-                    }))
-                  }
-                  className="input-premium mt-1 disabled:opacity-60"
-                  placeholder="MM.DD.YYYY"
-                  disabled={!authSession}
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs text-slate-400">Market</span>
-                <input
-                  type="text"
-                  value={reportMeta.market}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, market: e.target.value }))}
-                  className="input-premium mt-1 disabled:opacity-60"
-                  placeholder={inferredReportLocation.market || "Auto from document/API"}
-                  disabled={!authSession}
-                />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="text-xs text-slate-400">Submarket</span>
-                <input
-                  type="text"
-                  value={reportMeta.submarket}
-                  onChange={(e) => setReportMeta((prev) => ({ ...prev, submarket: e.target.value }))}
-                  className="input-premium mt-1 disabled:opacity-60"
-                  placeholder={inferredReportLocation.submarket || "Auto from document/API when available"}
-                  disabled={!authSession}
-                />
-              </label>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">
-              Defaults if blank: Prepared for = Client, Prepared by = The CRE Model, Report date = today (MM.DD.YYYY). Market/Submarket use API extracted values when available.
-            </p>
+            {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading settings…</p>}
           </div>
           <div className="flex flex-wrap gap-3">
               <button
@@ -2301,12 +2366,13 @@ function HomeContent() {
               </ResultsActionsCard>
         </div>
         </section>
+        <BrokerOsCommandCenter />
       </main>
       ) : (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
           <ClientDocumentCenter />
           <section className="scroll-mt-24 bg-grid mt-6 space-y-4">
-            <div className="mx-auto w-full max-w-6xl space-y-4">
+            <div className="mx-auto w-full max-w-[96vw] space-y-4">
               {!authSession && (
                 <div className="border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
                   <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
@@ -2320,92 +2386,22 @@ function HomeContent() {
                   </div>
                 </div>
               )}
-              <div className="border border-white/20 bg-slate-950/35 p-4 space-y-4">
-                <div className="border border-slate-300/20 bg-slate-950/30 p-4">
-                  <p className="heading-kicker mb-2">Brokerage branding</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
-                    <div>
-                      <p className="text-xs text-slate-400">Brokerage name</p>
-                      <p className="mt-1 text-sm text-white">{brokerageName || "The CRE Model"}</p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        Brokerage logo: {organizationBranding?.has_logo ? "Saved" : "Using The CRE Model default"}
-                      </p>
-                      <p className="mt-2 text-xs text-slate-400">
-                        Brokerage name and logo are editable only in Account.
-                      </p>
-                    </div>
-                    {authSession ? (
-                      <a href="/branding" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                        Manage brokerage branding
-                      </a>
-                    ) : (
-                      <a href="/account?mode=signin" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                        Sign in to manage branding
-                      </a>
-                    )}
+              <div className="border border-slate-300/20 bg-slate-950/30 p-4">
+                <p className="heading-kicker mb-2">Report + Branding Settings</p>
+                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
+                  <div>
+                    <p className="text-sm text-slate-200">
+                      Use account dashboard/settings to manage brokerage branding, and client cover assets.
+                    </p>
+                    <p className="mt-2 text-xs text-slate-400">
+                      Brokerage: {brokerageName || "The CRE Model"} · Prepared for: {reportMeta.prepared_for.trim() || "Client"}
+                    </p>
                   </div>
-                  {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading brokerage branding…</p>}
+                  <a href={settingsHref} className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                    {settingsCtaLabel}
+                  </a>
                 </div>
-
-                <div className="border-t border-slate-300/20 pt-4">
-                  <p className="heading-kicker mb-2">Report meta (for PDF cover)</p>
-                  <div className="mb-3">
-                    <ClientLogoUploader
-                      logoDataUrl={clientLogoDataUrl}
-                      fileName={clientLogoFileName}
-                      uploading={clientLogoUploading}
-                      disabled={!authSession}
-                      disabledMessage="Sign in to upload a client logo."
-                      error={clientLogoError}
-                      onUpload={uploadClientLogo}
-                      onClear={clearClientLogo}
-                    />
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <label className="block">
-                      <span className="text-xs text-slate-400">Prepared for</span>
-                      <input
-                        type="text"
-                        value={reportMeta.prepared_for}
-                        onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_for: e.target.value }))}
-                        className="input-premium mt-1 disabled:opacity-60"
-                        placeholder="Client"
-                        disabled={!authSession}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-xs text-slate-400">Prepared by</span>
-                      <input
-                        type="text"
-                        value={reportMeta.prepared_by}
-                        onChange={(e) => setReportMeta((prev) => ({ ...prev, prepared_by: e.target.value }))}
-                        className="input-premium mt-1 disabled:opacity-60"
-                        placeholder={CRE_DEFAULT_PREPARED_BY}
-                        disabled={!authSession}
-                      />
-                    </label>
-                    <label className="block sm:col-span-2">
-                      <span className="text-xs text-slate-400">Report date</span>
-                      <input
-                        type="text"
-                        value={reportMeta.report_date}
-                        onChange={(e) => setReportMeta((prev) => ({ ...prev, report_date: e.target.value }))}
-                        onBlur={(e) =>
-                          setReportMeta((prev) => ({
-                            ...prev,
-                            report_date: normalizeDateMmDdYyyy(e.target.value),
-                          }))
-                        }
-                        className="input-premium mt-1 disabled:opacity-60"
-                        placeholder="MM.DD.YYYY"
-                        disabled={!authSession}
-                      />
-                    </label>
-                  </div>
-                  <p className="mt-2 text-xs text-slate-500">
-                    Defaults if blank: Prepared for = Client, Prepared by = The CRE Model, Report date = today (MM.DD.YYYY).
-                  </p>
-                </div>
+                {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading settings…</p>}
               </div>
             </div>
 
@@ -2431,13 +2427,14 @@ function HomeContent() {
               }}
             />
           </section>
+          <BrokerOsCommandCenter />
         </main>
           );
         }
         if (activePlatformModule === "completed-leases") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter showDropZone={false} />
+          <ClientDocumentCenter />
           <CompletedLeasesWorkspace
             clientId={workspaceScopeId}
             exportBranding={{
@@ -2458,6 +2455,7 @@ function HomeContent() {
               clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
             }}
           />
+          <BrokerOsCommandCenter />
         </main>
           );
         }
@@ -2485,13 +2483,24 @@ function HomeContent() {
               clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
             }}
           />
+          <BrokerOsCommandCenter />
         </main>
+          );
+        }
+        if (activePlatformModule === "deals") {
+          return (
+          <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+            <ClientDocumentCenter />
+            <DealsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
+            <BrokerOsCommandCenter />
+          </main>
           );
         }
         return (
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
             <ClientDocumentCenter />
             <ObligationsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
+            <BrokerOsCommandCenter />
           </main>
         );
       })() : null}

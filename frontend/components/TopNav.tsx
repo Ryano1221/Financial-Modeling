@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   PLATFORM_MODULES,
   resolveActivePlatformModule,
@@ -16,14 +16,20 @@ function truncateLabel(value: string, maxChars: number): string {
   return `${clean.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`;
 }
 
+function asText(value: unknown): string {
+  return String(value || "").trim();
+}
+
 export function TopNav() {
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const {
     ready,
     session,
-    activeClient,
+    clients,
     activeClientId,
+    setActiveClient,
     cloudSyncStatus,
     cloudSyncMessage,
     cloudLastSyncedAt,
@@ -43,10 +49,7 @@ export function TopNav() {
   const activeModule = hasExplicitModule
     ? resolveActivePlatformModule(rawModule, Boolean(session))
     : null;
-  const showModuleNav = pathname === "/";
-  const clientHref = activeClientId ? `/client/${encodeURIComponent(activeClientId)}` : "/client";
-  const clientLabel = activeClient ? `Client: ${truncateLabel(activeClient.name, 26)}` : "Client";
-  const clientTabActive = pathname?.startsWith("/client");
+  const accountTabActive = pathname?.startsWith("/account");
   const syncTime =
     cloudLastSyncedAt && Number.isFinite(new Date(cloudLastSyncedAt).getTime())
       ? new Date(cloudLastSyncedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -94,43 +97,78 @@ export function TopNav() {
             >
               {mobileMenuOpen ? "Close" : "Menu"}
             </button>
-            <div className="hidden sm:flex flex-wrap items-center justify-end gap-2 min-w-0">
+            <div className="hidden sm:flex flex-nowrap items-center gap-2 min-w-0 ml-auto whitespace-nowrap [&>*]:shrink-0">
               {ready && session ? (
                 <span
-                  className={`hidden md:inline-flex text-[11px] uppercase tracking-[0.08em] ${cloudSyncClass}`}
+                  className={`hidden 2xl:inline-flex text-[11px] uppercase tracking-[0.08em] ${cloudSyncClass}`}
                   title={cloudSyncMessage}
                 >
                   {cloudSyncLabel}
                 </span>
               ) : null}
-              {showModuleNav
-                ? PLATFORM_MODULES.map((tab) => {
-                    const isActive = tab.id === activeModule;
-                    return (
-                      <Link
-                        key={tab.id}
-                        href={`/?module=${tab.id}`}
-                        className={`btn-premium !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm ${
-                          isActive ? "btn-premium-primary" : "btn-premium-secondary"
-                        }`}
-                      >
-                        {tab.label}
-                      </Link>
-                    );
-                  })
-                : null}
-              {ready && session ? (
-                <Link
-                  href={clientHref}
-                  className={`btn-premium !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm ${
-                    clientTabActive ? "btn-premium-primary" : "btn-premium-secondary"
-                  }`}
+              <div className="lg:hidden min-w-[190px]">
+                <select
+                  aria-label="Module navigation"
+                  className="input-premium !h-9 !py-1.5 !text-xs"
+                  value={activeModule || ""}
+                  onChange={(event) => {
+                    const moduleId = asText(event.target.value);
+                    if (!moduleId) return;
+                    router.push(`/?module=${encodeURIComponent(moduleId)}`);
+                  }}
                 >
-                  {clientLabel}
-                </Link>
+                  <option value="">Select module</option>
+                  {PLATFORM_MODULES.map((tab) => (
+                    <option key={tab.id} value={tab.id}>
+                      {tab.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="hidden lg:flex items-center gap-2">
+                {PLATFORM_MODULES.map((tab) => {
+                  const isActive = tab.id === activeModule;
+                  return (
+                    <Link
+                      key={tab.id}
+                      href={`/?module=${tab.id}`}
+                      className={`btn-premium !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
+                        isActive ? "btn-premium-primary" : "btn-premium-secondary"
+                      }`}
+                    >
+                      {tab.label}
+                    </Link>
+                  );
+                })}
+              </div>
+              {ready && session ? (
+                <select
+                  aria-label="Active client workspace"
+                  className="input-premium !h-8 !py-1 !text-[11px] max-w-[160px] xl:max-w-[190px]"
+                  value={activeClientId || ""}
+                  onChange={(event) => {
+                    const clientId = asText(event.target.value);
+                    if (!clientId) return;
+                    setActiveClient(clientId);
+                  }}
+                >
+                  <option value="" disabled>
+                    Select client
+                  </option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {truncateLabel(client.name, 30)}
+                    </option>
+                  ))}
+                </select>
               ) : null}
               {!ready ? null : session ? (
-                <Link href="/account" className="btn-premium btn-premium-secondary !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm">
+                <Link
+                  href="/account"
+                  className={`btn-premium !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
+                    accountTabActive ? "btn-premium-primary" : "btn-premium-secondary"
+                  }`}
+                >
                   Account
                 </Link>
               ) : (
@@ -154,39 +192,49 @@ export function TopNav() {
                   {cloudSyncLabel}
                 </div>
               ) : null}
-              {showModuleNav
-                ? PLATFORM_MODULES.map((tab) => {
-                    const isActive = tab.id === activeModule;
-                    return (
-                      <Link
-                        key={tab.id}
-                        href={`/?module=${tab.id}`}
-                        onClick={() => setMobileMenuOpen(false)}
-                        className={`btn-premium text-xs ${
-                          isActive ? "btn-premium-primary" : "btn-premium-secondary"
-                        }`}
-                      >
-                        {tab.label}
-                      </Link>
-                    );
-                  })
-                : null}
+              {PLATFORM_MODULES.map((tab) => {
+                const isActive = tab.id === activeModule;
+                return (
+                  <Link
+                    key={tab.id}
+                    href={`/?module=${tab.id}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`btn-premium text-xs ${
+                      isActive ? "btn-premium-primary" : "btn-premium-secondary"
+                    }`}
+                  >
+                    {tab.label}
+                  </Link>
+                );
+              })}
               {ready && session ? (
-                <Link
-                  href={clientHref}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`btn-premium text-xs ${
-                    clientTabActive ? "btn-premium-primary" : "btn-premium-secondary"
-                  }`}
+                <select
+                  aria-label="Active client workspace"
+                  className="input-premium !text-xs"
+                  value={activeClientId || ""}
+                  onChange={(event) => {
+                    const clientId = asText(event.target.value);
+                    if (!clientId) return;
+                    setActiveClient(clientId);
+                  }}
                 >
-                  {clientLabel}
-                </Link>
+                  <option value="" disabled>
+                    Select client
+                  </option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {truncateLabel(client.name, 36)}
+                    </option>
+                  ))}
+                </select>
               ) : null}
               {!ready ? null : session ? (
                 <Link
                   href="/account"
                   onClick={() => setMobileMenuOpen(false)}
-                  className="btn-premium btn-premium-secondary text-xs"
+                  className={`btn-premium text-xs ${
+                    accountTabActive ? "btn-premium-primary" : "btn-premium-secondary"
+                  }`}
                 >
                   Account
                 </Link>

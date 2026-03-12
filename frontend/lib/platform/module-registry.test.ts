@@ -23,6 +23,7 @@ describe("platform/module-registry", () => {
 
   it("recognizes module and financial-tool ids", () => {
     expect(isPlatformModuleId("obligations")).toBe(true);
+    expect(isPlatformModuleId("deals")).toBe(true);
     expect(isPlatformModuleId("not-real")).toBe(false);
 
     const toolIds = FINANCIAL_ANALYSES_TOOL_TABS.map((tab) => tab.id);

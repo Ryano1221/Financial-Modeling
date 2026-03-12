@@ -1,3 +1,5 @@
+@import "leaflet/dist/leaflet.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -90,7 +92,7 @@
 @layer components {
   .app-container {
     width: 100%;
-    max-width: 1400px;
+    max-width: min(3400px, 96vw);
     margin-inline: auto;
     padding-left: max(clamp(1rem, 2vw, 2.2rem), env(safe-area-inset-left));
     padding-right: max(clamp(1rem, 2vw, 2.2rem), env(safe-area-inset-right));
@@ -311,12 +313,39 @@
     transform: translate3d(0, var(--parallax-y, 0px), 0);
     will-change: transform;
   }
+
+  @media (max-width: 1024px) {
+    .overflow-x-auto {
+      overflow-x: clip;
+    }
+
+    .overflow-x-auto > table {
+      width: 100% !important;
+      min-width: 100% !important;
+      table-layout: fixed;
+    }
+
+    .overflow-x-auto th,
+    .overflow-x-auto td {
+      white-space: normal !important;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+  }
 }
 
 @media (max-width: 640px) {
   .app-container {
     padding-left: max(0.95rem, env(safe-area-inset-left));
     padding-right: max(0.95rem, env(safe-area-inset-right));
+  }
+
+  .btn-premium {
+    max-width: 100%;
+    white-space: normal;
+    line-height: 1.2;
+    padding-inline: 0.95rem;
+    letter-spacing: 0.1em;
   }
 }
 

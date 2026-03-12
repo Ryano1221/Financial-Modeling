@@ -411,6 +411,7 @@ export interface BackendCanonicalLease {
 }
 
 export interface ExtractionSummary {
+  headline?: string;
   document_type_detected: string;
   key_terms_found: string[];
   key_terms_missing: string[];

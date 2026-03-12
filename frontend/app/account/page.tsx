@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AuthPanel } from "@/components/AuthPanel";
 import { signOut } from "@/lib/supabase";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
@@ -20,7 +20,9 @@ export default function AccountPage() {
     isAuthenticated,
     clients,
     activeClientId,
+    dealStages,
     setActiveClient,
+    setDealStages,
     createClient,
     getDocumentsForClient,
   } = useClientWorkspace();
@@ -33,12 +35,31 @@ export default function AccountPage() {
     contactEmail: "",
     notes: "",
   });
+  const [stageDraft, setStageDraft] = useState("");
+  const [stageError, setStageError] = useState("");
+  const [stageStatus, setStageStatus] = useState("");
+  const [crmTabActive, setCrmTabActive] = useState(false);
+  const crmSettingsRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const value = new URLSearchParams(window.location.search).get("mode");
+    const search = new URLSearchParams(window.location.search);
+    const value = search.get("mode");
+    const tab = search.get("tab");
     setInitialMode(value === "signup" ? "signup" : "signin");
+    setCrmTabActive(tab === "crm");
   }, []);
+
+  useEffect(() => {
+    if (!crmTabActive) return;
+    const target = crmSettingsRef.current;
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [crmTabActive]);
+
+  useEffect(() => {
+    setStageDraft(dealStages.join(", "));
+  }, [dealStages, activeClientId]);
 
   const clientsByCreatedAt = useMemo(
     () =>
@@ -48,6 +69,10 @@ export default function AccountPage() {
         return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
       }),
     [clients],
+  );
+  const activeClient = useMemo(
+    () => clients.find((client) => client.id === activeClientId) || null,
+    [clients, activeClientId],
   );
 
   if (!ready) {
@@ -82,6 +107,12 @@ export default function AccountPage() {
           </Link>
           <Link href="/client" className="btn-premium btn-premium-secondary text-center">
             Client settings
+          </Link>
+          <Link
+            href="/account?tab=crm"
+            className={`btn-premium text-center ${crmTabActive ? "btn-premium-primary" : "btn-premium-secondary"}`}
+          >
+            CRM settings
           </Link>
           <Link href="/branding" className="btn-premium btn-premium-secondary text-center">
             Branding settings
@@ -152,6 +183,56 @@ export default function AccountPage() {
               })
             )}
           </div>
+
+          <section
+            id="crm-settings"
+            ref={crmSettingsRef}
+            className={`mt-5 border p-4 ${crmTabActive ? "border-cyan-300/60 bg-cyan-500/10" : "border-white/15 bg-black/30"}`}
+          >
+            <p className="heading-kicker mb-2">Deal Stage Settings</p>
+            {activeClient ? (
+              <>
+                <p className="text-xs text-slate-300 mb-2">
+                  Configure stages for <span className="text-white">{activeClient.name}</span>.
+                </p>
+                <textarea
+                  className="input-premium min-h-[84px]"
+                  value={stageDraft}
+                  onChange={(event) => setStageDraft(event.target.value)}
+                  placeholder="Comma-separated stages"
+                />
+                {stageError ? <p className="mt-2 text-xs text-red-300">{stageError}</p> : null}
+                {stageStatus ? <p className="mt-2 text-xs text-cyan-200">{stageStatus}</p> : null}
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    className="btn-premium btn-premium-secondary text-xs"
+                    onClick={() => {
+                      const parsed = Array.from(
+                        new Set(
+                          stageDraft
+                            .split(",")
+                            .map((item) => asText(item))
+                            .filter(Boolean),
+                        ),
+                      );
+                      if (parsed.length === 0) {
+                        setStageError("At least one stage is required.");
+                        return;
+                      }
+                      setDealStages(parsed, activeClient.id);
+                      setStageError("");
+                      setStageStatus(`Saved ${parsed.length} stage${parsed.length === 1 ? "" : "s"} for ${activeClient.name}.`);
+                    }}
+                  >
+                    Save Stages
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-slate-400">Select an active client to edit deal stages.</p>
+            )}
+          </section>
 
           <div className="mt-5 border border-white/15 bg-black/30 p-4">
             <p className="heading-kicker mb-2">Add Client</p>

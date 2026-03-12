@@ -6359,6 +6359,41 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         elif re.search(r"(?i)\b(?:base\s+annual\s+)?net\s+rental\s+rate\b|\bnet\s+rent(?:al)?\b", text):
             hints["lease_type"] = "NNN"
 
+    # Strong full-service rate cue: a line with rent label + explicit full-service/gross wording + numeric rate.
+    # This should override accidental NNN inference from nearby operating-expense references.
+    full_service_rate_candidates: list[tuple[int, int, float]] = []
+    for line_match in re.finditer(r"(?m)^.*$", text):
+        line = line_match.group(0) or ""
+        low_line = line.lower()
+        if not line.strip():
+            continue
+        if not any(token in low_line for token in ("full service", "full-service", "fsg", "gross")):
+            continue
+        if any(token in low_line for token in ("modified gross", "base year", "expense stop", "gross with stop")):
+            continue
+        if not re.search(r"(?i)\b(?:base\s+rent|rental\s+rate|lease\s+rate|annual\s+rent|rent)\b", line):
+            continue
+        for rate_match in re.finditer(r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)", line):
+            rate = _coerce_float_token(rate_match.group(1), 0.0) or 0.0
+            if not (3.0 <= rate <= 300.0):
+                continue
+            score = 1
+            if "full service gross" in low_line or "full-service gross" in low_line:
+                score += 5
+            elif "full service" in low_line or "full-service" in low_line:
+                score += 4
+            elif "fsg" in low_line:
+                score += 4
+            elif "gross rent" in low_line:
+                score += 2
+            if "base rent" in low_line or "rental rate" in low_line or "lease rate" in low_line:
+                score += 2
+            full_service_rate_candidates.append((score, line_match.start(), float(rate)))
+    if full_service_rate_candidates:
+        full_service_rate_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
+        hints["full_service_rate_psf_yr"] = float(full_service_rate_candidates[0][2])
+        hints["lease_type"] = "Full Service"
+
     # Parking ratio and economics
     parking_ratio_evidence = False
     parking_count_evidence = False
@@ -8831,6 +8866,13 @@ def _normalize_impl(
                     updates["scenario_name"] = location_label
             if extracted_hints.get("lease_type"):
                 updates["lease_type"] = str(extracted_hints["lease_type"])
+            hinted_full_service_rate = _coerce_float_token(extracted_hints.get("full_service_rate_psf_yr"), 0.0) or 0.0
+            if hinted_full_service_rate > 0:
+                if not _is_full_service_lease_type(updates.get("lease_type")):
+                    warnings.append(
+                        "Detected explicit full-service gross rental rate cue; overriding lease type to Full Service."
+                    )
+                updates["lease_type"] = "Full Service"
             effective_lease_type_for_opex = updates.get(
                 "lease_type",
                 canonical.lease_type.value if hasattr(canonical.lease_type, "value") else canonical.lease_type,
@@ -9137,6 +9179,69 @@ def _normalize_impl(
                     if should_override_rent:
                         updates["rent_schedule"] = [RentScheduleStep(**step) for step in normalized_hint]
                         warnings.append("Rent schedule extracted from phased rent terms in the uploaded document.")
+            if is_full_service_lease and hinted_full_service_rate > 0:
+                current_schedule_for_fsg = updates.get("rent_schedule", canonical.rent_schedule) or []
+                current_first_rate = 0.0
+                if current_schedule_for_fsg:
+                    first_step = sorted(
+                        current_schedule_for_fsg,
+                        key=lambda s: int(
+                            _coerce_int_token(
+                                (s.get("start_month") if isinstance(s, dict) else getattr(s, "start_month", 0)),
+                                0,
+                            )
+                            or 0
+                        ),
+                    )[0]
+                    current_first_rate = (
+                        _coerce_float_token(
+                            first_step.get("rent_psf_annual") if isinstance(first_step, dict) else getattr(first_step, "rent_psf_annual", 0.0),
+                            0.0,
+                        )
+                        or 0.0
+                    )
+                effective_term_for_fsg = _coerce_int_token(
+                    updates.get("term_months"),
+                    _coerce_int_token(canonical.term_months, 0),
+                ) or 0
+                if effective_term_for_fsg <= 0:
+                    if current_schedule_for_fsg:
+                        last_step = sorted(
+                            current_schedule_for_fsg,
+                            key=lambda s: int(
+                                _coerce_int_token(
+                                    (s.get("end_month") if isinstance(s, dict) else getattr(s, "end_month", 0)),
+                                    0,
+                                )
+                                or 0
+                            ),
+                        )[-1]
+                        effective_term_for_fsg = max(
+                            1,
+                            int(
+                                _coerce_int_token(
+                                    last_step.get("end_month") if isinstance(last_step, dict) else getattr(last_step, "end_month", 0),
+                                    0,
+                                )
+                                or 0
+                            )
+                            + 1,
+                        )
+                    else:
+                        effective_term_for_fsg = 12
+                rate_delta = abs(float(current_first_rate) - float(hinted_full_service_rate))
+                delta_threshold = max(1.0, float(hinted_full_service_rate) * 0.08)
+                if (not current_schedule_for_fsg) or (rate_delta > delta_threshold):
+                    updates["rent_schedule"] = [
+                        RentScheduleStep(
+                            start_month=0,
+                            end_month=max(0, int(effective_term_for_fsg) - 1),
+                            rent_psf_annual=float(round(hinted_full_service_rate, 4)),
+                        )
+                    ]
+                    warnings.append(
+                        f"Applied full-service gross rate ${float(hinted_full_service_rate):,.2f}/SF as controlling rent schedule."
+                    )
             phase_schedule_hint = extracted_hints.get("phase_in_schedule")
             if isinstance(phase_schedule_hint, list) and phase_schedule_hint:
                 normalized_phase = []

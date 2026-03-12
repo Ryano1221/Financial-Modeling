@@ -7,8 +7,8 @@ export default function SecurityPage() {
               <p className="heading-kicker">Security</p>
               <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Security Overview</h1>
               <p className="body-lead max-w-3xl">
-                The CRE Model uses practical controls for authentication, tenant data separation, and private branding
-                asset handling.
+                The CRE Model applies practical controls for authentication, client-workspace isolation, document
+                handling, and auditable AI-assisted workflows.
               </p>
             </div>
 
@@ -49,6 +49,55 @@ export default function SecurityPage() {
               <p className="text-sm sm:text-base text-slate-300">
                 User data is not shared across accounts. Request handling and storage keys are account-scoped to prevent
                 cross-tenant data access.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Client Workspace Isolation</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Platform records are tied to an active client workspace. Documents, deals, surveys, abstracts, and
+                obligations are loaded and persisted with client-specific identifiers to prevent cross-client leakage.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Interface Updates</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                CRM layout improvements, navigation ordering, and module naming updates (for example Lease Abstract)
+                are client-side presentation changes. Authentication checks, account-scoped authorization, and
+                data-isolation controls remain unchanged.
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                Deal stage configuration is handled in Account dashboard/settings for the active client, and follows
+                the same account-scoped access controls.
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                The Account page CRM Settings tab writes stage configuration to the active client scope only.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Single Intake Surface</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                File ingestion is centralized to one shared Document Center library. Whether a file is uploaded in
+                Document Center, or dropped anywhere in the active workspace,
+                ingestion follows the same account-scoped processing controls.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Auditability and AI Actions</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                System activity, entity changes, and AI-triggered actions are captured in centralized logs for traceable
+                workflow history and operational review.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Map Geocoding</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Survey map pins are generated from location text fields (for example building and address) using
+                client-side geocoding. Account authorization and data-isolation controls remain unchanged.
               </p>
             </section>
 

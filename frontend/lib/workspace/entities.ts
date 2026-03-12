@@ -1,4 +1,8 @@
-import type { ClientWorkspaceClient, ClientWorkspaceDocument } from "@/lib/workspace/types";
+import type {
+  ClientWorkspaceClient,
+  ClientWorkspaceDeal,
+  ClientWorkspaceDocument,
+} from "@/lib/workspace/types";
 
 export interface WorkspaceCompanyEntity {
   id: string;
@@ -44,6 +48,17 @@ export interface WorkspaceSurveyEntity {
   sourceDocumentId: string;
 }
 
+export interface WorkspaceDealEntity {
+  id: string;
+  companyId: string;
+  clientId: string;
+  dealName: string;
+  stage: string;
+  status: string;
+  priority: string;
+  linkedDocumentIds: string[];
+}
+
 export interface WorkspaceEntityGraph {
   companies: WorkspaceCompanyEntity[];
   clients: ClientWorkspaceClient[];
@@ -52,12 +67,14 @@ export interface WorkspaceEntityGraph {
   obligations: WorkspaceObligationEntity[];
   analyses: WorkspaceAnalysisEntity[];
   surveys: WorkspaceSurveyEntity[];
+  deals: WorkspaceDealEntity[];
   documents: ClientWorkspaceDocument[];
 }
 
 interface BuildWorkspaceEntityGraphInput {
   clients: ClientWorkspaceClient[];
   documents: ClientWorkspaceDocument[];
+  deals?: ClientWorkspaceDeal[];
 }
 
 function asText(value: unknown): string {
@@ -114,6 +131,7 @@ function attachDocumentToCompany(
 export function buildWorkspaceEntityGraph({
   clients,
   documents,
+  deals = [],
 }: BuildWorkspaceEntityGraphInput): WorkspaceEntityGraph {
   const clientById = new Map<string, ClientWorkspaceClient>();
   for (const client of clients) {
@@ -131,6 +149,7 @@ export function buildWorkspaceEntityGraph({
   const obligations = new Map<string, WorkspaceObligationEntity>();
   const analyses = new Map<string, WorkspaceAnalysisEntity>();
   const surveys = new Map<string, WorkspaceSurveyEntity>();
+  const dealEntities = new Map<string, WorkspaceDealEntity>();
 
   for (const document of documents) {
     const client = clientById.get(document.clientId);
@@ -229,6 +248,39 @@ export function buildWorkspaceEntityGraph({
     }
   }
 
+  for (const deal of deals) {
+    const client = clientById.get(deal.clientId);
+    const companyId = client ? companyIdForClient(client) : "company_unassigned";
+    if (!companies.has(companyId)) {
+      companies.set(companyId, {
+        id: companyId,
+        name: client ? companyNameForClient(client) : "Unassigned",
+        clientIds: client ? [client.id] : [],
+        documentIds: [],
+      });
+    }
+    const linkedDocumentIds = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(deal.linkedDocumentIds) ? deal.linkedDocumentIds : []),
+          ...documents
+            .filter((doc) => doc.dealId === deal.id)
+            .map((doc) => doc.id),
+        ].filter(Boolean),
+      ),
+    );
+    dealEntities.set(deal.id, {
+      id: deal.id,
+      companyId,
+      clientId: deal.clientId,
+      dealName: deal.dealName,
+      stage: deal.stage,
+      status: deal.status,
+      priority: deal.priority,
+      linkedDocumentIds,
+    });
+  }
+
   return {
     companies: Array.from(companies.values()),
     clients: [...clients],
@@ -237,6 +289,7 @@ export function buildWorkspaceEntityGraph({
     obligations: Array.from(obligations.values()),
     analyses: Array.from(analyses.values()),
     surveys: Array.from(surveys.values()),
+    deals: Array.from(dealEntities.values()),
     documents: [...documents],
   };
 }

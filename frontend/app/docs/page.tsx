@@ -15,6 +15,22 @@ const FAQ_ITEMS = [
     q: "Why is my logo not showing in exports?",
     a: "Sign in first, then upload your brokerage logo in Branding settings. If no logo is saved, theCREmodel branding is used automatically.",
   },
+  {
+    q: "How do CRM stages fit on one screen?",
+    a: "On large monitors, the CRM board expands columns to use the available width so stage lanes can be reviewed at once. On smaller screens, the board keeps horizontal scroll so cards remain readable.",
+  },
+  {
+    q: "Where do I configure deal stages?",
+    a: "Deal stage configuration is managed in Account dashboard/settings for the active client workspace, not inside the Deals tab.",
+  },
+  {
+    q: "Where should I upload files in workspace modules?",
+    a: "Use the shared Document Center intake. You can upload from Document Center itself or drop files anywhere in the active workspace; both route to the same client library.",
+  },
+  {
+    q: "Can survey entries show map pins?",
+    a: "Yes. The Surveys workspace includes a location map that drops a pin for each entry with a mappable address.",
+  },
 ];
 
 export default function DocsPage() {
@@ -26,10 +42,31 @@ export default function DocsPage() {
               <p className="heading-kicker">Docs</p>
               <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Using The CRE Model</h1>
               <p className="body-lead max-w-3xl">
-                The CRE Model converts lease documents into structured scenarios, compares economics across options,
-                and exports client-ready Excel and PDF deliverables.
+                The CRE Model is a client-scoped brokerage operating system for tenant representation workflows,
+                document intelligence, deal execution, and client-ready exports.
               </p>
             </div>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Brokerage OS Modules</h2>
+              <ul className="space-y-2 text-sm sm:text-base text-slate-300 list-disc pl-5">
+                <li>
+                  <strong>Deals:</strong> Pipeline lifecycle with stages, timeline activity, tasks, linked documents, and workspace context.
+                </li>
+                <li>
+                  <strong>Surveys:</strong> Structured survey entries, occupancy cost calculations, and client share outputs.
+                </li>
+                <li>
+                  <strong>Financial Analyses:</strong> Lease comparison and sublease recovery workflows using client-scoped source documents.
+                </li>
+                <li>
+                  <strong>Lease Abstract:</strong> Executed lease/amendment parsing, abstract generation, and export output.
+                </li>
+                <li>
+                  <strong>Obligations:</strong> Lease obligation tracking, timeline visibility, and portfolio metrics.
+                </li>
+              </ul>
+            </section>
 
             <section className="space-y-3">
               <h2 className="heading-section">Upload and Analysis Flow</h2>
@@ -48,6 +85,46 @@ export default function DocsPage() {
                 Rent terms from leases, LOIs, proposals, and amendments are normalized into month-based periods so every
                 option can be analyzed on the same timeline. If periods overlap, are partial, or missing details, the
                 app flags them for review and preserves the best available interpretation instead of blocking workflow.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">CRM Pipeline Layout</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                The CRM pipeline is responsive by design. Desktop layouts prioritize showing all stage columns in one
+                view, while smaller displays maintain smooth horizontal scrolling to preserve deal-card readability.
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                Stage definitions are configured in Account dashboard/settings and then applied to the Deals module.
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                Use the Account page <strong>CRM Settings</strong> tab to edit stage lists for the active client.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Unified Upload Flow</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Client workspaces use one upload destination: Document Center. You can upload in Document Center,
+                or drop files anywhere on the active workspace screen.
+                All paths ingest to the same client-scoped document library.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">AI Command Center</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                The Brokerage OS Command Center runs structured actions across shared entities, workflows, and documents.
+                Use natural language prompts (for example, compare proposals or create workflow tasks), then review
+                planned tools, execution results, and audit entries.
+              </p>
+            </section>
+
+            <section className="space-y-3">
+              <h2 className="heading-section">Survey Location Map</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Survey entries are plotted on a map using building and address fields. Click any map pin to jump to the
+                corresponding survey row and edit details.
               </p>
             </section>
 

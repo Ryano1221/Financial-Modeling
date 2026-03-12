@@ -21,7 +21,7 @@ function CompletedLeasesShareContent() {
     return (
       <main className="app-container pt-24 pb-16">
         <section className="mx-auto max-w-4xl border border-white/20 bg-black/35 p-6">
-          <p className="heading-kicker mb-2">Completed Leases Share</p>
+          <p className="heading-kicker mb-2">Lease Abstract Share</p>
           <h1 className="heading-section mb-2">Invalid Or Missing Share Data</h1>
           <p className="text-sm text-slate-300">This completed lease abstract share link is invalid or expired.</p>
         </section>
@@ -32,7 +32,7 @@ function CompletedLeasesShareContent() {
   return (
     <main className="app-container pt-24 pb-16">
       <section className="mx-auto max-w-6xl border border-white/20 bg-black/35 p-6">
-        <p className="heading-kicker mb-2">Completed Leases Share</p>
+        <p className="heading-kicker mb-2">Lease Abstract Share</p>
         <h1 className="heading-section mb-1">{envelope.payload.title}</h1>
         <p className="text-sm text-slate-300 mb-4">
           {envelope.branding.brokerageName} | {envelope.branding.clientName} | Prepared by {envelope.branding.preparedBy || "-"} | Report Date {envelope.branding.reportDate}

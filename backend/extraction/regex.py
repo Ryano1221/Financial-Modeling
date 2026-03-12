@@ -209,11 +209,22 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
         "term_months": [],
         "abatement_scope": [],
         "abatement_classification": [],
+        "free_rent_months": [],
         "rent_definition_scope": [],
         "phase_in_detected": [],
         "opex_mode": [],
         "opex_psf_year_1": [],
         "opex_growth_rate": [],
+        "ti_allowance_psf": [],
+        "ti_allowance_total": [],
+        "parking_ratio": [],
+        "parking_rate_monthly": [],
+        "parking_spaces": [],
+        "renewal_option": [],
+        "termination_right": [],
+        "expansion_option": [],
+        "contraction_option": [],
+        "rofr_rofo": [],
         "rsf": [],
         "suite": [],
         "floor": [],
@@ -331,6 +342,12 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 out["abatement_classification"].append(
                     _mk_candidate("abatement_classification", "rent_abatement", page.page_number, ln, "pdf_text_regex", 0.76)
                 )
+                for free_match in re.finditer(r"(?i)\b(\d{1,2})\s+months?\b", scan_line):
+                    months = int(free_match.group(1))
+                    if 0 < months <= 24:
+                        out["free_rent_months"].append(
+                            _mk_candidate("free_rent_months", months, page.page_number, ln, "pdf_text_regex", 0.73)
+                        )
 
             # Definitions: use for abatement scope disambiguation where "Rent" includes additional rent.
             if "rent" in low and ("means" in low or "defined as" in low):
@@ -366,6 +383,75 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
             if growth_match:
                 out["opex_growth_rate"].append(
                     _mk_candidate("opex_growth_rate", float(growth_match.group(1)) / 100.0, page.page_number, ln, "pdf_text_regex", 0.69)
+                )
+
+            ti_psf_match = re.search(
+                r"(?i)(?:tenant\s+improvement(?:s)?|improvement\s+allowance|tia?|allowance)\D{0,40}\$\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/\s*(?:rsf|sf)|per\s+(?:rsf|sf))",
+                scan_line,
+            )
+            if ti_psf_match and "operating" not in low and "opex" not in low:
+                out["ti_allowance_psf"].append(
+                    _mk_candidate("ti_allowance_psf", float(ti_psf_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.76)
+                )
+
+            ti_total_match = re.search(
+                r"(?i)(?:tenant\s+improvement(?:s)?|improvement\s+allowance|tia?|allowance|buildout)\D{0,40}\$\s*([0-9]{1,3}(?:,[0-9]{3})+|\d{4,9})(?!\s*(?:/|per)\s*(?:rsf|sf))",
+                scan_line,
+            )
+            if ti_total_match and "operating" not in low and "opex" not in low:
+                out["ti_allowance_total"].append(
+                    _mk_candidate("ti_allowance_total", float(ti_total_match.group(1).replace(",", "")), page.page_number, ln, "pdf_text_regex", 0.7)
+                )
+
+            parking_ratio_match = re.search(
+                r"(?i)(\d+(?:\.\d+)?)\s*(?:/\s*1,?000|per\s*1,?000)\s*(?:rsf|sf)?",
+                scan_line,
+            )
+            if parking_ratio_match and "park" in low:
+                out["parking_ratio"].append(
+                    _mk_candidate("parking_ratio", float(parking_ratio_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.78)
+                )
+
+            parking_rate_match = re.search(
+                r"(?i)\$\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/|per)\s*(?:space|stall)\s*(?:/|per)?\s*(?:month|mo)\b",
+                scan_line,
+            )
+            if parking_rate_match and "park" in low:
+                out["parking_rate_monthly"].append(
+                    _mk_candidate("parking_rate_monthly", float(parking_rate_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.78)
+                )
+
+            parking_spaces_match = re.search(r"(?i)\b(\d{1,3})\s+(?:parking\s+)?spaces\b", scan_line)
+            if parking_spaces_match and "park" in low:
+                out["parking_spaces"].append(
+                    _mk_candidate("parking_spaces", int(parking_spaces_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.68)
+                )
+
+            renewal_match = re.search(r"(?i)(\d+)\s*x\s*(\d{1,2})\s*year\s+(?:renewal|extension)\s+option", scan_line)
+            if renewal_match:
+                out["renewal_option"].append(
+                    _mk_candidate("renewal_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.74)
+                )
+            elif ("renewal option" in low or "extension option" in low) and len(scan_line) <= 220:
+                out["renewal_option"].append(
+                    _mk_candidate("renewal_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.66)
+                )
+
+            if "termination right" in low or "early termination" in low or "terminate this lease" in low:
+                out["termination_right"].append(
+                    _mk_candidate("termination_right", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.68)
+                )
+            if "expansion option" in low or "expand into" in low:
+                out["expansion_option"].append(
+                    _mk_candidate("expansion_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.66)
+                )
+            if "contraction option" in low or "contraction right" in low or "reduce the premises" in low:
+                out["contraction_option"].append(
+                    _mk_candidate("contraction_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.66)
+                )
+            if any(tok in low for tok in ("right of first refusal", "right of first offer", "rofr", "rofo")):
+                out["rofr_rofo"].append(
+                    _mk_candidate("rofr_rofo", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.69)
                 )
 
             if "premises" in low and ("located" in low or "at" in low):

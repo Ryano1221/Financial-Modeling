@@ -19,6 +19,8 @@ type PlatformSectionProps = {
   description?: string;
   actions?: ReactNode;
   children: ReactNode;
+  maxWidthClassName?: string;
+  headerAlign?: "left" | "center";
 };
 
 type PlatformPanelProps = {
@@ -101,18 +103,21 @@ export function PlatformSection({
   description,
   actions,
   children,
+  maxWidthClassName = "max-w-[96vw]",
+  headerAlign = "left",
 }: PlatformSectionProps) {
+  const centered = headerAlign === "center";
   return (
     <section className="scroll-mt-24 bg-grid">
-      <div className="mx-auto w-full max-w-6xl space-y-4 border border-white/15 p-3 sm:p-4 bg-grid">
+      <div className={`mx-auto w-full ${maxWidthClassName} space-y-4 border border-white/15 p-3 sm:p-4 bg-grid`}>
         <div className="border border-white/15 bg-black/25 p-4 sm:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
+          <div className={centered ? "flex flex-col items-center gap-4 text-center" : "flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"}>
+            <div className={centered ? "mx-auto max-w-4xl" : undefined}>
               <p className="heading-kicker mb-2">{kicker}</p>
               <h2 className="heading-section mb-2">{title}</h2>
-              {description ? <p className="text-sm text-slate-300 max-w-3xl">{description}</p> : null}
+              {description ? <p className={`text-sm text-slate-300 max-w-3xl ${centered ? "mx-auto" : ""}`}>{description}</p> : null}
             </div>
-            {actions ? <div className="shrink-0">{actions}</div> : null}
+            {actions ? <div className={centered ? "flex justify-center" : "shrink-0"}>{actions}</div> : null}
           </div>
         </div>
         {children}

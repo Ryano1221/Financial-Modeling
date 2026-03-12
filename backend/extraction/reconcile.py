@@ -1027,8 +1027,15 @@ def _validate_candidate_set(
     return ok, reasons, consistency
 
 
-def _select_premises_and_opex_scalar(by_field: dict[str, list[dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
-    resolved: dict[str, Any] = {"premises": {}, "opex": {}}
+def _select_scalar_sections(by_field: dict[str, list[dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
+    resolved: dict[str, Any] = {
+        "premises": {},
+        "opex": {},
+        "concessions": {},
+        "tenant_improvements": {},
+        "parking": {},
+        "rights_options": {},
+    }
     provenance: dict[str, list[dict[str, Any]]] = {}
 
     field_mapping = {
@@ -1037,6 +1044,17 @@ def _select_premises_and_opex_scalar(by_field: dict[str, list[dict[str, Any]]]) 
         "floor": ("premises", "floor", lambda v: str(v).strip() if str(v or "").strip() else None),
         "address": ("premises", "address", lambda v: str(v).strip() if str(v or "").strip() else None),
         "rsf": ("premises", "rsf", lambda v: max(0.0, float(v)) if _safe_float(v, None) is not None else None),
+        "free_rent_months": ("concessions", "free_rent_months", lambda v: max(0, int(v)) if _safe_int(v, None) is not None else None),
+        "ti_allowance_psf": ("tenant_improvements", "ti_allowance_psf", lambda v: max(0.0, float(v)) if _safe_float(v, None) is not None else None),
+        "ti_allowance_total": ("tenant_improvements", "ti_allowance_total", lambda v: max(0.0, float(v)) if _safe_float(v, None) is not None else None),
+        "parking_ratio": ("parking", "ratio_per_1000_rsf", lambda v: max(0.0, float(v)) if _safe_float(v, None) is not None else None),
+        "parking_rate_monthly": ("parking", "rate_monthly_per_space", lambda v: max(0.0, float(v)) if _safe_float(v, None) is not None else None),
+        "parking_spaces": ("parking", "spaces", lambda v: max(0, int(v)) if _safe_int(v, None) is not None else None),
+        "renewal_option": ("rights_options", "renewal_option", lambda v: str(v).strip() if str(v or "").strip() else None),
+        "termination_right": ("rights_options", "termination_right", lambda v: str(v).strip() if str(v or "").strip() else None),
+        "expansion_option": ("rights_options", "expansion_option", lambda v: str(v).strip() if str(v or "").strip() else None),
+        "contraction_option": ("rights_options", "contraction_option", lambda v: str(v).strip() if str(v or "").strip() else None),
+        "rofr_rofo": ("rights_options", "rofr_rofo", lambda v: str(v).strip() if str(v or "").strip() else None),
     }
 
     for field, (bucket, key, normalizer) in field_mapping.items():
@@ -1054,6 +1072,10 @@ def _resolve_from_candidate_set(
     *,
     term: dict[str, Any],
     premises: dict[str, Any],
+    concessions: dict[str, Any],
+    tenant_improvements: dict[str, Any],
+    parking: dict[str, Any],
+    rights_options: dict[str, Any],
     rent_steps: list[dict[str, Any]],
     abatements: list[dict[str, Any]],
     phase_detected: bool,
@@ -1068,6 +1090,10 @@ def _resolve_from_candidate_set(
         classification = "phase_in"
     elif has_abatement:
         classification = "rent_abatement"
+
+    free_rent_months = concessions.get("free_rent_months")
+    if free_rent_months in (None, "") and abatements:
+        free_rent_months = sum(max(0, int(a.get("end_month") or 0) - int(a.get("start_month") or 0) + 1) for a in abatements)
 
     return {
         "term": {
@@ -1104,6 +1130,25 @@ def _resolve_from_candidate_set(
             "phase_in_detected": bool(phase_detected),
             "phase_in_confidence": round(float(phase_conf or 0.0), 4),
             "scope": (str(abatements[0].get("scope") or "unspecified") if abatements else None),
+        },
+        "concessions": {
+            "free_rent_months": (None if free_rent_months in (None, "") else int(free_rent_months)),
+        },
+        "tenant_improvements": {
+            "ti_allowance_psf": (None if tenant_improvements.get("ti_allowance_psf") is None else float(tenant_improvements.get("ti_allowance_psf") or 0.0)),
+            "ti_allowance_total": (None if tenant_improvements.get("ti_allowance_total") is None else float(tenant_improvements.get("ti_allowance_total") or 0.0)),
+        },
+        "parking": {
+            "ratio_per_1000_rsf": (None if parking.get("ratio_per_1000_rsf") is None else float(parking.get("ratio_per_1000_rsf") or 0.0)),
+            "rate_monthly_per_space": (None if parking.get("rate_monthly_per_space") is None else float(parking.get("rate_monthly_per_space") or 0.0)),
+            "spaces": (None if parking.get("spaces") is None else int(parking.get("spaces") or 0)),
+        },
+        "rights_options": {
+            "renewal_option": rights_options.get("renewal_option"),
+            "termination_right": rights_options.get("termination_right"),
+            "expansion_option": rights_options.get("expansion_option"),
+            "contraction_option": rights_options.get("contraction_option"),
+            "rofr_rofo": rights_options.get("rofr_rofo"),
         },
         "opex": {
             "mode": str(opex.get("mode") or "nnn"),
@@ -1180,9 +1225,36 @@ def reconcile(
                         "source_confidence": 0.6,
                     }
                 )
+        for section, fields in {
+            "concessions": ("free_rent_months",),
+            "tenant_improvements": ("ti_allowance_psf", "ti_allowance_total"),
+            "parking": ("parking_ratio", "parking_rate_monthly", "parking_spaces"),
+            "rights_options": ("renewal_option", "termination_right", "expansion_option", "contraction_option", "rofr_rofo"),
+        }.items():
+            obj = llm_output.get(section)
+            if not isinstance(obj, dict):
+                continue
+            for fld in fields:
+                if obj.get(fld) in (None, ""):
+                    continue
+                by_field[fld].append(
+                    {
+                        "field": fld,
+                        "value": obj.get(fld),
+                        "page": None,
+                        "snippet": f"llm_structured_output.{section}.{fld}",
+                        "bbox": None,
+                        "source": "llm",
+                        "source_confidence": 0.6,
+                    }
+                )
 
-    scalar_resolved, scalar_provenance = _select_premises_and_opex_scalar(by_field)
+    scalar_resolved, scalar_provenance = _select_scalar_sections(by_field)
     premises = scalar_resolved.get("premises") or {}
+    concessions = scalar_resolved.get("concessions") or {}
+    tenant_improvements = scalar_resolved.get("tenant_improvements") or {}
+    parking = scalar_resolved.get("parking") or {}
+    rights_options = scalar_resolved.get("rights_options") or {}
     rsf = _safe_float(premises.get("rsf"), None)
 
     term_sets = _collect_term_sets(by_field)
@@ -1331,6 +1403,10 @@ def reconcile(
     resolved = _resolve_from_candidate_set(
         term=best.get("term") or {},
         premises=premises,
+        concessions=concessions,
+        tenant_improvements=tenant_improvements,
+        parking=parking,
+        rights_options=rights_options,
         rent_steps=list((best.get("rent") or {}).get("materialized_steps") or []),
         abatements=list((best.get("abatement") or {}).get("abatements") or []),
         phase_detected=phase_detected,

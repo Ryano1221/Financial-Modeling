@@ -94,6 +94,45 @@ CANONICAL_EXTRACTION_SCHEMA: dict[str, Any] = {
             },
             "additionalProperties": False,
         },
+        "concessions": {
+            "type": "object",
+            "properties": {
+                "free_rent_months": {"type": ["integer", "null"], "minimum": 0}
+            },
+            "additionalProperties": False,
+        },
+        "tenant_improvements": {
+            "type": "object",
+            "properties": {
+                "ti_allowance_psf": {"type": ["number", "null"], "minimum": 0},
+                "ti_allowance_total": {"type": ["number", "null"], "minimum": 0}
+            },
+            "additionalProperties": False,
+        },
+        "parking": {
+            "type": "object",
+            "properties": {
+                "ratio_per_1000_rsf": {"type": ["number", "null"], "minimum": 0},
+                "rate_monthly_per_space": {"type": ["number", "null"], "minimum": 0},
+                "spaces": {"type": ["integer", "null"], "minimum": 0}
+            },
+            "additionalProperties": False,
+        },
+        "rights_options": {
+            "type": "object",
+            "properties": {
+                "renewal_option": {"type": ["string", "null"]},
+                "termination_right": {"type": ["string", "null"]},
+                "expansion_option": {"type": ["string", "null"]},
+                "contraction_option": {"type": ["string", "null"]},
+                "rofr_rofo": {"type": ["string", "null"]}
+            },
+            "additionalProperties": False,
+        },
+        "missing_information": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
         "opex": {
             "type": "object",
             "properties": {

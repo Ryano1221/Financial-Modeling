@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
-import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
+import { getDisplayErrorMessage } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
+import { SurveyLocationsMap } from "@/components/surveys/SurveyLocationsMap";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { computeSurveyMonthlyOccupancyCost, createManualSurveyEntryFromImage, mapNormalizeToSurveyEntry } from "@/lib/surveys/engine";
 import {
@@ -42,18 +43,13 @@ function formatIsoDate(iso: string): string {
 }
 
 export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorkspaceProps) {
-  const { registerDocument, isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated } = useClientWorkspace();
   const [entries, setEntries] = useState<SurveyEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [storageHydrated, setStorageHydrated] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [excelLoading, setExcelLoading] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("No survey files uploaded.");
-  const [dragOver, setDragOver] = useState(false);
-  const [globalDragActive, setGlobalDragActive] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const globalDragDepthRef = useRef(0);
+  const [status, setStatus] = useState("No survey entries yet. Upload files in Document Center, then select them here.");
   const scopedStorageKey = useMemo(
     () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
     [clientId],
@@ -65,7 +61,7 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
     setStorageHydrated(false);
     setEntries([]);
     setSelectedId("");
-    setStatus("No survey files uploaded.");
+    setStatus("No survey entries yet. Upload files in Document Center, then select them here.");
     setError("");
 
     const applyParsed = (parsed: { entries?: SurveyEntry[]; selectedId?: string } | null) => {
@@ -147,54 +143,6 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
     setSelectedId(entry.id);
   }, []);
 
-  const parseDocument = useCallback(async (file: File): Promise<{ entry: SurveyEntry; normalize: NormalizerResponse | null }> => {
-    const lower = file.name.toLowerCase();
-    const isDoc = lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".doc");
-    const isImage = lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp");
-    if (isImage) return { entry: createManualSurveyEntryFromImage(file.name, clientId), normalize: null };
-    if (!isDoc) throw new Error(`Unsupported file type for ${file.name}. Use PDF, DOCX, DOC, PNG, JPG, or WEBP.`);
-
-    const form = new FormData();
-    form.append("source", lower.endsWith(".pdf") ? "PDF" : "WORD");
-    form.append("file", file);
-    const res = await fetchApi("/normalize", { method: "POST", body: form });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || `Normalize request failed (${res.status}).`);
-    }
-    const normalize = (await res.json()) as NormalizerResponse;
-    return { entry: mapNormalizeToSurveyEntry(normalize, file.name, clientId), normalize };
-  }, [clientId]);
-
-  const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
-    const files = Array.from(incoming ?? []);
-    if (files.length === 0) return;
-    setLoading(true);
-    setError("");
-    try {
-      let count = 0;
-      for (const file of files) {
-        setStatus(`Processing ${file.name}...`);
-        const { entry, normalize } = await parseDocument(file);
-        addEntry(entry);
-        await registerDocument({
-          clientId,
-          name: file.name,
-          file,
-          sourceModule: "surveys",
-          normalize,
-          parsed: Boolean(normalize),
-        });
-        count += 1;
-      }
-      setStatus(`Processed ${count} survey file${count === 1 ? "" : "s"}.`);
-    } catch (err) {
-      setError(getDisplayErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [parseDocument, registerDocument, clientId, addEntry]);
-
   const onSelectExistingDocument = useCallback((document: ClientWorkspaceDocument) => {
     try {
       const snapshot = document.normalizeSnapshot;
@@ -271,56 +219,14 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
     }
   }, [entries, exportBranding]);
 
-  const isFileDragEvent = useCallback((event: DragEvent): boolean => {
-    const dt = event.dataTransfer;
-    if (!dt) return false;
-    return Array.from(dt.types || []).includes("Files");
-  }, []);
-
-  useEffect(() => {
-    const onWindowDragEnter = (event: DragEvent) => {
-      if (loading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      globalDragDepthRef.current += 1;
-      setGlobalDragActive(true);
-    };
-    const onWindowDragOver = (event: DragEvent) => {
-      if (loading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-      setGlobalDragActive(true);
-    };
-    const onWindowDragLeave = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      globalDragDepthRef.current = Math.max(0, globalDragDepthRef.current - 1);
-      if (globalDragDepthRef.current === 0) setGlobalDragActive(false);
-    };
-    const onWindowDrop = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      event.preventDefault();
-      globalDragDepthRef.current = 0;
-      setGlobalDragActive(false);
-      void processFiles(event.dataTransfer?.files);
-    };
-    window.addEventListener("dragenter", onWindowDragEnter);
-    window.addEventListener("dragover", onWindowDragOver);
-    window.addEventListener("dragleave", onWindowDragLeave);
-    window.addEventListener("drop", onWindowDrop);
-    return () => {
-      window.removeEventListener("dragenter", onWindowDragEnter);
-      window.removeEventListener("dragover", onWindowDragOver);
-      window.removeEventListener("dragleave", onWindowDragLeave);
-      window.removeEventListener("drop", onWindowDrop);
-    };
-  }, [isFileDragEvent, loading, processFiles]);
-
   return (
     <PlatformSection
       kicker="Surveys"
       title="Survey Generation Workspace"
       description="Upload flyers, floorplans, brochures, and marketing packages to create structured survey entries and client-ready outputs."
+      headerAlign="center"
       actions={
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-center gap-2">
           <button
             type="button"
             className="btn-premium btn-premium-success disabled:opacity-50"
@@ -349,66 +255,50 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
       }
     >
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <PlatformPanel kicker="Intake" title="Upload Survey Sources" className="lg:col-span-4">
-          <div
-            role="button"
-            tabIndex={0}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              void processFiles(e.dataTransfer.files);
-            }}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-            className={`cursor-pointer border border-dashed px-4 py-8 text-center transition-colors ${
-              dragOver || globalDragActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
-            }`}
-          >
-            <p className="heading-kicker mb-2">Survey file upload</p>
-            <p className="text-sm text-slate-200">
-              Drop <strong>PDF</strong>, <strong>DOCX</strong>, <strong>DOC</strong>, <strong>PNG</strong>, <strong>JPG</strong>, or <strong>WEBP</strong> files.
-            </p>
-            <p className="text-xs text-slate-400 mt-2">
-              Ambiguous entries are flagged for review before client output.
-            </p>
+        <PlatformPanel kicker="Survey Entries" title="Survey Table" className="lg:col-span-12">
+          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <p className="text-xs text-slate-400">{status}</p>
+              {error ? <p className="text-xs text-red-300">{error}</p> : null}
+            </div>
+            <div className="w-full lg:w-auto">
+              <ClientDocumentPicker
+                buttonLabel="Select Existing Survey Document"
+                allowedTypes={["surveys", "flyers", "floorplans", "other"]}
+                onSelectDocument={onSelectExistingDocument}
+              />
+            </div>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/webp"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void processFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <p className="text-xs text-slate-400 mt-3">{loading ? "Processing..." : status}</p>
-          <div className="mt-3">
-            <ClientDocumentPicker
-              buttonLabel="Select Existing Survey Document"
-              allowedTypes={["surveys", "flyers", "floorplans", "other"]}
-              onSelectDocument={onSelectExistingDocument}
-            />
+          <div className="space-y-3 md:hidden">
+            {entries.length === 0 ? (
+              <p className="py-4 text-sm text-slate-400">No survey entries yet.</p>
+            ) : (
+              entries.map((entry) => {
+                const active = entry.id === selected?.id;
+                const cost = computeSurveyMonthlyOccupancyCost(entry);
+                return (
+                  <div key={entry.id} className={`border p-3 space-y-2 ${active ? "border-cyan-400/50 bg-cyan-500/10" : "border-white/15 bg-black/20"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(entry.id)}
+                      className={`text-left text-sm break-words ${active ? "text-cyan-100" : "text-slate-100"}`}
+                    >
+                      {entry.buildingName || entry.sourceDocumentName}
+                    </button>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <p className="text-slate-400">RSF: <span className="text-slate-200">{asNumber(entry.availableSqft).toLocaleString("en-US")}</span></p>
+                      <p className="text-slate-400">Lease: <span className="text-slate-200">{entry.leaseType}</span></p>
+                      <p className="text-slate-400">Type: <span className="text-slate-200">{entry.occupancyType}</span></p>
+                      <p className="text-slate-400">Status: <span className="text-slate-200">{entry.needsReview ? "Needs Review" : "Ready"}</span></p>
+                      <p className="col-span-2 text-slate-400">Address: <span className="text-slate-200">{entry.address || "-"}</span></p>
+                      <p className="col-span-2 text-slate-400">Monthly Cost: <span className="text-slate-200">{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(cost.totalMonthly)}</span></p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
-          {error ? <p className="text-xs text-red-300 mt-2">{error}</p> : null}
-        </PlatformPanel>
-
-        <PlatformPanel kicker="Survey Entries" title="Survey Table" className="lg:col-span-8">
-          <div className="overflow-x-auto">
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full min-w-[860px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-white/20">
@@ -460,6 +350,14 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
               </tbody>
             </table>
           </div>
+        </PlatformPanel>
+
+        <PlatformPanel kicker="Map" title="Survey Location Map" className="lg:col-span-12">
+          <SurveyLocationsMap
+            entries={entries}
+            selectedEntryId={selected?.id || null}
+            onSelectEntry={(entryId) => setSelectedId(entryId)}
+          />
         </PlatformPanel>
 
         <PlatformPanel kicker="Review" title="Survey Editor" className="lg:col-span-5">

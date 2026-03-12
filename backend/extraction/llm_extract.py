@@ -43,10 +43,14 @@ def structured_extract(snippets: dict[str, list[dict[str, Any]]], table_candidat
             "premises": {"type": "object"},
             "rent_steps": {"type": "array", "items": {"type": "object"}},
             "abatements": {"type": "array", "items": {"type": "object"}},
+            "concessions": {"type": "object"},
+            "tenant_improvements": {"type": "object"},
+            "parking": {"type": "object"},
+            "rights_options": {"type": "object"},
             "opex": {"type": "object"},
             "review_tasks": {"type": "array", "items": {"type": "object"}},
         },
-        "required": ["term", "premises", "rent_steps", "abatements", "opex", "review_tasks"],
+        "required": ["term", "premises", "rent_steps", "abatements", "concessions", "tenant_improvements", "parking", "rights_options", "opex", "review_tasks"],
         "additionalProperties": False,
     }
 

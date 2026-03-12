@@ -1,5 +1,17 @@
 export const PLATFORM_MODULES = [
   {
+    id: "deals",
+    label: "CRM",
+    description: "Tenant representation pipeline, lifecycle, and linked workflows.",
+    requiresAuth: true,
+  },
+  {
+    id: "surveys",
+    label: "Surveys",
+    description: "Structure market surveys and publish branded client views.",
+    requiresAuth: true,
+  },
+  {
     id: "financial-analyses",
     label: "Financial Analyses",
     description: "Financial modeling and side-by-side lease comparisons.",
@@ -7,14 +19,8 @@ export const PLATFORM_MODULES = [
   },
   {
     id: "completed-leases",
-    label: "Completed Leases",
+    label: "Lease Abstract",
     description: "Parse executed leases and generate abstract outputs.",
-    requiresAuth: true,
-  },
-  {
-    id: "surveys",
-    label: "Surveys",
-    description: "Structure market surveys and publish branded client views.",
     requiresAuth: true,
   },
   {

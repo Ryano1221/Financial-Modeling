@@ -20,19 +20,28 @@ import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import {
   ACTIVE_CLIENT_STORAGE_KEY,
   CLIENTS_STORAGE_KEY,
+  DEAL_LIBRARY_STORAGE_KEY,
+  DEAL_STAGE_CONFIG_STORAGE_KEY,
   DOCUMENT_LIBRARY_STORAGE_KEY,
 } from "@/lib/workspace/storage";
 import { buildWorkspaceEntityGraph, type WorkspaceEntityGraph } from "@/lib/workspace/entities";
 import { inferWorkspaceDocumentType } from "@/lib/workspace/document-type";
+import { getDealDocumentStageTransition } from "@/lib/workspace/deal-stage-automation";
 import { fetchWorkspaceCloudState, saveWorkspaceCloudState } from "@/lib/workspace/cloud";
+import { CLIENT_DOCUMENT_TYPES, DEFAULT_DEAL_STAGES } from "@/lib/workspace/types";
 import type {
+  ClientWorkspaceDeal,
   ClientDocumentSourceModule,
   ClientDocumentType,
   ClientWorkspaceClient,
   ClientWorkspaceDocument,
+  CreateDealInput,
   CreateClientInput,
   DocumentNormalizeSnapshot,
   RegisterClientDocumentInput,
+  UpdateDealInput,
+  UpdateClientInput,
+  UpdateClientDocumentInput,
 } from "@/lib/workspace/types";
 
 type CloudSyncStatus = "local" | "idle" | "saving" | "synced" | "error";
@@ -47,12 +56,23 @@ interface ClientWorkspaceContextValue {
   clients: ClientWorkspaceClient[];
   activeClientId: string | null;
   activeClient: ClientWorkspaceClient | null;
+  allDeals: ClientWorkspaceDeal[];
+  deals: ClientWorkspaceDeal[];
+  dealStages: string[];
   documents: ClientWorkspaceDocument[];
   allDocuments: ClientWorkspaceDocument[];
   entityGraph: WorkspaceEntityGraph;
   setActiveClient: (clientId: string) => void;
   createClient: (input: CreateClientInput) => ClientWorkspaceClient | null;
+  updateClient: (clientId: string, input: UpdateClientInput) => void;
+  createDeal: (input: CreateDealInput) => ClientWorkspaceDeal | null;
+  updateDeal: (dealId: string, input: UpdateDealInput) => void;
+  removeDeal: (dealId: string) => void;
+  setDealStages: (stages: string[], clientId?: string | null) => void;
+  getDealsForClient: (clientId?: string | null) => ClientWorkspaceDeal[];
+  getDealStagesForClient: (clientId?: string | null) => string[];
   registerDocument: (input: RegisterClientDocumentInput) => Promise<ClientWorkspaceDocument | null>;
+  updateDocument: (documentId: string, input: UpdateClientDocumentInput) => void;
   removeDocument: (documentId: string) => void;
   getDocumentsForClient: (clientId?: string | null) => ClientWorkspaceDocument[];
 }
@@ -65,6 +85,10 @@ function nextId(prefix: string): string {
 
 function asText(value: unknown): string {
   return String(value || "").trim();
+}
+
+function hasOwnKey<T extends object, K extends PropertyKey>(obj: T, key: K): obj is T & Record<K, unknown> {
+  return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 function asCanonical(normalize: unknown): BackendCanonicalLease | null {
@@ -128,25 +152,27 @@ function parseStoredClients(raw: string | null): ClientWorkspaceClient[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => {
-        const obj = item as Partial<ClientWorkspaceClient>;
-        const name = asText(obj.name);
-        const id = asText(obj.id);
-        if (!name || !id) return null;
-        return {
-          id,
-          name,
-          companyType: asText(obj.companyType),
-          industry: asText(obj.industry),
-          contactName: asText(obj.contactName),
-          contactEmail: asText(obj.contactEmail),
-          brokerage: asText(obj.brokerage),
-          notes: asText(obj.notes),
-          createdAt: asText(obj.createdAt) || new Date().toISOString(),
-        } satisfies ClientWorkspaceClient;
-      })
-      .filter((item): item is ClientWorkspaceClient => !!item);
+    const out: ClientWorkspaceClient[] = [];
+    for (const item of parsed) {
+      const obj = item as Partial<ClientWorkspaceClient>;
+      const name = asText(obj.name);
+      const id = asText(obj.id);
+      if (!name || !id) continue;
+      out.push({
+        id,
+        name,
+        companyType: asText(obj.companyType),
+        industry: asText(obj.industry),
+        contactName: asText(obj.contactName),
+        contactEmail: asText(obj.contactEmail),
+        brokerage: asText(obj.brokerage),
+        notes: asText(obj.notes),
+        createdAt: asText(obj.createdAt) || new Date().toISOString(),
+        logoDataUrl: asText(obj.logoDataUrl) || undefined,
+        logoFileName: asText(obj.logoFileName) || undefined,
+      });
+    }
+    return out;
   } catch {
     return [];
   }
@@ -157,46 +183,127 @@ function parseStoredDocuments(raw: string | null): ClientWorkspaceDocument[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => {
-        const obj = item as Partial<ClientWorkspaceDocument>;
-        const id = asText(obj.id);
-        const clientId = asText(obj.clientId);
-        const name = asText(obj.name);
-        if (!id || !clientId || !name) return null;
-        const previewDataUrl = asText(obj.previewDataUrl);
-        const normalizeSnapshot = toNormalizeSnapshot(obj.normalizeSnapshot);
-        const sourceModule = (asText(obj.sourceModule) as ClientDocumentSourceModule) || "document-center";
-        const inferredType = inferWorkspaceDocumentType(name, sourceModule, normalizeSnapshot);
-        const storedType = asText(obj.type) as ClientDocumentType;
-        const normalizedType: ClientDocumentType =
-          storedType === "sublease documents" && inferredType === "proposals"
-            ? "proposals"
-            : (storedType || inferredType || "other");
-        return {
-          id,
-          clientId,
-          name,
-          type: normalizedType,
-          building: asText(obj.building),
-          address: asText(obj.address),
-          suite: asText(obj.suite),
-          parsed: Boolean(obj.parsed),
-          uploadedBy: asText(obj.uploadedBy) || "User",
-          uploadedAt: asText(obj.uploadedAt) || new Date().toISOString(),
-          sourceModule,
-          ...(previewDataUrl ? { previewDataUrl } : {}),
-          ...(normalizeSnapshot ? { normalizeSnapshot } : {}),
-        } satisfies ClientWorkspaceDocument;
-      })
-      .filter((item): item is ClientWorkspaceDocument => !!item);
+    const out: ClientWorkspaceDocument[] = [];
+    for (const item of parsed) {
+      const obj = item as Partial<ClientWorkspaceDocument>;
+      const id = asText(obj.id);
+      const clientId = asText(obj.clientId);
+      const name = asText(obj.name);
+      if (!id || !clientId || !name) continue;
+      const previewDataUrl = asText(obj.previewDataUrl);
+      const normalizeSnapshot = toNormalizeSnapshot(obj.normalizeSnapshot);
+      const sourceModule = (asText(obj.sourceModule) as ClientDocumentSourceModule) || "document-center";
+      const inferredType = inferWorkspaceDocumentType(name, sourceModule, normalizeSnapshot);
+      const storedType = asText(obj.type) as ClientDocumentType;
+      const normalizedType: ClientDocumentType =
+        storedType === "sublease documents" && inferredType === "proposals"
+          ? "proposals"
+          : (storedType || inferredType || "other");
+      const nextDoc: ClientWorkspaceDocument = {
+        id,
+        clientId,
+        dealId: asText(obj.dealId) || undefined,
+        name,
+        type: normalizedType,
+        building: asText(obj.building),
+        address: asText(obj.address),
+        suite: asText(obj.suite),
+        parsed: Boolean(obj.parsed),
+        uploadedBy: asText(obj.uploadedBy) || "User",
+        uploadedAt: asText(obj.uploadedAt) || new Date().toISOString(),
+        sourceModule,
+        ...(previewDataUrl ? { previewDataUrl } : {}),
+        ...(normalizeSnapshot ? { normalizeSnapshot } : {}),
+      };
+      out.push(nextDoc);
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
+function parseStoredDeals(raw: string | null): ClientWorkspaceDeal[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => {
+        const obj = item as Partial<ClientWorkspaceDeal>;
+        const id = asText(obj.id);
+        const clientId = asText(obj.clientId);
+        const dealName = asText(obj.dealName);
+        if (!id || !clientId || !dealName) return null;
+        const nowIso = new Date().toISOString();
+        return {
+          id,
+          clientId,
+          dealName,
+          requirementName: asText(obj.requirementName),
+          dealType: asText(obj.dealType),
+          stage: asText(obj.stage) || DEFAULT_DEAL_STAGES[0],
+          status: (asText(obj.status) as ClientWorkspaceDeal["status"]) || "open",
+          priority: (asText(obj.priority) as ClientWorkspaceDeal["priority"]) || "medium",
+          targetMarket: asText(obj.targetMarket),
+          submarket: asText(obj.submarket),
+          city: asText(obj.city),
+          squareFootageMin: Number(obj.squareFootageMin) || 0,
+          squareFootageMax: Number(obj.squareFootageMax) || 0,
+          budget: Number(obj.budget) || 0,
+          occupancyDateGoal: asText(obj.occupancyDateGoal),
+          expirationDate: asText(obj.expirationDate),
+          selectedProperty: asText(obj.selectedProperty),
+          selectedSuite: asText(obj.selectedSuite),
+          selectedLandlord: asText(obj.selectedLandlord),
+          tenantRepBroker: asText(obj.tenantRepBroker),
+          notes: asText(obj.notes),
+          linkedSurveyIds: Array.isArray(obj.linkedSurveyIds) ? obj.linkedSurveyIds.map((id) => asText(id)).filter(Boolean) : [],
+          linkedAnalysisIds: Array.isArray(obj.linkedAnalysisIds) ? obj.linkedAnalysisIds.map((id) => asText(id)).filter(Boolean) : [],
+          linkedDocumentIds: Array.isArray(obj.linkedDocumentIds) ? obj.linkedDocumentIds.map((id) => asText(id)).filter(Boolean) : [],
+          linkedObligationIds: Array.isArray(obj.linkedObligationIds) ? obj.linkedObligationIds.map((id) => asText(id)).filter(Boolean) : [],
+          linkedLeaseAbstractIds: Array.isArray(obj.linkedLeaseAbstractIds) ? obj.linkedLeaseAbstractIds.map((id) => asText(id)).filter(Boolean) : [],
+          timeline: Array.isArray(obj.timeline) ? obj.timeline : [],
+          tasks: Array.isArray(obj.tasks) ? obj.tasks : [],
+          createdAt: asText(obj.createdAt) || nowIso,
+          updatedAt: asText(obj.updatedAt) || nowIso,
+        } satisfies ClientWorkspaceDeal;
+      })
+      .filter((item): item is ClientWorkspaceDeal => !!item);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeDealStages(rawStages: unknown): string[] {
+  const normalized = (Array.isArray(rawStages) ? rawStages : [])
+    .map((item) => asText(item))
+    .filter(Boolean);
+  const deduped = Array.from(new Set(normalized));
+  return deduped.length > 0 ? deduped : [...DEFAULT_DEAL_STAGES];
+}
+
+function parseStoredDealStageMap(raw: string | null): Record<string, string[]> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, string[]> = {};
+    for (const [clientId, stageList] of Object.entries(parsed as Record<string, unknown>)) {
+      const key = asText(clientId);
+      if (!key) continue;
+      out[key] = normalizeDealStages(stageList);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function serializeWorkspaceStateForCloud(
   clients: ClientWorkspaceClient[],
+  deals: ClientWorkspaceDeal[],
+  dealStageMap: Record<string, string[]>,
   documents: ClientWorkspaceDocument[],
   activeClientId: string | null,
   options?: { includeSnapshots?: boolean },
@@ -206,6 +313,7 @@ function serializeWorkspaceStateForCloud(
     const baseDocument = {
       id: doc.id,
       clientId: doc.clientId,
+      dealId: doc.dealId || undefined,
       name: doc.name,
       type: doc.type,
       building: doc.building,
@@ -226,6 +334,8 @@ function serializeWorkspaceStateForCloud(
   });
   return {
     clients,
+    deals,
+    dealStageMap,
     documents: serializedDocuments,
     activeClientId: activeClientId || null,
   };
@@ -235,6 +345,56 @@ function isWorkspacePayloadTooLargeError(error: unknown): boolean {
   const message = String(error instanceof Error ? error.message : error || "").toLowerCase();
   if (!message) return false;
   return message.includes("exceeds size limit") || message.includes("workspace payload") || message.includes("413");
+}
+
+function appendDealTimelineActivity(
+  deal: ClientWorkspaceDeal,
+  label: string,
+  description: string,
+  createdAt: string,
+): ClientWorkspaceDeal["timeline"] {
+  const next = [
+    {
+      id: nextId("deal_activity"),
+      clientId: deal.clientId,
+      dealId: deal.id,
+      label,
+      description,
+      createdAt,
+    },
+    ...deal.timeline,
+  ];
+  return next.slice(0, 100);
+}
+
+function applyDocumentStageAutomation(input: {
+  deal: ClientWorkspaceDeal;
+  documentType: ClientDocumentType;
+  stageOptions: string[];
+  nowIso: string;
+  activityDescription: string;
+}): ClientWorkspaceDeal {
+  const transition = getDealDocumentStageTransition({
+    stages: input.stageOptions,
+    currentStage: input.deal.stage,
+    documentType: input.documentType,
+  });
+  if (!transition) return input.deal;
+  const nextStatus: ClientWorkspaceDeal["status"] = transition.shouldMarkWon
+    ? "won"
+    : input.deal.status;
+  return {
+    ...input.deal,
+    stage: transition.nextStage,
+    status: nextStatus,
+    timeline: appendDealTimelineActivity(
+      input.deal,
+      "AI stage update",
+      `${transition.reason}. Moved to ${transition.nextStage}. ${input.activityDescription}`,
+      input.nowIso,
+    ),
+    updatedAt: input.nowIso,
+  };
 }
 
 export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
@@ -250,6 +410,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   const [cloudLocalFallback, setCloudLocalFallback] = useState(false);
   const [clients, setClients] = useState<ClientWorkspaceClient[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+  const [allDeals, setAllDeals] = useState<ClientWorkspaceDeal[]>([]);
+  const [dealStageMap, setDealStageMap] = useState<Record<string, string[]>>({});
   const [allDocuments, setAllDocuments] = useState<ClientWorkspaceDocument[]>([]);
 
   useEffect(() => {
@@ -289,24 +451,34 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
     const applyWorkspaceState = (state: Record<string, unknown> | null | undefined) => {
       const clientsRaw = Array.isArray(state?.clients) ? state?.clients : [];
+      const dealsRaw = Array.isArray(state?.deals) ? state?.deals : [];
+      const dealStagesRaw = state?.dealStageMap;
       const documentsRaw = Array.isArray(state?.documents) ? state?.documents : [];
       const activeRaw = asText(state?.activeClientId);
       const loadedClients = parseStoredClients(JSON.stringify(clientsRaw));
+      const loadedDeals = parseStoredDeals(JSON.stringify(dealsRaw));
+      const loadedDealStages = parseStoredDealStageMap(JSON.stringify(dealStagesRaw || {}));
       const loadedDocuments = parseStoredDocuments(JSON.stringify(documentsRaw));
       const resolvedActive =
         activeRaw && loadedClients.some((client) => client.id === activeRaw)
           ? activeRaw
           : (loadedClients[0]?.id || null);
       setClients(loadedClients);
+      setAllDeals(loadedDeals);
+      setDealStageMap(loadedDealStages);
       setAllDocuments(loadedDocuments);
       setActiveClientId(resolvedActive);
     };
 
     const applyLocalFallback = () => {
       const loadedClients = parseStoredClients(window.localStorage.getItem(CLIENTS_STORAGE_KEY));
+      const loadedDeals = parseStoredDeals(window.localStorage.getItem(DEAL_LIBRARY_STORAGE_KEY));
+      const loadedDealStages = parseStoredDealStageMap(window.localStorage.getItem(DEAL_STAGE_CONFIG_STORAGE_KEY));
       const loadedDocuments = parseStoredDocuments(window.localStorage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
       const storedActiveId = asText(window.localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY));
       setClients(loadedClients);
+      setAllDeals(loadedDeals);
+      setDealStageMap(loadedDealStages);
       setAllDocuments(loadedDocuments);
       if (storedActiveId && loadedClients.some((client) => client.id === storedActiveId)) {
         setActiveClientId(storedActiveId);
@@ -336,6 +508,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           try {
             // Signed-in mode should not rely on device-local storage.
             window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
+            window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
+            window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
             window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
             window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
           } catch {
@@ -386,6 +560,24 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
     if (session && !cloudLocalFallback) {
+      window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(DEAL_LIBRARY_STORAGE_KEY, JSON.stringify(allDeals));
+  }, [ready, allDeals, session, cloudLocalFallback]);
+
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
+    if (session && !cloudLocalFallback) {
+      window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(DEAL_STAGE_CONFIG_STORAGE_KEY, JSON.stringify(dealStageMap));
+  }, [ready, dealStageMap, session, cloudLocalFallback]);
+
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
+    if (session && !cloudLocalFallback) {
       window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
       return;
     }
@@ -411,7 +603,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     setCloudSyncStatus("saving");
     setCloudSyncMessage("Syncing to cloud...");
     const handle = window.setTimeout(() => {
-      const workspaceState = serializeWorkspaceStateForCloud(clients, allDocuments, activeClientId, {
+      const workspaceState = serializeWorkspaceStateForCloud(clients, allDeals, dealStageMap, allDocuments, activeClientId, {
         includeSnapshots: true,
       });
       void (async () => {
@@ -426,7 +618,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         } catch (error) {
           if (cancelled) return;
           if (isWorkspacePayloadTooLargeError(error)) {
-            const compactState = serializeWorkspaceStateForCloud(clients, allDocuments, activeClientId, {
+            const compactState = serializeWorkspaceStateForCloud(clients, allDeals, dealStageMap, allDocuments, activeClientId, {
               includeSnapshots: false,
             });
             try {
@@ -460,13 +652,23 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [ready, session, clients, allDocuments, activeClientId, cloudLocalFallback]);
+  }, [ready, session, clients, allDeals, dealStageMap, allDocuments, activeClientId, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready) return;
     if (activeClientId && clients.some((client) => client.id === activeClientId)) return;
     setActiveClientId(clients[0]?.id || null);
   }, [ready, activeClientId, clients]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!activeClientId) return;
+    if (Array.isArray(dealStageMap[activeClientId]) && dealStageMap[activeClientId].length > 0) return;
+    setDealStageMap((prev) => ({
+      ...prev,
+      [activeClientId]: [...DEFAULT_DEAL_STAGES],
+    }));
+  }, [ready, activeClientId, dealStageMap]);
 
   const setActiveClient = useCallback((clientId: string) => {
     const targetId = asText(clientId);
@@ -487,10 +689,170 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       brokerage: asText(input.brokerage),
       notes: asText(input.notes),
       createdAt: new Date().toISOString(),
+      logoDataUrl: asText(input.logoDataUrl) || undefined,
+      logoFileName: asText(input.logoFileName) || undefined,
     };
     setClients((prev) => [created, ...prev]);
+    setDealStageMap((prev) => ({
+      ...prev,
+      [created.id]: prev[created.id] && prev[created.id].length > 0 ? prev[created.id] : [...DEFAULT_DEAL_STAGES],
+    }));
     setActiveClientId(created.id);
     return created;
+  }, []);
+
+  const updateClient = useCallback((clientId: string, input: UpdateClientInput) => {
+    const id = asText(clientId);
+    if (!id) return;
+    setClients((prev) =>
+      prev.map((client) => {
+        if (client.id !== id) return client;
+        const nextLogoDataUrl = hasOwnKey(input, "logoDataUrl")
+          ? (asText(input.logoDataUrl) || undefined)
+          : client.logoDataUrl;
+        const nextLogoFileName = hasOwnKey(input, "logoFileName")
+          ? (asText(input.logoFileName) || undefined)
+          : client.logoFileName;
+        return {
+          ...client,
+          name: hasOwnKey(input, "name") ? asText(input.name) || client.name : client.name,
+          companyType: hasOwnKey(input, "companyType") ? asText(input.companyType) : client.companyType,
+          industry: hasOwnKey(input, "industry") ? asText(input.industry) : client.industry,
+          contactName: hasOwnKey(input, "contactName") ? asText(input.contactName) : client.contactName,
+          contactEmail: hasOwnKey(input, "contactEmail") ? asText(input.contactEmail) : client.contactEmail,
+          brokerage: hasOwnKey(input, "brokerage") ? asText(input.brokerage) : client.brokerage,
+          notes: hasOwnKey(input, "notes") ? asText(input.notes) : client.notes,
+          logoDataUrl: nextLogoDataUrl,
+          logoFileName: nextLogoFileName,
+        };
+      }),
+    );
+  }, []);
+
+  const getDealsForClient = useCallback((clientId?: string | null) => {
+    const resolvedClientId = asText(clientId || activeClientId);
+    if (!resolvedClientId) return [];
+    return allDeals.filter((deal) => deal.clientId === resolvedClientId);
+  }, [allDeals, activeClientId]);
+
+  const getDealStagesForClient = useCallback((clientId?: string | null) => {
+    const resolvedClientId = asText(clientId || activeClientId);
+    if (!resolvedClientId) return [...DEFAULT_DEAL_STAGES];
+    return normalizeDealStages(dealStageMap[resolvedClientId]);
+  }, [dealStageMap, activeClientId]);
+
+  const setDealStages = useCallback((stages: string[], clientId?: string | null) => {
+    const resolvedClientId = asText(clientId || activeClientId);
+    if (!resolvedClientId) return;
+    const normalizedStages = normalizeDealStages(stages);
+    setDealStageMap((prev) => ({
+      ...prev,
+      [resolvedClientId]: normalizedStages,
+    }));
+  }, [activeClientId]);
+
+  const createDeal = useCallback((input: CreateDealInput): ClientWorkspaceDeal | null => {
+    const resolvedClientId = asText(input.clientId || activeClientId);
+    const dealName = asText(input.dealName);
+    if (!resolvedClientId || !dealName) return null;
+    const stages = normalizeDealStages(dealStageMap[resolvedClientId]);
+    const nowIso = new Date().toISOString();
+    const created: ClientWorkspaceDeal = {
+      id: nextId("deal"),
+      clientId: resolvedClientId,
+      dealName,
+      requirementName: asText(input.requirementName),
+      dealType: asText(input.dealType),
+      stage: asText(input.stage) || stages[0] || DEFAULT_DEAL_STAGES[0],
+      status: input.status || "open",
+      priority: input.priority || "medium",
+      targetMarket: asText(input.targetMarket),
+      submarket: asText(input.submarket),
+      city: asText(input.city),
+      squareFootageMin: Number(input.squareFootageMin) || 0,
+      squareFootageMax: Number(input.squareFootageMax) || 0,
+      budget: Number(input.budget) || 0,
+      occupancyDateGoal: asText(input.occupancyDateGoal),
+      expirationDate: asText(input.expirationDate),
+      selectedProperty: asText(input.selectedProperty),
+      selectedSuite: asText(input.selectedSuite),
+      selectedLandlord: asText(input.selectedLandlord),
+      tenantRepBroker: asText(input.tenantRepBroker),
+      notes: asText(input.notes),
+      linkedSurveyIds: input.linkedSurveyIds || [],
+      linkedAnalysisIds: input.linkedAnalysisIds || [],
+      linkedDocumentIds: input.linkedDocumentIds || [],
+      linkedObligationIds: input.linkedObligationIds || [],
+      linkedLeaseAbstractIds: input.linkedLeaseAbstractIds || [],
+      timeline: [],
+      tasks: [],
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    setAllDeals((prev) => [created, ...prev]);
+    setDealStageMap((prev) => ({
+      ...prev,
+      [resolvedClientId]: normalizeDealStages(prev[resolvedClientId]),
+    }));
+    return created;
+  }, [activeClientId, dealStageMap]);
+
+  const updateDeal = useCallback((dealId: string, input: UpdateDealInput) => {
+    const id = asText(dealId);
+    if (!id) return;
+    setAllDeals((prev) =>
+      prev.map((deal) => {
+        if (deal.id !== id) return deal;
+        const nextLinkedDocuments = hasOwnKey(input, "linkedDocumentIds")
+          ? Array.from(new Set((input.linkedDocumentIds || []).map((value) => asText(value)).filter(Boolean)))
+          : deal.linkedDocumentIds;
+        return {
+          ...deal,
+          dealName: hasOwnKey(input, "dealName") ? asText(input.dealName) || deal.dealName : deal.dealName,
+          requirementName: hasOwnKey(input, "requirementName") ? asText(input.requirementName) : deal.requirementName,
+          dealType: hasOwnKey(input, "dealType") ? asText(input.dealType) : deal.dealType,
+          stage: hasOwnKey(input, "stage") ? asText(input.stage) : deal.stage,
+          status: hasOwnKey(input, "status") ? ((asText(input.status) || deal.status) as ClientWorkspaceDeal["status"]) : deal.status,
+          priority: hasOwnKey(input, "priority") ? ((asText(input.priority) || deal.priority) as ClientWorkspaceDeal["priority"]) : deal.priority,
+          targetMarket: hasOwnKey(input, "targetMarket") ? asText(input.targetMarket) : deal.targetMarket,
+          submarket: hasOwnKey(input, "submarket") ? asText(input.submarket) : deal.submarket,
+          city: hasOwnKey(input, "city") ? asText(input.city) : deal.city,
+          squareFootageMin: hasOwnKey(input, "squareFootageMin") ? (Number(input.squareFootageMin) || 0) : deal.squareFootageMin,
+          squareFootageMax: hasOwnKey(input, "squareFootageMax") ? (Number(input.squareFootageMax) || 0) : deal.squareFootageMax,
+          budget: hasOwnKey(input, "budget") ? (Number(input.budget) || 0) : deal.budget,
+          occupancyDateGoal: hasOwnKey(input, "occupancyDateGoal") ? asText(input.occupancyDateGoal) : deal.occupancyDateGoal,
+          expirationDate: hasOwnKey(input, "expirationDate") ? asText(input.expirationDate) : deal.expirationDate,
+          selectedProperty: hasOwnKey(input, "selectedProperty") ? asText(input.selectedProperty) : deal.selectedProperty,
+          selectedSuite: hasOwnKey(input, "selectedSuite") ? asText(input.selectedSuite) : deal.selectedSuite,
+          selectedLandlord: hasOwnKey(input, "selectedLandlord") ? asText(input.selectedLandlord) : deal.selectedLandlord,
+          tenantRepBroker: hasOwnKey(input, "tenantRepBroker") ? asText(input.tenantRepBroker) : deal.tenantRepBroker,
+          notes: hasOwnKey(input, "notes") ? asText(input.notes) : deal.notes,
+          linkedSurveyIds: hasOwnKey(input, "linkedSurveyIds")
+            ? Array.from(new Set((input.linkedSurveyIds || []).map((value) => asText(value)).filter(Boolean)))
+            : deal.linkedSurveyIds,
+          linkedAnalysisIds: hasOwnKey(input, "linkedAnalysisIds")
+            ? Array.from(new Set((input.linkedAnalysisIds || []).map((value) => asText(value)).filter(Boolean)))
+            : deal.linkedAnalysisIds,
+          linkedDocumentIds: nextLinkedDocuments,
+          linkedObligationIds: hasOwnKey(input, "linkedObligationIds")
+            ? Array.from(new Set((input.linkedObligationIds || []).map((value) => asText(value)).filter(Boolean)))
+            : deal.linkedObligationIds,
+          linkedLeaseAbstractIds: hasOwnKey(input, "linkedLeaseAbstractIds")
+            ? Array.from(new Set((input.linkedLeaseAbstractIds || []).map((value) => asText(value)).filter(Boolean)))
+            : deal.linkedLeaseAbstractIds,
+          timeline: hasOwnKey(input, "timeline") && Array.isArray(input.timeline) ? input.timeline : deal.timeline,
+          tasks: hasOwnKey(input, "tasks") && Array.isArray(input.tasks) ? input.tasks : deal.tasks,
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    );
+  }, []);
+
+  const removeDeal = useCallback((dealId: string) => {
+    const id = asText(dealId);
+    if (!id) return;
+    setAllDeals((prev) => prev.filter((deal) => deal.id !== id));
+    setAllDocuments((prev) => prev.map((doc) => (doc.dealId === id ? { ...doc, dealId: undefined } : doc)));
   }, []);
 
   const registerDocument = useCallback(async (input: RegisterClientDocumentInput): Promise<ClientWorkspaceDocument | null> => {
@@ -501,11 +863,13 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     const canonical = asCanonical(snapshot);
     const previewDataUrl = await maybeBuildPreview(input.file);
 
+    const resolvedType = input.type || inferWorkspaceDocumentType(input.name, input.sourceModule, snapshot);
     const document: ClientWorkspaceDocument = {
       id: nextId("doc"),
       clientId: resolvedClientId,
+      dealId: asText(input.dealId) || undefined,
       name: asText(input.name) || "Untitled document",
-      type: input.type || inferWorkspaceDocumentType(input.name, input.sourceModule, snapshot),
+      type: resolvedType,
       building: asText(input.building) || asText(canonical?.building_name || canonical?.premises_name),
       address: asText(input.address) || asText(canonical?.address),
       suite: asText(input.suite) || asText(canonical?.suite),
@@ -518,13 +882,111 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     };
 
     setAllDocuments((prev) => [document, ...prev]);
+    if (document.dealId) {
+      const nowIso = new Date().toISOString();
+      setAllDeals((prev) =>
+        prev.map((deal) => {
+          if (deal.id !== document.dealId) return deal;
+          let nextDeal = deal;
+          const linkedDocumentIds = Array.from(new Set([...(deal.linkedDocumentIds || []), document.id]));
+          if (linkedDocumentIds.length !== deal.linkedDocumentIds.length) {
+            nextDeal = {
+              ...nextDeal,
+              linkedDocumentIds,
+              updatedAt: nowIso,
+            };
+          }
+          const stageOptions = normalizeDealStages(dealStageMap[deal.clientId]);
+          return applyDocumentStageAutomation({
+            deal: nextDeal,
+            documentType: document.type,
+            stageOptions,
+            nowIso,
+            activityDescription: `Source document: ${document.name}`,
+          });
+        }),
+      );
+    }
     return document;
-  }, [activeClientId, session]);
+  }, [activeClientId, session, dealStageMap]);
+
+  const updateDocument = useCallback((documentId: string, input: UpdateClientDocumentInput) => {
+    const id = asText(documentId);
+    if (!id) return;
+    const previousDocument = allDocuments.find((doc) => doc.id === id);
+    const requestedType = hasOwnKey(input, "type") ? asText(input.type) : "";
+    const nextType: ClientDocumentType =
+      requestedType && (CLIENT_DOCUMENT_TYPES as readonly string[]).includes(requestedType)
+        ? (requestedType as ClientDocumentType)
+        : (previousDocument?.type || "other");
+    const previousDealId = asText(previousDocument?.dealId);
+    const nextDealId = hasOwnKey(input, "dealId") ? asText(input.dealId) : previousDealId;
+
+    setAllDocuments((prev) =>
+      prev.map((doc) => {
+        if (doc.id !== id) return doc;
+
+        return {
+          ...doc,
+          dealId: hasOwnKey(input, "dealId") ? (nextDealId || undefined) : doc.dealId,
+          name: hasOwnKey(input, "name") ? asText(input.name) || doc.name : doc.name,
+          type: nextType,
+          building: hasOwnKey(input, "building") ? asText(input.building) : doc.building,
+          address: hasOwnKey(input, "address") ? asText(input.address) : doc.address,
+          suite: hasOwnKey(input, "suite") ? asText(input.suite) : doc.suite,
+        };
+      }),
+    );
+    if (!hasOwnKey(input, "dealId") && !hasOwnKey(input, "type")) return;
+    const dealLinkChanged = hasOwnKey(input, "dealId") && previousDealId !== nextDealId;
+    const nowIso = new Date().toISOString();
+    setAllDeals((prev) =>
+      prev.map((deal) => {
+        if (deal.id !== previousDealId && deal.id !== nextDealId) return deal;
+        let nextDeal = deal;
+        if (dealLinkChanged && deal.id === previousDealId) {
+          nextDeal = {
+            ...nextDeal,
+            linkedDocumentIds: nextDeal.linkedDocumentIds.filter((docId) => docId !== id),
+            updatedAt: nowIso,
+          };
+        }
+        if (dealLinkChanged && deal.id === nextDealId) {
+          nextDeal = {
+            ...nextDeal,
+            linkedDocumentIds: Array.from(new Set([...nextDeal.linkedDocumentIds, id])),
+            updatedAt: nowIso,
+          };
+        }
+        if (deal.id === nextDealId) {
+          const stageOptions = normalizeDealStages(dealStageMap[deal.clientId]);
+          nextDeal = applyDocumentStageAutomation({
+            deal: nextDeal,
+            documentType: nextType,
+            stageOptions,
+            nowIso,
+            activityDescription: `Linked document: ${asText(previousDocument?.name) || "document"}`,
+          });
+        }
+        return nextDeal;
+      }),
+    );
+  }, [allDocuments, dealStageMap]);
 
   const removeDocument = useCallback((documentId: string) => {
     const id = asText(documentId);
     if (!id) return;
     setAllDocuments((prev) => prev.filter((doc) => doc.id !== id));
+    setAllDeals((prev) =>
+      prev.map((deal) => {
+        if (!deal.linkedDocumentIds.includes(id)) return deal;
+        return {
+          ...deal,
+          linkedDocumentIds: deal.linkedDocumentIds.filter((docId) => docId !== id),
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    );
   }, []);
 
   const getDocumentsForClient = useCallback((clientId?: string | null) => {
@@ -538,13 +1000,21 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     [clients, activeClientId],
   );
 
+  const deals = useMemo(
+    () => getDealsForClient(activeClientId),
+    [activeClientId, getDealsForClient],
+  );
+  const dealStages = useMemo(
+    () => getDealStagesForClient(activeClientId),
+    [activeClientId, getDealStagesForClient],
+  );
   const documents = useMemo(
     () => getDocumentsForClient(activeClientId),
     [activeClientId, getDocumentsForClient],
   );
   const entityGraph = useMemo(
-    () => buildWorkspaceEntityGraph({ clients, documents: allDocuments }),
-    [clients, allDocuments],
+    () => buildWorkspaceEntityGraph({ clients, documents: allDocuments, deals: allDeals }),
+    [clients, allDocuments, allDeals],
   );
 
   const value = useMemo<ClientWorkspaceContextValue>(
@@ -558,12 +1028,23 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       clients,
       activeClientId,
       activeClient,
+      allDeals,
+      deals,
+      dealStages,
       documents,
       allDocuments,
       entityGraph,
       setActiveClient,
       createClient,
+      updateClient,
+      createDeal,
+      updateDeal,
+      removeDeal,
+      setDealStages,
+      getDealsForClient,
+      getDealStagesForClient,
       registerDocument,
+      updateDocument,
       removeDocument,
       getDocumentsForClient,
     }),
@@ -576,12 +1057,23 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       clients,
       activeClientId,
       activeClient,
+      allDeals,
+      deals,
+      dealStages,
       documents,
       allDocuments,
       entityGraph,
       setActiveClient,
       createClient,
+      updateClient,
+      createDeal,
+      updateDeal,
+      removeDeal,
+      setDealStages,
+      getDealsForClient,
+      getDealStagesForClient,
       registerDocument,
+      updateDocument,
       removeDocument,
       getDocumentsForClient,
     ],

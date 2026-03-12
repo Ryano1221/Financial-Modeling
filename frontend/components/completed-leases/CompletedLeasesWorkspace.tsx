@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
-import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
+import { getDisplayErrorMessage } from "@/lib/api";
 import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
@@ -250,18 +250,13 @@ function buildControllingAbstract(
 }
 
 export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: CompletedLeasesWorkspaceProps) {
-  const { registerDocument, isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated } = useClientWorkspace();
   const [documents, setDocuments] = useState<CompletedLeaseDocumentRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [storageHydrated, setStorageHydrated] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [status, setStatus] = useState("No files uploaded");
-  const [dragOver, setDragOver] = useState(false);
-  const [globalDragActive, setGlobalDragActive] = useState(false);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const globalDragDepthRef = useRef(0);
   const scopedStorageKey = useMemo(
     () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
     [clientId],
@@ -381,7 +376,6 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
     input: {
       fileName: string;
       normalize: NormalizerResponse;
-      file?: File;
       uploadedAtIso?: string;
     },
   ) => {
@@ -402,62 +396,8 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
     };
     setDocuments((prev) => [record, ...prev]);
     setSelectedId(record.id);
-    if (input.file) {
-      await registerDocument({
-        clientId,
-        name: input.fileName,
-        file: input.file,
-        sourceModule: "completed-leases",
-        normalize: input.normalize,
-        parsed: true,
-        type: kind === "amendment" ? "amendments" : "leases",
-      });
-    }
     return record;
-  }, [clientId, leaseOptions, registerDocument]);
-
-  const parseAndAddDocument = useCallback(async (file: File) => {
-    const name = String(file.name || "").toLowerCase();
-    if (!name.endsWith(".pdf") && !name.endsWith(".docx") && !name.endsWith(".doc")) {
-      throw new Error(`Unsupported file type for ${file.name}. Use .pdf, .docx, or .doc.`);
-    }
-    const form = new FormData();
-    form.append("source", name.endsWith(".pdf") ? "PDF" : "WORD");
-    form.append("file", file);
-
-    const res = await fetchApi("/normalize", { method: "POST", body: form });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || `Normalize request failed (${res.status}).`);
-    }
-    const normalize = (await res.json()) as NormalizerResponse;
-    return await addDocumentFromNormalize({
-      fileName: file.name,
-      normalize,
-      file,
-      uploadedAtIso: toIsoDate(new Date()),
-    });
-  }, [addDocumentFromNormalize]);
-
-  const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
-    const files = Array.from(incoming ?? []);
-    if (files.length === 0) return;
-    setLoading(true);
-    setError("");
-    try {
-      let processed = 0;
-      for (const file of files) {
-        setStatus(`Extracting ${file.name}...`);
-        await parseAndAddDocument(file);
-        processed += 1;
-      }
-      setStatus(`Processed ${processed} document${processed === 1 ? "" : "s"}.`);
-    } catch (err) {
-      setError(getDisplayErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [parseAndAddDocument]);
+  }, [clientId, leaseOptions]);
 
   const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
     const snapshot = document.normalizeSnapshot;
@@ -525,57 +465,14 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
     }
   }, [controllingAbstract, exportBranding]);
 
-  const isFileDragEvent = useCallback((event: DragEvent): boolean => {
-    const dt = event.dataTransfer;
-    if (!dt) return false;
-    return Array.from(dt.types || []).includes("Files");
-  }, []);
-
-  useEffect(() => {
-    const onWindowDragEnter = (event: DragEvent) => {
-      if (loading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      globalDragDepthRef.current += 1;
-      setGlobalDragActive(true);
-    };
-    const onWindowDragOver = (event: DragEvent) => {
-      if (loading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-      setGlobalDragActive(true);
-    };
-    const onWindowDragLeave = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      globalDragDepthRef.current = Math.max(0, globalDragDepthRef.current - 1);
-      if (globalDragDepthRef.current === 0) setGlobalDragActive(false);
-    };
-    const onWindowDrop = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      event.preventDefault();
-      globalDragDepthRef.current = 0;
-      setGlobalDragActive(false);
-      void processFiles(event.dataTransfer?.files);
-    };
-
-    window.addEventListener("dragenter", onWindowDragEnter);
-    window.addEventListener("dragover", onWindowDragOver);
-    window.addEventListener("dragleave", onWindowDragLeave);
-    window.addEventListener("drop", onWindowDrop);
-    return () => {
-      window.removeEventListener("dragenter", onWindowDragEnter);
-      window.removeEventListener("dragover", onWindowDragOver);
-      window.removeEventListener("dragleave", onWindowDragLeave);
-      window.removeEventListener("drop", onWindowDrop);
-    };
-  }, [isFileDragEvent, loading, processFiles]);
-
   return (
     <PlatformSection
-      kicker="Completed Leases"
+      kicker="Lease Abstract"
       title="Completed Lease Abstraction"
-      description="Upload executed leases and amendments, review extracted controlling terms, and export polished abstract outputs."
+      description="Review executed leases and amendments from Document Center, confirm controlling terms, and export polished abstract outputs."
+      headerAlign="center"
       actions={
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-center gap-2">
           <button
             type="button"
             onClick={onExcelExport}
@@ -604,55 +501,17 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
       }
     >
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <PlatformPanel kicker="Intake" title="Upload Lease Documents" className="lg:col-span-4">
-          <div
-            role="button"
-            tabIndex={0}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              void processFiles(e.dataTransfer.files);
-            }}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-            className={`cursor-pointer border border-dashed px-4 py-8 text-center transition-colors ${
-              dragOver || globalDragActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
-            }`}
-          >
-            <p className="heading-kicker mb-2">Upload lease package</p>
+        <PlatformPanel kicker="Intake" title="Lease Document Intake" className="lg:col-span-4">
+          <div className="border border-dashed border-white/20 bg-black/20 px-4 py-8 text-center">
+            <p className="heading-kicker mb-2">Unified Document Intake</p>
             <p className="text-sm text-slate-200">
-              Drag and drop <strong>.pdf</strong>, <strong>.docx</strong>, or <strong>.doc</strong> files here,
-              or click to choose.
+              Use the single Document Center above to upload or drop lease files anywhere on this screen.
             </p>
             <p className="text-xs text-slate-400 mt-2">
-              Amendment files can be linked to a base lease for controlling-term overrides.
+              Amendment files can then be linked to a base lease for controlling-term overrides.
             </p>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.docx,.doc,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            multiple
-            className="hidden"
-            onChange={(event) => {
-              void processFiles(event.target.files);
-              event.target.value = "";
-            }}
-          />
-          <p className="text-xs text-slate-400 mt-3">{loading ? "Processing documents..." : status}</p>
+          <p className="text-xs text-slate-400 mt-3">{status}</p>
           <div className="mt-3">
             <ClientDocumentPicker
               buttonLabel="Select Existing Lease/Amendment"
@@ -666,7 +525,51 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
         </PlatformPanel>
 
         <PlatformPanel kicker="Repository" title="Document Stack" className="lg:col-span-8 min-w-0">
-          <div className="w-full overflow-x-auto">
+          <div className="space-y-3 md:hidden">
+            {documents.length === 0 ? (
+              <p className="py-4 text-sm text-slate-400">No documents yet.</p>
+            ) : (
+              documents.map((doc) => {
+                const selectedRow = doc.id === selected?.id;
+                return (
+                  <div key={doc.id} className={`border p-3 space-y-2 ${selectedRow ? "border-cyan-400/50 bg-cyan-500/10" : "border-white/15 bg-black/20"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(doc.id)}
+                      className={`text-left text-sm break-words ${selectedRow ? "text-cyan-100" : "text-slate-100"}`}
+                    >
+                      {doc.fileName}
+                    </button>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <p className="text-slate-400">Type: <span className="text-slate-200">{doc.kind === "amendment" ? "Amendment" : "Lease"}</span></p>
+                      <p className="text-slate-400">Uploaded: <span className="text-slate-200">{formatDate(doc.uploadedAtIso.slice(0, 10))}</span></p>
+                      <p className="text-slate-400">Review: <span className={doc.reviewTasks.length > 0 ? "text-amber-200" : "text-emerald-200"}>{doc.reviewTasks.length > 0 ? `${doc.reviewTasks.length} task(s)` : "Ready"}</span></p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400 mb-1">Link to Lease</p>
+                      {doc.kind === "amendment" ? (
+                        <select
+                          value={doc.linkedLeaseId || ""}
+                          onChange={(event) => updateDocumentMeta(doc.id, { linkedLeaseId: event.target.value || undefined })}
+                          className="input-premium !py-1.5 !px-2 text-xs w-full"
+                        >
+                          <option value="">Unlinked</option>
+                          {leaseOptions.map((lease) => (
+                            <option key={lease.id} value={lease.id}>
+                              {lease.fileName}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="text-xs text-slate-400">Base lease</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className="hidden md:block w-full overflow-x-auto">
             <table className="w-full min-w-[980px] border-collapse text-sm whitespace-nowrap">
               <thead>
                 <tr className="border-b border-white/20">

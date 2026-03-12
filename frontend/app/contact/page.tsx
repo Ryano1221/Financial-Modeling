@@ -80,6 +80,24 @@ export default function ContactPage() {
                 </a>{" "}
                 or send a message below.
               </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                For workspace or CRM layout issues, include your screen size, browser, and current module
+                (Deals, Surveys, Financial Analyses, Lease Abstract, or Obligations).
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                For deal stage configuration issues, include the active client name and confirm changes were made in
+                Account dashboard CRM Settings tab.
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                For upload issues, include the active client name and confirm whether files were dropped in Document Center,
+                or elsewhere on the active workspace.
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                For AI workflow issues, include the command you ran and the module where you executed it.
+              </p>
+              <p className="text-sm sm:text-base text-slate-300">
+                For map pin issues, include the survey building/address values so we can diagnose geocoding quickly.
+              </p>
             </div>
 
             <form onSubmit={onSubmit} className="surface-card p-4 sm:p-6 space-y-4">

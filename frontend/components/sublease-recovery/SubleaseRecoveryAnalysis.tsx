@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { NormalizerResponse, ScenarioWithId } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
@@ -19,7 +19,6 @@ import type { SubleaseScenario } from "@/lib/sublease-recovery/types";
 import type { ImportedProposalFieldReview } from "@/lib/sublease-recovery/types";
 import {
   mapProposalToScenarioDraft,
-  normalizeProposalUpload,
   type ProposalImportDraft,
 } from "@/lib/sublease-recovery/proposal-import";
 import {
@@ -135,7 +134,7 @@ interface SubleaseRecoveryAnalysisProps {
 }
 
 export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBranding = {} }: SubleaseRecoveryAnalysisProps) {
-  const { registerDocument, isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated } = useClientWorkspace();
   const existing = useMemo(() => buildExistingObligationFromScenario(sourceScenario), [sourceScenario]);
   const existingKey = `${existing.premises}|${existing.commencementDate}|${existing.expirationDate}|${existing.rsf}`;
   const scopedStorageKey = useMemo(
@@ -148,7 +147,6 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
   const [excelLoading, setExcelLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string>("Not saved");
-  const [importLoading, setImportLoading] = useState(false);
   const [importStatus, setImportStatus] = useState<string>("");
   const [importError, setImportError] = useState<string>("");
   const [proposalDraft, setProposalDraft] = useState<ProposalImportDraft | null>(null);
@@ -156,10 +154,6 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
   const [storageHydrated, setStorageHydrated] = useState(false);
   const [shareStatus, setShareStatus] = useState("");
   const [shareError, setShareError] = useState("");
-  const [dragOver, setDragOver] = useState(false);
-  const [globalDragActive, setGlobalDragActive] = useState(false);
-  const proposalFileInputRef = useRef<HTMLInputElement | null>(null);
-  const globalDragDepthRef = useRef(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -420,53 +414,6 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
     });
   };
 
-  const processImportFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
-    const files = Array.from(incoming ?? []);
-    if (files.length === 0) return;
-
-    const accepted = files.filter((file) => {
-      const name = String(file.name || "").toLowerCase();
-      return name.endsWith(".pdf") || name.endsWith(".docx") || name.endsWith(".doc");
-    });
-    const rejectedCount = files.length - accepted.length;
-    if (accepted.length === 0) {
-      setImportError("Only .pdf, .docx, and .doc proposal files are supported.");
-      setImportStatus("");
-      return;
-    }
-    if (accepted.length > 1) {
-      setImportStatus(`Detected ${accepted.length} supported files. Importing the first file: ${accepted[0].name}.`);
-    } else if (rejectedCount > 0) {
-      setImportStatus(`Imported 1 supported file. Ignored ${rejectedCount} unsupported file${rejectedCount === 1 ? "" : "s"}.`);
-    }
-
-    const file = accepted[0];
-    setImportLoading(true);
-    setImportError("");
-    setImportStatus(`Parsing ${file.name}...`);
-    try {
-      const normalized = await normalizeProposalUpload(file);
-      await registerDocument({
-        clientId,
-        name: file.name,
-        file,
-        sourceModule: "sublease-recovery",
-        normalize: normalized,
-        parsed: true,
-        type: "sublease documents",
-      });
-      const draft = mapProposalToScenarioDraft(normalized, existing, file.name || "Uploaded proposal");
-      setProposalDraft(draft);
-      setProposalFieldReview(draft.fieldReview);
-      setImportStatus(`Extracted proposal terms from ${file.name}. Review and approve below.`);
-    } catch (error) {
-      setImportError(error instanceof Error ? error.message : "Unable to parse proposal file.");
-      setImportStatus("");
-    } finally {
-      setImportLoading(false);
-    }
-  }, [existing, registerDocument, clientId]);
-
   const importFromExistingClientDocument = useCallback((document: ClientWorkspaceDocument) => {
     const snapshot = document.normalizeSnapshot;
     if (!snapshot?.canonical_lease) {
@@ -491,59 +438,6 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
     setImportStatus(`Loaded proposal terms from ${document.name}. Review and approve below.`);
     setImportError("");
   }, [existing]);
-
-  const isFileDragEvent = useCallback((event: DragEvent): boolean => {
-    const dt = event.dataTransfer;
-    if (!dt) return false;
-    const types = Array.from(dt.types ?? []);
-    return types.includes("Files");
-  }, []);
-
-  useEffect(() => {
-    const onWindowDragEnter = (event: DragEvent) => {
-      if (event.defaultPrevented || importLoading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      globalDragDepthRef.current += 1;
-      setGlobalDragActive(true);
-    };
-
-    const onWindowDragOver = (event: DragEvent) => {
-      if (event.defaultPrevented || importLoading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-      setGlobalDragActive(true);
-    };
-
-    const onWindowDragLeave = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      globalDragDepthRef.current = Math.max(0, globalDragDepthRef.current - 1);
-      if (globalDragDepthRef.current === 0) setGlobalDragActive(false);
-    };
-
-    const onWindowDrop = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      if (event.defaultPrevented) {
-        globalDragDepthRef.current = 0;
-        setGlobalDragActive(false);
-        return;
-      }
-      event.preventDefault();
-      globalDragDepthRef.current = 0;
-      setGlobalDragActive(false);
-      void processImportFiles(event.dataTransfer?.files);
-    };
-
-    window.addEventListener("dragenter", onWindowDragEnter);
-    window.addEventListener("dragover", onWindowDragOver);
-    window.addEventListener("dragleave", onWindowDragLeave);
-    window.addEventListener("drop", onWindowDrop);
-    return () => {
-      window.removeEventListener("dragenter", onWindowDragEnter);
-      window.removeEventListener("dragover", onWindowDragOver);
-      window.removeEventListener("dragleave", onWindowDragLeave);
-      window.removeEventListener("drop", onWindowDrop);
-    };
-  }, [importLoading, isFileDragEvent, processImportFiles]);
 
   const saveProposalDraftScenario = () => {
     if (!proposalDraft) return;
@@ -601,13 +495,6 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
 
   return (
     <section className="mx-auto w-full max-w-6xl border border-white/20 bg-black/55 backdrop-blur-[2px] p-4 sm:p-5">
-      {globalDragActive && (
-        <div className="pointer-events-none fixed inset-0 z-[70] border-2 border-dashed border-cyan-300/70 bg-cyan-500/10 backdrop-blur-[1px]">
-          <div className="absolute inset-x-4 top-16 rounded-xl border border-cyan-200/70 bg-slate-900/90 px-4 py-3 text-center text-sm font-semibold tracking-tight text-cyan-100 shadow-[0_20px_60px_rgba(2,6,23,0.45)]">
-            Drop proposal files anywhere to import into Sublease Recovery
-          </div>
-        </div>
-      )}
       <div className="flex flex-col sm:flex-row sm:flex-wrap items-center sm:items-start justify-center sm:justify-between gap-3 border-b border-white/15 pb-4 mb-4 text-center sm:text-left">
         <div className="w-full sm:w-auto">
           <h2 className="heading-section">Sublease Recovery Analysis</h2>
@@ -616,25 +503,6 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
           </p>
         </div>
         <div className="flex w-full sm:w-auto flex-wrap justify-center sm:justify-end gap-2">
-          <input
-            ref={proposalFileInputRef}
-            type="file"
-            accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void processImportFiles(e.target.files);
-              e.currentTarget.value = "";
-            }}
-          />
-          <button
-            type="button"
-            className="btn-premium btn-premium-success"
-            onClick={() => proposalFileInputRef.current?.click()}
-            disabled={importLoading}
-          >
-            {importLoading ? "Parsing Proposal…" : "Import Proposal"}
-          </button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={addScenario}>Add Scenario</button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={duplicateScenario} disabled={!activeScenario}>Duplicate</button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={resetScenarios}>Reset</button>
@@ -652,39 +520,14 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
       {shareStatus ? <p className="text-xs text-cyan-200 mb-3">{shareStatus}</p> : null}
       {shareError ? <p className="text-xs text-rose-300 mb-3">{shareError}</p> : null}
 
-      <div
-        className={`
-          mb-4 rounded-xl border-2 border-dashed p-4 sm:p-5 text-center transition-all duration-200 cursor-pointer
-          ${dragOver ? "border-cyan-300/70 bg-cyan-500/12 shadow-[0_0_0_1px_rgba(34,211,238,0.4),0_16px_45px_rgba(8,145,178,0.25)]" : "border-white/20 bg-black/25"}
-          ${importLoading ? "opacity-75 pointer-events-none" : ""}
-        `}
-        onClick={() => {
-          if (!importLoading) proposalFileInputRef.current?.click();
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(false);
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setDragOver(false);
-          void processImportFiles(e.dataTransfer.files);
-        }}
-      >
-        <p className="heading-kicker mb-1">Upload Sublease Proposal</p>
+      <div className="mb-4 rounded-xl border border-dashed border-white/20 bg-black/25 p-4 sm:p-5 text-center">
+        <p className="heading-kicker mb-1">Unified Document Intake</p>
         <p className="text-sm text-slate-200">
-          Drag and drop one or more <strong>.pdf</strong>, <strong>.docx</strong>, or <strong>.doc</strong> proposal files here, or click to choose.
+          Upload sublease proposals in the single Document Center above, or drop files anywhere on this screen.
         </p>
-        <p className="text-xs text-slate-400 mt-2">Parsed terms are reviewed before a scenario is created.</p>
-        {importStatus && <p className="text-xs text-cyan-200 mt-2">{importStatus}</p>}
-        {importError && <p className="text-xs text-rose-300 mt-2">{importError}</p>}
+        <p className="text-xs text-slate-400 mt-2">Then select a parsed proposal below to import terms into a scenario draft.</p>
+        {importStatus ? <p className="text-xs text-cyan-200 mt-2">{importStatus}</p> : null}
+        {importError ? <p className="text-xs text-rose-300 mt-2">{importError}</p> : null}
       </div>
       <div className="mb-4">
         <ClientDocumentPicker

@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
-import { CLIENT_DOCUMENT_TYPES } from "@/lib/workspace/types";
+import { CLIENT_DOCUMENT_TYPES, type ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { getDisplayErrorMessage } from "@/lib/api";
 
 function asText(value: unknown): string {
@@ -30,18 +30,28 @@ interface ClientDocumentCenterProps {
 }
 
 export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCenterProps) {
-  const { activeClient, documents, registerDocument } = useClientWorkspace();
+  const { activeClient, documents, registerDocument, updateDocument, removeDocument } = useClientWorkspace();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("No documents uploaded for this client.");
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [globalDragActive, setGlobalDragActive] = useState(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [buildingFilter, setBuildingFilter] = useState("");
   const [suiteFilter, setSuiteFilter] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState({
+    name: "",
+    type: "other" as (typeof CLIENT_DOCUMENT_TYPES)[number],
+    building: "",
+    address: "",
+    suite: "",
+  });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const globalDragDepthRef = useRef(0);
 
   const triggerDownloadFromDataUrl = useCallback(async (fileName: string, dataUrl: string): Promise<void> => {
     const safeName = asText(fileName) || "document";
@@ -78,6 +88,108 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
     }
     setError("");
   }, [documents, triggerDownloadFromDataUrl]);
+
+  const startEditing = useCallback((doc: ClientWorkspaceDocument) => {
+    setEditingId(doc.id);
+    setEditDraft({
+      name: doc.name,
+      type: doc.type,
+      building: doc.building,
+      address: doc.address,
+      suite: doc.suite,
+    });
+    setError("");
+  }, []);
+
+  const cancelEditing = useCallback(() => {
+    setEditingId(null);
+  }, []);
+
+  const saveEditing = useCallback(() => {
+    if (!editingId) return;
+    const name = asText(editDraft.name);
+    if (!name) {
+      setError("Document name is required.");
+      return;
+    }
+    updateDocument(editingId, {
+      name,
+      type: editDraft.type,
+      building: editDraft.building,
+      address: editDraft.address,
+      suite: editDraft.suite,
+    });
+    setEditingId(null);
+    setError("");
+    setStatus(`Updated document metadata for ${name}.`);
+  }, [editDraft, editingId, updateDocument]);
+
+  const deleteDocument = useCallback((doc: ClientWorkspaceDocument) => {
+    const confirmed = window.confirm(`Delete "${doc.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+    removeDocument(doc.id);
+    if (editingId === doc.id) {
+      setEditingId(null);
+    }
+    setError("");
+    setStatus(`Deleted ${doc.name}.`);
+  }, [editingId, removeDocument]);
+
+  const renderEditFields = useCallback(() => (
+    <>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+        <input
+          type="text"
+          value={editDraft.name}
+          onChange={(event) => setEditDraft((prev) => ({ ...prev, name: event.target.value }))}
+          className="input-premium"
+          placeholder="Document name"
+        />
+        <select
+          value={editDraft.type}
+          onChange={(event) =>
+            setEditDraft((prev) => ({ ...prev, type: event.target.value as (typeof CLIENT_DOCUMENT_TYPES)[number] }))
+          }
+          className="input-premium"
+        >
+          {CLIENT_DOCUMENT_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={editDraft.building}
+          onChange={(event) => setEditDraft((prev) => ({ ...prev, building: event.target.value }))}
+          className="input-premium"
+          placeholder="Building"
+        />
+        <input
+          type="text"
+          value={editDraft.suite}
+          onChange={(event) => setEditDraft((prev) => ({ ...prev, suite: event.target.value }))}
+          className="input-premium"
+          placeholder="Suite"
+        />
+        <input
+          type="text"
+          value={editDraft.address}
+          onChange={(event) => setEditDraft((prev) => ({ ...prev, address: event.target.value }))}
+          className="input-premium"
+          placeholder="Address"
+        />
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="btn-premium btn-premium-primary text-xs" onClick={saveEditing}>
+          Save
+        </button>
+        <button type="button" className="btn-premium btn-premium-secondary text-xs" onClick={cancelEditing}>
+          Cancel
+        </button>
+      </div>
+    </>
+  ), [cancelEditing, editDraft, saveEditing]);
 
   const filteredDocuments = useMemo(() => {
     const needle = asText(query).toLowerCase();
@@ -131,14 +243,64 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
     }
   }, [activeClient, registerDocument]);
 
+  const isFileDragEvent = useCallback((event: DragEvent): boolean => {
+    const dt = event.dataTransfer;
+    if (!dt) return false;
+    return Array.from(dt.types || []).includes("Files");
+  }, []);
+
+  useEffect(() => {
+    const onWindowDragEnter = (event: DragEvent) => {
+      if (loading || !isFileDragEvent(event)) return;
+      event.preventDefault();
+      globalDragDepthRef.current += 1;
+      setGlobalDragActive(true);
+    };
+    const onWindowDragOver = (event: DragEvent) => {
+      if (loading || !isFileDragEvent(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      setGlobalDragActive(true);
+    };
+    const onWindowDragLeave = (event: DragEvent) => {
+      if (!isFileDragEvent(event)) return;
+      globalDragDepthRef.current = Math.max(0, globalDragDepthRef.current - 1);
+      if (globalDragDepthRef.current === 0) setGlobalDragActive(false);
+    };
+    const onWindowDrop = (event: DragEvent) => {
+      if (!isFileDragEvent(event)) return;
+      event.preventDefault();
+      globalDragDepthRef.current = 0;
+      setGlobalDragActive(false);
+      void processFiles(event.dataTransfer?.files);
+    };
+    window.addEventListener("dragenter", onWindowDragEnter);
+    window.addEventListener("dragover", onWindowDragOver);
+    window.addEventListener("dragleave", onWindowDragLeave);
+    window.addEventListener("drop", onWindowDrop);
+    return () => {
+      window.removeEventListener("dragenter", onWindowDragEnter);
+      window.removeEventListener("dragover", onWindowDragOver);
+      window.removeEventListener("dragleave", onWindowDragLeave);
+      window.removeEventListener("drop", onWindowDrop);
+    };
+  }, [isFileDragEvent, loading, processFiles]);
+
   if (!activeClient) return null;
 
   return (
     <section className="scroll-mt-24 bg-grid">
-      <div className="mx-auto w-full max-w-6xl border border-white/15 p-3 sm:p-4 bg-grid">
+      {globalDragActive ? (
+        <div className="pointer-events-none fixed inset-0 z-[70] border-2 border-dashed border-cyan-300/70 bg-cyan-500/10 backdrop-blur-[1px]">
+          <div className="absolute inset-x-4 top-16 rounded-xl border border-cyan-200/70 bg-slate-900/90 px-4 py-3 text-center text-sm font-semibold tracking-tight text-cyan-100 shadow-[0_20px_60px_rgba(2,6,23,0.45)]">
+            Drop files anywhere to upload into Document Center
+          </div>
+        </div>
+      ) : null}
+      <div className="mx-auto w-full max-w-[96vw] border border-white/15 p-3 sm:p-4 bg-grid">
         <div className="border border-white/15 bg-black/25 p-4 sm:p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
+          <div className="flex flex-col items-center justify-center gap-3 text-center">
+            <div className="mx-auto max-w-3xl">
               <p className="heading-kicker mb-2">Document Center</p>
               <h2 className="heading-section mb-1">{activeClient.name} Document Library</h2>
               <p className="text-sm text-slate-300">All platform uploads route into this client-scoped library.</p>
@@ -177,11 +339,11 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
                 }
               }}
               className={`mt-4 cursor-pointer border border-dashed px-4 py-8 text-center transition-colors ${
-                dragOver ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
+                dragOver || globalDragActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
               }`}
             >
               <p className="heading-kicker mb-2">Drag and drop upload</p>
-              <p className="text-sm text-slate-200">Supports bulk files. Parseable files are automatically classified and indexed.</p>
+              <p className="text-sm text-slate-200">Supports bulk files. You can also drop files anywhere on this screen. Parseable files are automatically classified and indexed.</p>
             </div>
           ) : null}
           <input
@@ -249,16 +411,66 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
 
         <div className="mt-4 border border-white/15 bg-black/30 p-4">
             <p className="heading-kicker mb-2">Documents</p>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-sm">
+            <div className="space-y-3 md:hidden">
+              {filteredDocuments.length === 0 ? (
+                <p className="py-4 text-sm text-slate-400">No documents match the current filters.</p>
+              ) : (
+                filteredDocuments.map((doc) => {
+                  const isEditing = editingId === doc.id;
+                  return (
+                    <div key={doc.id} className="border border-white/15 bg-black/20 p-3 space-y-2">
+                      <p className="text-sm text-slate-100 break-words">{doc.name}</p>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <p className="text-slate-400">Type: <span className="text-slate-200">{doc.type}</span></p>
+                        <p className="text-slate-400">Suite: <span className="text-slate-200">{doc.suite || "-"}</span></p>
+                        <p className="text-slate-400 col-span-2">Building: <span className="text-slate-200">{doc.building || "-"}</span></p>
+                        <p className="text-slate-400 col-span-2">Uploaded: <span className="text-slate-200">{formatDateTime(doc.uploadedAt)}</span></p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="btn-premium btn-premium-secondary text-xs"
+                          onClick={() => {
+                            void openDocument(doc.id);
+                          }}
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-premium btn-premium-secondary text-xs"
+                          onClick={() => startEditing(doc)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-premium btn-premium-danger text-xs"
+                          onClick={() => deleteDocument(doc)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      {isEditing ? (
+                        <div className="border-t border-white/10 pt-3">
+                          {renderEditFields()}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full min-w-[980px] table-fixed border-collapse text-xs sm:text-sm">
                 <thead>
                   <tr className="border-b border-white/20">
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Name</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Type</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Building</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Suite</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Uploaded</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Open</th>
+                    <th className="w-[32%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Name</th>
+                    <th className="w-[10%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Type</th>
+                    <th className="hidden md:table-cell w-[23%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Building</th>
+                    <th className="hidden sm:table-cell w-[10%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Suite</th>
+                    <th className="w-[13%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Uploaded</th>
+                    <th className="sticky right-0 z-10 border-l border-white/10 bg-black/90 w-[276px] text-left py-2 pl-2 pr-2 sm:pr-3 text-slate-300 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -268,28 +480,51 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
                     </tr>
                   ) : (
                     filteredDocuments.map((doc) => {
+                      const isEditing = editingId === doc.id;
                       return (
-                        <tr
-                          key={doc.id}
-                          className="border-b border-white/10 transition-colors hover:bg-white/5"
-                        >
-                          <td className="py-2 pr-3 text-slate-100">{doc.name}</td>
-                          <td className="py-2 pr-3 text-slate-300">{doc.type}</td>
-                          <td className="py-2 pr-3 text-slate-300">{doc.building || "-"}</td>
-                          <td className="py-2 pr-3 text-slate-300">{doc.suite || "-"}</td>
-                          <td className="py-2 pr-3 text-slate-300">{formatDateTime(doc.uploadedAt)}</td>
-                          <td className="py-2 pr-3 text-slate-300">
-                            <button
-                              type="button"
-                              className="btn-premium btn-premium-secondary text-xs"
-                              onClick={() => {
-                                void openDocument(doc.id);
-                              }}
-                            >
-                              Open
-                            </button>
-                          </td>
-                        </tr>
+                        <Fragment key={doc.id}>
+                          <tr className="border-b border-white/10 transition-colors hover:bg-white/5">
+                            <td className="py-3 pr-2 sm:pr-3 text-slate-100 align-top truncate" title={doc.name}>{doc.name}</td>
+                            <td className="py-3 pr-2 sm:pr-3 text-slate-300 align-top truncate" title={doc.type}>{doc.type}</td>
+                            <td className="hidden md:table-cell py-3 pr-2 sm:pr-3 text-slate-300 align-top truncate" title={doc.building || "-"}>{doc.building || "-"}</td>
+                            <td className="hidden sm:table-cell py-3 pr-2 sm:pr-3 text-slate-300 align-top truncate" title={doc.suite || "-"}>{doc.suite || "-"}</td>
+                            <td className="py-3 pr-2 sm:pr-3 text-slate-300 break-words align-top">{formatDateTime(doc.uploadedAt)}</td>
+                            <td className="sticky right-0 border-l border-white/10 bg-black/90 py-3 pl-2 pr-2 sm:pr-3 text-slate-300 align-top whitespace-nowrap">
+                              <div className="flex flex-nowrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="btn-premium btn-premium-secondary !h-8 !min-h-8 !w-20 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                  onClick={() => {
+                                    void openDocument(doc.id);
+                                  }}
+                                >
+                                  Open
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-premium btn-premium-secondary !h-8 !min-h-8 !w-20 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                  onClick={() => startEditing(doc)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-premium btn-premium-danger !h-8 !min-h-8 !w-20 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                  onClick={() => deleteDocument(doc)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                          {isEditing ? (
+                            <tr className="border-b border-white/10 bg-black/20">
+                              <td colSpan={6} className="py-3 pr-2 sm:pr-3">
+                                {renderEditFields()}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
                       );
                     })
                   )}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
-import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
+import { getDisplayErrorMessage } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
@@ -144,8 +144,39 @@ function kindChipClass(kind: string): string {
   return "bg-white/10 text-slate-100 border-white/30";
 }
 
+const TIMELINE_EVENT_STYLES = {
+  expiring: {
+    label: "Expirations",
+    border: "#38BDF8",
+    fill: "#0EA5E9",
+    track: "rgba(14, 165, 233, 0.14)",
+    textClass: "text-sky-200",
+  },
+  notice: {
+    label: "Notices",
+    border: "#F97316",
+    fill: "#EA580C",
+    track: "rgba(234, 88, 12, 0.14)",
+    textClass: "text-orange-200",
+  },
+  renewal: {
+    label: "Renewals",
+    border: "#84CC16",
+    fill: "#65A30D",
+    track: "rgba(101, 163, 13, 0.16)",
+    textClass: "text-lime-200",
+  },
+  termination: {
+    label: "Termination Rights",
+    border: "#E879F9",
+    fill: "#D946EF",
+    track: "rgba(217, 70, 239, 0.14)",
+    textClass: "text-fuchsia-200",
+  },
+} as const;
+
 export function ObligationsWorkspace({ clientId, clientName }: { clientId: string; clientName?: string | null }) {
-  const { registerDocument, isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated } = useClientWorkspace();
   const resolvedClientName = asText(clientName);
   const defaultCompanyName = resolvedClientName || "Default Portfolio";
   const [companies, setCompanies] = useState<ObligationCompany[]>([]);
@@ -158,11 +189,7 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("No obligation documents uploaded.");
-  const [dragOver, setDragOver] = useState(false);
-  const [globalDragActive, setGlobalDragActive] = useState(false);
   const [editingPanelsOpen, setEditingPanelsOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const globalDragDepthRef = useRef(0);
   const obligationsRef = useRef<ObligationRecord[]>([]);
   const documentsRef = useRef<ObligationDocumentRecord[]>([]);
   const scopedStorageKey = useMemo(
@@ -342,28 +369,9 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
     setNewCompanyName("");
   }, [newCompanyName]);
 
-  const parseDocument = useCallback(async (file: File) => {
-    const lower = file.name.toLowerCase();
-    const isDoc = lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".doc");
-    if (!isDoc) {
-      throw new Error(`Unsupported file type for ${file.name}. Use PDF, DOCX, or DOC.`);
-    }
-
-    const form = new FormData();
-    form.append("source", lower.endsWith(".pdf") ? "PDF" : "WORD");
-    form.append("file", file);
-    const res = await fetchApi("/normalize", { method: "POST", body: form });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || `Normalize request failed (${res.status}).`);
-    }
-    return (await res.json()) as NormalizerResponse;
-  }, []);
-
   const ingestNormalize = useCallback(async (
     sourceName: string,
     normalize: NormalizerResponse,
-    uploadedFile?: File,
   ) => {
     if (!activeCompanyId) return;
     const seed = mapNormalizeToObligationSeed(normalize, sourceName);
@@ -427,42 +435,8 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
     documentsRef.current = nextDocs;
     obligationsRef.current = nextObligations;
 
-    if (uploadedFile) {
-      await registerDocument({
-        clientId,
-        name: sourceName,
-        file: uploadedFile,
-        sourceModule: "obligations",
-        normalize,
-        parsed: true,
-      });
-    }
-
     setSelectedObligationId(obligationId);
-  }, [activeCompanyId, clientId, registerDocument]);
-
-  const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
-    if (!activeCompanyId) return;
-    const files = Array.from(incoming ?? []);
-    if (files.length === 0) return;
-    setLoading(true);
-    setError("");
-
-    try {
-      let processed = 0;
-      for (const file of files) {
-        setStatus(`Processing ${file.name}...`);
-        const normalize = await parseDocument(file);
-        await ingestNormalize(file.name, normalize, file);
-        processed += 1;
-      }
-      setStatus(`Processed ${processed} document${processed === 1 ? "" : "s"}.`);
-    } catch (err) {
-      setError(getDisplayErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [activeCompanyId, parseDocument, ingestNormalize]);
+  }, [activeCompanyId, clientId]);
 
   const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
     const normalize = toNormalizerResponseFromSnapshot(document);
@@ -483,49 +457,6 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
       setLoading(false);
     }
   }, [ingestNormalize]);
-
-  const isFileDragEvent = useCallback((event: DragEvent): boolean => {
-    const dt = event.dataTransfer;
-    if (!dt) return false;
-    return Array.from(dt.types || []).includes("Files");
-  }, []);
-
-  useEffect(() => {
-    const onWindowDragEnter = (event: DragEvent) => {
-      if (loading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      globalDragDepthRef.current += 1;
-      setGlobalDragActive(true);
-    };
-    const onWindowDragOver = (event: DragEvent) => {
-      if (loading || !isFileDragEvent(event)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-      setGlobalDragActive(true);
-    };
-    const onWindowDragLeave = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      globalDragDepthRef.current = Math.max(0, globalDragDepthRef.current - 1);
-      if (globalDragDepthRef.current === 0) setGlobalDragActive(false);
-    };
-    const onWindowDrop = (event: DragEvent) => {
-      if (!isFileDragEvent(event)) return;
-      event.preventDefault();
-      globalDragDepthRef.current = 0;
-      setGlobalDragActive(false);
-      void processFiles(event.dataTransfer?.files);
-    };
-    window.addEventListener("dragenter", onWindowDragEnter);
-    window.addEventListener("dragover", onWindowDragOver);
-    window.addEventListener("dragleave", onWindowDragLeave);
-    window.addEventListener("drop", onWindowDrop);
-    return () => {
-      window.removeEventListener("dragenter", onWindowDragEnter);
-      window.removeEventListener("dragover", onWindowDragOver);
-      window.removeEventListener("dragleave", onWindowDragLeave);
-      window.removeEventListener("drop", onWindowDrop);
-    };
-  }, [isFileDragEvent, loading, processFiles]);
 
   const onReassignDocument = useCallback((documentId: string, nextObligationId: string) => {
     const target = obligationsRef.current.find((o) => o.id === nextObligationId);
@@ -557,22 +488,15 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
       kicker="Obligations"
       title="Portfolio Obligation Command Center"
       description="Store company obligations, associate documents, and track expirations, notices, and risk from one workspace."
+      headerAlign="center"
       actions={
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-center gap-2">
           <button
             type="button"
             className={`btn-premium ${editingPanelsOpen ? "btn-premium-primary" : "btn-premium-secondary"}`}
             onClick={() => setEditingPanelsOpen((prev) => !prev)}
           >
             {editingPanelsOpen ? "Close Obligation Editor" : "Edit Obligation Details"}
-          </button>
-          <button
-            type="button"
-            className="btn-premium btn-premium-secondary"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={loading || !activeCompanyId}
-          >
-            {loading ? "Processing..." : "Upload Obligation Docs"}
           </button>
         </div>
       }
@@ -604,50 +528,12 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
             </button>
           </div>
 
-          <div
-            role="button"
-            tabIndex={0}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              void processFiles(e.dataTransfer.files);
-            }}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-            className={`mt-4 cursor-pointer border border-dashed px-4 py-7 text-center transition-colors ${
-              dragOver || globalDragActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
-            }`}
-          >
-            <p className="heading-kicker mb-2">Upload leases + amendments + proposals</p>
-            <p className="text-sm text-slate-200">Drop PDF, DOCX, or DOC files to classify and map obligations.</p>
-            <p className="text-xs text-slate-400 mt-2">Documents are auto-associated and flagged for review when confidence is low.</p>
+          <div className="mt-4 border border-dashed border-white/20 bg-black/20 px-4 py-7 text-center">
+            <p className="heading-kicker mb-2">Unified Document Intake</p>
+            <p className="text-sm text-slate-200">Upload and drop files in the single Document Center above.</p>
+            <p className="text-xs text-slate-400 mt-2">Then select a parsed file below to map obligations.</p>
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.docx,.doc,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void processFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <p className="text-xs text-slate-400 mt-3">{status}</p>
+          <p className="text-xs text-slate-400 mt-3">{loading ? "Importing selected document..." : status}</p>
           <div className="mt-3">
             <ClientDocumentPicker
               buttonLabel="Select Existing Obligation Document"
@@ -724,25 +610,64 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
                 return (
                   <div key={bucket.year} className="grid grid-cols-[70px_1fr_1fr_1fr_1fr] gap-2 items-center text-xs">
                     <span className="text-slate-300">{bucket.year}</span>
-                    <div className="h-2 border border-cyan-300/40 bg-white/5">
-                      <div className="h-full bg-cyan-300" style={{ width: expireWidth }} />
+                    <div
+                      className="h-2 border"
+                      style={{
+                        borderColor: TIMELINE_EVENT_STYLES.expiring.border,
+                        backgroundColor: TIMELINE_EVENT_STYLES.expiring.track,
+                      }}
+                    >
+                      <div
+                        className="h-full"
+                        style={{ width: expireWidth, backgroundColor: TIMELINE_EVENT_STYLES.expiring.fill }}
+                      />
                     </div>
-                    <div className="h-2 border border-amber-300/40 bg-white/5">
-                      <div className="h-full bg-amber-300" style={{ width: noticeWidth }} />
+                    <div
+                      className="h-2 border"
+                      style={{
+                        borderColor: TIMELINE_EVENT_STYLES.notice.border,
+                        backgroundColor: TIMELINE_EVENT_STYLES.notice.track,
+                      }}
+                    >
+                      <div
+                        className="h-full"
+                        style={{ width: noticeWidth, backgroundColor: TIMELINE_EVENT_STYLES.notice.fill }}
+                      />
                     </div>
-                    <div className="h-2 border border-emerald-300/40 bg-white/5">
-                      <div className="h-full bg-emerald-300" style={{ width: renewalWidth }} />
+                    <div
+                      className="h-2 border"
+                      style={{
+                        borderColor: TIMELINE_EVENT_STYLES.renewal.border,
+                        backgroundColor: TIMELINE_EVENT_STYLES.renewal.track,
+                      }}
+                    >
+                      <div
+                        className="h-full"
+                        style={{ width: renewalWidth, backgroundColor: TIMELINE_EVENT_STYLES.renewal.fill }}
+                      />
                     </div>
-                    <div className="h-2 border border-fuchsia-300/40 bg-white/5">
-                      <div className="h-full bg-fuchsia-300" style={{ width: terminationWidth }} />
+                    <div
+                      className="h-2 border"
+                      style={{
+                        borderColor: TIMELINE_EVENT_STYLES.termination.border,
+                        backgroundColor: TIMELINE_EVENT_STYLES.termination.track,
+                      }}
+                    >
+                      <div
+                        className="h-full"
+                        style={{ width: terminationWidth, backgroundColor: TIMELINE_EVENT_STYLES.termination.fill }}
+                      />
                     </div>
                   </div>
                 );
               })}
             </div>
-            <p className="text-[11px] text-slate-400 mt-2">
-              Cyan = expirations. Amber = notices. Green = renewals. Fuchsia = termination rights.
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+              <span className={TIMELINE_EVENT_STYLES.expiring.textClass}>Expirations</span>
+              <span className={TIMELINE_EVENT_STYLES.notice.textClass}>Notices</span>
+              <span className={TIMELINE_EVENT_STYLES.renewal.textClass}>Renewals</span>
+              <span className={TIMELINE_EVENT_STYLES.termination.textClass}>Termination rights</span>
+            </div>
           </div>
         </PlatformPanel>
 
@@ -751,7 +676,34 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
           title="Obligation Repository"
           className={editingPanelsOpen ? "xl:col-span-8" : "xl:col-span-12"}
         >
-          <div className="overflow-x-auto">
+          <div className="space-y-3 md:hidden">
+            {activeObligations.length === 0 ? (
+              <p className="py-4 text-sm text-slate-400">No obligations for this company yet.</p>
+            ) : (
+              activeObligations.map((item) => {
+                const isActive = selectedObligation?.id === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`w-full border p-3 text-left space-y-2 ${isActive ? "border-cyan-400/50 bg-cyan-500/10" : "border-white/15 bg-black/20"}`}
+                    onClick={() => setSelectedObligationId(item.id)}
+                  >
+                    <p className="text-sm text-white break-words">{item.title}</p>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <p className="text-slate-400">Expiration: <span className="text-slate-200">{formatIsoDate(item.expirationDate)}</span></p>
+                      <p className="text-slate-400">RSF: <span className="text-slate-200">{formatInt(item.rsf)}</span></p>
+                      <p className="text-slate-400">Annual: <span className="text-slate-200">{formatUsd(item.annualObligation)}</span></p>
+                      <p className="text-slate-400">Completeness: <span className="text-slate-200">{item.completenessScore}%</span></p>
+                      <p className="text-slate-400">Docs: <span className="text-slate-200">{item.sourceDocumentIds.length}</span></p>
+                      <p className="col-span-2 text-slate-400">Address: <span className="text-slate-200">{item.address || "-"}</span></p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-white/20">

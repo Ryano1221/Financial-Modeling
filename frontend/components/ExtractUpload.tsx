@@ -15,6 +15,8 @@ function sleep(ms: number): Promise<void> {
 
 interface ExtractUploadProps {
   showAdvancedOptions?: boolean;
+  showInlineDropZone?: boolean;
+  onPersistDocument?: (payload: { file: File; normalize: NormalizerResponse | null; parsed: boolean }) => void | Promise<void>;
   onSuccess: (data: NormalizerResponse, context?: { fileName: string; file: File }) => void | Promise<void>;
   onError: (message: string) => void;
 }
@@ -75,7 +77,13 @@ function classifyFailureReason(raw: unknown): string | null {
   return null;
 }
 
-export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError }: ExtractUploadProps) {
+export function ExtractUpload({
+  showAdvancedOptions = false,
+  showInlineDropZone = true,
+  onPersistDocument,
+  onSuccess,
+  onError,
+}: ExtractUploadProps) {
   const [dragOver, setDragOver] = useState(false);
   const [globalDragActive, setGlobalDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -84,8 +92,17 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
 
   const sendFile = useCallback(
     async (file: File) => {
+      const persistDocument = async (normalize: NormalizerResponse | null, parsed: boolean) => {
+        if (!onPersistDocument) return;
+        try {
+          await onPersistDocument({ file, normalize, parsed });
+        } catch (persistError) {
+          console.warn("[normalize] persist_document_failed", persistError);
+        }
+      };
       const fn = file.name.toLowerCase();
       if (!fn.endsWith(".pdf") && !fn.endsWith(".docx") && !fn.endsWith(".doc")) {
+        await persistDocument(null, false);
         onError("Only .pdf, .docx, and .doc files are accepted.");
         return;
       }
@@ -139,6 +156,7 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
                   lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type,
                 });
                 console.log("[normalize] calling onSuccess");
+                await persistDocument(data, true);
                 await onSuccess(data, { fileName: file.name, file });
                 return;
               }
@@ -167,9 +185,11 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
                 await sleep(1000 * attempt);
                 continue;
               }
+              await persistDocument(null, false);
               onError(reason ?? formatNormalizeError(res, body));
               return;
             }
+            await persistDocument(null, false);
             onError(formatNormalizeError(res, body));
             return;
           } catch (err) {
@@ -187,10 +207,12 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         if (lastError) {
           const msg = lastError.message || "Request failed.";
           if (lastError.name === "AbortError" || msg.toLowerCase().includes("abort")) {
+            await persistDocument(null, false);
             onError(NORMALIZE_TIMEOUT_MESSAGE);
             return;
           }
           const reason = classifyFailureReason(msg);
+          await persistDocument(null, false);
           onError(reason ?? msg);
           return;
         }
@@ -198,16 +220,18 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[normalize] error", { rid, msg });
         if (e instanceof Error && (e.name === "AbortError" || msg.toLowerCase().includes("abort"))) {
+          await persistDocument(null, false);
           onError(NORMALIZE_TIMEOUT_MESSAGE);
           return;
         }
         const reason = classifyFailureReason(msg);
+        await persistDocument(null, false);
         onError(reason ?? (msg || "Request failed."));
       } finally {
         // batch processor manages loading state
       }
     },
-    [onSuccess, onError]
+    [onSuccess, onError, onPersistDocument]
   );
 
   const processFiles = useCallback(
@@ -288,6 +312,12 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
   }, []);
 
   useEffect(() => {
+    if (!showInlineDropZone) {
+      setGlobalDragActive(false);
+      setDragOver(false);
+      return;
+    }
+
     const onWindowDragEnter = (event: DragEvent) => {
       if (event.defaultPrevented || loading || !isFileDragEvent(event)) return;
       event.preventDefault();
@@ -333,7 +363,7 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
       window.removeEventListener("dragleave", onWindowDragLeave);
       window.removeEventListener("drop", onWindowDrop);
     };
-  }, [isFileDragEvent, loading, processFiles]);
+  }, [isFileDragEvent, loading, processFiles, showInlineDropZone]);
 
   return (
     <div className="space-y-3">
@@ -344,39 +374,43 @@ export function ExtractUpload({ showAdvancedOptions = false, onSuccess, onError 
           </div>
         </div>
       )}
-      <div
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        className={`
-          border-2 border-dashed rounded-2xl text-center transition-all duration-200
-          p-4 sm:p-5 min-h-[120px] sm:min-h-[140px] flex flex-col items-center justify-center
-          ${dragOver ? "border-blue-300/70 bg-blue-500/12 shadow-[0_0_0_1px_rgba(147,197,253,0.4),0_16px_45px_rgba(30,64,175,0.2)]" : "border-slate-300/30 bg-slate-900/30"}
-          ${loading ? "pointer-events-none opacity-70" : ""}
-        `}
-      >
-        <div className="mx-auto flex w-full max-w-[38ch] flex-col items-center justify-center gap-3">
-          <p className="text-sm font-semibold tracking-tight leading-relaxed text-slate-100">
-            Drag and drop one or more <strong className="text-slate-50">.pdf</strong>, <strong className="text-slate-50">.docx</strong>, or <strong className="text-slate-50">.doc</strong> lease documents here, or click to choose.
-          </p>
-          <label
-            htmlFor="extract-file-input"
-            className="btn-premium btn-premium-primary inline-flex items-center justify-center cursor-pointer focus-within:focus-ring"
-          >
-            {loading ? "Extracting…" : "Choose files"}
-          </label>
+      {showInlineDropZone ? (
+        <div
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          className={`
+            border-2 border-dashed rounded-2xl text-center transition-all duration-200
+            p-4 sm:p-5 min-h-[120px] sm:min-h-[140px] flex flex-col items-center justify-center
+            ${dragOver ? "border-blue-300/70 bg-blue-500/12 shadow-[0_0_0_1px_rgba(147,197,253,0.4),0_16px_45px_rgba(30,64,175,0.2)]" : "border-slate-300/30 bg-slate-900/30"}
+            ${loading ? "pointer-events-none opacity-70" : ""}
+          `}
+        >
+          <div className="mx-auto flex w-full max-w-[38ch] flex-col items-center justify-center gap-3">
+            <p className="text-sm font-semibold tracking-tight leading-relaxed text-slate-100">
+              Drag and drop one or more <strong className="text-slate-50">.pdf</strong>, <strong className="text-slate-50">.docx</strong>, or <strong className="text-slate-50">.doc</strong> lease documents here, or click to choose.
+            </p>
+            <label
+              htmlFor="extract-file-input"
+              className="btn-premium btn-premium-primary inline-flex items-center justify-center cursor-pointer focus-within:focus-ring"
+            >
+              {loading ? "Extracting…" : "Choose files"}
+            </label>
+          </div>
+          <input
+            type="file"
+            accept=".pdf,.docx,.doc"
+            multiple
+            onChange={onFileInput}
+            disabled={loading}
+            className="hidden"
+            id="extract-file-input"
+          />
+          {batchStatus && <p className="mt-4 text-xs text-slate-400">{batchStatus}</p>}
         </div>
-        <input
-          type="file"
-          accept=".pdf,.docx,.doc"
-          multiple
-          onChange={onFileInput}
-          disabled={loading}
-          className="hidden"
-          id="extract-file-input"
-        />
-        {batchStatus && <p className="mt-4 text-xs text-slate-400">{batchStatus}</p>}
-      </div>
+      ) : batchStatus ? (
+        <p className="text-xs text-slate-400 text-center">{batchStatus}</p>
+      ) : null}
     </div>
   );
 }

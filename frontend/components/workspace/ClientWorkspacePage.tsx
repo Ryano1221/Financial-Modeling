@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ClientLogoUploader } from "@/components/ClientLogoUploader";
 import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCenter";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 
@@ -14,6 +15,17 @@ function formatCreatedAt(iso: string): string {
   const dt = new Date(iso);
   if (Number.isNaN(dt.getTime())) return "-";
   return dt.toLocaleDateString();
+}
+
+const ACCEPTED_LOGO_MIME = new Set(["image/png", "image/jpeg", "image/jpg", "image/svg+xml"]);
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read logo file."));
+    reader.readAsDataURL(file);
+  });
 }
 
 interface ClientWorkspacePageProps {
@@ -31,6 +43,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     activeClientId,
     setActiveClient,
     createClient,
+    updateClient,
   } = useClientWorkspace();
 
   const [query, setQuery] = useState("");
@@ -41,6 +54,12 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     contactEmail: "",
     notes: "",
   });
+  const [createLogoDataUrl, setCreateLogoDataUrl] = useState<string | null>(null);
+  const [createLogoFileName, setCreateLogoFileName] = useState<string | null>(null);
+  const [createLogoUploading, setCreateLogoUploading] = useState(false);
+  const [createLogoError, setCreateLogoError] = useState<string | null>(null);
+  const [clientLogoUploading, setClientLogoUploading] = useState(false);
+  const [clientLogoError, setClientLogoError] = useState<string | null>(null);
   const [createError, setCreateError] = useState("");
 
   const requestedClientId = asText(routeClientId);
@@ -49,6 +68,8 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     () => clients.find((client) => client.id === requestedClientId) ?? null,
     [clients, requestedClientId],
   );
+  const currentClient = requestedClient ?? activeClient;
+  const routeClientMissing = Boolean(requestedClientId) && !requestedClient;
 
   useEffect(() => {
     if (!ready || !requestedClientId || !requestedClient) return;
@@ -56,6 +77,66 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
       setActiveClient(requestedClient.id);
     }
   }, [ready, requestedClientId, requestedClient, activeClientId, setActiveClient]);
+
+  const validateLogoFile = useCallback((file: File): string | null => {
+    const mime = (file.type || "").toLowerCase();
+    if (!ACCEPTED_LOGO_MIME.has(mime)) return "Client logo must be PNG, SVG, or JPG.";
+    if (file.size > 1_500_000) return "Client logo must be 1.5MB or smaller.";
+    return null;
+  }, []);
+
+  const uploadCreateClientLogo = useCallback(async (file: File) => {
+    const validationError = validateLogoFile(file);
+    if (validationError) {
+      setCreateLogoError(validationError);
+      return;
+    }
+    setCreateLogoUploading(true);
+    setCreateLogoError(null);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setCreateLogoDataUrl(dataUrl || null);
+      setCreateLogoFileName(file.name || null);
+    } catch (err) {
+      setCreateLogoError(String((err as Error)?.message || "Unable to upload client logo."));
+    } finally {
+      setCreateLogoUploading(false);
+    }
+  }, [validateLogoFile]);
+
+  const clearCreateClientLogo = useCallback(() => {
+    setCreateLogoDataUrl(null);
+    setCreateLogoFileName(null);
+    setCreateLogoError(null);
+  }, []);
+
+  const uploadSelectedClientLogo = useCallback(async (file: File) => {
+    if (!currentClient) return;
+    const validationError = validateLogoFile(file);
+    if (validationError) {
+      setClientLogoError(validationError);
+      return;
+    }
+    setClientLogoUploading(true);
+    setClientLogoError(null);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      updateClient(currentClient.id, {
+        logoDataUrl: dataUrl || "",
+        logoFileName: file.name || "",
+      });
+    } catch (err) {
+      setClientLogoError(String((err as Error)?.message || "Unable to upload client logo."));
+    } finally {
+      setClientLogoUploading(false);
+    }
+  }, [currentClient, updateClient, validateLogoFile]);
+
+  const clearSelectedClientLogo = useCallback(() => {
+    if (!currentClient) return;
+    updateClient(currentClient.id, { logoDataUrl: "", logoFileName: "" });
+    setClientLogoError(null);
+  }, [currentClient, updateClient]);
 
   const filteredClients = useMemo(() => {
     const needle = asText(query).toLowerCase();
@@ -65,9 +146,6 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
       return haystack.includes(needle);
     });
   }, [clients, query]);
-
-  const currentClient = requestedClient ?? activeClient;
-  const routeClientMissing = Boolean(requestedClientId) && !requestedClient;
 
   if (!ready) {
     return (
@@ -80,7 +158,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
   if (!isAuthenticated) {
     return (
       <main className="relative z-10 app-container pt-24 sm:pt-28 pb-14 md:pb-20">
-        <section className="mx-auto w-full max-w-3xl border border-white/20 bg-slate-950/70 p-6">
+        <section className="mx-auto w-full max-w-[96vw] border border-white/20 bg-slate-950/70 p-6">
           <p className="heading-kicker mb-2">Client Workspace</p>
           <h1 className="heading-section mb-2">Sign in to access clients</h1>
           <p className="text-sm text-slate-300 mb-4">
@@ -101,7 +179,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
 
   return (
     <main className="relative z-10 app-container pt-24 sm:pt-28 pb-14 md:pb-20 space-y-6">
-      <section className="mx-auto w-full max-w-6xl border border-white/15 bg-black/25 p-4 sm:p-5">
+      <section className="mx-auto w-full max-w-[96vw] border border-white/15 bg-black/25 p-4 sm:p-5">
         <p className="heading-kicker mb-2">Client Workspace</p>
         <h1 className="heading-section mb-2">Manage Client Workspaces</h1>
         <p className="text-sm text-slate-300">
@@ -110,7 +188,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
         <p className="mt-2 text-xs text-slate-400">{session?.user?.email || "Authenticated account"}</p>
       </section>
 
-      <section className="mx-auto w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <section className="mx-auto w-full max-w-[96vw] grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-7 border border-white/15 bg-black/25 p-4 sm:p-5">
           <div className="flex items-end justify-between gap-3">
             <p className="heading-kicker">Existing Clients</p>
@@ -149,6 +227,9 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
                         <p className="text-xs text-slate-400">
                           {client.companyType || "Company"}
                         </p>
+                        {client.logoDataUrl ? (
+                          <p className="text-[11px] text-cyan-300 mt-1">Logo configured</p>
+                        ) : null}
                         <p className="text-xs text-slate-500 mt-1">
                           {client.contactName || "No contact"}
                           {client.contactEmail ? ` · ${client.contactEmail}` : ""}
@@ -167,6 +248,19 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
 
         <div className="lg:col-span-5 border border-white/15 bg-black/25 p-4 sm:p-5">
           <p className="heading-kicker mb-2">Create Client</p>
+          {currentClient ? (
+            <div className="mb-3">
+              <p className="text-xs text-slate-300 mb-2">Selected client logo</p>
+              <ClientLogoUploader
+                logoDataUrl={currentClient.logoDataUrl || null}
+                fileName={currentClient.logoFileName || null}
+                uploading={clientLogoUploading}
+                error={clientLogoError}
+                onUpload={uploadSelectedClientLogo}
+                onClear={clearSelectedClientLogo}
+              />
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input
               type="text"
@@ -203,6 +297,16 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
               className="input-premium min-h-[84px] sm:col-span-2"
             />
           </div>
+          <div className="mt-3">
+            <ClientLogoUploader
+              logoDataUrl={createLogoDataUrl}
+              fileName={createLogoFileName}
+              uploading={createLogoUploading}
+              error={createLogoError}
+              onUpload={uploadCreateClientLogo}
+              onClear={clearCreateClientLogo}
+            />
+          </div>
           {createError ? <p className="mt-2 text-xs text-red-300">{createError}</p> : null}
           <div className="mt-3 flex justify-end">
             <button
@@ -220,6 +324,8 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
                   contactName: createForm.contactName,
                   contactEmail: createForm.contactEmail,
                   notes: createForm.notes,
+                  logoDataUrl: createLogoDataUrl || undefined,
+                  logoFileName: createLogoFileName || undefined,
                 });
                 if (!created) {
                   setCreateError("Unable to create client.");
@@ -233,6 +339,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
                   contactEmail: "",
                   notes: "",
                 });
+                clearCreateClientLogo();
                 router.push(`/client/${encodeURIComponent(created.id)}`);
               }}
             >
@@ -243,7 +350,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
       </section>
 
       {routeClientMissing ? (
-        <section className="mx-auto w-full max-w-6xl border border-amber-500/40 bg-amber-500/10 p-4">
+        <section className="mx-auto w-full max-w-[96vw] border border-amber-500/40 bg-amber-500/10 p-4">
           <p className="text-sm text-amber-100">
             The requested client workspace was not found. Select another client or create one.
           </p>
@@ -253,7 +360,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
       {currentClient ? (
         <ClientDocumentCenter />
       ) : (
-        <section className="mx-auto w-full max-w-6xl border border-white/15 bg-black/25 p-4">
+        <section className="mx-auto w-full max-w-[96vw] border border-white/15 bg-black/25 p-4">
           <p className="text-sm text-slate-300">
             Select an existing client or create one to open the document library.
           </p>
