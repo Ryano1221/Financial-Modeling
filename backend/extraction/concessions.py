@@ -1,0 +1,442 @@
+from __future__ import annotations
+
+import re
+from typing import Any
+
+
+_NUMBER_WORDS: dict[str, int] = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+    "hundred": 100,
+}
+
+
+def _coerce_int_token(value: Any, default: int | None = None) -> int | None:
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def _word_token_to_int(value: Any) -> int | None:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    raw = raw.replace("-", " ")
+    if raw.isdigit():
+        return int(raw)
+    total = 0
+    current = 0
+    seen = False
+    for token in raw.split():
+        if token not in _NUMBER_WORDS:
+            return None
+        seen = True
+        number = _NUMBER_WORDS[token]
+        if number == 100:
+            current = max(1, current) * number
+        else:
+            current += number
+    if not seen:
+        return None
+    total += current
+    return total
+
+
+def _normalize_scope_token(value: Any, default: str = "base") -> str:
+    raw = str(value or "").strip().lower()
+    if raw == "gross":
+        return "gross"
+    return "base" if default != "gross" else "gross"
+
+
+def _analysis_scope_from_text(text: str, definitions_hint: str = "") -> str:
+    low = f" {str(text or '').lower()} "
+    if any(
+        token in low
+        for token in (
+            "gross rent",
+            "all rent",
+            "base rent and operating expenses",
+            "base rent plus operating expenses",
+            "rent and operating expenses",
+            "base rent and cam",
+            "parking and rent",
+        )
+    ):
+        return "gross_rent"
+    if any(token in low for token in ("base rent only", "base-rent-only", "base rental only")):
+        return "base_rent_only"
+    if " base rent " in low and not any(token in low for token in ("operating", "cam", "gross", "all rent")):
+        return "base_rent_only"
+    if " rent " in low and "additional rent" in (definitions_hint or ""):
+        return "gross_rent"
+    return "unspecified"
+
+
+def _extract_context(text: str, start: int, end: int, pad: int = 90) -> str:
+    snippet = str(text or "")[max(0, start - pad): min(len(str(text or "")), end + pad)].strip()
+    return re.sub(r"\s+", " ", snippet)
+
+
+def _normalize_periods(periods: list[dict[str, Any]], *, term_months: int = 0) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, str]] = set()
+    max_end = max(0, int(term_months) - 1) if int(term_months or 0) > 0 else None
+    for period in periods:
+        start_month = _coerce_int_token(period.get("start_month"), None)
+        end_month = _coerce_int_token(period.get("end_month"), start_month)
+        if start_month is None or end_month is None:
+            continue
+        start_i = max(0, int(start_month))
+        end_i = max(start_i, int(end_month))
+        if max_end is not None:
+            if start_i > max_end:
+                continue
+            end_i = min(end_i, max_end)
+        scope = _normalize_scope_token(period.get("scope"), default="base")
+        key = (start_i, end_i, scope)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(
+            {
+                "start_month": start_i,
+                "end_month": end_i,
+                "scope": scope,
+                "row_text": str(period.get("row_text") or ""),
+            }
+        )
+    normalized.sort(key=lambda row: (int(row["start_month"]), int(row["end_month"]), str(row["scope"])))
+    return normalized
+
+
+def _count_unique_months(periods: list[dict[str, Any]]) -> int:
+    covered: set[int] = set()
+    for period in periods or []:
+        start_i = int(period.get("start_month") or 0)
+        end_i = int(period.get("end_month") or start_i)
+        for month_idx in range(start_i, end_i + 1):
+            covered.add(month_idx)
+    return len(covered)
+
+
+def _looks_like_distribution_window(snippet: str) -> bool:
+    low = str(snippet or "").lower()
+    if not any(token in low for token in ("abatement", "abated", "abate", "free rent")):
+        return False
+    if not any(
+        token in low
+        for token in (
+            "spread",
+            "installment",
+            "installments",
+            "throughout",
+            "amortiz",
+            "pro rata",
+            "prorata",
+            "over the first",
+            "over first",
+        )
+    ):
+        return False
+    return bool(
+        re.search(
+            r"(?i)\bfirst\s+(?:[a-z\-]+\s*)?\(?\d{1,3}\)?\s+months?\b|\bmonths?\s+1\s*(?:-|to|through|thru|–|—)\s*\d{1,3}\b",
+            low,
+        )
+    )
+
+
+def parse_concession_text(
+    text: str,
+    *,
+    term_months_hint: int = 0,
+    definitions_hint: str = "",
+) -> dict[str, Any]:
+    raw_text = str(text or "")
+    cleaned = " ".join(raw_text.split())
+    low = raw_text.lower()
+    term_cap = max(0, int(term_months_hint or 0))
+
+    has_concession_language = bool(re.search(r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated|waived)\b", raw_text))
+    scope_analysis = _analysis_scope_from_text(raw_text, definitions_hint=definitions_hint)
+    default_scope = "gross" if scope_analysis == "gross_rent" else "base"
+
+    periods: list[dict[str, Any]] = []
+    signals: list[dict[str, str]] = []
+    parking_periods: list[dict[str, Any]] = []
+
+    def add_signal(category: str, reason: str, row_text: str) -> None:
+        row = re.sub(r"\s+", " ", str(row_text or "")).strip()
+        if not row:
+            row = re.sub(r"\s+", " ", raw_text).strip()[:240]
+        key = (category, reason, row)
+        if key in {(s["category"], s["reason"], s["row_text"]) for s in signals}:
+            return
+        signals.append({"category": category, "reason": reason, "row_text": row[:280]})
+
+    def add_period(start_month: int, month_count: int, scope: str, row_text: str) -> None:
+        count = max(0, int(month_count))
+        if count <= 0:
+            return
+        start_i = max(0, int(start_month))
+        end_i = max(start_i, start_i + count - 1)
+        periods.append({"start_month": start_i, "end_month": end_i, "scope": scope, "row_text": row_text})
+
+    for match in re.finditer(
+        r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,120}\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b",
+        raw_text,
+    ):
+        start_1 = _coerce_int_token(match.group(1), 0) or 0
+        end_1 = _coerce_int_token(match.group(2), 0) or 0
+        if start_1 <= 0 or end_1 < start_1:
+            continue
+        periods.append(
+            {
+                "start_month": start_1 - 1,
+                "end_month": end_1 - 1,
+                "scope": default_scope,
+                "row_text": _extract_context(raw_text, match.start(), match.end()),
+            }
+        )
+    for match in re.finditer(
+        r"(?i)\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b[^\n]{0,120}\b(?:free\s+rent|rent\s+abatement|abatement)\b",
+        raw_text,
+    ):
+        start_1 = _coerce_int_token(match.group(1), 0) or 0
+        end_1 = _coerce_int_token(match.group(2), 0) or 0
+        if start_1 <= 0 or end_1 < start_1:
+            continue
+        periods.append(
+            {
+                "start_month": start_1 - 1,
+                "end_month": end_1 - 1,
+                "scope": default_scope,
+                "row_text": _extract_context(raw_text, match.start(), match.end()),
+            }
+        )
+
+    for line in [ln.strip() for ln in raw_text.splitlines() if ln.strip()]:
+        low_line = line.lower()
+        if not any(token in low_line for token in ("free rent", "abatement", "abated", "abate")):
+            continue
+        list_match = re.search(r"(?i)\bfollowing\s+months?\b[^:\n]{0,60}[:\-]\s*([0-9,\s]+)\b", line)
+        if not list_match:
+            list_match = re.search(r"(?i)\bmonths?\b[^:\n]{0,30}[:\-]\s*([0-9,\s]+)\b", line)
+        if not list_match:
+            continue
+        month_vals = sorted(
+            {
+                int(val)
+                for val in re.findall(r"\b(\d{1,3})\b", list_match.group(1))
+                if 1 <= int(val) <= (term_cap if term_cap > 0 else 600)
+            }
+        )
+        if len(month_vals) < 2:
+            continue
+        for month_1 in month_vals:
+            periods.append(
+                {
+                    "start_month": int(month_1 - 1),
+                    "end_month": int(month_1 - 1),
+                    "scope": default_scope,
+                    "row_text": line,
+                }
+            )
+
+    front_cursor = 0
+    front_block = re.split(r"(?i)\ban?\s+additional\b", cleaned, maxsplit=1)[0]
+    front_pattern = re.compile(
+        r"(?i)(?:the\s+first\s+|initial\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s*(?:of\s+)?"
+        r"(?:(gross|base)\s+(?:rent\s+)?)?(?:free\s+rent|rent\s+abatement|abatement)\b"
+    )
+    for match in front_pattern.finditer(front_block):
+        local = _extract_context(front_block, match.start(), match.end())
+        if _looks_like_distribution_window(local):
+            continue
+        digit_val = _coerce_int_token(match.group(2), 0) or 0
+        word_val = _word_token_to_int(match.group(1)) or 0
+        count = max(digit_val, word_val)
+        if count <= 0:
+            continue
+        local_scope = _normalize_scope_token(match.group(3), default=default_scope)
+        add_period(front_cursor, count, local_scope, local)
+        front_cursor += count
+
+    additional_pattern = re.compile(
+        r"(?is)\ban?\s+additional\s+([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s*(?:of\s+)?"
+        r"(?:(gross|base)\s+(?:rent\s+)?)?(?:free\s+rent|rent\s+abatement|abatement)\b"
+    )
+    for match in additional_pattern.finditer(cleaned):
+        digit_val = _coerce_int_token(match.group(2), 0) or 0
+        word_val = _word_token_to_int(match.group(1)) or 0
+        count_total = max(digit_val, word_val)
+        if count_total <= 0:
+            continue
+        local_scope = _normalize_scope_token(match.group(3), default=default_scope)
+        tail = cleaned[match.end():]
+        boundary = re.search(r"(?is)\ban?\s+additional\b|\boption\s*(?:one|1|a|two|2|b)\b", tail)
+        alloc_text = tail[:boundary.start()] if boundary else tail[:420]
+        allocated = 0
+        for alloc in re.finditer(
+            r"(?i)([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s+in\s+the\s+beginning\s+of\s+(?:lease\s+)?year\s+(\d{1,2}|[a-z]+(?:-[a-z]+)?)\b",
+            alloc_text,
+        ):
+            local = _extract_context(alloc_text, alloc.start(), alloc.end())
+            alloc_digit = _coerce_int_token(alloc.group(2), 0) or 0
+            alloc_word = _word_token_to_int(alloc.group(1)) or 0
+            alloc_count = max(alloc_digit, alloc_word)
+            lease_year = _coerce_int_token(alloc.group(3), 0) or _word_token_to_int(alloc.group(3)) or 0
+            if alloc_count <= 0 or lease_year <= 0:
+                continue
+            add_period(max(0, (lease_year - 1) * 12), alloc_count, local_scope, local)
+            allocated += alloc_count
+        if allocated <= 0:
+            add_period(front_cursor, count_total, local_scope, _extract_context(cleaned, match.start(), match.end()))
+            front_cursor += count_total
+
+    if not periods:
+        free_count_candidates: list[tuple[int, int, str]] = []
+        for line in [ln.strip() for ln in raw_text.splitlines() if ln.strip()]:
+            low_line = line.lower()
+            if not any(token in low_line for token in ("free rent", "abatement", "abated", "abate")):
+                continue
+            for pattern, score in (
+                (r"(?i)\brent\s+abatement\s*\(months?\)\s*[:\-]?\s*(\d{1,3})\b", 20),
+                (r"(?i)\bfree\s+rent\s*\(months?\)\s*[:\-]?\s*(\d{1,3})\b", 20),
+                (r"(?i)\bwith\s+(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\s+(?:(gross|base)\s+)?(?:free\s+rent|rent\s+abatement|abatement)\b", 18),
+                (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:(gross|base)\s+)?(?:free\s+rent|rent\s+abatement|abatement)\b", 15),
+                (r"(?i)\b(?:(gross|base)\s+)?(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,70}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b", 14),
+            ):
+                for match in re.finditer(pattern, line):
+                    local = _extract_context(line, match.start(), match.end())
+                    if _looks_like_distribution_window(local):
+                        continue
+                    groups = [match.group(i) if i <= (match.lastindex or 0) else None for i in range(1, (match.lastindex or 0) + 1)]
+                    nums = [_coerce_int_token(group, None) for group in groups if group and re.search(r"\d", group)]
+                    word_nums = [_word_token_to_int(group) for group in groups if group and not re.search(r"\d", group)]
+                    count = max([n for n in [*(nums or []), *(word_nums or [])] if n is not None], default=0)
+                    scope_token = "gross" if "gross" in local.lower() else "base" if "base" in local.lower() else default_scope
+                    if count > 0:
+                        free_count_candidates.append((score, count, scope_token))
+        if free_count_candidates:
+            free_count_candidates.sort(key=lambda row: (-row[0], row[1]))
+            _, free_count, scope_token = free_count_candidates[0]
+            add_period(0, free_count, scope_token, raw_text[:240])
+
+    periods = _normalize_periods(periods, term_months=term_cap)
+    if has_concession_language and not periods:
+        add_signal("timing_incomplete", "concession language detected without a confident abatement window", raw_text)
+
+    if periods and scope_analysis == "unspecified":
+        add_signal("scope_incomplete", "abatement timing was parsed but rent scope remains unspecified", periods[0].get("row_text") or raw_text)
+
+    for match in re.finditer(
+        r"(?i)\b(?:parking(?:\s+charges?|\s+costs?|\s+rent|\s+fees?)?[^\n]{0,120}?(?:abated|abatement|waived|free))\b[^\n]{0,120}\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b",
+        raw_text,
+    ):
+        start_1 = _coerce_int_token(match.group(1), 0) or 0
+        end_1 = _coerce_int_token(match.group(2), 0) or 0
+        if start_1 <= 0 or end_1 < start_1:
+            continue
+        parking_periods.append(
+            {
+                "start_month": start_1 - 1,
+                "end_month": end_1 - 1,
+                "row_text": _extract_context(raw_text, match.start(), match.end()),
+            }
+        )
+    if not parking_periods:
+        for match in re.finditer(
+            r"(?i)\b(?:first\s+)?(\d{1,3})\s+months?\b[^\n]{0,100}\bparking(?:\s+charges?|\s+costs?|\s+rent|\s+fees?)?[^\n]{0,40}\b(?:abated|abatement|waived|free)\b",
+            raw_text,
+        ):
+            count = _coerce_int_token(match.group(1), 0) or 0
+            if count <= 0:
+                continue
+            parking_periods.append({"start_month": 0, "end_month": max(0, count - 1), "row_text": _extract_context(raw_text, match.start(), match.end())})
+
+    parking_reference = bool(
+        re.search(
+            r"(?is)\bparking(?:\s+costs?|\s+charges?|\s+rent|\s+fees?)?\b[\s\S]{0,220}\b(?:abated|abatement|waived|free)\b",
+            raw_text,
+        )
+    )
+    references_abatement_period = bool(
+        re.search(
+            r"(?is)\bparking(?:\s+costs?|\s+charges?|\s+rent|\s+fees?)?\b[\s\S]{0,220}\b(?:abated|abatement|waived|free)\b[\s\S]{0,220}\babatement\s+period\b",
+            raw_text,
+        )
+        or re.search(r"(?is)\bgross\s+rent\b[\s\S]{0,80}\bparking\s+abatement\b", raw_text)
+    )
+    if parking_reference and not parking_periods and periods:
+        parking_periods = [
+            {"start_month": int(period["start_month"]), "end_month": int(period["end_month"]), "row_text": str(period.get("row_text") or raw_text[:240])}
+            for period in periods
+        ]
+    elif parking_reference and not parking_periods and references_abatement_period:
+        add_signal("parking_period_incomplete", "parking abatement referenced an abatement period, but rent-abatement timing was unresolved", raw_text)
+
+    deduped_parking: list[dict[str, Any]] = []
+    seen_parking: set[tuple[int, int]] = set()
+    max_end = max(0, term_cap - 1) if term_cap > 0 else None
+    for period in parking_periods:
+        start_i = max(0, int(period.get("start_month") or 0))
+        end_i = max(start_i, int(period.get("end_month") or start_i))
+        if max_end is not None:
+            if start_i > max_end:
+                continue
+            end_i = min(end_i, max_end)
+        key = (start_i, end_i)
+        if key in seen_parking:
+            continue
+        seen_parking.add(key)
+        deduped_parking.append({"start_month": start_i, "end_month": end_i, "row_text": str(period.get("row_text") or "")})
+    deduped_parking.sort(key=lambda row: (int(row["start_month"]), int(row["end_month"])))
+
+    return {
+        "concession_detected": has_concession_language,
+        "scope": scope_analysis,
+        "abatements": [
+            {
+                "start_month": int(period["start_month"]),
+                "end_month": int(period["end_month"]),
+                "scope": "gross_rent" if str(period.get("scope") or "base") == "gross" else "base_rent_only",
+                "classification": "rent_abatement",
+                "row_text": str(period.get("row_text") or ""),
+            }
+            for period in periods
+        ],
+        "free_rent_months": _count_unique_months(periods) if periods else None,
+        "parking_abatements": deduped_parking,
+        "signals": signals,
+    }
