@@ -75,7 +75,7 @@ export default function DocsPage() {
                 </li>
               </ul>
               <p className="text-sm sm:text-base text-slate-300">
-                In <strong>Tenant Rep</strong> mode, emphasis is on client requirements, analyses, surveys, completed leases, and obligations.
+                In <strong>Tenant Rep</strong> mode, emphasis is on client requirements, analyses, surveys, lease abstracts, and obligations.
                 In <strong>Landlord Rep</strong> mode, emphasis shifts to availabilities, listing marketing, inquiry/tour/proposal pipeline, lease tracking, and reporting.
               </p>
             </section>

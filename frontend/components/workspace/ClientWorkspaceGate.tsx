@@ -65,7 +65,7 @@ export function ClientWorkspaceGate() {
           >
             <p className="text-sm font-medium">Tenant Rep</p>
             <p className="mt-1 text-xs text-slate-300">
-              Requirement-driven deals, surveys, financial analyses, completed leases, and obligations.
+              Requirement-driven deals, surveys, financial analyses, lease abstracts, and obligations.
             </p>
           </button>
           <button

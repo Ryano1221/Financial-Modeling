@@ -80,7 +80,7 @@ export function BrokerOsCommandCenter() {
           <p className="text-sm text-slate-300 mb-3">
             {isLandlordMode
               ? "Run structured landlord workflows across listings, inquiries, tours, proposals, leases, reporting, exports, and share links."
-              : "Run structured workflows across deals, documents, surveys, analyses, completed leases, obligations, exports, and share links."}
+              : "Run structured workflows across deals, documents, surveys, analyses, lease abstracts, obligations, exports, and share links."}
           </p>
           <input
             ref={fileInputRef}

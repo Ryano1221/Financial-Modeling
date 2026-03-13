@@ -2060,7 +2060,7 @@ function HomeContent() {
   const heroPreparedBy = coverMetaPreview.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
   const heroCapabilitiesLabel = isLandlordMode
     ? "Deals • Availabilities • Marketing • Lease Tracking • Reporting • AI Workflows"
-    : "Financial Analyses • Surveys • Completed Leases • CRM • Obligations • AI Workflows";
+    : "Financial Analyses • Surveys • Lease Abstracts • CRM • Obligations • AI Workflows";
   const heroWorkflowFooterLabel = isLandlordMode
     ? `${landlordSignedDealsCount} signed · ${workflowCoverageCount} workflows active`
     : `${parsedDocumentsCount} parsed · ${workflowCoverageCount} workflows active`;

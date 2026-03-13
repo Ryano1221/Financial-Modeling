@@ -29,7 +29,7 @@ const MODULE_DEFINITION_BY_ID: Record<PlatformModuleDefinition["id"], Omit<Platf
     requiresAuth: true,
   },
   "completed-leases": {
-    label: "Completed Leases",
+    label: "Lease Abstracts",
     description: "Parse executed leases and generate abstract outputs.",
     requiresAuth: true,
   },
