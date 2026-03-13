@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import extraction.pipeline as extraction_pipeline
 from extraction.normalize import NormalizedDocument, PageData
 from extraction.classify import classify_document
 from extraction.regex import mine_candidates
@@ -341,3 +342,102 @@ def test_rule_classifier_detects_flyer_and_floorplan() -> None:
 
     assert classify_document(flyer).get("doc_type") == "flyer"
     assert classify_document(floorplan).get("doc_type") == "floorplan"
+
+
+def test_run_extraction_pipeline_surfaces_rejected_rent_rows_as_review_tasks(monkeypatch) -> None:
+    normalized = NormalizedDocument(
+        sha256="pipeline-rent-review",
+        filename="lease.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text="Lease Year 1 Monthly Rent $25,000",
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text="Lease Year 1 Monthly Rent $25,000",
+    )
+
+    monkeypatch.setattr(extraction_pipeline, "normalize_document", lambda *args, **kwargs: normalized)
+    monkeypatch.setattr(
+        extraction_pipeline,
+        "extract_rent_step_candidates_with_review",
+        lambda *args, **kwargs: (
+            [],
+            [
+                {
+                    "field_path": "rent_steps",
+                    "severity": "warn",
+                    "issue_code": "RENT_ROW_REJECTED_MONTHLY_TOTAL",
+                    "message": "Row looked like monthly total rent, not annual PSF rent.",
+                    "candidates": [
+                        {
+                            "row_text": "Lease Year 1 Monthly Rent $25,000",
+                            "category": "monthly_total",
+                            "reason": "Row looked like monthly total rent, not annual PSF rent.",
+                            "source": "text_line_regex",
+                        }
+                    ],
+                    "recommended_value": None,
+                    "evidence": [
+                        {
+                            "page": 1,
+                            "snippet": "Lease Year 1 Monthly Rent $25,000",
+                            "bbox": None,
+                            "source": "text_line_regex",
+                            "source_confidence": 0.9,
+                        }
+                    ],
+                    "metadata": {
+                        "row_text": "Lease Year 1 Monthly Rent $25,000",
+                        "rejection_reason": "Row looked like monthly total rent, not annual PSF rent.",
+                        "rejection_category": "monthly_total",
+                        "base_issue_code": "RENT_ROW_REJECTED",
+                    },
+                }
+            ],
+        ),
+    )
+    monkeypatch.setattr(extraction_pipeline, "mine_candidates", lambda *args, **kwargs: {})
+    monkeypatch.setattr(extraction_pipeline, "retrieve_section_snippets", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        extraction_pipeline,
+        "classify_document",
+        lambda *args, **kwargs: {"doc_type": "lease", "doc_role": "prime_lease", "confidence": 0.9, "evidence_spans": []},
+    )
+    monkeypatch.setattr(extraction_pipeline, "structured_extract", lambda *args, **kwargs: {"review_tasks": []})
+    monkeypatch.setattr(
+        extraction_pipeline,
+        "reconcile",
+        lambda *args, **kwargs: {
+            "resolved": {
+                "term": {"commencement_date": "2026-01-01", "expiration_date": "2026-12-31", "term_months": 12},
+                "premises": {"building_name": "A", "suite": "100", "floor": None, "address": "A", "rsf": 1000},
+                "rent_steps": [],
+                "abatements": [],
+                "abatement_analysis": {"classification": "none", "phase_in_detected": False, "phase_in_confidence": 0.0, "scope": None},
+                "concessions": {},
+                "tenant_improvements": {},
+                "parking": {},
+                "rights_options": {},
+                "opex": {"mode": "nnn", "base_psf_year_1": 10.0, "growth_rate": 0.03, "cues": ["nnn"]},
+            },
+            "provenance": {},
+            "reconcile_margin": 0.5,
+            "solver_debug": {},
+            "degraded": False,
+        },
+    )
+
+    result = extraction_pipeline.run_extraction_pipeline(
+        file_bytes=b"%PDF-1.4 test",
+        filename="lease.pdf",
+        content_type="application/pdf",
+    )
+
+    rent_review = next(task for task in result.get("review_tasks") or [] if task.get("issue_code") == "RENT_ROW_REJECTED_MONTHLY_TOTAL")
+    assert rent_review.get("metadata", {}).get("rejection_category") == "monthly_total"
+    assert "Monthly Rent" in rent_review.get("metadata", {}).get("row_text", "")

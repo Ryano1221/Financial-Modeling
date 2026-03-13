@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClientLogoUploader } from "@/components/ClientLogoUploader";
 import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCenter";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
 
 function asText(value: unknown): string {
   return String(value || "").trim();
@@ -41,7 +42,9 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     clients,
     activeClient,
     activeClientId,
+    representationMode,
     setActiveClient,
+    setRepresentationMode,
     createClient,
     updateClient,
   } = useClientWorkspace();
@@ -171,6 +174,28 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
             <Link href="/account?mode=signup" className="btn-premium btn-premium-primary">
               Create account
             </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (!representationMode) {
+    return (
+      <main className="relative z-10 app-container pt-24 sm:pt-28 pb-14 md:pb-20">
+        <section className="mx-auto w-full max-w-[96vw] border border-white/20 bg-slate-950/70 p-6">
+          <p className="heading-kicker mb-2">Client Workspace</p>
+          <h1 className="heading-section mb-2">Choose Representation Mode</h1>
+          <p className="text-sm text-slate-300 mb-4">
+            Select your operating side before managing client workspaces.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button type="button" className="btn-premium btn-premium-secondary" onClick={() => setRepresentationMode(TENANT_REP_MODE)}>
+              Tenant Rep
+            </button>
+            <button type="button" className="btn-premium btn-premium-secondary" onClick={() => setRepresentationMode(LANDLORD_REP_MODE)}>
+              Landlord Rep
+            </button>
           </div>
         </section>
       </main>

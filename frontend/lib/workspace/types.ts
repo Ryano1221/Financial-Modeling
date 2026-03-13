@@ -1,5 +1,11 @@
 import type { BackendCanonicalLease, ExtractionReviewTask, ExtractionSummary, NormalizerResponse } from "@/lib/types";
 import type { PlatformModuleId } from "@/lib/platform/module-registry";
+import {
+  DEFAULT_REPRESENTATION_MODE,
+  LANDLORD_REP_MODE,
+  TENANT_REP_MODE,
+  type RepresentationMode,
+} from "@/lib/workspace/representation-mode";
 
 export interface ClientWorkspaceClient {
   id: string;
@@ -14,6 +20,8 @@ export interface ClientWorkspaceClient {
   logoDataUrl?: string;
   logoFileName?: string;
 }
+
+export { DEFAULT_REPRESENTATION_MODE, LANDLORD_REP_MODE, TENANT_REP_MODE, type RepresentationMode };
 
 export type ClientDocumentType =
   | "proposals"
@@ -166,6 +174,13 @@ export interface ClientWorkspaceDeal {
   updatedAt: string;
 }
 
+export type DealsViewMode = "board" | "table" | "timeline" | "client_grouped";
+
+export interface ClientCrmSettings {
+  autoStageFromDocuments: boolean;
+  defaultDealsView: DealsViewMode;
+}
+
 export interface CreateDealInput {
   clientId?: string;
   dealName: string;
@@ -223,24 +238,82 @@ export interface UpdateDealInput {
   tasks?: DealTaskItem[];
 }
 
-export const DEFAULT_DEAL_STAGES: readonly string[] = [
+export const TENANT_REP_DEAL_STAGES: readonly string[] = [
   "New Lead",
   "Qualified",
   "Requirement Gathering",
-  "Market Survey",
+  "Survey",
   "Touring",
-  "Shortlist",
   "Proposal Requested",
   "Proposal Received",
   "Financial Analysis",
   "Negotiation",
-  "Finalist",
+  "LOI",
   "Lease Drafting",
   "Lease Review",
   "Executed",
   "Lost",
   "On Hold",
 ] as const;
+
+export const LANDLORD_REP_DEAL_STAGES: readonly string[] = [
+  "New Inquiry",
+  "Qualified Prospect",
+  "Tour Scheduled",
+  "Toured",
+  "Proposal Out",
+  "Proposal Received / Countering",
+  "Negotiation",
+  "LOI",
+  "Lease Drafting",
+  "Lease Review",
+  "Executed",
+  "Lost",
+  "On Hold",
+] as const;
+
+export const DEFAULT_DEAL_STAGES: readonly string[] = TENANT_REP_DEAL_STAGES;
+
+export const DEFAULT_CRM_SETTINGS: Readonly<ClientCrmSettings> = {
+  autoStageFromDocuments: true,
+  defaultDealsView: "board",
+};
+
+export function getDefaultDealStagesForMode(
+  mode: RepresentationMode | null | undefined,
+): readonly string[] {
+  if (mode === LANDLORD_REP_MODE) return LANDLORD_REP_DEAL_STAGES;
+  if (mode === TENANT_REP_MODE) return TENANT_REP_DEAL_STAGES;
+  return DEFAULT_REPRESENTATION_MODE === LANDLORD_REP_MODE ? LANDLORD_REP_DEAL_STAGES : TENANT_REP_DEAL_STAGES;
+}
+
+export function normalizeDealsViewMode(value: unknown): DealsViewMode {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "table" || normalized === "timeline" || normalized === "client_grouped") return normalized;
+  return "board";
+}
+
+export function getDefaultCrmSettingsForMode(
+  _mode: RepresentationMode | null | undefined,
+): ClientCrmSettings {
+  return { ...DEFAULT_CRM_SETTINGS };
+}
+
+export function normalizeCrmSettings(
+  value: unknown,
+  mode: RepresentationMode | null | undefined,
+): ClientCrmSettings {
+  const defaults = getDefaultCrmSettingsForMode(mode);
+  if (!value || typeof value !== "object") return defaults;
+  const obj = value as Partial<ClientCrmSettings>;
+  return {
+    autoStageFromDocuments:
+      typeof obj.autoStageFromDocuments === "boolean"
+        ? obj.autoStageFromDocuments
+        : defaults.autoStageFromDocuments,
+    defaultDealsView: normalizeDealsViewMode(obj.defaultDealsView),
+  };
+}
 
 export const CLIENT_DOCUMENT_TYPES: readonly ClientDocumentType[] = [
   "proposals",

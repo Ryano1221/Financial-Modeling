@@ -215,6 +215,21 @@ def test_extract_hints_derives_relative_commencement_and_rsf_from_premises_claus
     assert str(hints["expiration_date"]) == "2034-04-30"
 
 
+def test_extract_hints_carries_dated_rent_review_tasks() -> None:
+    text = (
+        "Base Rent Schedule\n"
+        "January 1, 2026 - December 31, 2026 Monthly Rent $25,000.00 Annual Rent $300,000.00\n"
+        "January 1, 2027 - December 31, 2027 Monthly Rent $26,250.00 Annual Rent $315,000.00\n"
+    )
+
+    hints = main._extract_lease_hints(text, "amendment.pdf", "test-rid")
+
+    review_tasks = [task for task in list(hints.get("_review_tasks") or []) if isinstance(task, dict)]
+    monthly_review = next(task for task in review_tasks if task.get("issue_code") == "RENT_ROW_REJECTED_MONTHLY_TOTAL")
+    assert monthly_review.get("metadata", {}).get("rejection_category") == "monthly_total"
+    assert "Monthly Rent $25,000.00" in monthly_review.get("metadata", {}).get("row_text", "")
+
+
 def test_extract_hints_amendment_prefers_extended_term_not_whereas_schedule() -> None:
     text = (
         "WHEREAS, the term of the Lease is scheduled to expire on August 31, 2019; and\n"

@@ -5,10 +5,11 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  PLATFORM_MODULES,
+  getPlatformModulesForMode,
   resolveActivePlatformModule,
 } from "@/lib/platform/module-registry";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { representationModeLabel } from "@/lib/workspace/representation-mode";
 
 function truncateLabel(value: string, maxChars: number): string {
   const clean = String(value || "").trim();
@@ -27,6 +28,7 @@ export function TopNav() {
   const {
     ready,
     session,
+    representationMode,
     clients,
     activeClientId,
     setActiveClient,
@@ -46,8 +48,9 @@ export function TopNav() {
 
   const rawModule = String(searchParams?.get("module") || "").trim().toLowerCase();
   const hasExplicitModule = rawModule.length > 0;
+  const platformModules = getPlatformModulesForMode(representationMode);
   const activeModule = hasExplicitModule
-    ? resolveActivePlatformModule(rawModule, Boolean(session))
+    ? resolveActivePlatformModule(rawModule, Boolean(session), representationMode)
     : null;
   const accountTabActive = pathname?.startsWith("/account");
   const syncTime =
@@ -106,6 +109,11 @@ export function TopNav() {
                   {cloudSyncLabel}
                 </span>
               ) : null}
+              {ready && session ? (
+                <span className="hidden 2xl:inline-flex text-[11px] uppercase tracking-[0.08em] text-slate-300">
+                  {representationMode ? representationModeLabel(representationMode) : "Mode Required"}
+                </span>
+              ) : null}
               <div className="lg:hidden min-w-[190px]">
                 <select
                   aria-label="Module navigation"
@@ -118,7 +126,7 @@ export function TopNav() {
                   }}
                 >
                   <option value="">Select module</option>
-                  {PLATFORM_MODULES.map((tab) => (
+                  {platformModules.map((tab) => (
                     <option key={tab.id} value={tab.id}>
                       {tab.label}
                     </option>
@@ -126,7 +134,7 @@ export function TopNav() {
                 </select>
               </div>
               <div className="hidden lg:flex items-center gap-2">
-                {PLATFORM_MODULES.map((tab) => {
+                {platformModules.map((tab) => {
                   const isActive = tab.id === activeModule;
                   return (
                     <Link
@@ -192,7 +200,7 @@ export function TopNav() {
                   {cloudSyncLabel}
                 </div>
               ) : null}
-              {PLATFORM_MODULES.map((tab) => {
+              {platformModules.map((tab) => {
                 const isActive = tab.id === activeModule;
                 return (
                   <Link

@@ -16,7 +16,7 @@ from .reconcile import reconcile
 from .regex import mine_candidates
 from .schema import validate_canonical_extraction
 from .sections import retrieve_section_snippets
-from .tables import extract_rent_step_candidates
+from .tables import extract_rent_step_candidates_with_review
 from .validate import validate_extraction
 
 
@@ -387,7 +387,7 @@ def run_extraction_pipeline(
             tmp_pdf_path = tmp.name
 
     try:
-        rent_step_candidates = extract_rent_step_candidates(normalized, file_path=tmp_pdf_path)
+        rent_step_candidates, rent_row_review_tasks = extract_rent_step_candidates_with_review(normalized, file_path=tmp_pdf_path)
     finally:
         if tmp_pdf_path:
             try:
@@ -425,7 +425,7 @@ def run_extraction_pipeline(
         "parking": dict(resolved.get("parking") or {}),
         "rights_options": dict(resolved.get("rights_options") or {}),
         "opex": dict(resolved.get("opex") or {}),
-        "review_tasks": list((llm or {}).get("review_tasks") or []),
+        "review_tasks": list((llm or {}).get("review_tasks") or []) + list(rent_row_review_tasks or []),
         "provenance": provenance,
         "evidence": _flatten_evidence(
             provenance,

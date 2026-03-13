@@ -11,6 +11,172 @@ import main
 from models import ExtractionResponse, OpexMode, RentStep, Scenario
 
 
+def test_run_extraction_artifacts_primary_pass_omits_canonical_backfill(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_build_extract_response(*, file_bytes: bytes, filename: str, content_type: str, canonical_lease=None):
+        captured["file_bytes"] = file_bytes
+        captured["filename"] = filename
+        captured["content_type"] = content_type
+        captured["canonical_lease"] = canonical_lease
+        return {
+            "document": {"doc_type": "proposal", "doc_role": "proposal", "confidence": 0.91, "evidence_spans": []},
+            "term": {
+                "commencement_date": "2026-01-01",
+                "expiration_date": "2030-12-31",
+                "rent_commencement_date": "2026-01-01",
+                "term_months": 60,
+            },
+            "premises": {"building_name": "Signal Tower", "suite": "700", "floor": None, "address": "123 Main St", "rsf": 12000.0},
+            "rent_steps": [],
+            "abatements": [],
+            "parking_abatements": [],
+            "opex": {"mode": "nnn", "base_psf_year_1": 8.5, "growth_rate": 0.03, "cues": []},
+            "proposal": {},
+            "provenance": {"fields": []},
+            "review_tasks": [],
+            "confidence": {"overall": 0.91, "status": "green", "export_allowed": True},
+            "export_allowed": True,
+        }
+
+    monkeypatch.setattr(main, "build_extract_response", _fake_build_extract_response)
+    canonical = main._dict_to_canonical(
+        {
+            "building_name": "Legacy Tower",
+            "suite": "1200",
+            "rsf": 10000,
+            "commencement_date": "2026-01-01",
+            "expiration_date": "2030-12-31",
+            "term_months": 60,
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 42.0}],
+        }
+    )
+
+    artifacts = main._run_extraction_artifacts(
+        file_bytes=b"proposal bytes",
+        filename="proposal.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        canonical=canonical,
+    )
+
+    assert captured["canonical_lease"] is None
+    assert artifacts["canonical_extraction"]["document"]["doc_type"] == "proposal"
+    assert artifacts["extraction_confidence"]["status"] == "green"
+
+
+def test_run_extraction_artifacts_uses_canonical_only_fallback_when_pipeline_errors(monkeypatch) -> None:
+    monkeypatch.setattr(main, "build_extract_response", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    canonical = main._dict_to_canonical(
+        {
+            "building_name": "Fallback Tower",
+            "suite": "500",
+            "rsf": 8500,
+            "commencement_date": "2027-01-01",
+            "expiration_date": "2031-12-31",
+            "term_months": 60,
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 38.5}],
+        }
+    )
+
+    artifacts = main._run_extraction_artifacts(
+        file_bytes=b"lease bytes",
+        filename="lease.pdf",
+        content_type="application/pdf",
+        canonical=canonical,
+    )
+
+    assert artifacts["review_tasks"][0]["issue_code"] == "PIPELINE_FALLBACK"
+    assert artifacts["canonical_extraction"]["term"]["term_months"] == int(canonical.term_months)
+    assert artifacts["canonical_extraction"]["rent_steps"][0]["source"] == "canonical_normalizer"
+
+
+def test_merge_canonical_primary_then_legacy_prefers_primary_values() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "Legacy Tower",
+            "suite": "1200",
+            "address": "500 Legacy Blvd",
+            "rsf": 10000,
+            "commencement_date": "2026-01-01",
+            "expiration_date": "2030-12-31",
+            "term_months": 60,
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
+            "opex_psf_year_1": 11.0,
+        }
+    )
+    extraction = {
+        "term": {
+            "commencement_date": "2026-02-01",
+            "expiration_date": "2031-01-31",
+            "term_months": 60,
+        },
+        "premises": {
+            "building_name": "Pipeline Tower",
+            "suite": "900",
+            "address": "100 Pipeline Ave",
+            "rsf": 12500,
+        },
+        "rent_steps": [
+            {"start_month": 0, "end_month": 59, "rate_psf_annual": 48.0},
+        ],
+        "opex": {"mode": "nnn", "base_psf_year_1": 9.5, "growth_rate": 0.03},
+        "provenance": {
+            "premises.rsf": [{"source": "pdf_text_regex", "source_confidence": 0.92, "snippet": "12,500 RSF", "page": 1, "bbox": None}],
+        },
+        "confidence": {"overall": 0.91},
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={"suite": 0.7},
+    )
+
+    assert merged.building_name == "Pipeline Tower"
+    assert merged.suite == "900"
+    assert merged.rsf == 12500
+    assert meta["field_sources"]["rsf"] == "canonical_pipeline"
+    assert meta["field_sources"]["building_name"] == "canonical_pipeline"
+    assert meta["provenance"]["rsf"][0]["source"] != "legacy_fallback"
+
+
+def test_merge_canonical_primary_then_legacy_uses_legacy_only_for_missing_primary_fields() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "Legacy Tower",
+            "suite": "500",
+            "address": "500 Legacy Blvd",
+            "rsf": 10000,
+            "commencement_date": "2026-01-01",
+            "expiration_date": "2030-12-31",
+            "term_months": 60,
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
+        }
+    )
+    extraction = {
+        "term": {"commencement_date": "2026-03-01", "expiration_date": "2031-02-28", "term_months": 60},
+        "premises": {"building_name": "Primary Tower", "suite": None, "address": "200 Primary Dr", "rsf": 11500},
+        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 46.0}],
+        "opex": {"mode": "nnn", "base_psf_year_1": 8.0, "growth_rate": 0.03},
+        "provenance": {},
+        "confidence": {"overall": 0.86},
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={"suite": 0.74},
+    )
+
+    assert merged.building_name == "Primary Tower"
+    assert merged.rsf == 11500
+    assert merged.suite == "500"
+    assert meta["field_sources"]["suite"] == "legacy_fallback"
+    assert "suite" in list(meta.get("fallback_fields") or [])
+    assert meta["provenance"]["suite"][0]["source"] == "legacy_fallback"
+    assert any("legacy fallback populated" in str(w).lower() for w in list(meta.get("warnings") or []))
+
+
 def test_supplemental_quality_checks_flags_rent_schedule_coverage_gap() -> None:
     canonical = main._dict_to_canonical(
         {
@@ -29,6 +195,99 @@ def test_supplemental_quality_checks_flags_rent_schedule_coverage_gap() -> None:
     tasks = [t for t in quality["review_tasks"] if isinstance(t, dict)]
     assert any(t.get("issue_code") == "RENT_SCHEDULE_COVERAGE" for t in tasks)
     assert any(str(t.get("severity") or "").lower() == "blocker" for t in tasks)
+
+
+def test_normalize_impl_merges_dated_rent_review_tasks_from_hints(monkeypatch) -> None:
+    monkeypatch.setattr(main, "extract_text_from_pdf", lambda _buf: "dated amendment text")
+    monkeypatch.setattr(main, "text_quality_requires_ocr", lambda _text: False)
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "amendment")
+    monkeypatch.setattr(
+        main,
+        "_extract_lease_hints",
+        lambda _text, _filename, _rid: {
+            "building_name": "Signal Tower",
+            "suite": "700",
+            "rsf": 12000.0,
+            "commencement_date": date(2026, 1, 1),
+            "expiration_date": date(2030, 12, 31),
+            "term_months": 60,
+            "_review_tasks": [
+                {
+                    "field_path": "rent_steps",
+                    "severity": "warn",
+                    "issue_code": "RENT_ROW_REJECTED_MONTHLY_TOTAL",
+                    "message": "Dated rent row looked like monthly rent dollars, not an annual PSF rent step.",
+                    "candidates": [
+                        {
+                            "row_text": "January 1, 2026 - December 31, 2026 Monthly Rent $25,000.00 Annual Rent $300,000.00",
+                            "category": "monthly_total",
+                            "reason": "Dated rent row looked like monthly rent dollars, not an annual PSF rent step.",
+                            "source": "dated_rent_table_triplet",
+                        }
+                    ],
+                    "recommended_value": None,
+                    "evidence": [
+                        {
+                            "page": None,
+                            "snippet": "January 1, 2026 - December 31, 2026 Monthly Rent $25,000.00 Annual Rent $300,000.00",
+                            "bbox": None,
+                            "source": "dated_rent_table_triplet",
+                            "source_confidence": 0.9,
+                        }
+                    ],
+                    "metadata": {
+                        "row_text": "January 1, 2026 - December 31, 2026 Monthly Rent $25,000.00 Annual Rent $300,000.00",
+                        "rejection_reason": "Dated rent row looked like monthly rent dollars, not an annual PSF rent step.",
+                        "rejection_category": "monthly_total",
+                        "base_issue_code": "RENT_ROW_REJECTED",
+                    },
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Signal Tower",
+                rsf=12000.0,
+                commencement=date(2026, 1, 1),
+                expiration=date(2030, 12, 31),
+                rent_steps=[RentStep(start=0, end=59, rate_psf_yr=42.0)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=8.0,
+                base_year_opex_psf_yr=8.0,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"rsf": 0.9},
+            warnings=[],
+            source="pdf_text",
+            text_length=18,
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="dated-amendment.pdf", file=BytesIO(b"pdf-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "PDF", None, None, upload)
+
+    tasks = list(result.review_tasks or [])
+    rent_review = next(task for task in tasks if getattr(task, "issue_code", None) == "RENT_ROW_REJECTED_MONTHLY_TOTAL")
+    assert rent_review.candidates[0]["category"] == "monthly_total"
 
 
 def test_supplemental_quality_checks_flags_opex_equal_to_ti_allowance() -> None:

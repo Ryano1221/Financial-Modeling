@@ -3,6 +3,8 @@ export const ACTIVE_CLIENT_STORAGE_KEY = "lease_deck_active_client_id_v1";
 export const DOCUMENT_LIBRARY_STORAGE_KEY = "lease_deck_documents_v1";
 export const DEAL_LIBRARY_STORAGE_KEY = "lease_deck_deals_v1";
 export const DEAL_STAGE_CONFIG_STORAGE_KEY = "lease_deck_deal_stages_v1";
+export const CRM_SETTINGS_STORAGE_KEY = "lease_deck_crm_settings_v1";
+export const REPRESENTATION_MODE_STORAGE_KEY = "lease_deck_representation_mode_v1";
 
 export function normalizeWorkspaceScope(clientId: string | null | undefined): string {
   const raw = String(clientId || "").trim();

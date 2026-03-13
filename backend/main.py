@@ -64,6 +64,7 @@ from scenario_extract import (
 )
 from reports_store import load_report, save_report, REPORTS_DIR
 from routes.api import router as api_router
+from extraction.tables import classify_rent_currency_signal
 try:
     from routes.extract_lease import build_extract_response
 except Exception:  # noqa: BLE001
@@ -117,7 +118,7 @@ except ModuleNotFoundError:
         def set_cached_report_deck(*args, **kwargs) -> None:
             return None
 
-print("BOOT_VERSION", "health_v_2026_02_16_2055", flush=True)
+print("BOOT_VERSION", "health_v_2026_03_13_1735", flush=True)
 
 REPORT_BASE_URL = os.environ.get(
     "REPORT_BASE_URL",
@@ -728,14 +729,14 @@ app.include_router(webhooks_router)
 
 
 # Deploy marker: change this string after each deploy so Render logs prove new code is running
-DEPLOY_MARKER = "v4_2026_02_16_2215"
+DEPLOY_MARKER = "v5_2026_03_13_1735"
 
 
 @app.on_event("startup")
 async def _startup_log():
     commit = (os.getenv("RENDER_GIT_COMMIT") or "").strip() or "not-set"
     print("BOOT", {
-        "health_v": "v3_2026_02_16_1900",
+        "health_v": "v4_2026_03_13_1735",
         "source_file": str(Path(__file__).resolve()),
         "render_git_commit": commit,
         "render_service_name": os.getenv("RENDER_SERVICE_NAME", ""),
@@ -770,7 +771,7 @@ def health():
     ai_enabled = bool(key)
     openai_configured = bool(key)
     openai_key_prefix = (key[:7] if key else "") or None
-    version = "health_v_2026_02_16_2055"
+    version = "health_v_2026_03_13_1735"
     print("HEALTH", {"version": version, "ai_enabled": ai_enabled}, flush=True)
     return {
         "status": "ok",
@@ -2772,10 +2773,426 @@ def _extract_property_name_from_party_entities(text: str, suite_hint: str = "") 
     return ""
 
 
+def _strong_annual_rent_schedule_context(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)\b(?:base\s+rent|annual\s+rent|annual\s+base\s+rent|annual\s+fixed\s+rent|rental\s+rate|rent\s+schedule|rent\s+chart)\b",
+            str(text or ""),
+        )
+    )
+
+
+def _has_monthly_rent_context(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)\b(?:monthly\s+rent|fixed\s+monthly\s+rent|monthly\s+base\s+rent|per\s+month|/mo\b)\b",
+            str(text or ""),
+        )
+    )
+
+
+def _extract_currency_tokens_with_spans(text: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for match in re.finditer(r"(?i)[\$§S]\s*([\d][\d,]*(?:\.\d{1,4})?)", str(text or "")):
+        raw_num = str(match.group(1) or "")
+        value = _parse_number_token(raw_num)
+        if value is None:
+            continue
+        out.append(
+            {
+                "raw": match.group(0),
+                "value": float(value),
+                "start": int(match.start()),
+                "end": int(match.end()),
+            }
+        )
+    return out
+
+
+def _build_dated_rent_review_task(
+    *,
+    row_text: str,
+    category: str,
+    reason: str,
+    source: str,
+    confidence: float,
+    page: int | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    row_snippet = str(row_text or "").strip()[:300]
+    return {
+        "field_path": "rent_steps",
+        "severity": "warn",
+        "issue_code": f"RENT_ROW_REJECTED_{str(category or 'weak_context').upper()}",
+        "message": reason,
+        "candidates": [
+            {
+                "row_text": row_snippet,
+                "category": category,
+                "reason": reason,
+                "source": source,
+            }
+        ],
+        "recommended_value": None,
+        "evidence": [
+            {
+                "page": page,
+                "snippet": row_snippet,
+                "bbox": list(bbox) if bbox else None,
+                "source": source,
+                "source_confidence": max(0.2, min(0.95, float(confidence))),
+            }
+        ],
+        "metadata": {
+            "row_text": row_snippet,
+            "rejection_reason": reason,
+            "rejection_category": category,
+            "base_issue_code": "RENT_ROW_REJECTED",
+        },
+    }
+
+
+def _append_dated_rent_review_task(tasks: list[dict[str, Any]], task: dict[str, Any] | None) -> None:
+    if not isinstance(task, dict):
+        return
+    issue_code = str(task.get("issue_code") or "").strip()
+    field_path = str(task.get("field_path") or "").strip()
+    if not issue_code or not field_path:
+        return
+    for existing in tasks:
+        if not isinstance(existing, dict):
+            continue
+        if (
+            str(existing.get("issue_code") or "").strip() != issue_code
+            or str(existing.get("field_path") or "").strip() != field_path
+        ):
+            continue
+        existing_candidates = existing.get("candidates") if isinstance(existing.get("candidates"), list) else []
+        for candidate in task.get("candidates") or []:
+            if isinstance(candidate, dict) and candidate not in existing_candidates:
+                existing_candidates.append(candidate)
+        existing["candidates"] = existing_candidates
+
+        existing_evidence = existing.get("evidence") if isinstance(existing.get("evidence"), list) else []
+        for evidence in task.get("evidence") or []:
+            if isinstance(evidence, dict) and evidence not in existing_evidence:
+                existing_evidence.append(evidence)
+        existing["evidence"] = existing_evidence
+
+        existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+        existing_rows = existing_metadata.get("rows") if isinstance(existing_metadata.get("rows"), list) else []
+        incoming_metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        incoming_candidates = task.get("candidates") if isinstance(task.get("candidates"), list) else []
+        row_entry = {
+            "row_text": incoming_metadata.get("row_text"),
+            "rejection_reason": incoming_metadata.get("rejection_reason"),
+            "rejection_category": incoming_metadata.get("rejection_category"),
+            "source": (
+                incoming_candidates[0].get("source")
+                if incoming_candidates and isinstance(incoming_candidates[0], dict)
+                else None
+            ),
+        }
+        if row_entry not in existing_rows:
+            existing_rows.append(row_entry)
+        existing_metadata["rows"] = existing_rows
+        existing["metadata"] = existing_metadata
+        return
+
+    task_metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    task_candidates = task.get("candidates") if isinstance(task.get("candidates"), list) else []
+    task["metadata"] = {
+        **task_metadata,
+        "rows": [
+            {
+                "row_text": task_metadata.get("row_text"),
+                "rejection_reason": task_metadata.get("rejection_reason"),
+                "rejection_category": task_metadata.get("rejection_category"),
+                "source": (
+                    task_candidates[0].get("source")
+                    if task_candidates and isinstance(task_candidates[0], dict)
+                    else None
+                ),
+            }
+        ],
+    }
+    tasks.append(task)
+
+
+def _classify_dated_amount_triplet_with_review(row_text: str, context_text: str | None = None) -> tuple[tuple[float, float] | None, dict[str, Any] | None]:
+    tokens = _extract_currency_tokens_with_spans(row_text)
+    if len(tokens) < 3:
+        return None, None
+    tokens = tokens[:3]
+    row_context = str(row_text or "")
+    surrounding_context = str(context_text or row_text or "")
+    if _has_monthly_rent_context(surrounding_context):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="monthly_total",
+            reason="Dated rent row looked like monthly rent dollars, not an annual PSF rent step.",
+            source="dated_rent_table_triplet",
+            confidence=0.9,
+        )
+    if not _strong_annual_rent_schedule_context(surrounding_context):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="weak_context",
+            reason="Dated rent row had date and currency values but lacked strong annual rent schedule context.",
+            source="dated_rent_table_triplet",
+            confidence=0.38,
+        )
+    if any(tok in surrounding_context.lower() for tok in ("operating expense", "opex", "cam", "reconciliation")):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="weak_context",
+            reason="Dated row was rejected because the surrounding context looked like OpEx or CAM, not base rent.",
+            source="dated_rent_table_triplet",
+            confidence=0.42,
+        )
+
+    def local_signal(token: dict[str, Any]) -> Any:
+        pad_left = max(0, int(token["start"]) - 28)
+        pad_right = min(len(row_context), int(token["end"]) + 28)
+        return classify_rent_currency_signal(row_context[pad_left:pad_right])
+
+    first_signal = local_signal(tokens[0])
+    second_signal = local_signal(tokens[1])
+    third_signal = local_signal(tokens[2])
+
+    rate_value = float(tokens[0]["value"])
+    annual_total = float(tokens[1]["value"])
+    monthly_total = float(tokens[2]["value"])
+
+    if first_signal and getattr(first_signal, "kind", "") == "monthly_psf":
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="monthly_psf",
+            reason="Dated rent row looked like monthly PSF rent, not annual PSF rent.",
+            source="dated_rent_table_triplet",
+            confidence=float(getattr(first_signal, "confidence", 0.2) or 0.2),
+        )
+    if second_signal and getattr(second_signal, "kind", "") == "monthly_total":
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="monthly_total",
+            reason="Dated rent row looked like monthly rent dollars, not a typed annual rent schedule row.",
+            source="dated_rent_table_triplet",
+            confidence=float(getattr(second_signal, "confidence", 0.9) or 0.9),
+        )
+    if third_signal and getattr(third_signal, "kind", "") == "annual_total":
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="annual_total",
+            reason="Dated rent row looked like annual total rent dollars, not a typed annual PSF rent step.",
+            source="dated_rent_table_triplet",
+            confidence=float(getattr(third_signal, "confidence", 0.86) or 0.86),
+        )
+    if not (1.0 <= rate_value <= 250.0):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="ambiguous_currency",
+            reason="Dated rent row contained multiple dollar amounts, but the leading value did not look like an annual PSF rate.",
+            source="dated_rent_table_triplet",
+            confidence=0.35,
+        )
+    if annual_total < 1_000 or monthly_total < 100:
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="ambiguous_currency",
+            reason="Dated rent row contained multiple dollar amounts, but the totals did not resolve into annual total and monthly total rent.",
+            source="dated_rent_table_triplet",
+            confidence=0.35,
+        )
+    annual_ratio = annual_total / max(monthly_total, 1.0)
+    if not (8.0 <= annual_ratio <= 16.0):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="ambiguous_currency",
+            reason="Dated rent row had multiple dollar amounts, but they did not align to a consistent annual-total versus monthly-total pattern.",
+            source="dated_rent_table_triplet",
+            confidence=0.35,
+        )
+    if first_signal and getattr(first_signal, "kind", "") not in {"", "annual_psf", "ambiguous_currency"}:
+        reject_kind = str(getattr(first_signal, "kind", "") or "ambiguous_currency")
+        reject_reason = {
+            "monthly_total": "Dated rent row looked like monthly rent dollars, not annual PSF rent.",
+            "annual_total": "Dated rent row looked like annual total rent dollars, not annual PSF rent.",
+            "monthly_psf": "Dated rent row looked like monthly PSF rent, not annual PSF rent.",
+            "ambiguous_currency": "Dated rent row had ambiguous currency values without clear annual PSF labeling.",
+        }.get(reject_kind, "Dated rent row was rejected because the rent amount type was ambiguous.")
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category=reject_kind,
+            reason=reject_reason,
+            source="dated_rent_table_triplet",
+            confidence=float(getattr(first_signal, "confidence", 0.35) or 0.35),
+        )
+    return (rate_value, annual_total), None
+
+
+def _classify_dated_amount_triplet(row_text: str, context_text: str | None = None) -> tuple[float, float] | None:
+    classified, _review = _classify_dated_amount_triplet_with_review(row_text, context_text)
+    return classified
+
+
+def _classify_fragmented_dated_amount_pair_with_review(
+    *,
+    row_text: str,
+    header_context: str,
+    annual_total_value: float,
+    rate_value: float,
+) -> tuple[tuple[float, float] | None, dict[str, Any] | None]:
+    context = str(header_context or "")
+    if _has_monthly_rent_context(context):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="monthly_total",
+            reason="Fragmented dated rent row appeared under monthly rent context, not annual PSF rent context.",
+            source="dated_rent_table_fragmented_ocr",
+            confidence=0.9,
+        )
+    if not _strong_annual_rent_schedule_context(context):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="weak_context",
+            reason="Fragmented dated rent row had date and currency values but lacked strong annual rent schedule context.",
+            source="dated_rent_table_fragmented_ocr",
+            confidence=0.38,
+        )
+    if any(tok in context.lower() for tok in ("operating expense", "opex", "cam", "reconciliation")):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="weak_context",
+            reason="Fragmented dated row was rejected because the header context looked like OpEx or CAM, not base rent.",
+            source="dated_rent_table_fragmented_ocr",
+            confidence=0.42,
+        )
+    if annual_total_value < 1_000:
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="annual_total",
+            reason="Fragmented dated rent row did not include a credible annual total rent amount.",
+            source="dated_rent_table_fragmented_ocr",
+            confidence=0.4,
+        )
+    if not (1.0 <= rate_value <= 250.0):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="ambiguous_currency",
+            reason="Fragmented dated rent row did not include a credible annual PSF rent amount.",
+            source="dated_rent_table_fragmented_ocr",
+            confidence=0.35,
+        )
+    return (rate_value, annual_total_value), None
+
+
+def _classify_fragmented_dated_amount_pair(
+    *,
+    header_context: str,
+    annual_total_value: float,
+    rate_value: float,
+) -> tuple[float, float] | None:
+    classified, _review = _classify_fragmented_dated_amount_pair_with_review(
+        row_text=header_context,
+        header_context=header_context,
+        annual_total_value=annual_total_value,
+        rate_value=rate_value,
+    )
+    return classified
+
+
+def _classify_dated_range_rate_row(
+    *,
+    row_text: str,
+    context_text: str,
+) -> tuple[float | None, dict[str, Any] | None]:
+    rate_signal = classify_rent_currency_signal(row_text)
+    if rate_signal is None:
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="ambiguous_currency",
+            reason="Dated rent row included a date range and dollars but no clear annual PSF rate.",
+            source="dated_rent_table_range_rate",
+            confidence=0.35,
+        )
+    if str(rate_signal.kind) != "annual_psf":
+        reject_kind = str(rate_signal.kind or "ambiguous_currency")
+        reject_reason = {
+            "monthly_psf": "Dated rent row looked like monthly PSF rent, not annual PSF rent.",
+            "monthly_total": "Dated rent row looked like monthly rent dollars, not annual PSF rent.",
+            "annual_total": "Dated rent row looked like annual total rent dollars, not annual PSF rent.",
+            "ambiguous_currency": "Dated rent row included ambiguous currency without clear annual PSF labeling.",
+        }.get(reject_kind, "Dated rent row was rejected because the rent amount type was ambiguous.")
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category=reject_kind,
+            reason=reject_reason,
+            source="dated_rent_table_range_rate",
+            confidence=float(rate_signal.confidence or 0.35),
+        )
+    if _has_monthly_rent_context(context_text):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="monthly_total",
+            reason="Dated rent row appeared in monthly rent context, so it was not promoted to an annual PSF rent step.",
+            source="dated_rent_table_range_rate",
+            confidence=0.9,
+        )
+    if not _strong_annual_rent_schedule_context(context_text):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="weak_context",
+            reason="Dated rent row had a date range and annual PSF amount but lacked strong annual rent schedule context.",
+            source="dated_rent_table_range_rate",
+            confidence=0.38,
+        )
+    if any(tok in context_text.lower() for tok in ("operating expense", "opex", "cam", "reconciliation")):
+        return None, _build_dated_rent_review_task(
+            row_text=row_text,
+            category="weak_context",
+            reason="Dated rent row was rejected because the surrounding context looked like OpEx or CAM, not base rent.",
+            source="dated_rent_table_range_rate",
+            confidence=0.42,
+        )
+    return float(rate_signal.value), None
+
+
+def _dated_schedule_header_context(lines: list[str], idx: int) -> str:
+    header_line_idx = -1
+    header_pattern = re.compile(r"(?i)\b(?:annual\s+rent|annual\s+base\s+rent|annual\s+fixed\s+rent|rent\s+schedule|rent\s+chart|rental\s+rate)\b")
+    date_like_pattern = re.compile(r"^\s*(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|[\$§S]\s*[\d])")
+    for probe_idx in range(max(0, idx - 40), idx):
+        if header_pattern.search(lines[probe_idx]):
+            header_line_idx = probe_idx
+    if header_line_idx >= 0:
+        return " ".join(
+            line
+            for line in lines[header_line_idx:idx]
+            if line and not date_like_pattern.match(line)
+        )
+    return " ".join(
+        line
+        for line in lines[max(0, idx - 8):idx]
+        if line and not date_like_pattern.match(line)
+    )
+
+
 def _extract_dated_rent_table_schedule_and_rsf(
     text: str,
     commencement_hint: Optional[date] = None,
 ) -> tuple[list[dict], Optional[float]]:
+    schedule, rsf, _review_tasks = _extract_dated_rent_table_schedule_and_rsf_with_review(
+        text,
+        commencement_hint=commencement_hint,
+    )
+    return schedule, rsf
+
+
+def _extract_dated_rent_table_schedule_and_rsf_with_review(
+    text: str,
+    commencement_hint: Optional[date] = None,
+) -> tuple[list[dict], Optional[float], list[dict]]:
     """
     Parse amendment-style rent tables with date ranges and rent columns, e.g.
     "Sep 1, 2019 - Nov 30, 2020 $18.50 $186,498.50 $15,541.54".
@@ -2784,7 +3201,7 @@ def _extract_dated_rent_table_schedule_and_rsf(
     returned month offsets are aligned to that commencement.
     """
     if not text:
-        return [], None
+        return [], None, []
     month_token = (
         r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
@@ -2799,6 +3216,11 @@ def _extract_dated_rent_table_schedule_and_rsf(
         r"[^\n$]{0,120}\$\s*([\d,]+(?:\.\d{1,4})?)"
         r"[^\n$]{0,80}\$\s*([\d,]+(?:\.\d{1,4})?)"
         r"[^\n$]{0,80}\$\s*([\d,]+(?:\.\d{1,4})?)"
+    )
+    monthly_annual_row_pattern = re.compile(
+        rf"(?is)\b({date_token})\s*(?:-|–|—|to|through|thru)\s*({date_token})\b"
+        r"[^\n]{0,120}\bmonthly\s+(?:base\s+)?rent\b[^\n$]{0,40}\$\s*([\d,]+(?:\.\d{1,4})?)"
+        r"[^\n]{0,120}\bannual\s+(?:base\s+)?rent\b[^\n$]{0,40}\$\s*([\d,]+(?:\.\d{1,4})?)"
     )
     anchor_pattern = re.compile(
         rf"(?is)\b(?:expansion\s+)?commencement\s+date\b[^\n]{{0,120}}?\b({date_token})\b"
@@ -2820,29 +3242,18 @@ def _extract_dated_rent_table_schedule_and_rsf(
         if m_anchor:
             anchor_date = _parse_lease_date(m_anchor.group(1))
     rows: list[dict] = []
+    review_tasks: list[dict[str, Any]] = []
     for match in re.finditer(row_pattern, text):
         start_date = _parse_lease_date(match.group(1))
         end_date = _parse_lease_date(match.group(2))
-        rate_psf = _parse_number_token(match.group(3))
-        annual_total = _parse_number_token(match.group(4))
-        monthly_total = _parse_number_token(match.group(5))
         if not start_date or not end_date or end_date < start_date:
             continue
-        if rate_psf is None or annual_total is None or monthly_total is None:
+        context = text[max(0, match.start() - 180): min(len(text), match.end() + 180)]
+        classified, review_task = _classify_dated_amount_triplet_with_review(match.group(0), context)
+        if classified is None:
+            _append_dated_rent_review_task(review_tasks, review_task)
             continue
-        if not (1.0 <= float(rate_psf) <= 250.0):
-            continue
-        if float(annual_total) < 1_000 or float(monthly_total) < 100:
-            continue
-        # Basic sanity: annual should be roughly 12x monthly.
-        annual_ratio = float(annual_total) / max(float(monthly_total), 1.0)
-        if not (8.0 <= annual_ratio <= 16.0):
-            continue
-        context = text[max(0, match.start() - 180): min(len(text), match.end() + 180)].lower()
-        if "base rent" not in context and "annual fixed rent" not in context and "per rentable" not in context:
-            continue
-        if any(tok in context for tok in ("operating expense", "opex", "cam", "reconciliation")):
-            continue
+        rate_psf, annual_total = classified
         rows.append(
             {
                 "start_date": start_date,
@@ -2850,6 +3261,21 @@ def _extract_dated_rent_table_schedule_and_rsf(
                 "rate_psf_annual": float(rate_psf),
                 "annual_total": float(annual_total),
             }
+        )
+    for match in re.finditer(monthly_annual_row_pattern, text):
+        start_date = _parse_lease_date(match.group(1))
+        end_date = _parse_lease_date(match.group(2))
+        if not start_date or not end_date or end_date < start_date:
+            continue
+        _append_dated_rent_review_task(
+            review_tasks,
+            _build_dated_rent_review_task(
+                row_text=match.group(0),
+                category="monthly_total",
+                reason="Dated rent row looked like monthly rent dollars with annual totals, not an annual PSF rent step.",
+                source="dated_rent_table_labeled_amounts",
+                confidence=0.92,
+            ),
         )
 
     # Handle charts that provide date-range + $/RSF and a single amount column
@@ -2862,10 +3288,16 @@ def _extract_dated_rent_table_schedule_and_rsf(
             continue
         left_raw = " ".join((m.group(1) or "").split()).strip(" ,.;:-")
         end_raw = m.group(2)
-        rate_psf = _parse_number_token(m.group(3))
         amount2 = _parse_number_token(m.group(4)) if m.group(4) is not None else None
-        if rate_psf is None or not (1.0 <= float(rate_psf) <= 250.0):
+        local_context = " ".join(lines[max(0, idx - 6): min(len(lines), idx + 3)])
+        rate_psf, review_task = _classify_dated_range_rate_row(
+            row_text=m.group(0),
+            context_text=local_context,
+        )
+        if rate_psf is None:
+            _append_dated_rent_review_task(review_tasks, review_task)
             continue
+        rate_psf = float(rate_psf)
         end_date = _parse_lease_date(end_raw)
         if not end_date:
             continue
@@ -2874,16 +3306,10 @@ def _extract_dated_rent_table_schedule_and_rsf(
             start_date = anchor_date
         if not start_date or end_date < start_date:
             continue
-        local_context = " ".join(lines[max(0, idx - 6): min(len(lines), idx + 3)]).lower()
-        if not any(tok in local_context for tok in ("base rent", "rental rate", "rent chart", "lease months")):
-            continue
-        if any(tok in local_context for tok in ("operating expense", "opex", "cam", "reconciliation")):
-            continue
         annual_total = 0.0
         if amount2 is not None and float(amount2) > 1_000:
-            # Keep as annual only when the implied RSF is plausible for annualized dollars.
             implied_rsf = float(amount2) / max(float(rate_psf), 1.0)
-            if implied_rsf > 2_000:
+            if implied_rsf > 2_000 and not _has_monthly_rent_context(str(m.group(0) or "")):
                 annual_total = float(amount2)
         rows.append(
             {
@@ -2941,23 +3367,53 @@ def _extract_dated_rent_table_schedule_and_rsf(
                         break
                 if rate_psf is not None:
                     break
-            if rate_psf is None:
+            header_context = _dated_schedule_header_context(lines, idx)
+            classified_pair = None
+            fragmented_row_text = " | ".join(lines[idx: min(len(lines), idx + 6)])
+            if annual_total > 0 and rate_psf is not None:
+                classified_pair, review_task = _classify_fragmented_dated_amount_pair_with_review(
+                    row_text=fragmented_row_text,
+                    header_context=header_context,
+                    annual_total_value=float(annual_total),
+                    rate_value=float(rate_psf),
+                )
+                if classified_pair is None:
+                    _append_dated_rent_review_task(review_tasks, review_task)
+            elif annual_total > 0 or rate_psf is not None:
+                missing_category = "annual_total" if annual_total <= 0 else "ambiguous_currency"
+                missing_reason = (
+                    "Fragmented dated rent row did not include a credible annual total rent amount."
+                    if annual_total <= 0
+                    else "Fragmented dated rent row did not include a credible annual PSF rent amount."
+                )
+                _append_dated_rent_review_task(
+                    review_tasks,
+                    _build_dated_rent_review_task(
+                        row_text=fragmented_row_text,
+                        category=missing_category,
+                        reason=missing_reason,
+                        source="dated_rent_table_fragmented_ocr",
+                        confidence=0.36,
+                    ),
+                )
+            if classified_pair is None:
                 continue
+            rate_psf, annual_total = classified_pair
             rows.append(
                 {
                     "start_date": start_date,
                     "end_date": end_date,
                     "rate_psf_annual": float(rate_psf),
                     "annual_total": float(max(0.0, annual_total)),
-                }
-            )
+            }
+        )
     if len(rows) < 2:
-        return [], None
+        return [], None, review_tasks
     rows.sort(key=lambda row: (row["start_date"], row["end_date"]))
     commencement = commencement_hint or rows[0]["start_date"]
     rows = [row for row in rows if row["end_date"] >= commencement]
     if not rows:
-        return [], None
+        return [], None, review_tasks
     rows.sort(key=lambda row: (row["start_date"], row["end_date"]))
     if commencement_hint is None:
         commencement = rows[0]["start_date"]
@@ -2990,7 +3446,7 @@ def _extract_dated_rent_table_schedule_and_rsf(
             if 300 <= inferred_rsf <= 2_000_000:
                 rsf_candidates.append(inferred_rsf)
     if not schedule:
-        return [], None
+        return [], None, review_tasks
     # Dedupe by start/end/rate.
     deduped: list[dict] = []
     seen: set[tuple[int, int, float]] = set()
@@ -3010,7 +3466,7 @@ def _extract_dated_rent_table_schedule_and_rsf(
             max_dev = max(abs(v - median) / median for v in ordered)
             if max_dev <= 0.2:
                 inferred_rsf_value = float(round(median, 2))
-    return deduped, inferred_rsf_value
+    return deduped, inferred_rsf_value, review_tasks
 
 
 def _iter_date_tokens(text: str) -> list[tuple[date, int]]:
@@ -5679,10 +6135,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             except Exception:
                 pass
 
-    table_rent_schedule, table_rsf = _extract_dated_rent_table_schedule_and_rsf(
+    table_rent_schedule, table_rsf, table_review_tasks = _extract_dated_rent_table_schedule_and_rsf_with_review(
         text,
         commencement_hint=hints.get("commencement_date"),
     )
+    if table_review_tasks:
+        existing_hint_review_tasks = hints.get("_review_tasks") if isinstance(hints.get("_review_tasks"), list) else []
+        hints["_review_tasks"] = existing_hint_review_tasks + [task for task in table_review_tasks if isinstance(task, dict)]
     if table_rent_schedule:
         current_hint_schedule = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
         if not current_hint_schedule or len(table_rent_schedule) > len(current_hint_schedule):
@@ -7525,6 +7984,316 @@ def _merge_review_tasks(primary: list[dict], supplemental: list[dict]) -> list[d
     return merged
 
 
+_NORMALIZE_PRIMARY_PATH_BY_FIELD: dict[str, str] = {
+    "commencement_date": "term.commencement_date",
+    "expiration_date": "term.expiration_date",
+    "term_months": "term.term_months",
+    "building_name": "premises.building_name",
+    "suite": "premises.suite",
+    "floor": "premises.floor",
+    "address": "premises.address",
+    "rsf": "premises.rsf",
+    "rent_schedule": "rent_steps",
+    "free_rent_months": "concessions.free_rent_months",
+    "free_rent_periods": "abatements",
+    "opex_psf_year_1": "opex.base_psf_year_1",
+    "opex_growth_rate": "opex.growth_rate",
+    "lease_type": "opex.mode",
+    "expense_structure_type": "opex.mode",
+    "ti_allowance_psf": "tenant_improvements.ti_allowance_psf",
+    "ti_budget_total": "tenant_improvements.ti_allowance_total",
+    "ti_total": "tenant_improvements.ti_allowance_total",
+    "parking_ratio": "parking.ratio_per_1000_rsf",
+    "parking_count": "parking.spaces",
+    "parking_rate_monthly": "parking.rate_monthly_per_space",
+}
+
+
+def _normalize_provenance_span(source: str, confidence: float, snippet: str) -> dict:
+    return {
+        "page": None,
+        "snippet": snippet[:280],
+        "bbox": None,
+        "source": source,
+        "source_confidence": round(max(0.0, min(1.0, float(confidence))), 4),
+    }
+
+
+def _preview_merge_value(value: Any) -> str:
+    if isinstance(value, list):
+        return f"{len(value)} item(s)"
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, float):
+        return f"{value:.4f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def _legacy_merge_value_available(canonical: CanonicalLease, field_name: str) -> bool:
+    value = getattr(canonical, field_name, None)
+    if field_name in {"building_name", "suite", "floor", "address", "lease_type", "expense_structure_type"}:
+        return bool(str(value or "").strip())
+    if field_name in {"commencement_date", "expiration_date"}:
+        return isinstance(value, date)
+    if field_name == "term_months":
+        return (_coerce_int_token(value, 0) or 0) > 0
+    if field_name == "rsf":
+        return (_coerce_float_token(value, 0.0) or 0.0) > 0
+    if field_name in {
+        "free_rent_months",
+        "opex_psf_year_1",
+        "opex_growth_rate",
+        "ti_allowance_psf",
+        "ti_budget_total",
+        "ti_total",
+        "parking_ratio",
+        "parking_count",
+        "parking_rate_monthly",
+    }:
+        return (_coerce_float_token(value, 0.0) or 0.0) > 0
+    if field_name in {"rent_schedule", "free_rent_periods"}:
+        return bool(list(value or []))
+    return value is not None
+
+
+def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    term = extraction.get("term") if isinstance(extraction.get("term"), dict) else {}
+    premises = extraction.get("premises") if isinstance(extraction.get("premises"), dict) else {}
+    opex = extraction.get("opex") if isinstance(extraction.get("opex"), dict) else {}
+    concessions = extraction.get("concessions") if isinstance(extraction.get("concessions"), dict) else {}
+    ti = extraction.get("tenant_improvements") if isinstance(extraction.get("tenant_improvements"), dict) else {}
+    parking = extraction.get("parking") if isinstance(extraction.get("parking"), dict) else {}
+
+    comm = _parse_lease_date(str(term.get("commencement_date") or ""))
+    exp = _parse_lease_date(str(term.get("expiration_date") or ""))
+    term_months = _coerce_int_token(term.get("term_months"), None)
+    if isinstance(comm, date):
+        updates["commencement_date"] = comm
+    if isinstance(exp, date):
+        updates["expiration_date"] = exp
+    if term_months is not None and int(term_months) > 0:
+        updates["term_months"] = int(term_months)
+
+    building_name = str(premises.get("building_name") or "").strip()
+    suite = str(premises.get("suite") or "").strip()
+    floor = str(premises.get("floor") or "").strip()
+    address = str(premises.get("address") or "").strip()
+    rsf = _coerce_float_token(premises.get("rsf"), None)
+    if building_name:
+        updates["building_name"] = building_name
+    if suite:
+        updates["suite"] = suite
+    if floor:
+        updates["floor"] = floor
+    if address:
+        updates["address"] = address
+    if rsf is not None and float(rsf) > 0:
+        updates["rsf"] = float(rsf)
+
+    rent_schedule_steps: list[RentScheduleStep] = []
+    for raw_step in list(extraction.get("rent_steps") or []):
+        if not isinstance(raw_step, dict):
+            continue
+        start_m = _coerce_int_token(raw_step.get("start_month"), None)
+        end_m = _coerce_int_token(raw_step.get("end_month"), start_m)
+        rate = _coerce_float_token(raw_step.get("rate_psf_annual"), None)
+        if start_m is None or end_m is None or rate is None:
+            continue
+        try:
+            rent_schedule_steps.append(
+                RentScheduleStep(
+                    start_month=max(0, int(start_m)),
+                    end_month=max(max(0, int(start_m)), int(end_m)),
+                    rent_psf_annual=max(0.0, float(rate)),
+                )
+            )
+        except Exception:
+            continue
+    if rent_schedule_steps:
+        updates["rent_schedule"] = sorted(rent_schedule_steps, key=lambda step: (int(step.start_month), int(step.end_month)))
+
+    if "free_rent_months" in concessions and concessions.get("free_rent_months") is not None:
+        free_months = _coerce_int_token(concessions.get("free_rent_months"), None)
+        if free_months is not None and int(free_months) >= 0:
+            updates["free_rent_months"] = int(free_months)
+
+    abatement_analysis = extraction.get("abatement_analysis") if isinstance(extraction.get("abatement_analysis"), dict) else {}
+    abatement_classification = str(abatement_analysis.get("classification") or "").strip().lower()
+    if abatement_classification != "phase_in":
+        free_rent_periods: list[FreeRentPeriod] = []
+        period_rows: list[dict[str, Any]] = []
+        for raw_period in list(extraction.get("abatements") or []):
+            if not isinstance(raw_period, dict):
+                continue
+            start_m = _coerce_int_token(raw_period.get("start_month"), None)
+            end_m = _coerce_int_token(raw_period.get("end_month"), start_m)
+            if start_m is None or end_m is None:
+                continue
+            scope_raw = str(raw_period.get("scope") or "").strip().lower()
+            scope = "gross" if "gross" in scope_raw else "base"
+            start_i = max(0, int(start_m))
+            end_i = max(start_i, int(end_m))
+            period_rows.append({"start_month": start_i, "end_month": end_i, "scope": scope})
+            try:
+                free_rent_periods.append(FreeRentPeriod(start_month=start_i, end_month=end_i, scope=scope))
+            except Exception:
+                continue
+        if free_rent_periods:
+            updates["free_rent_periods"] = free_rent_periods
+            if "free_rent_months" not in updates:
+                updates["free_rent_months"] = _count_unique_months_from_periods(
+                    period_rows,
+                    term_months=_coerce_int_token(updates.get("term_months"), 0) or 0,
+                )
+
+    if "base_psf_year_1" in opex and opex.get("base_psf_year_1") is not None:
+        base_opex = _coerce_float_token(opex.get("base_psf_year_1"), None)
+        if base_opex is not None and float(base_opex) >= 0:
+            updates["opex_psf_year_1"] = float(base_opex)
+    if "growth_rate" in opex and opex.get("growth_rate") is not None:
+        growth = _coerce_float_token(opex.get("growth_rate"), None)
+        if growth is not None and float(growth) >= 0:
+            updates["opex_growth_rate"] = float(growth)
+    mode = str(opex.get("mode") or "").strip().lower()
+    if mode == "nnn":
+        updates["lease_type"] = "NNN"
+        updates["expense_structure_type"] = "nnn"
+    elif mode == "base_year":
+        updates["lease_type"] = "Modified Gross"
+        updates["expense_structure_type"] = "base_year"
+    elif mode == "full_service":
+        updates["lease_type"] = "Full Service"
+
+    if "ti_allowance_psf" in ti and ti.get("ti_allowance_psf") is not None:
+        ti_psf = _coerce_float_token(ti.get("ti_allowance_psf"), None)
+        if ti_psf is not None and float(ti_psf) >= 0:
+            updates["ti_allowance_psf"] = float(ti_psf)
+    if "ti_allowance_total" in ti and ti.get("ti_allowance_total") is not None:
+        ti_total = _coerce_float_token(ti.get("ti_allowance_total"), None)
+        if ti_total is not None and float(ti_total) >= 0:
+            updates["ti_budget_total"] = float(ti_total)
+            updates["ti_total"] = float(ti_total)
+
+    if "ratio_per_1000_rsf" in parking and parking.get("ratio_per_1000_rsf") is not None:
+        parking_ratio = _coerce_float_token(parking.get("ratio_per_1000_rsf"), None)
+        if parking_ratio is not None and float(parking_ratio) >= 0:
+            updates["parking_ratio"] = float(parking_ratio)
+    if "spaces" in parking and parking.get("spaces") is not None:
+        parking_spaces = _coerce_int_token(parking.get("spaces"), None)
+        if parking_spaces is not None and int(parking_spaces) >= 0:
+            updates["parking_count"] = int(parking_spaces)
+    if "rate_monthly_per_space" in parking and parking.get("rate_monthly_per_space") is not None:
+        parking_rate = _coerce_float_token(parking.get("rate_monthly_per_space"), None)
+        if parking_rate is not None and float(parking_rate) >= 0:
+            updates["parking_rate_monthly"] = float(parking_rate)
+
+    return updates
+
+
+def _looks_like_canonical_only_fallback_extraction(extraction: dict) -> bool:
+    if not isinstance(extraction, dict) or not extraction:
+        return True
+    document = extraction.get("document") if isinstance(extraction.get("document"), dict) else {}
+    doc_role = str(document.get("doc_role") or "").strip().lower()
+    rent_steps = [row for row in list(extraction.get("rent_steps") or []) if isinstance(row, dict)]
+    abatements = [row for row in list(extraction.get("abatements") or []) if isinstance(row, dict)]
+    if not rent_steps:
+        return False
+    rent_sources = {str(row.get("source") or "").strip().lower() for row in rent_steps}
+    abatement_sources = {str(row.get("source") or "").strip().lower() for row in abatements}
+    canonical_rent_only = rent_sources.issubset({"", "canonical_normalizer"})
+    canonical_abatement_only = not abatements or abatement_sources.issubset({"", "canonical_normalizer"})
+    return canonical_rent_only and canonical_abatement_only and doc_role in {"", "unknown"}
+
+
+def _merge_canonical_primary_then_legacy(
+    *,
+    primary_extraction: dict,
+    legacy_canonical: CanonicalLease,
+    legacy_field_confidence: dict[str, Any] | None = None,
+) -> tuple[CanonicalLease, dict[str, Any]]:
+    tracked_fields = list(_NORMALIZE_PRIMARY_PATH_BY_FIELD.keys())
+    primary_updates = _collect_primary_updates_from_canonical_extraction(primary_extraction)
+    merged_canonical = legacy_canonical.model_copy(update=primary_updates) if primary_updates else legacy_canonical
+
+    extraction_provenance = (
+        primary_extraction.get("provenance")
+        if isinstance(primary_extraction.get("provenance"), dict)
+        else {}
+    )
+    extraction_confidence = (
+        primary_extraction.get("confidence")
+        if isinstance(primary_extraction.get("confidence"), dict)
+        else {}
+    )
+    primary_confidence = _coerce_float_token(extraction_confidence.get("overall"), 0.72) or 0.72
+
+    field_sources: dict[str, str] = {}
+    merge_provenance: dict[str, list[dict]] = {}
+    primary_fields: list[str] = []
+    fallback_fields: list[str] = []
+
+    for field_name in tracked_fields:
+        if field_name in primary_updates:
+            field_sources[field_name] = "canonical_pipeline"
+            primary_fields.append(field_name)
+            extraction_key = _NORMALIZE_PRIMARY_PATH_BY_FIELD.get(field_name, "")
+            spans = extraction_provenance.get(extraction_key) if isinstance(extraction_provenance.get(extraction_key), list) else []
+            if spans:
+                merge_provenance[field_name] = spans
+            else:
+                merge_provenance[field_name] = [
+                    _normalize_provenance_span(
+                        "canonical_pipeline",
+                        primary_confidence,
+                        f"Primary extraction set {field_name}={_preview_merge_value(primary_updates[field_name])}",
+                    )
+                ]
+            continue
+        if _legacy_merge_value_available(legacy_canonical, field_name):
+            field_sources[field_name] = "legacy_fallback"
+            fallback_fields.append(field_name)
+            legacy_conf = _coerce_float_token((legacy_field_confidence or {}).get(field_name), 0.55) or 0.55
+            merge_provenance[field_name] = [
+                _normalize_provenance_span(
+                    "legacy_fallback",
+                    min(0.85, legacy_conf),
+                    f"Legacy fallback retained for {field_name}={_preview_merge_value(getattr(legacy_canonical, field_name, None))}",
+                )
+            ]
+
+    warnings: list[str] = []
+    review_tasks: list[dict] = []
+    if fallback_fields:
+        preview = ", ".join(fallback_fields[:8])
+        if len(fallback_fields) > 8:
+            preview = f"{preview}, +{len(fallback_fields) - 8} more"
+        warnings.append(
+            f"Primary canonical extraction left some fields blank; legacy fallback populated: {preview}."
+        )
+        review_tasks.append(
+            {
+                "field_path": "normalize.merge",
+                "severity": "warn",
+                "issue_code": "LEGACY_FALLBACK_FIELDS",
+                "message": "Legacy fallback values were used only for fields missing from primary canonical extraction.",
+                "candidates": [{"field": field, "source": "legacy_fallback"} for field in fallback_fields[:20]],
+                "recommended_value": None,
+                "evidence": [],
+            }
+        )
+
+    return merged_canonical, {
+        "field_sources": field_sources,
+        "primary_fields": primary_fields,
+        "fallback_fields": fallback_fields,
+        "provenance": merge_provenance,
+        "warnings": warnings,
+        "review_tasks": review_tasks,
+    }
+
+
 def _building_name_is_suspicious(value: str) -> bool:
     v = " ".join((value or "").split()).strip().lower()
     if not v:
@@ -8392,7 +9161,9 @@ def _run_extraction_artifacts(
             file_bytes=file_bytes,
             filename=filename,
             content_type=content_type,
-            canonical_lease=canonical,
+            # Primary extraction for /normalize runs independently of legacy Scenario-derived canonical data.
+            # Canonical data remains available only for explicit fallback responses below.
+            canonical_lease=None,
         )
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("extraction_pipeline_failed file=%s err=%s", filename, exc)
@@ -9342,13 +10113,51 @@ def _normalize_impl(
             confidence_score = 0.3
             used_fallback = True
             warnings.append("Lease normalization failed. A review template was loaded so you can continue.")
+        extraction_artifacts = _run_extraction_artifacts(
+            file_bytes=contents,
+            filename=file.filename or "uploaded.pdf",
+            content_type=(
+                "application/pdf"
+                if fn.endswith(".pdf")
+                else ("application/msword" if fn.endswith(".doc") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            ),
+            canonical=canonical,
+        )
+        extraction_artifacts = _merge_proposal_profile_into_extraction_artifacts(
+            extraction_artifacts=extraction_artifacts,
+            canonical=canonical,
+            text=extraction_text_for_summary,
+            filename=file.filename or extraction_filename_for_summary or "uploaded-document",
+        )
+        canonical_extraction_payload = (
+            extraction_artifacts.get("canonical_extraction")
+            if isinstance(extraction_artifacts.get("canonical_extraction"), dict)
+            else {}
+        )
+        primary_merge_payload = (
+            {}
+            if _looks_like_canonical_only_fallback_extraction(canonical_extraction_payload)
+            else canonical_extraction_payload
+        )
+        canonical, merge_metadata = _merge_canonical_primary_then_legacy(
+            primary_extraction=primary_merge_payload,
+            legacy_canonical=canonical,
+            legacy_field_confidence=field_confidence,
+        )
+        field_sources = merge_metadata.get("field_sources") if isinstance(merge_metadata.get("field_sources"), dict) else {}
+        fallback_fields = list(merge_metadata.get("fallback_fields") or [])
+        for warning in list(merge_metadata.get("warnings") or []):
+            if warning and warning not in warnings:
+                warnings.append(str(warning))
+
         option_variants = _build_canonical_option_variants(
             canonical=canonical,
             extracted_hints=extracted_hints,
             filename=file.filename or "",
         )
         conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
-        if used_fallback:
+        merge_used_legacy = bool(fallback_fields)
+        if used_fallback or merge_used_legacy:
             confidence_score = min(confidence_score, conf_from_missing)
             if not questions:
                 questions = [
@@ -9356,6 +10165,14 @@ def _normalize_impl(
                 ]
         else:
             confidence_score = max(confidence_score, conf_from_missing)
+        if merge_used_legacy:
+            confidence_score = max(0.0, confidence_score - min(0.12, 0.02 * len(fallback_fields)))
+            fallback_prompt = (
+                f"Primary extraction did not produce all fields. Please review legacy fallback values: {', '.join(fallback_fields[:8])}."
+            )
+            if fallback_prompt not in questions:
+                questions.append(fallback_prompt)
+
         supplemental_checks = _supplemental_quality_checks(
             canonical=canonical,
             text=extraction_text_for_summary,
@@ -9378,6 +10195,18 @@ def _normalize_impl(
             canonical=canonical,
             extracted_hints=extracted_hints,
         )
+        extraction_overall = _coerce_float_token(
+            (extraction_artifacts.get("extraction_confidence") or {}).get("overall"),
+            _coerce_float_token((canonical_extraction_payload.get("confidence") if isinstance(canonical_extraction_payload.get("confidence"), dict) else {}).get("overall"), 0.72),
+        ) or 0.72
+        for field_name, source_name in field_sources.items():
+            if source_name == "legacy_fallback":
+                current = _coerce_float_token(field_confidence.get(field_name), 0.6) or 0.6
+                field_confidence[field_name] = min(current, 0.62)
+            elif source_name == "canonical_pipeline":
+                current = _coerce_float_token(field_confidence.get(field_name), 0.0) or 0.0
+                field_confidence[field_name] = max(current, min(0.96, max(0.55, extraction_overall)))
+
         extraction_summary = _build_extraction_summary(
             text=extraction_text_for_summary,
             filename=extraction_filename_for_summary,
@@ -9389,25 +10218,46 @@ def _normalize_impl(
         doc_type_note = f"Document type detected: {doc_type}."
         if not any("document type detected:" in str(w).lower() for w in warnings):
             warnings.insert(0, doc_type_note)
-        extraction_artifacts = _run_extraction_artifacts(
-            file_bytes=contents,
-            filename=file.filename or "uploaded.pdf",
-            content_type=(
-                "application/pdf"
-                if fn.endswith(".pdf")
-                else ("application/msword" if fn.endswith(".doc") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-            ),
-            canonical=canonical,
-        )
-        extraction_artifacts = _merge_proposal_profile_into_extraction_artifacts(
-            extraction_artifacts=extraction_artifacts,
-            canonical=canonical,
-            text=extraction_text_for_summary,
-            filename=file.filename or extraction_filename_for_summary or "uploaded-document",
-        )
+
+        base_provenance = extraction_artifacts.get("provenance") if isinstance(extraction_artifacts.get("provenance"), dict) else {}
+        merged_provenance: dict[str, list[dict]] = {}
+        for key, spans in base_provenance.items():
+            if isinstance(spans, list):
+                merged_provenance[key] = list(spans)
+        merge_provenance = merge_metadata.get("provenance") if isinstance(merge_metadata.get("provenance"), dict) else {}
+        for key, spans in merge_provenance.items():
+            if not isinstance(spans, list):
+                continue
+            existing = merged_provenance.get(key) or []
+            merged_provenance[key] = existing + [span for span in spans if isinstance(span, dict)]
+        extraction_artifacts["provenance"] = merged_provenance
+
+        if isinstance(canonical_extraction_payload, dict):
+            canonical_extraction_payload["normalized_field_sources"] = field_sources
+            canonical_provenance = canonical_extraction_payload.get("provenance") if isinstance(canonical_extraction_payload.get("provenance"), dict) else {}
+            merged_canonical_provenance: dict[str, list[dict]] = {}
+            for key, spans in canonical_provenance.items():
+                if isinstance(spans, list):
+                    merged_canonical_provenance[key] = list(spans)
+            for key, spans in merge_provenance.items():
+                if not isinstance(spans, list):
+                    continue
+                existing = merged_canonical_provenance.get(key) or []
+                merged_canonical_provenance[key] = existing + [span for span in spans if isinstance(span, dict)]
+            canonical_extraction_payload["provenance"] = merged_canonical_provenance
+            extraction_artifacts["canonical_extraction"] = canonical_extraction_payload
+
         merged_review_tasks = _merge_review_tasks(
             list(extraction_artifacts.get("review_tasks") or []),
+            list(extracted_hints.get("_review_tasks") or []),
+        )
+        merged_review_tasks = _merge_review_tasks(
+            merged_review_tasks,
             list(supplemental_checks.get("review_tasks") or []),
+        )
+        merged_review_tasks = _merge_review_tasks(
+            merged_review_tasks,
+            list(merge_metadata.get("review_tasks") or []),
         )
         extraction_artifacts["review_tasks"] = merged_review_tasks
         blockers = [

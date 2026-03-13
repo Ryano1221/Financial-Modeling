@@ -61,6 +61,14 @@ export default function SecurityPage() {
             </section>
 
             <section className="space-y-3">
+              <h2 className="heading-section">Representation Mode Controls</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Tenant Rep and Landlord Rep are account-scoped operating modes. Mode selection changes workflow defaults
+                and interface emphasis, but does not weaken account authorization boundaries or data isolation controls.
+              </p>
+            </section>
+
+            <section className="space-y-3">
               <h2 className="heading-section">Interface Updates</h2>
               <p className="text-sm sm:text-base text-slate-300">
                 CRM layout improvements, navigation ordering, and module naming updates (for example Lease Abstract)
@@ -68,11 +76,11 @@ export default function SecurityPage() {
                 data-isolation controls remain unchanged.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
-                Deal stage configuration is handled in Account dashboard/settings for the active client, and follows
-                the same account-scoped access controls.
+                CRM Settings (stage order, stage automation toggle, and default CRM view) are handled in Account
+                Settings for the active client, and follow the same account-scoped access controls.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
-                The Account page CRM Settings tab writes stage configuration to the active client scope only.
+                The Account page Settings area writes CRM configuration to the active client scope only.
               </p>
             </section>
 

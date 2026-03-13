@@ -21,7 +21,15 @@ const FAQ_ITEMS = [
   },
   {
     q: "Where do I configure deal stages?",
-    a: "Deal stage configuration is managed in Account dashboard/settings for the active client workspace, not inside the Deals tab.",
+    a: "Open Account dashboard, switch to Settings, then open CRM Settings for the active client. You can add, reorder, remove, and load tenant/landlord templates.",
+  },
+  {
+    q: "What CRM settings can I control per client?",
+    a: "In Account > Settings > CRM Settings you can manage stage order, toggle document-driven stage automation, and set the default Deals view (board, table, timeline, or client grouped).",
+  },
+  {
+    q: "Where do I choose Tenant Rep vs Landlord Rep mode?",
+    a: "Mode selection is required during first-time onboarding and can be changed later in Account settings. This mode changes dashboard defaults, navigation emphasis, pipeline templates, AI suggestions, and export orientation.",
   },
   {
     q: "Where should I upload files in workspace modules?",
@@ -42,8 +50,8 @@ export default function DocsPage() {
               <p className="heading-kicker">Docs</p>
               <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Using The CRE Model</h1>
               <p className="body-lead max-w-3xl">
-                The CRE Model is a client-scoped brokerage operating system for tenant representation workflows,
-                document intelligence, deal execution, and client-ready exports.
+                The CRE Model is a client-scoped brokerage operating system that supports both Tenant Rep and
+                Landlord Rep workflows on one shared architecture.
               </p>
             </div>
 
@@ -51,7 +59,7 @@ export default function DocsPage() {
               <h2 className="heading-section">Brokerage OS Modules</h2>
               <ul className="space-y-2 text-sm sm:text-base text-slate-300 list-disc pl-5">
                 <li>
-                  <strong>Deals:</strong> Pipeline lifecycle with stages, timeline activity, tasks, linked documents, and workspace context.
+                  <strong>CRM (Deals):</strong> Pipeline lifecycle with stages, timeline activity, tasks, linked documents, and workspace context.
                 </li>
                 <li>
                   <strong>Surveys:</strong> Structured survey entries, occupancy cost calculations, and client share outputs.
@@ -66,6 +74,10 @@ export default function DocsPage() {
                   <strong>Obligations:</strong> Lease obligation tracking, timeline visibility, and portfolio metrics.
                 </li>
               </ul>
+              <p className="text-sm sm:text-base text-slate-300">
+                In <strong>Tenant Rep</strong> mode, emphasis is on client requirements, analyses, surveys, completed leases, and obligations.
+                In <strong>Landlord Rep</strong> mode, emphasis shifts to availabilities, listing marketing, inquiry/tour/proposal pipeline, lease tracking, and reporting.
+              </p>
             </section>
 
             <section className="space-y-3">
@@ -95,10 +107,11 @@ export default function DocsPage() {
                 view, while smaller displays maintain smooth horizontal scrolling to preserve deal-card readability.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
-                Stage definitions are configured in Account dashboard/settings and then applied to the Deals module.
+                Stage definitions are configured in Account Settings under CRM Settings and then applied to the Deals module.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
-                Use the Account page <strong>CRM Settings</strong> tab to edit stage lists for the active client.
+                Use the Account page <strong>Settings</strong> area, then open <strong>CRM Settings</strong> to edit stage order, default CRM view, and
+                document-driven stage automation for the active client.
               </p>
             </section>
 

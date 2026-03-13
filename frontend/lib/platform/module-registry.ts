@@ -1,39 +1,113 @@
-export const PLATFORM_MODULES = [
-  {
-    id: "deals",
+import {
+  DEFAULT_REPRESENTATION_MODE,
+  LANDLORD_REP_MODE,
+  TENANT_REP_MODE,
+  type RepresentationMode,
+} from "@/lib/workspace/representation-mode";
+
+type PlatformModuleDefinition = {
+  id: "deals" | "financial-analyses" | "surveys" | "completed-leases" | "obligations";
+  label: string;
+  description: string;
+  requiresAuth: boolean;
+};
+
+const MODULE_DEFINITION_BY_ID: Record<PlatformModuleDefinition["id"], Omit<PlatformModuleDefinition, "id">> = {
+  deals: {
     label: "CRM",
-    description: "Tenant representation pipeline, lifecycle, and linked workflows.",
+    description: "Pipeline lifecycle, linked workflows, and execution tracking.",
     requiresAuth: true,
   },
-  {
-    id: "surveys",
-    label: "Surveys",
-    description: "Structure market surveys and publish branded client views.",
-    requiresAuth: true,
-  },
-  {
-    id: "financial-analyses",
+  "financial-analyses": {
     label: "Financial Analyses",
     description: "Financial modeling and side-by-side lease comparisons.",
     requiresAuth: false,
   },
-  {
-    id: "completed-leases",
-    label: "Lease Abstract",
+  surveys: {
+    label: "Surveys",
+    description: "Structure market surveys and publish branded client views.",
+    requiresAuth: true,
+  },
+  "completed-leases": {
+    label: "Completed Leases",
     description: "Parse executed leases and generate abstract outputs.",
     requiresAuth: true,
   },
-  {
-    id: "obligations",
+  obligations: {
     label: "Obligations",
     description: "Track obligation timelines, documents, and portfolio risk.",
     requiresAuth: true,
   },
-] as const;
+};
 
-export type PlatformModuleId = (typeof PLATFORM_MODULES)[number]["id"];
+const TENANT_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
+  "deals",
+  "financial-analyses",
+  "surveys",
+  "completed-leases",
+  "obligations",
+];
 
-export const DEFAULT_PLATFORM_MODULE_ID: PlatformModuleId = "financial-analyses";
+const LANDLORD_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
+  "deals",
+  "financial-analyses",
+  "surveys",
+  "completed-leases",
+  "obligations",
+];
+
+const LANDLORD_MODULE_LABEL_OVERRIDES: Partial<Record<PlatformModuleDefinition["id"], string>> = {
+  "financial-analyses": "Availabilities",
+  surveys: "Marketing",
+  "completed-leases": "Lease Tracking",
+  obligations: "Reporting",
+};
+
+const LANDLORD_MODULE_DESCRIPTION_OVERRIDES: Partial<Record<PlatformModuleDefinition["id"], string>> = {
+  deals: "Inquiry-to-execution pipeline for suites and listing opportunities.",
+  "financial-analyses": "Availability inventory, suite economics, and listing positioning.",
+  surveys: "Marketing package workflows, flyers, and listing collateral.",
+  "completed-leases": "Lease execution tracking and closed package records.",
+  obligations: "Property performance, expirations, and landlord reporting.",
+};
+
+export const DEFAULT_PLATFORM_MODULE_ID_BY_MODE: Record<RepresentationMode, PlatformModuleDefinition["id"]> = {
+  tenant_rep: "financial-analyses",
+  landlord_rep: "deals",
+};
+
+function moduleDefinitionForMode(
+  id: PlatformModuleDefinition["id"],
+  mode: RepresentationMode,
+): PlatformModuleDefinition {
+  const base = MODULE_DEFINITION_BY_ID[id];
+  if (mode !== LANDLORD_REP_MODE) {
+    return {
+      id,
+      ...base,
+    };
+  }
+  return {
+    id,
+    ...base,
+    label: LANDLORD_MODULE_LABEL_OVERRIDES[id] || base.label,
+    description: LANDLORD_MODULE_DESCRIPTION_OVERRIDES[id] || base.description,
+  };
+}
+
+export function getPlatformModulesForMode(
+  mode: RepresentationMode | null | undefined,
+): readonly PlatformModuleDefinition[] {
+  const resolvedMode = mode || DEFAULT_REPRESENTATION_MODE;
+  const orderedIds = resolvedMode === LANDLORD_REP_MODE ? LANDLORD_MODULE_ORDER : TENANT_MODULE_ORDER;
+  return orderedIds.map((id) => moduleDefinitionForMode(id, resolvedMode));
+}
+
+export const PLATFORM_MODULES = getPlatformModulesForMode(DEFAULT_REPRESENTATION_MODE);
+
+export type PlatformModuleId = PlatformModuleDefinition["id"];
+
+export const DEFAULT_PLATFORM_MODULE_ID: PlatformModuleId = DEFAULT_PLATFORM_MODULE_ID_BY_MODE[DEFAULT_REPRESENTATION_MODE];
 
 export const FINANCIAL_ANALYSES_TOOL_TABS = [
   {
@@ -50,7 +124,7 @@ export const FINANCIAL_ANALYSES_TOOL_TABS = [
 
 export type FinancialAnalysesToolId = (typeof FINANCIAL_ANALYSES_TOOL_TABS)[number]["id"];
 
-const MODULE_ID_SET = new Set<string>(PLATFORM_MODULES.map((module) => module.id));
+const MODULE_ID_SET = new Set<string>(Object.keys(MODULE_DEFINITION_BY_ID));
 const FINANCIAL_TOOL_ID_SET = new Set<string>(FINANCIAL_ANALYSES_TOOL_TABS.map((tab) => tab.id));
 
 export function isPlatformModuleId(value: string | null | undefined): value is PlatformModuleId {
@@ -63,16 +137,29 @@ export function isFinancialAnalysesToolId(value: string | null | undefined): val
   return FINANCIAL_TOOL_ID_SET.has(raw);
 }
 
-export function getPlatformModuleById(moduleId: PlatformModuleId) {
-  return PLATFORM_MODULES.find((module) => module.id === moduleId) || PLATFORM_MODULES[0];
+export function getDefaultPlatformModuleId(
+  mode: RepresentationMode | null | undefined,
+): PlatformModuleId {
+  const resolvedMode = mode || DEFAULT_REPRESENTATION_MODE;
+  return DEFAULT_PLATFORM_MODULE_ID_BY_MODE[resolvedMode];
+}
+
+export function getPlatformModuleById(
+  moduleId: PlatformModuleId,
+  mode: RepresentationMode | null | undefined = DEFAULT_REPRESENTATION_MODE,
+) {
+  const modules = getPlatformModulesForMode(mode);
+  return modules.find((module) => module.id === moduleId) || modules[0];
 }
 
 export function resolveActivePlatformModule(
   rawValue: string | null | undefined,
   isAuthenticated: boolean,
+  mode: RepresentationMode | null | undefined = DEFAULT_REPRESENTATION_MODE,
 ): PlatformModuleId {
-  if (!isPlatformModuleId(rawValue)) return DEFAULT_PLATFORM_MODULE_ID;
-  const resolved = getPlatformModuleById(rawValue);
-  if (!isAuthenticated && resolved.requiresAuth) return DEFAULT_PLATFORM_MODULE_ID;
+  const fallback = getDefaultPlatformModuleId(mode);
+  if (!isPlatformModuleId(rawValue)) return fallback;
+  const resolved = getPlatformModuleById(rawValue, mode);
+  if (!isAuthenticated && resolved.requiresAuth) return fallback;
   return resolved.id;
 }

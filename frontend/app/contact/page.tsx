@@ -81,12 +81,12 @@ export default function ContactPage() {
                 or send a message below.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
-                For workspace or CRM layout issues, include your screen size, browser, and current module
-                (Deals, Surveys, Financial Analyses, Lease Abstract, or Obligations).
+                For workspace or CRM layout issues, include your screen size, browser, representation mode
+                (Tenant Rep or Landlord Rep), and current module.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
                 For deal stage configuration issues, include the active client name and confirm changes were made in
-                Account dashboard CRM Settings tab.
+                Account dashboard Settings {" > "} CRM Settings (stage order, automation toggle, and default view).
               </p>
               <p className="text-sm sm:text-base text-slate-300">
                 For upload issues, include the active client name and confirm whether files were dropped in Document Center,

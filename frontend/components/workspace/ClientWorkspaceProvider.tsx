@@ -20,15 +20,24 @@ import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import {
   ACTIVE_CLIENT_STORAGE_KEY,
   CLIENTS_STORAGE_KEY,
+  CRM_SETTINGS_STORAGE_KEY,
   DEAL_LIBRARY_STORAGE_KEY,
   DEAL_STAGE_CONFIG_STORAGE_KEY,
   DOCUMENT_LIBRARY_STORAGE_KEY,
+  REPRESENTATION_MODE_STORAGE_KEY,
 } from "@/lib/workspace/storage";
 import { buildWorkspaceEntityGraph, type WorkspaceEntityGraph } from "@/lib/workspace/entities";
 import { inferWorkspaceDocumentType } from "@/lib/workspace/document-type";
 import { getDealDocumentStageTransition } from "@/lib/workspace/deal-stage-automation";
 import { fetchWorkspaceCloudState, saveWorkspaceCloudState } from "@/lib/workspace/cloud";
-import { CLIENT_DOCUMENT_TYPES, DEFAULT_DEAL_STAGES } from "@/lib/workspace/types";
+import { normalizeRepresentationMode, type RepresentationMode } from "@/lib/workspace/representation-mode";
+import {
+  CLIENT_DOCUMENT_TYPES,
+  DEFAULT_DEAL_STAGES,
+  getDefaultDealStagesForMode,
+  normalizeCrmSettings,
+  type ClientCrmSettings,
+} from "@/lib/workspace/types";
 import type {
   ClientWorkspaceDeal,
   ClientDocumentSourceModule,
@@ -53,16 +62,19 @@ interface ClientWorkspaceContextValue {
   cloudSyncStatus: CloudSyncStatus;
   cloudSyncMessage: string;
   cloudLastSyncedAt: string | null;
+  representationMode: RepresentationMode | null;
   clients: ClientWorkspaceClient[];
   activeClientId: string | null;
   activeClient: ClientWorkspaceClient | null;
   allDeals: ClientWorkspaceDeal[];
   deals: ClientWorkspaceDeal[];
   dealStages: string[];
+  crmSettings: ClientCrmSettings;
   documents: ClientWorkspaceDocument[];
   allDocuments: ClientWorkspaceDocument[];
   entityGraph: WorkspaceEntityGraph;
   setActiveClient: (clientId: string) => void;
+  setRepresentationMode: (mode: RepresentationMode) => void;
   createClient: (input: CreateClientInput) => ClientWorkspaceClient | null;
   updateClient: (clientId: string, input: UpdateClientInput) => void;
   createDeal: (input: CreateDealInput) => ClientWorkspaceDeal | null;
@@ -71,6 +83,8 @@ interface ClientWorkspaceContextValue {
   setDealStages: (stages: string[], clientId?: string | null) => void;
   getDealsForClient: (clientId?: string | null) => ClientWorkspaceDeal[];
   getDealStagesForClient: (clientId?: string | null) => string[];
+  setCrmSettings: (settings: Partial<ClientCrmSettings>, clientId?: string | null) => void;
+  getCrmSettingsForClient: (clientId?: string | null) => ClientCrmSettings;
   registerDocument: (input: RegisterClientDocumentInput) => Promise<ClientWorkspaceDocument | null>;
   updateDocument: (documentId: string, input: UpdateClientDocumentInput) => void;
   removeDocument: (documentId: string) => void;
@@ -275,15 +289,22 @@ function parseStoredDeals(raw: string | null): ClientWorkspaceDeal[] {
   }
 }
 
-function normalizeDealStages(rawStages: unknown): string[] {
+function normalizeDealStages(
+  rawStages: unknown,
+  mode: RepresentationMode | null | undefined = null,
+): string[] {
   const normalized = (Array.isArray(rawStages) ? rawStages : [])
     .map((item) => asText(item))
     .filter(Boolean);
   const deduped = Array.from(new Set(normalized));
-  return deduped.length > 0 ? deduped : [...DEFAULT_DEAL_STAGES];
+  if (deduped.length > 0) return deduped;
+  return [...getDefaultDealStagesForMode(mode)];
 }
 
-function parseStoredDealStageMap(raw: string | null): Record<string, string[]> {
+function parseStoredDealStageMap(
+  raw: string | null,
+  mode: RepresentationMode | null | undefined = null,
+): Record<string, string[]> {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -292,7 +313,7 @@ function parseStoredDealStageMap(raw: string | null): Record<string, string[]> {
     for (const [clientId, stageList] of Object.entries(parsed as Record<string, unknown>)) {
       const key = asText(clientId);
       if (!key) continue;
-      out[key] = normalizeDealStages(stageList);
+      out[key] = normalizeDealStages(stageList, mode);
     }
     return out;
   } catch {
@@ -300,10 +321,72 @@ function parseStoredDealStageMap(raw: string | null): Record<string, string[]> {
   }
 }
 
+function parseStoredCrmSettingsMap(
+  raw: string | null,
+  mode: RepresentationMode | null | undefined = null,
+): Record<string, ClientCrmSettings> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, ClientCrmSettings> = {};
+    for (const [clientId, settings] of Object.entries(parsed as Record<string, unknown>)) {
+      const key = asText(clientId);
+      if (!key) continue;
+      out[key] = normalizeCrmSettings(settings, mode);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function isSameStageSet(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => asText(value).toLowerCase() === asText(b[index]).toLowerCase());
+}
+
+function isDefaultStageSet(stages: readonly string[]): boolean {
+  return isSameStageSet(stages, getDefaultDealStagesForMode("tenant_rep"))
+    || isSameStageSet(stages, getDefaultDealStagesForMode("landlord_rep"));
+}
+
+function seedDealStagesForClients(
+  clients: ClientWorkspaceClient[],
+  existingMap: Record<string, string[]>,
+  mode: RepresentationMode | null | undefined,
+): Record<string, string[]> {
+  const defaults = [...getDefaultDealStagesForMode(mode)];
+  const next: Record<string, string[]> = { ...existingMap };
+  for (const client of clients) {
+    const current = Array.isArray(next[client.id]) ? normalizeDealStages(next[client.id], mode) : [];
+    if (current.length === 0 || isDefaultStageSet(current)) {
+      next[client.id] = [...defaults];
+      continue;
+    }
+    next[client.id] = current;
+  }
+  return next;
+}
+
+function seedCrmSettingsForClients(
+  clients: ClientWorkspaceClient[],
+  existingMap: Record<string, ClientCrmSettings>,
+  mode: RepresentationMode | null | undefined,
+): Record<string, ClientCrmSettings> {
+  const next: Record<string, ClientCrmSettings> = { ...existingMap };
+  for (const client of clients) {
+    next[client.id] = normalizeCrmSettings(next[client.id], mode);
+  }
+  return next;
+}
+
 function serializeWorkspaceStateForCloud(
+  representationMode: RepresentationMode | null,
   clients: ClientWorkspaceClient[],
   deals: ClientWorkspaceDeal[],
   dealStageMap: Record<string, string[]>,
+  crmSettingsMap: Record<string, ClientCrmSettings>,
   documents: ClientWorkspaceDocument[],
   activeClientId: string | null,
   options?: { includeSnapshots?: boolean },
@@ -333,9 +416,11 @@ function serializeWorkspaceStateForCloud(
     return baseDocument;
   });
   return {
+    representationMode,
     clients,
     deals,
     dealStageMap,
+    crmSettingsMap,
     documents: serializedDocuments,
     activeClientId: activeClientId || null,
   };
@@ -408,10 +493,12 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   const [cloudSyncMessage, setCloudSyncMessage] = useState("Cloud sync ready.");
   const [cloudLastSyncedAt, setCloudLastSyncedAt] = useState<string | null>(null);
   const [cloudLocalFallback, setCloudLocalFallback] = useState(false);
+  const [representationMode, setRepresentationModeState] = useState<RepresentationMode | null>(null);
   const [clients, setClients] = useState<ClientWorkspaceClient[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [allDeals, setAllDeals] = useState<ClientWorkspaceDeal[]>([]);
   const [dealStageMap, setDealStageMap] = useState<Record<string, string[]>>({});
+  const [crmSettingsMap, setCrmSettingsMap] = useState<Record<string, ClientCrmSettings>>({});
   const [allDocuments, setAllDocuments] = useState<ClientWorkspaceDocument[]>([]);
 
   useEffect(() => {
@@ -450,35 +537,62 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const applyWorkspaceState = (state: Record<string, unknown> | null | undefined) => {
+      const loadedRepresentationMode = normalizeRepresentationMode(state?.representationMode);
       const clientsRaw = Array.isArray(state?.clients) ? state?.clients : [];
       const dealsRaw = Array.isArray(state?.deals) ? state?.deals : [];
       const dealStagesRaw = state?.dealStageMap;
+      const crmSettingsRaw = state?.crmSettingsMap;
       const documentsRaw = Array.isArray(state?.documents) ? state?.documents : [];
       const activeRaw = asText(state?.activeClientId);
       const loadedClients = parseStoredClients(JSON.stringify(clientsRaw));
       const loadedDeals = parseStoredDeals(JSON.stringify(dealsRaw));
-      const loadedDealStages = parseStoredDealStageMap(JSON.stringify(dealStagesRaw || {}));
+      const loadedDealStages = seedDealStagesForClients(
+        loadedClients,
+        parseStoredDealStageMap(JSON.stringify(dealStagesRaw || {}), loadedRepresentationMode),
+        loadedRepresentationMode,
+      );
+      const loadedCrmSettings = seedCrmSettingsForClients(
+        loadedClients,
+        parseStoredCrmSettingsMap(JSON.stringify(crmSettingsRaw || {}), loadedRepresentationMode),
+        loadedRepresentationMode,
+      );
       const loadedDocuments = parseStoredDocuments(JSON.stringify(documentsRaw));
       const resolvedActive =
         activeRaw && loadedClients.some((client) => client.id === activeRaw)
           ? activeRaw
           : (loadedClients[0]?.id || null);
+      setRepresentationModeState(loadedRepresentationMode);
       setClients(loadedClients);
       setAllDeals(loadedDeals);
       setDealStageMap(loadedDealStages);
+      setCrmSettingsMap(loadedCrmSettings);
       setAllDocuments(loadedDocuments);
       setActiveClientId(resolvedActive);
     };
 
     const applyLocalFallback = () => {
+      const loadedRepresentationMode = normalizeRepresentationMode(
+        window.localStorage.getItem(REPRESENTATION_MODE_STORAGE_KEY),
+      );
       const loadedClients = parseStoredClients(window.localStorage.getItem(CLIENTS_STORAGE_KEY));
       const loadedDeals = parseStoredDeals(window.localStorage.getItem(DEAL_LIBRARY_STORAGE_KEY));
-      const loadedDealStages = parseStoredDealStageMap(window.localStorage.getItem(DEAL_STAGE_CONFIG_STORAGE_KEY));
+      const loadedDealStages = seedDealStagesForClients(
+        loadedClients,
+        parseStoredDealStageMap(window.localStorage.getItem(DEAL_STAGE_CONFIG_STORAGE_KEY), loadedRepresentationMode),
+        loadedRepresentationMode,
+      );
+      const loadedCrmSettings = seedCrmSettingsForClients(
+        loadedClients,
+        parseStoredCrmSettingsMap(window.localStorage.getItem(CRM_SETTINGS_STORAGE_KEY), loadedRepresentationMode),
+        loadedRepresentationMode,
+      );
       const loadedDocuments = parseStoredDocuments(window.localStorage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
       const storedActiveId = asText(window.localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY));
+      setRepresentationModeState(loadedRepresentationMode);
       setClients(loadedClients);
       setAllDeals(loadedDeals);
       setDealStageMap(loadedDealStages);
+      setCrmSettingsMap(loadedCrmSettings);
       setAllDocuments(loadedDocuments);
       if (storedActiveId && loadedClients.some((client) => client.id === storedActiveId)) {
         setActiveClientId(storedActiveId);
@@ -510,8 +624,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
             window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
             window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
+            window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
             window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
             window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+            window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
           } catch {
             // ignore localStorage errors
           }
@@ -578,11 +694,33 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
     if (session && !cloudLocalFallback) {
+      window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(CRM_SETTINGS_STORAGE_KEY, JSON.stringify(crmSettingsMap));
+  }, [ready, crmSettingsMap, session, cloudLocalFallback]);
+
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
+    if (session && !cloudLocalFallback) {
       window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
       return;
     }
     window.localStorage.setItem(DOCUMENT_LIBRARY_STORAGE_KEY, JSON.stringify(allDocuments));
   }, [ready, allDocuments, session, cloudLocalFallback]);
+
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
+    if (session && !cloudLocalFallback) {
+      window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
+      return;
+    }
+    if (representationMode) {
+      window.localStorage.setItem(REPRESENTATION_MODE_STORAGE_KEY, representationMode);
+      return;
+    }
+    window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
+  }, [ready, session, cloudLocalFallback, representationMode]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
@@ -603,9 +741,18 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     setCloudSyncStatus("saving");
     setCloudSyncMessage("Syncing to cloud...");
     const handle = window.setTimeout(() => {
-      const workspaceState = serializeWorkspaceStateForCloud(clients, allDeals, dealStageMap, allDocuments, activeClientId, {
-        includeSnapshots: true,
-      });
+      const workspaceState = serializeWorkspaceStateForCloud(
+        representationMode,
+        clients,
+        allDeals,
+        dealStageMap,
+        crmSettingsMap,
+        allDocuments,
+        activeClientId,
+        {
+          includeSnapshots: true,
+        },
+      );
       void (async () => {
         try {
           const saved = await saveWorkspaceCloudState(workspaceState);
@@ -618,9 +765,18 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         } catch (error) {
           if (cancelled) return;
           if (isWorkspacePayloadTooLargeError(error)) {
-            const compactState = serializeWorkspaceStateForCloud(clients, allDeals, dealStageMap, allDocuments, activeClientId, {
-              includeSnapshots: false,
-            });
+            const compactState = serializeWorkspaceStateForCloud(
+              representationMode,
+              clients,
+              allDeals,
+              dealStageMap,
+              crmSettingsMap,
+              allDocuments,
+              activeClientId,
+              {
+                includeSnapshots: false,
+              },
+            );
             try {
               const savedCompact = await saveWorkspaceCloudState(compactState);
               if (cancelled) return;
@@ -652,7 +808,18 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [ready, session, clients, allDeals, dealStageMap, allDocuments, activeClientId, cloudLocalFallback]);
+  }, [
+    ready,
+    session,
+    representationMode,
+    clients,
+    allDeals,
+    dealStageMap,
+    crmSettingsMap,
+    allDocuments,
+    activeClientId,
+    cloudLocalFallback,
+  ]);
 
   useEffect(() => {
     if (!ready) return;
@@ -666,15 +833,33 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     if (Array.isArray(dealStageMap[activeClientId]) && dealStageMap[activeClientId].length > 0) return;
     setDealStageMap((prev) => ({
       ...prev,
-      [activeClientId]: [...DEFAULT_DEAL_STAGES],
+      [activeClientId]: [...getDefaultDealStagesForMode(representationMode)],
     }));
-  }, [ready, activeClientId, dealStageMap]);
+  }, [ready, activeClientId, dealStageMap, representationMode]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (clients.length === 0) return;
+    setDealStageMap((prev) => seedDealStagesForClients(clients, prev, representationMode));
+  }, [ready, clients, representationMode]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (clients.length === 0) return;
+    setCrmSettingsMap((prev) => seedCrmSettingsForClients(clients, prev, representationMode));
+  }, [ready, clients, representationMode]);
 
   const setActiveClient = useCallback((clientId: string) => {
     const targetId = asText(clientId);
     if (!targetId) return;
     setActiveClientId((prev) => (prev === targetId ? prev : targetId));
   }, []);
+
+  const setRepresentationMode = useCallback((mode: RepresentationMode) => {
+    setRepresentationModeState((prev) => (prev === mode ? prev : mode));
+    setDealStageMap((prev) => seedDealStagesForClients(clients, prev, mode));
+    setCrmSettingsMap((prev) => seedCrmSettingsForClients(clients, prev, mode));
+  }, [clients]);
 
   const createClient = useCallback((input: CreateClientInput): ClientWorkspaceClient | null => {
     const name = asText(input.name);
@@ -695,11 +880,17 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     setClients((prev) => [created, ...prev]);
     setDealStageMap((prev) => ({
       ...prev,
-      [created.id]: prev[created.id] && prev[created.id].length > 0 ? prev[created.id] : [...DEFAULT_DEAL_STAGES],
+      [created.id]: prev[created.id] && prev[created.id].length > 0
+        ? normalizeDealStages(prev[created.id], representationMode)
+        : [...getDefaultDealStagesForMode(representationMode)],
+    }));
+    setCrmSettingsMap((prev) => ({
+      ...prev,
+      [created.id]: normalizeCrmSettings(prev[created.id], representationMode),
     }));
     setActiveClientId(created.id);
     return created;
-  }, []);
+  }, [representationMode]);
 
   const updateClient = useCallback((clientId: string, input: UpdateClientInput) => {
     const id = asText(clientId);
@@ -737,25 +928,49 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const getDealStagesForClient = useCallback((clientId?: string | null) => {
     const resolvedClientId = asText(clientId || activeClientId);
-    if (!resolvedClientId) return [...DEFAULT_DEAL_STAGES];
-    return normalizeDealStages(dealStageMap[resolvedClientId]);
-  }, [dealStageMap, activeClientId]);
+    if (!resolvedClientId) return [...getDefaultDealStagesForMode(representationMode)];
+    return normalizeDealStages(dealStageMap[resolvedClientId], representationMode);
+  }, [dealStageMap, activeClientId, representationMode]);
 
   const setDealStages = useCallback((stages: string[], clientId?: string | null) => {
     const resolvedClientId = asText(clientId || activeClientId);
     if (!resolvedClientId) return;
-    const normalizedStages = normalizeDealStages(stages);
+    const normalizedStages = normalizeDealStages(stages, representationMode);
     setDealStageMap((prev) => ({
       ...prev,
       [resolvedClientId]: normalizedStages,
     }));
-  }, [activeClientId]);
+  }, [activeClientId, representationMode]);
+
+  const getCrmSettingsForClient = useCallback((clientId?: string | null) => {
+    const resolvedClientId = asText(clientId || activeClientId);
+    if (!resolvedClientId) return normalizeCrmSettings(null, representationMode);
+    return normalizeCrmSettings(crmSettingsMap[resolvedClientId], representationMode);
+  }, [crmSettingsMap, activeClientId, representationMode]);
+
+  const setCrmSettings = useCallback((settings: Partial<ClientCrmSettings>, clientId?: string | null) => {
+    const resolvedClientId = asText(clientId || activeClientId);
+    if (!resolvedClientId) return;
+    setCrmSettingsMap((prev) => {
+      const current = normalizeCrmSettings(prev[resolvedClientId], representationMode);
+      return {
+        ...prev,
+        [resolvedClientId]: normalizeCrmSettings(
+          {
+            ...current,
+            ...settings,
+          },
+          representationMode,
+        ),
+      };
+    });
+  }, [activeClientId, representationMode]);
 
   const createDeal = useCallback((input: CreateDealInput): ClientWorkspaceDeal | null => {
     const resolvedClientId = asText(input.clientId || activeClientId);
     const dealName = asText(input.dealName);
     if (!resolvedClientId || !dealName) return null;
-    const stages = normalizeDealStages(dealStageMap[resolvedClientId]);
+    const stages = normalizeDealStages(dealStageMap[resolvedClientId], representationMode);
     const nowIso = new Date().toISOString();
     const created: ClientWorkspaceDeal = {
       id: nextId("deal"),
@@ -763,7 +978,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       dealName,
       requirementName: asText(input.requirementName),
       dealType: asText(input.dealType),
-      stage: asText(input.stage) || stages[0] || DEFAULT_DEAL_STAGES[0],
+      stage: asText(input.stage) || stages[0] || getDefaultDealStagesForMode(representationMode)[0] || DEFAULT_DEAL_STAGES[0],
       status: input.status || "open",
       priority: input.priority || "medium",
       targetMarket: asText(input.targetMarket),
@@ -792,10 +1007,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     setAllDeals((prev) => [created, ...prev]);
     setDealStageMap((prev) => ({
       ...prev,
-      [resolvedClientId]: normalizeDealStages(prev[resolvedClientId]),
+      [resolvedClientId]: normalizeDealStages(prev[resolvedClientId], representationMode),
     }));
     return created;
-  }, [activeClientId, dealStageMap]);
+  }, [activeClientId, dealStageMap, representationMode]);
 
   const updateDeal = useCallback((dealId: string, input: UpdateDealInput) => {
     const id = asText(dealId);
@@ -896,7 +1111,9 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
               updatedAt: nowIso,
             };
           }
-          const stageOptions = normalizeDealStages(dealStageMap[deal.clientId]);
+          const clientCrmSettings = normalizeCrmSettings(crmSettingsMap[deal.clientId], representationMode);
+          if (!clientCrmSettings.autoStageFromDocuments) return nextDeal;
+          const stageOptions = normalizeDealStages(dealStageMap[deal.clientId], representationMode);
           return applyDocumentStageAutomation({
             deal: nextDeal,
             documentType: document.type,
@@ -908,7 +1125,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       );
     }
     return document;
-  }, [activeClientId, session, dealStageMap]);
+  }, [activeClientId, session, dealStageMap, crmSettingsMap, representationMode]);
 
   const updateDocument = useCallback((documentId: string, input: UpdateClientDocumentInput) => {
     const id = asText(documentId);
@@ -959,7 +1176,9 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           };
         }
         if (deal.id === nextDealId) {
-          const stageOptions = normalizeDealStages(dealStageMap[deal.clientId]);
+          const clientCrmSettings = normalizeCrmSettings(crmSettingsMap[deal.clientId], representationMode);
+          if (!clientCrmSettings.autoStageFromDocuments) return nextDeal;
+          const stageOptions = normalizeDealStages(dealStageMap[deal.clientId], representationMode);
           nextDeal = applyDocumentStageAutomation({
             deal: nextDeal,
             documentType: nextType,
@@ -971,7 +1190,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         return nextDeal;
       }),
     );
-  }, [allDocuments, dealStageMap]);
+  }, [allDocuments, dealStageMap, crmSettingsMap, representationMode]);
 
   const removeDocument = useCallback((documentId: string) => {
     const id = asText(documentId);
@@ -1008,6 +1227,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     () => getDealStagesForClient(activeClientId),
     [activeClientId, getDealStagesForClient],
   );
+  const crmSettings = useMemo(
+    () => getCrmSettingsForClient(activeClientId),
+    [activeClientId, getCrmSettingsForClient],
+  );
   const documents = useMemo(
     () => getDocumentsForClient(activeClientId),
     [activeClientId, getDocumentsForClient],
@@ -1025,16 +1248,19 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       cloudSyncStatus,
       cloudSyncMessage,
       cloudLastSyncedAt,
+      representationMode,
       clients,
       activeClientId,
       activeClient,
       allDeals,
       deals,
       dealStages,
+      crmSettings,
       documents,
       allDocuments,
       entityGraph,
       setActiveClient,
+      setRepresentationMode,
       createClient,
       updateClient,
       createDeal,
@@ -1043,6 +1269,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setDealStages,
       getDealsForClient,
       getDealStagesForClient,
+      setCrmSettings,
+      getCrmSettingsForClient,
       registerDocument,
       updateDocument,
       removeDocument,
@@ -1054,16 +1282,19 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       cloudSyncStatus,
       cloudSyncMessage,
       cloudLastSyncedAt,
+      representationMode,
       clients,
       activeClientId,
       activeClient,
       allDeals,
       deals,
       dealStages,
+      crmSettings,
       documents,
       allDocuments,
       entityGraph,
       setActiveClient,
+      setRepresentationMode,
       createClient,
       updateClient,
       createDeal,
@@ -1072,6 +1303,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setDealStages,
       getDealsForClient,
       getDealStagesForClient,
+      setCrmSettings,
+      getCrmSettingsForClient,
       registerDocument,
       updateDocument,
       removeDocument,

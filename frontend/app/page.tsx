@@ -14,8 +14,8 @@ import {
   PlatformModuleTabs,
 } from "@/components/platform/PlatformShell";
 import {
-  DEFAULT_PLATFORM_MODULE_ID,
   FINANCIAL_ANALYSES_TOOL_TABS,
+  getDefaultPlatformModuleId,
   isFinancialAnalysesToolId,
   resolveActivePlatformModule,
   type FinancialAnalysesToolId,
@@ -92,6 +92,7 @@ import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicke
 import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCenter";
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
+import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -563,6 +564,7 @@ function HomeContent() {
     ready: workspaceReady,
     session: authSession,
     isAuthenticated,
+    representationMode,
     activeClient,
     activeClientId,
     allDeals,
@@ -589,7 +591,11 @@ function HomeContent() {
     () => makeClientScopedStorageKey(PENDING_SCENARIO_KEY, workspaceScopeId),
     [workspaceScopeId],
   );
-  const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>(DEFAULT_PLATFORM_MODULE_ID);
+  const defaultPlatformModuleId = useMemo(
+    () => getDefaultPlatformModuleId(representationMode),
+    [representationMode],
+  );
+  const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>(defaultPlatformModuleId);
   const [activeTopTab, setActiveTopTab] = useState<FinancialAnalysesToolId>("lease-comparison");
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -646,9 +652,25 @@ function HomeContent() {
   );
 
   useEffect(() => {
-    const resolved = resolveActivePlatformModule(rawModuleParam, Boolean(authSession));
+    const resolved = resolveActivePlatformModule(rawModuleParam, Boolean(authSession), representationMode);
     if (activePlatformModule !== resolved) setActivePlatformModule(resolved);
-  }, [rawModuleParam, authSession, activePlatformModule]);
+  }, [rawModuleParam, authSession, representationMode, activePlatformModule]);
+
+  useEffect(() => {
+    if (rawModuleParam.length > 0) return;
+    if (activePlatformModule === defaultPlatformModuleId) return;
+    setActivePlatformModule(defaultPlatformModuleId);
+  }, [rawModuleParam, activePlatformModule, defaultPlatformModuleId]);
+
+  useEffect(() => {
+    if (representationMode === LANDLORD_REP_MODE) {
+      setHeroAiPrompt("Build a listing summary for the 16th floor availability at 500 W 2nd.");
+      return;
+    }
+    if (representationMode === TENANT_REP_MODE) {
+      setHeroAiPrompt("Run a sublease recovery using the Austin obligation and these three proposals.");
+    }
+  }, [representationMode]);
 
   const getDefaultBrokerageLogoDataUrl = useCallback(async (): Promise<string | null> => {
     if (!defaultBrokerageLogoPromiseRef.current) {
@@ -1330,16 +1352,22 @@ function HomeContent() {
       const resolvedBrokerageName = authSession
         ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
         : CRE_DEFAULT_BROKERAGE_NAME;
+      const excelDescriptor = representationMode === LANDLORD_REP_MODE
+        ? "Landlord Report"
+        : "Financial Analysis";
+      const pdfDescriptor = representationMode === LANDLORD_REP_MODE
+        ? "Listing Pipeline Report"
+        : "Economic Presentation";
       return buildPlatformExportFileName({
         kind,
         brokerageName: resolvedBrokerageName,
         clientName: meta.prepared_for || "Client",
         reportDate: meta.report_date,
-        excelDescriptor: "Financial Analysis",
-        pdfDescriptor: "Economic Presentation",
+        excelDescriptor,
+        pdfDescriptor,
       });
     },
-    [authSession, organizationBranding]
+    [authSession, organizationBranding, representationMode]
   );
 
   const getScenarioResultForExport = useCallback((scenario: ScenarioWithId): CashflowResult => {
@@ -1807,10 +1835,39 @@ function HomeContent() {
     () => scopedDeals.filter((deal) => deal.status !== "won" && deal.status !== "lost").length,
     [scopedDeals],
   );
+  const isLandlordMode = representationMode === LANDLORD_REP_MODE;
   const parsedDocumentsCount = useMemo(
     () => scopedDocuments.filter((doc) => doc.parsed).length,
     [scopedDocuments],
   );
+  const landlordPropertyCount = useMemo(() => {
+    return new Set(
+      scopedDocuments
+        .map((doc) => `${String(doc.building || "").trim()}::${String(doc.address || "").trim()}`.toLowerCase())
+        .filter((key) => key !== "::"),
+    ).size;
+  }, [scopedDocuments]);
+  const landlordAvailableSpacesCount = useMemo(() => {
+    return scopedDocuments.filter((doc) => String(doc.suite || "").trim().length > 0).length;
+  }, [scopedDocuments]);
+  const landlordActiveToursCount = useMemo(() => {
+    return scopedDeals.filter((deal) => {
+      const stage = String(deal.stage || "").toLowerCase();
+      return stage.includes("tour");
+    }).length;
+  }, [scopedDeals]);
+  const landlordActiveProposalsCount = useMemo(() => {
+    return scopedDeals.filter((deal) => {
+      const stage = String(deal.stage || "").toLowerCase();
+      return stage.includes("proposal") || stage.includes("counter");
+    }).length;
+  }, [scopedDeals]);
+  const landlordSignedDealsCount = useMemo(() => {
+    return scopedDeals.filter((deal) => {
+      const stage = String(deal.stage || "").toLowerCase();
+      return deal.status === "won" || stage.includes("executed");
+    }).length;
+  }, [scopedDeals]);
   const hasScenarioErrors = useMemo(
     () => scenarios.some((scenario) => {
       const row = results[scenario.id];
@@ -1843,14 +1900,55 @@ function HomeContent() {
     scopedDocuments.length,
   ]);
   const heroPipelineActions = useMemo(
-    () => [
-      { label: "UPLOAD", value: `${scopedDocuments.length}`, active: scopedDocuments.length > 0 },
-      { label: "EXTRACT", value: `${parsedDocumentsCount}`, active: parsedDocumentsCount > 0 },
-      { label: "ANALYZE", value: `${scenarios.length}`, active: scenarios.length > 0 },
-      { label: "TRACK", value: `${activeDealsCount}`, active: activeDealsCount > 0 },
+    () => {
+      if (isLandlordMode) {
+        return [
+          { label: "LISTINGS", value: `${landlordAvailableSpacesCount}`, active: landlordAvailableSpacesCount > 0 },
+          { label: "INQUIRIES", value: `${activeDealsCount}`, active: activeDealsCount > 0 },
+          { label: "TOURS", value: `${landlordActiveToursCount}`, active: landlordActiveToursCount > 0 },
+          { label: "PROPOSALS", value: `${landlordActiveProposalsCount}`, active: landlordActiveProposalsCount > 0 },
+        ];
+      }
+      return [
+        { label: "UPLOAD", value: `${scopedDocuments.length}`, active: scopedDocuments.length > 0 },
+        { label: "EXTRACT", value: `${parsedDocumentsCount}`, active: parsedDocumentsCount > 0 },
+        { label: "ANALYZE", value: `${scenarios.length}`, active: scenarios.length > 0 },
+        { label: "TRACK", value: `${activeDealsCount}`, active: activeDealsCount > 0 },
+      ];
+    },
+    [
+      isLandlordMode,
+      landlordAvailableSpacesCount,
+      activeDealsCount,
+      landlordActiveToursCount,
+      landlordActiveProposalsCount,
+      scopedDocuments.length,
+      parsedDocumentsCount,
+      scenarios.length,
     ],
-    [scopedDocuments.length, parsedDocumentsCount, scenarios.length, activeDealsCount],
   );
+  const heroMetricCards = useMemo(() => {
+    if (isLandlordMode) {
+      return [
+        { label: "Properties", value: landlordPropertyCount },
+        { label: "Available Spaces", value: landlordAvailableSpacesCount },
+        { label: "Active Proposals", value: landlordActiveProposalsCount },
+      ];
+    }
+    return [
+      { label: "Active Deals", value: activeDealsCount },
+      { label: "Scenarios", value: scenarios.length },
+      { label: "Documents", value: scopedDocuments.length },
+    ];
+  }, [
+    isLandlordMode,
+    landlordPropertyCount,
+    landlordAvailableSpacesCount,
+    landlordActiveProposalsCount,
+    activeDealsCount,
+    scenarios.length,
+    scopedDocuments.length,
+  ]);
   const heroAiPlan = useMemo(
     () => suggestPlan(heroAiPrompt),
     [heroAiPrompt, suggestPlan],
@@ -1864,33 +1962,68 @@ function HomeContent() {
     })
     .filter((x): x is { name: string; error: string } => x !== null);
   const coverMetaPreview = buildReportMeta();
-  const heroSparklineValues = useMemo(() => {
-    const values = chartData
-      .map((row) => Number(row.npv_cost))
-      .filter((v) => Number.isFinite(v) && v > 0)
-      .slice(0, 8);
-    if (values.length >= 2) return values;
-    const base =
-      240
-      + (scopedDocuments.length * 28)
-      + (parsedDocumentsCount * 18)
-      + (activeDealsCount * 36)
-      + (scenarios.length * 42);
-    return [base * 0.92, base * 0.99, base * 0.95, base * 1.04, base];
-  }, [chartData, scopedDocuments.length, parsedDocumentsCount, activeDealsCount, scenarios.length]);
-  const heroSparklinePoints = useMemo(() => {
-    const min = Math.min(...heroSparklineValues);
-    const max = Math.max(...heroSparklineValues);
+  const heroTrendSeries = useMemo(() => {
+    const source = chartData
+      .map((row) => Number(isLandlordMode ? row.avg_cost_year : row.npv_cost))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .slice(-12);
+    if (source.length >= 5) return source;
+    const baseline =
+      100
+      + (scopedDocuments.length * 6)
+      + (parsedDocumentsCount * 5)
+      + (activeDealsCount * 8)
+      + (scenarios.length * 7)
+      + (isLandlordMode ? landlordPropertyCount * 5 : 0);
+    return Array.from({ length: 10 }, (_, index) => {
+      const trendLift = index * (2.5 + workflowCoverageCount * 0.6);
+      const modulation =
+        Math.sin((index + scopedDocuments.length) * 0.75) * (2 + Math.max(0, 4 - workflowCoverageCount) * 0.35);
+      const correction = hasScenarioErrors && index > 6 ? -2.2 : 0;
+      return baseline + trendLift + modulation + correction;
+    });
+  }, [
+    chartData,
+    isLandlordMode,
+    scopedDocuments.length,
+    parsedDocumentsCount,
+    activeDealsCount,
+    scenarios.length,
+    landlordPropertyCount,
+    workflowCoverageCount,
+    hasScenarioErrors,
+  ]);
+  const heroTrendChart = useMemo(() => {
+    const values = heroTrendSeries.length >= 2 ? heroTrendSeries : [heroTrendSeries[0] || 100, (heroTrendSeries[0] || 100) + 6];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
     const span = Math.max(1, max - min);
-    const count = heroSparklineValues.length;
-    return heroSparklineValues
-      .map((value, idx) => {
-        const x = count === 1 ? 12 : 12 + (idx * 236) / (count - 1);
-        const y = 58 - ((value - min) / span) * 42;
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
-  }, [heroSparklineValues]);
+    const frame = { left: 12, right: 308, top: 8, bottom: 64 };
+    const points = values.map((value, index) => {
+      const x = values.length === 1
+        ? (frame.left + frame.right) / 2
+        : frame.left + (index * (frame.right - frame.left)) / (values.length - 1);
+      const y = frame.bottom - ((value - min) / span) * (frame.bottom - frame.top);
+      return { x, y };
+    });
+    const strokePath = points.reduce((path, point, index) => {
+      if (index === 0) return `M ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
+      const prev = points[index - 1];
+      const controlX = ((prev.x + point.x) / 2).toFixed(2);
+      return `${path} C ${controlX} ${prev.y.toFixed(2)}, ${controlX} ${point.y.toFixed(2)}, ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
+    }, "");
+    const firstPoint = points[0];
+    const lastPoint = points[points.length - 1];
+    const areaPath = `${strokePath} L ${lastPoint.x.toFixed(2)} ${frame.bottom} L ${firstPoint.x.toFixed(2)} ${frame.bottom} Z`;
+    const deltaPercent = values.length > 1
+      ? ((values[values.length - 1] - values[0]) / Math.max(1, Math.abs(values[0]))) * 100
+      : 0;
+    return { points, strokePath, areaPath, deltaPercent };
+  }, [heroTrendSeries]);
+  const heroTrendDeltaLabel = useMemo(() => {
+    const direction = heroTrendChart.deltaPercent >= 0 ? "+" : "";
+    return `${direction}${heroTrendChart.deltaPercent.toFixed(1)}% period trend`;
+  }, [heroTrendChart.deltaPercent]);
   const runHeroAiCommand = useCallback(async () => {
     const command = heroAiPrompt.trim();
     if (!command) {
@@ -1925,14 +2058,19 @@ function HomeContent() {
   const openWorkspaceHref = authSession ? "/?module=deals" : "/account?mode=signin";
   const heroClientName = activeClient?.name || coverMetaPreview.prepared_for || "Client Workspace";
   const heroPreparedBy = coverMetaPreview.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
-  const heroCapabilitiesLabel = "Financial Analyses • Surveys • Lease Abstracts • Deals • Obligations • AI Workflows";
+  const heroCapabilitiesLabel = isLandlordMode
+    ? "Deals • Availabilities • Marketing • Lease Tracking • Reporting • AI Workflows"
+    : "Financial Analyses • Surveys • Completed Leases • CRM • Obligations • AI Workflows";
+  const heroWorkflowFooterLabel = isLandlordMode
+    ? `${landlordSignedDealsCount} signed · ${workflowCoverageCount} workflows active`
+    : `${parsedDocumentsCount} parsed · ${workflowCoverageCount} workflows active`;
   const showHomeHero = rawModuleParam.length === 0;
   const topNavOffsetClass = "pt-24 sm:pt-28";
-  const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === DEFAULT_PLATFORM_MODULE_ID;
+  const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === "financial-analyses";
   const mainTopOffsetClass = !showHomeHero && !moduleHasDedicatedTopTabs ? topNavOffsetClass : "";
   const tabTopOffsetClass = !showHomeHero ? topNavOffsetClass : "mt-8";
 
-  if (Boolean(authSession) && !activeClient) {
+  if (Boolean(authSession) && (!representationMode || !activeClient)) {
     return (
       <main className={`relative z-10 app-container ${topNavOffsetClass} pb-14 md:pb-20`}>
         <section className="scroll-mt-24 bg-grid mt-6">
@@ -1999,7 +2137,11 @@ function HomeContent() {
                         value={heroAiPrompt}
                         onChange={(event) => setHeroAiPrompt(event.target.value)}
                         className="input-premium !py-2.5"
-                        placeholder="Run a sublease recovery using the Austin obligation and these three proposals."
+                        placeholder={
+                          isLandlordMode
+                            ? "Show me all availabilities with proposals outstanding."
+                            : "Run a sublease recovery using the Austin obligation and these three proposals."
+                        }
                       />
                       <button
                         type="submit"
@@ -2030,18 +2172,16 @@ function HomeContent() {
                         <p className="heading-kicker mb-1">Client</p>
                         <p className="text-sm sm:text-base tracking-tight text-white leading-tight truncate">{heroClientName}</p>
                       </div>
-                      <div className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.12)" }}>
-                        <p className="heading-kicker mb-1">Active Deals</p>
-                        <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{activeDealsCount}</p>
-                      </div>
-                      <div className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.08)" }}>
-                        <p className="heading-kicker mb-1">Scenarios</p>
-                        <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{scenarios.length}</p>
-                      </div>
-                      <div className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.06)" }}>
-                        <p className="heading-kicker mb-1">Documents</p>
-                        <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{scopedDocuments.length}</p>
-                      </div>
+                      {heroMetricCards.map((metric, index) => (
+                        <div
+                          key={metric.label}
+                          className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center"
+                          style={{ ["--parallax-y" as string]: `calc(var(--hero-scroll-y, 0px) * -${(0.12 - index * 0.03).toFixed(2)})` }}
+                        >
+                          <p className="heading-kicker mb-1">{metric.label}</p>
+                          <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{metric.value}</p>
+                        </div>
+                      ))}
 
                       <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
                         <p className="heading-kicker mb-1">Status</p>
@@ -2059,29 +2199,47 @@ function HomeContent() {
                         <p className="text-sm text-white/90 leading-tight">{coverMetaPreview.report_date}</p>
                       </div>
 
-                      <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-between min-h-[132px]" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
+                      <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col min-h-[132px]" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
                         <div className="flex items-center justify-between mb-2">
                           <p className="heading-kicker">Portfolio trend</p>
                           <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live system</p>
                         </div>
-                        <svg viewBox="0 0 260 70" className="w-full h-20 sm:h-24">
-                          <polyline
-                            points={heroSparklinePoints}
-                            fill="none"
-                            stroke="rgba(255,255,255,0.28)"
-                            strokeWidth="5"
-                            strokeLinejoin="round"
-                            strokeLinecap="round"
-                          />
-                          <polyline
-                            points={heroSparklinePoints}
-                            fill="none"
-                            stroke="rgba(255,255,255,0.9)"
-                            strokeWidth="1.8"
-                            strokeLinejoin="round"
-                            strokeLinecap="round"
-                          />
-                        </svg>
+                        <div className="flex-1 border border-white/10 bg-black/35 p-2">
+                          <svg viewBox="0 0 320 72" className="w-full h-full min-h-[92px]" preserveAspectRatio="none">
+                            <defs>
+                              <linearGradient id="hero-trend-fill" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="rgba(103,232,249,0.35)" />
+                                <stop offset="100%" stopColor="rgba(103,232,249,0.02)" />
+                              </linearGradient>
+                            </defs>
+                            <g stroke="rgba(255,255,255,0.08)" strokeWidth="1">
+                              {[16, 28, 40, 52, 64].map((y) => (
+                                <line key={y} x1="12" x2="308" y1={y} y2={y} />
+                              ))}
+                            </g>
+                            <path d={heroTrendChart.areaPath} fill="url(#hero-trend-fill)" />
+                            <path
+                              d={heroTrendChart.strokePath}
+                              fill="none"
+                              stroke="rgba(255,255,255,0.92)"
+                              strokeWidth="2.1"
+                              strokeLinejoin="round"
+                              strokeLinecap="round"
+                            />
+                            {heroTrendChart.points.length > 0 ? (
+                              <circle
+                                cx={heroTrendChart.points[heroTrendChart.points.length - 1]?.x}
+                                cy={heroTrendChart.points[heroTrendChart.points.length - 1]?.y}
+                                r="2.6"
+                                fill="rgba(103,232,249,0.95)"
+                              />
+                            ) : null}
+                          </svg>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between text-[10px] uppercase tracking-[0.08em] text-slate-400">
+                          <span>{heroTrendDeltaLabel}</span>
+                          <span>{heroTrendSeries.length} points</span>
+                        </div>
                       </div>
                       <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
                         <p className="heading-kicker mb-2">Workflow actions</p>
@@ -2098,7 +2256,7 @@ function HomeContent() {
                             </div>
                           ))}
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-2">{parsedDocumentsCount} parsed · {workflowCoverageCount} workflows active</p>
+                        <p className="text-[10px] text-slate-400 mt-2">{heroWorkflowFooterLabel}</p>
                       </div>
                     </div>
                   </div>
@@ -2112,6 +2270,7 @@ function HomeContent() {
             workflowCount={workflowCoverageCount}
             insightCount={Math.max(1, chartData.length + parsedDocumentsCount)}
             activeClientName={heroClientName}
+            representationMode={representationMode}
           />
         </>
       ) : null}
