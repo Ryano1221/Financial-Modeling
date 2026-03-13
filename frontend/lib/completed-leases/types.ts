@@ -14,6 +14,7 @@ export interface CompletedLeaseExportBranding {
 export interface CompletedLeaseDocumentRecord {
   id: string;
   clientId: string;
+  sourceDocumentId?: string;
   fileName: string;
   uploadedAtIso: string;
   kind: CompletedLeaseDocumentKind;

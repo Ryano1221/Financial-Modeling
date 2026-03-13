@@ -134,7 +134,7 @@ interface SubleaseRecoveryAnalysisProps {
 }
 
 export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBranding = {} }: SubleaseRecoveryAnalysisProps) {
-  const { isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated, documents } = useClientWorkspace();
   const existing = useMemo(() => buildExistingObligationFromScenario(sourceScenario), [sourceScenario]);
   const existingKey = `${existing.premises}|${existing.commencementDate}|${existing.expirationDate}|${existing.rsf}`;
   const scopedStorageKey = useMemo(
@@ -433,11 +433,31 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
       review_tasks: snapshot.review_tasks || [],
     };
     const draft = mapProposalToScenarioDraft(normalized, existing, document.name || "Client proposal");
+    draft.scenario.source_document_id = document.id;
+    draft.scenario.source_document_name = document.name || "Client proposal";
     setProposalDraft(draft);
     setProposalFieldReview(draft.fieldReview);
     setImportStatus(`Loaded proposal terms from ${document.name}. Review and approve below.`);
     setImportError("");
   }, [existing]);
+
+  useEffect(() => {
+    if (!storageHydrated) return;
+    const importedSourceIds = new Set(
+      scenarios
+        .map((scenario) => String(scenario.source_document_id || "").trim())
+        .filter(Boolean)
+    );
+    const activeDraftSourceId = String(proposalDraft?.scenario.source_document_id || "").trim();
+    const pending = documents.find((document) =>
+      document.sourceModule === "sublease-recovery"
+      && document.normalizeSnapshot?.canonical_lease
+      && !importedSourceIds.has(document.id)
+      && document.id !== activeDraftSourceId
+    );
+    if (!pending) return;
+    importFromExistingClientDocument(pending);
+  }, [documents, importFromExistingClientDocument, proposalDraft?.scenario.source_document_id, scenarios, storageHydrated]);
 
   const saveProposalDraftScenario = () => {
     if (!proposalDraft) return;
@@ -523,7 +543,7 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
       <div className="mb-4 rounded-xl border border-dashed border-white/20 bg-black/25 p-4 sm:p-5 text-center">
         <p className="heading-kicker mb-1">Unified Document Intake</p>
         <p className="text-sm text-slate-200">
-          Upload sublease proposals in the single Document Center above, or drop files anywhere on this screen.
+          Drop sublease proposals anywhere on this tab to save them to this client and load a proposal draft here.
         </p>
         <p className="text-xs text-slate-400 mt-2">Then select a parsed proposal below to import terms into a scenario draft.</p>
         {importStatus ? <p className="text-xs text-cyan-200 mt-2">{importStatus}</p> : null}

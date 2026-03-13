@@ -70,6 +70,8 @@ export interface SubleaseScenario {
   id: string;
   clientId?: string;
   name: string;
+  source_document_id?: string;
+  source_document_name?: string;
   subtenantName: string;
   subtenantLegalEntity?: string;
   dbaName?: string;

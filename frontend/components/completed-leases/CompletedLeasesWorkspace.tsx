@@ -250,7 +250,7 @@ function buildControllingAbstract(
 }
 
 export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: CompletedLeasesWorkspaceProps) {
-  const { isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated, documents: clientDocuments } = useClientWorkspace();
   const [documents, setDocuments] = useState<CompletedLeaseDocumentRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [storageHydrated, setStorageHydrated] = useState(false);
@@ -402,7 +402,7 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
   const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
     const snapshot = document.normalizeSnapshot;
     if (!snapshot?.canonical_lease) {
-      setError("Selected document has no parsed payload. Upload this file through the Document Center first.");
+      setError("Selected document has no parsed payload. Upload this file through this client workspace first.");
       return;
     }
     setError("");
@@ -424,6 +424,58 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
     });
     setStatus(`Imported ${document.name} from client document library.`);
   }, [addDocumentFromNormalize]);
+
+  useEffect(() => {
+    if (!storageHydrated) return;
+    const moduleDocuments = clientDocuments.filter((document) => document.sourceModule === "completed-leases");
+    if (moduleDocuments.length === 0) return;
+
+    let importedCount = 0;
+    setDocuments((prev) => {
+      const existingSourceIds = new Set(prev.map((doc) => asText(doc.sourceDocumentId)).filter(Boolean));
+      const next = [...prev];
+      for (const document of moduleDocuments) {
+        if (existingSourceIds.has(document.id)) continue;
+        const snapshot = document.normalizeSnapshot;
+        if (!snapshot?.canonical_lease) continue;
+        const normalized: NormalizerResponse = {
+          canonical_lease: snapshot.canonical_lease,
+          option_variants: snapshot.option_variants || [],
+          confidence_score: Number(snapshot.confidence_score || 0),
+          field_confidence: snapshot.field_confidence || {},
+          missing_fields: [],
+          clarification_questions: [],
+          warnings: snapshot.warnings || [],
+          extraction_summary: snapshot.extraction_summary,
+          review_tasks: snapshot.review_tasks || [],
+        };
+        const kind = inferKind(document.name, normalized);
+        next.unshift({
+          id: nextId(),
+          clientId,
+          sourceDocumentId: document.id,
+          fileName: document.name,
+          uploadedAtIso: toIsoDate(new Date()),
+          kind,
+          linkedLeaseId: kind === "amendment" ? next.find((record) => record.kind === "lease")?.id : undefined,
+          canonical: normalized.canonical_lease,
+          fieldConfidence: normalized.field_confidence || {},
+          warnings: normalized.warnings || [],
+          extractionSummary: normalized.extraction_summary,
+          reviewTasks: normalized.review_tasks || [],
+          source: normalized,
+        });
+        existingSourceIds.add(document.id);
+        importedCount += 1;
+      }
+      return next;
+    });
+
+    if (importedCount > 0) {
+      setStatus(`Imported ${importedCount} lease document${importedCount === 1 ? "" : "s"} from this client's Lease Abstract tab upload.`);
+      setError("");
+    }
+  }, [clientDocuments, clientId, storageHydrated]);
 
   const onExcelExport = useCallback(async () => {
     if (!controllingAbstract) return;
@@ -469,7 +521,7 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
     <PlatformSection
       kicker="Lease Abstract"
       title="Completed Lease Abstraction"
-      description="Review executed leases and amendments from Document Center, confirm controlling terms, and export polished abstract outputs."
+      description="Review executed leases and amendments for this client, confirm controlling terms, and export polished abstract outputs."
       headerAlign="center"
       actions={
         <div className="flex flex-wrap justify-center gap-2">
@@ -505,7 +557,7 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
           <div className="border border-dashed border-white/20 bg-black/20 px-4 py-8 text-center">
             <p className="heading-kicker mb-2">Unified Document Intake</p>
             <p className="text-sm text-slate-200">
-              Use the single Document Center above to upload or drop lease files anywhere on this screen.
+              Drop lease files anywhere on this tab to save them to this client and load them into the lease abstract stack.
             </p>
             <p className="text-xs text-slate-400 mt-2">
               Amendment files can then be linked to a base lease for controlling-term overrides.

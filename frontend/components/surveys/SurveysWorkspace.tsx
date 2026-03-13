@@ -43,13 +43,13 @@ function formatIsoDate(iso: string): string {
 }
 
 export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorkspaceProps) {
-  const { isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated, documents } = useClientWorkspace();
   const [entries, setEntries] = useState<SurveyEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [storageHydrated, setStorageHydrated] = useState(false);
   const [excelLoading, setExcelLoading] = useState(false);
   const [error, setError] = useState("");
-  const [status, setStatus] = useState("No survey entries yet. Upload files in Document Center, then select them here.");
+  const [status, setStatus] = useState("No survey entries yet. Drop files on the Surveys tab or select client documents here.");
   const scopedStorageKey = useMemo(
     () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
     [clientId],
@@ -61,7 +61,7 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
     setStorageHydrated(false);
     setEntries([]);
     setSelectedId("");
-    setStatus("No survey entries yet. Upload files in Document Center, then select them here.");
+    setStatus("No survey entries yet. Drop files on the Surveys tab or select client documents here.");
     setError("");
 
     const applyParsed = (parsed: { entries?: SurveyEntry[]; selectedId?: string } | null) => {
@@ -174,6 +174,63 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
       setError(getDisplayErrorMessage(err));
     }
   }, [addEntry, clientId]);
+
+  useEffect(() => {
+    if (!storageHydrated) return;
+    const moduleDocuments = documents.filter((document) => document.sourceModule === "surveys");
+    if (moduleDocuments.length === 0) return;
+
+    let importedCount = 0;
+    let createdManual = 0;
+    setEntries((prev) => {
+      const existingSourceIds = new Set(prev.map((entry) => asText(entry.sourceDocumentId)).filter(Boolean));
+      const existingNames = new Set(prev.map((entry) => asText(entry.sourceDocumentName).toLowerCase()).filter(Boolean));
+      const next = [...prev];
+
+      for (const document of moduleDocuments) {
+        if (existingSourceIds.has(document.id)) continue;
+        if (!document.id && existingNames.has(asText(document.name).toLowerCase())) continue;
+
+        if (document.normalizeSnapshot?.canonical_lease) {
+          const normalized: NormalizerResponse = {
+            canonical_lease: document.normalizeSnapshot.canonical_lease,
+            option_variants: document.normalizeSnapshot.option_variants || [],
+            confidence_score: Number(document.normalizeSnapshot.confidence_score || 0),
+            field_confidence: document.normalizeSnapshot.field_confidence || {},
+            missing_fields: [],
+            clarification_questions: [],
+            warnings: document.normalizeSnapshot.warnings || [],
+            extraction_summary: document.normalizeSnapshot.extraction_summary,
+            review_tasks: document.normalizeSnapshot.review_tasks || [],
+          };
+          next.unshift({
+            ...mapNormalizeToSurveyEntry(normalized, document.name, clientId),
+            sourceDocumentId: document.id,
+          });
+          importedCount += 1;
+        } else {
+          next.unshift({
+            ...createManualSurveyEntryFromImage(document.name, clientId),
+            sourceDocumentId: document.id,
+          });
+          createdManual += 1;
+        }
+
+        existingSourceIds.add(document.id);
+        existingNames.add(asText(document.name).toLowerCase());
+      }
+      return next;
+    });
+
+    if (importedCount > 0 || createdManual > 0) {
+      const parts = [
+        importedCount > 0 ? `Imported ${importedCount} survey document${importedCount === 1 ? "" : "s"}` : "",
+        createdManual > 0 ? `added ${createdManual} manual review entr${createdManual === 1 ? "y" : "ies"}` : "",
+      ].filter(Boolean);
+      setStatus(`${parts.join(" and ")} from this client's Surveys tab upload.`);
+      setError("");
+    }
+  }, [clientId, documents, storageHydrated]);
 
   const updateSelected = useCallback((patch: Partial<SurveyEntry>) => {
     if (!selected) return;

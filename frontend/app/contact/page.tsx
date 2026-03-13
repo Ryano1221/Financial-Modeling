@@ -90,7 +90,7 @@ export default function ContactPage() {
               </p>
               <p className="text-sm sm:text-base text-slate-300">
                 For upload issues, include the active client name and confirm whether files were dropped in Document Center,
-                or elsewhere on the active workspace.
+                the Brokerage OS Command Center, or directly on a specific workspace tab.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
                 For AI workflow issues, include the command you ran and the module where you executed it.

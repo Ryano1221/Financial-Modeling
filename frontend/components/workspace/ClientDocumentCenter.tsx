@@ -4,7 +4,11 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
-import { CLIENT_DOCUMENT_TYPES, type ClientWorkspaceDocument } from "@/lib/workspace/types";
+import {
+  CLIENT_DOCUMENT_TYPES,
+  type ClientDocumentSourceModule,
+  type ClientWorkspaceDocument,
+} from "@/lib/workspace/types";
 import { getDisplayErrorMessage } from "@/lib/api";
 
 function asText(value: unknown): string {
@@ -28,9 +32,15 @@ function inDateRange(iso: string, startDate: string, endDate: string): boolean {
 
 interface ClientDocumentCenterProps {
   showDropZone?: boolean;
+  sourceModule?: ClientDocumentSourceModule;
+  globalDropLabel?: string;
 }
 
-export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCenterProps) {
+export function ClientDocumentCenter({
+  showDropZone = true,
+  sourceModule = "document-center",
+  globalDropLabel = "Drop files anywhere to save into this client and update the active workflow",
+}: ClientDocumentCenterProps) {
   const { activeClient, documents, registerDocument, updateDocument, removeDocument } = useClientWorkspace();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("No documents uploaded for this client.");
@@ -53,6 +63,7 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
   });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const globalDragDepthRef = useRef(0);
+  const isModuleScopedIntake = sourceModule !== "document-center";
 
   const triggerDownloadFromDataUrl = useCallback(async (fileName: string, dataUrl: string): Promise<void> => {
     const safeName = asText(fileName) || "document";
@@ -231,7 +242,7 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
           clientId: activeClient.id,
           name: file.name,
           file,
-          sourceModule: "document-center",
+          sourceModule,
           normalize,
           parsed: Boolean(normalize),
         });
@@ -243,7 +254,7 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
     } finally {
       setLoading(false);
     }
-  }, [activeClient, loading, registerDocument]);
+  }, [activeClient, loading, registerDocument, sourceModule]);
 
   const isFileDragEvent = useCallback((event: DragEvent): boolean => {
     const dt = event.dataTransfer;
@@ -295,7 +306,7 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
       {globalDragActive ? (
         <div className="pointer-events-none fixed inset-0 z-[70] border-2 border-dashed border-cyan-300/70 bg-cyan-500/10 backdrop-blur-[1px]">
           <div className="absolute inset-x-4 top-16 rounded-xl border border-cyan-200/70 bg-slate-900/90 px-4 py-3 text-center text-sm font-semibold tracking-tight text-cyan-100 shadow-[0_20px_60px_rgba(2,6,23,0.45)]">
-            Drop files anywhere to upload into Document Center
+            {globalDropLabel}
           </div>
         </div>
       ) : null}
@@ -356,12 +367,20 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
               {loading ? (
                 <DocumentIngestionLoader
                   status={status}
-                  detail="We are classifying each file, building previews, and attaching everything to this client's shared document library."
+                  detail={
+                    isModuleScopedIntake
+                      ? "We are classifying each file, building previews, saving everything to this client, and updating the active workspace flow."
+                      : "We are classifying each file, building previews, and attaching everything to this client's shared document library."
+                  }
                 />
               ) : (
                 <>
                   <p className="heading-kicker mb-2">Drag and drop upload</p>
-                  <p className="text-sm text-slate-200">Supports bulk files. You can also drop files anywhere on this screen. Parseable files are automatically classified and indexed.</p>
+                  <p className="text-sm text-slate-200">
+                    {isModuleScopedIntake
+                      ? "Supports bulk files. You can also drop files anywhere on this tab. Parseable files are automatically classified, saved to this client, and routed into the active workflow."
+                      : "Supports bulk files. You can also drop files anywhere on this screen. Parseable files are automatically classified and indexed."}
+                  </p>
                 </>
               )}
             </div>

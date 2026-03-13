@@ -176,7 +176,7 @@ const TIMELINE_EVENT_STYLES = {
 } as const;
 
 export function ObligationsWorkspace({ clientId, clientName }: { clientId: string; clientName?: string | null }) {
-  const { isAuthenticated } = useClientWorkspace();
+  const { isAuthenticated, documents: clientDocuments } = useClientWorkspace();
   const resolvedClientName = asText(clientName);
   const defaultCompanyName = resolvedClientName || "Default Portfolio";
   const [companies, setCompanies] = useState<ObligationCompany[]>([]);
@@ -372,6 +372,7 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
   const ingestNormalize = useCallback(async (
     sourceName: string,
     normalize: NormalizerResponse,
+    sourceDocumentId?: string,
   ) => {
     if (!activeCompanyId) return;
     const seed = mapNormalizeToObligationSeed(normalize, sourceName);
@@ -391,10 +392,16 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
     }
 
     const currentDocs = documentsRef.current;
-    const existing = currentDocs.find((doc) => doc.companyId === activeCompanyId && doc.fileName === sourceName);
+    const existing = currentDocs.find((doc) =>
+      doc.companyId === activeCompanyId && (
+        (sourceDocumentId && doc.sourceDocumentId === sourceDocumentId)
+        || doc.fileName === sourceName
+      )
+    );
     const nextDocRecord: ObligationDocumentRecord = {
       id: existing?.id || nextId(),
       clientId,
+      sourceDocumentId,
       companyId: activeCompanyId,
       obligationId,
       fileName: sourceName,
@@ -441,7 +448,7 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
   const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
     const normalize = toNormalizerResponseFromSnapshot(document);
     if (!normalize) {
-      setError("Selected document has no parsed payload. Upload this file through Document Center first.");
+      setError("Selected document has no parsed payload. Upload this file through this client workspace first.");
       return;
     }
 
@@ -449,7 +456,7 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
     setError("");
     try {
       setStatus(`Importing ${document.name} from client library...`);
-      await ingestNormalize(document.name, normalize);
+      await ingestNormalize(document.name, normalize, document.id);
       setStatus(`Imported ${document.name} from client document library.`);
     } catch (err) {
       setError(getDisplayErrorMessage(err));
@@ -457,6 +464,41 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
       setLoading(false);
     }
   }, [ingestNormalize]);
+
+  useEffect(() => {
+    if (!storageHydrated || !activeCompanyId || loading) return;
+    const pendingDocs = clientDocuments.filter((document) => {
+      if (document.sourceModule !== "obligations") return false;
+      if (!document.normalizeSnapshot?.canonical_lease) return false;
+      return !documents.some((record) => record.sourceDocumentId === document.id);
+    });
+    if (pendingDocs.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        for (const document of pendingDocs) {
+          if (cancelled) return;
+          const normalize = toNormalizerResponseFromSnapshot(document);
+          if (!normalize) continue;
+          await ingestNormalize(document.name, normalize, document.id);
+        }
+        if (!cancelled) {
+          setStatus(`Imported ${pendingDocs.length} obligation document${pendingDocs.length === 1 ? "" : "s"} from this client's Obligations tab upload.`);
+        }
+      } catch (err) {
+        if (!cancelled) setError(getDisplayErrorMessage(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCompanyId, clientDocuments, documents, ingestNormalize, loading, storageHydrated]);
 
   const onReassignDocument = useCallback((documentId: string, nextObligationId: string) => {
     const target = obligationsRef.current.find((o) => o.id === nextObligationId);
@@ -530,8 +572,8 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
 
           <div className="mt-4 border border-dashed border-white/20 bg-black/20 px-4 py-7 text-center">
             <p className="heading-kicker mb-2">Unified Document Intake</p>
-            <p className="text-sm text-slate-200">Upload and drop files in the single Document Center above.</p>
-            <p className="text-xs text-slate-400 mt-2">Then select a parsed file below to map obligations.</p>
+            <p className="text-sm text-slate-200">Drop files anywhere on this tab to save them to this client and update obligations.</p>
+            <p className="text-xs text-slate-400 mt-2">Parsed files auto-load here, and you can still select any existing client document below.</p>
           </div>
           <p className="text-xs text-slate-400 mt-3">{loading ? "Importing selected document..." : status}</p>
           <div className="mt-3">

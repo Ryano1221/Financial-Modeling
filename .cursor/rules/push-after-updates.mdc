@@ -1,0 +1,18 @@
+---
+description: After making code changes, commit and push so the domain gets updates
+alwaysApply: true
+---
+
+# Push changes to remote after updates
+
+When you make updates to the codebase (edits, new files, or fixes):
+
+1. **Commit** the changes with a clear, concise message that describes what was done.
+2. **Push** to the remote so deployments run (e.g. Vercel for frontend, Render for backend).
+
+- Prefer pushing to `main` so production/domain gets the update:  
+  `git push origin HEAD:main` (or `git push` if current branch is `main`).
+- Do not leave changes only local; the user expects the domain to reflect updates.
+- If the user is on a feature branch, push that branch and optionally merge/push to `main` so the domain updates.
+
+Exception: If the user explicitly asks to only make local changes or not to push, skip committing/pushing.

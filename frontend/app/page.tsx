@@ -91,7 +91,7 @@ import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCente
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCenter";
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
-import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
+import type { ClientDocumentSourceModule, ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
@@ -497,6 +497,8 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
     is_remaining_obligation: _isRemainingObligation,
     remaining_obligation_start_date: _remainingObligationStartDate,
     original_extracted_lease: _originalExtractedLease,
+    source_document_id: _sourceDocumentId,
+    source_document_name: _sourceDocumentName,
     ...rest
   } = s;
   const tiSource = normalizeTiSourceOfTruth(
@@ -634,6 +636,7 @@ function HomeContent() {
   const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
   const computeRequestEpochRef = useRef<Record<string, number>>({});
+  const autoImportedAnalysisDocumentIdsRef = useRef<Record<string, true>>({});
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
   const [heroAiPrompt, setHeroAiPrompt] = useState(
@@ -644,6 +647,32 @@ function HomeContent() {
   const [heroAiError, setHeroAiError] = useState<string | null>(null);
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
   const rawModuleParam = String(searchParams?.get("module") || "").trim().toLowerCase();
+
+  const activeDocumentDropSourceModule = useMemo<ClientDocumentSourceModule>(() => {
+    if (activePlatformModule === "financial-analyses" && activeTopTab === "sublease-recovery") {
+      return "sublease-recovery";
+    }
+    return activePlatformModule;
+  }, [activePlatformModule, activeTopTab]);
+
+  const activeDocumentDropLabel = useMemo(() => {
+    if (activePlatformModule === "financial-analyses" && activeTopTab === "sublease-recovery") {
+      return "Drop files anywhere to save into this client and load them into Sublease Recovery";
+    }
+    if (activePlatformModule === "financial-analyses") {
+      return "Drop files anywhere to save into this client and build Financial Analysis scenarios";
+    }
+    if (activePlatformModule === "completed-leases") {
+      return "Drop files anywhere to save into this client and load Lease Abstract documents";
+    }
+    if (activePlatformModule === "surveys") {
+      return "Drop files anywhere to save into this client and create Survey entries";
+    }
+    if (activePlatformModule === "obligations") {
+      return "Drop files anywhere to save into this client and update Obligations";
+    }
+    return "Drop files anywhere to save into this client and feed the active CRM workflow";
+  }, [activePlatformModule, activeTopTab]);
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null;
   const defaultPreparedByFromAuth = useMemo(
@@ -688,6 +717,7 @@ function HomeContent() {
     setCanonicalComputeCache({});
     setIncludedInSummary({});
     computeRequestEpochRef.current = {};
+    autoImportedAnalysisDocumentIdsRef.current = {};
     setHasRestored(false);
   }, [scenariosStorageKey, workspaceReady]);
 
@@ -962,9 +992,14 @@ function HomeContent() {
     (
       canonical: BackendCanonicalLease,
       onAdded?: (s: ScenarioWithId) => void,
-      preferredName?: string
+      preferredName?: string,
+      sourceDocument?: { id?: string; name?: string },
     ) => {
-      let scenarioInput = normalizeScenarioEconomics(backendCanonicalToScenarioInput(canonical, preferredName));
+      let scenarioInput = normalizeScenarioEconomics({
+        ...backendCanonicalToScenarioInput(canonical, preferredName),
+        source_document_id: sourceDocument?.id,
+        source_document_name: sourceDocument?.name,
+      });
       scenarioInput = normalizeScenarioEconomics({ ...scenarioInput, clientId: workspaceScopeId });
       if (hasCommencementBeforeToday(scenarioInput.commencement)) {
         scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, "remaining_obligation"));
@@ -1019,6 +1054,7 @@ function HomeContent() {
       source?: {
         name?: string;
         file?: File | null;
+        sourceDocumentId?: string;
         sourceModule?: "financial-analyses" | "sublease-recovery" | "upload";
         skipDocumentRegister?: boolean;
       },
@@ -1067,7 +1103,11 @@ function HomeContent() {
             });
             runComputeForScenario(newScenario);
           },
-          preferredName || undefined
+          preferredName || undefined,
+          {
+            id: source?.sourceDocumentId,
+            name: source?.name,
+          }
         );
       });
     },
@@ -1097,10 +1137,62 @@ function HomeContent() {
     };
     void handleNormalizeSuccess(payload, {
       name: document.name,
+      sourceDocumentId: document.id,
       sourceModule: "financial-analyses",
       skipDocumentRegister: true,
     });
   }, [handleNormalizeSuccess]);
+
+  useEffect(() => {
+    if (!workspaceReady || !hasRestored || !activeClientId || activePlatformModule !== "financial-analyses" || activeTopTab !== "lease-comparison") {
+      return;
+    }
+    const importedSourceIds = new Set(
+      scenarios
+        .map((scenario) => String(scenario.source_document_id || "").trim())
+        .filter(Boolean)
+    );
+    const pendingDocs = allDocuments.filter((document) =>
+      document.clientId === activeClientId
+      && document.sourceModule === "financial-analyses"
+      && Boolean(document.normalizeSnapshot?.canonical_lease)
+      && !importedSourceIds.has(document.id)
+      && !autoImportedAnalysisDocumentIdsRef.current[document.id]
+    );
+    if (pendingDocs.length === 0) return;
+
+    pendingDocs.forEach((document) => {
+      autoImportedAnalysisDocumentIdsRef.current[document.id] = true;
+      const snapshot = document.normalizeSnapshot;
+      if (!snapshot?.canonical_lease) return;
+      const payload: NormalizerResponse = {
+        canonical_lease: snapshot.canonical_lease,
+        option_variants: snapshot.option_variants || [],
+        confidence_score: Number(snapshot.confidence_score || 0),
+        field_confidence: snapshot.field_confidence || {},
+        missing_fields: [],
+        clarification_questions: [],
+        warnings: snapshot.warnings || [],
+        extraction_summary: snapshot.extraction_summary,
+        review_tasks: snapshot.review_tasks || [],
+      };
+      void handleNormalizeSuccess(payload, {
+        name: document.name,
+        sourceDocumentId: document.id,
+        sourceModule: "financial-analyses",
+        skipDocumentRegister: true,
+      });
+    });
+  }, [
+    activeClientId,
+    activePlatformModule,
+    activeTopTab,
+    allDocuments,
+    handleNormalizeSuccess,
+    hasRestored,
+    scenarios,
+    workspaceReady,
+  ]);
 
   useEffect(() => {
     if (!workspaceReady) return;
@@ -2294,14 +2386,14 @@ function HomeContent() {
         if (activePlatformModule === "financial-analyses") {
           return activeTopTab === "lease-comparison" ? (
       <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-        <ClientDocumentCenter />
+        <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="mx-auto w-full max-w-[96vw] space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
           <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
             <div className="mx-auto w-full max-w-[1800px] text-center">
               <h2 className="heading-section mb-3">Extract From Client Documents</h2>
               <p className="text-sm text-slate-300 mb-3">
-                Use the single upload entry in Document Center above, or drop files anywhere on this screen.
+                Drop files anywhere on this tab to save them to this client and build analysis scenarios automatically.
               </p>
               <ExtractUpload
                 showAdvancedOptions={showDiagnostics}
@@ -2525,11 +2617,11 @@ function HomeContent() {
               </ResultsActionsCard>
         </div>
         </section>
-        <BrokerOsCommandCenter />
+        <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
       </main>
       ) : (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter />
+          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
           <section className="scroll-mt-24 bg-grid mt-6 space-y-4">
             <div className="mx-auto w-full max-w-[96vw] space-y-4">
               {!authSession && (
@@ -2586,14 +2678,14 @@ function HomeContent() {
               }}
             />
           </section>
-          <BrokerOsCommandCenter />
+          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
         </main>
           );
         }
         if (activePlatformModule === "completed-leases") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter />
+          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
           <CompletedLeasesWorkspace
             clientId={workspaceScopeId}
             exportBranding={{
@@ -2614,14 +2706,14 @@ function HomeContent() {
               clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
             }}
           />
-          <BrokerOsCommandCenter />
+          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
         </main>
           );
         }
         if (activePlatformModule === "surveys") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter />
+          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
           <SurveysWorkspace
             clientId={workspaceScopeId}
             exportBranding={{
@@ -2642,24 +2734,24 @@ function HomeContent() {
               clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
             }}
           />
-          <BrokerOsCommandCenter />
+          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
         </main>
           );
         }
         if (activePlatformModule === "deals") {
           return (
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-            <ClientDocumentCenter />
+            <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
             <DealsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
-            <BrokerOsCommandCenter />
+            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
           </main>
           );
         }
         return (
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-            <ClientDocumentCenter />
+            <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
             <ObligationsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
-            <BrokerOsCommandCenter />
+            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
           </main>
         );
       })() : null}

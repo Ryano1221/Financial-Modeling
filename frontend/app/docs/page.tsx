@@ -33,7 +33,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Where should I upload files in workspace modules?",
-    a: "Use the shared Document Center intake. You can upload from Document Center itself or drop files anywhere in the active workspace; both route to the same client library.",
+    a: "Use the active workspace tab. Files dropped anywhere on that tab still save into the same client library, and they also trigger that module's workflow automatically.",
   },
   {
     q: "Can survey entries show map pins?",
@@ -118,9 +118,9 @@ export default function DocsPage() {
             <section className="space-y-3">
               <h2 className="heading-section">Unified Upload Flow</h2>
               <p className="text-sm sm:text-base text-slate-300">
-                Client workspaces use one upload destination: Document Center. You can upload in Document Center,
-                or drop files anywhere on the active workspace screen.
-                All paths ingest to the same client-scoped document library.
+                Client workspaces use one shared client-scoped document library. You can upload in Document Center, or
+                drop files anywhere on the active workspace tab. In both cases the file stays with the active client,
+                and tab-based drops also feed the workflow for that specific module.
               </p>
             </section>
 

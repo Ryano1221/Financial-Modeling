@@ -8,6 +8,7 @@ import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvid
 import { getDisplayErrorMessage } from "@/lib/api";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
+import type { ClientDocumentSourceModule } from "@/lib/workspace/types";
 
 function formatDateTime(value: string): string {
   const raw = String(value || "").trim();
@@ -17,7 +18,11 @@ function formatDateTime(value: string): string {
   return date.toLocaleString();
 }
 
-export function BrokerOsCommandCenter() {
+export function BrokerOsCommandCenter({
+  sourceModule = "document-center",
+}: {
+  sourceModule?: ClientDocumentSourceModule;
+}) {
   const { activeClient, representationMode, registerDocument } = useClientWorkspace();
   const { graph, artifacts, runAiCommand, suggestPlan } = useBrokerOs();
   const isLandlordMode = representationMode === LANDLORD_REP_MODE;
@@ -55,19 +60,19 @@ export function BrokerOsCommandCenter() {
           clientId: activeClient.id,
           name: file.name,
           file,
-          sourceModule: "document-center",
+          sourceModule,
           normalize,
           parsed: Boolean(normalize),
         });
         processed += 1;
       }
-      setUploadStatus(`Ingested ${processed} document${processed === 1 ? "" : "s"} to ${activeClient.name} Document Center.`);
+      setUploadStatus(`Ingested ${processed} document${processed === 1 ? "" : "s"} for ${activeClient.name}.`);
     } catch (error) {
       setUploadError(getDisplayErrorMessage(error));
     } finally {
       setUploading(false);
     }
-  }, [activeClient, registerDocument, uploading]);
+  }, [activeClient, registerDocument, sourceModule, uploading]);
 
   if (!activeClient) return null;
 
@@ -136,14 +141,14 @@ export function BrokerOsCommandCenter() {
             {uploading ? (
               <DocumentIngestionLoader
                 compact
-                status={uploadStatus || "Ingesting documents into Document Center..."}
-                detail="The shared client library is updating now, so workflows can use the new files as soon as indexing completes."
+                status={uploadStatus || "Ingesting documents for this client workspace..."}
+                detail="The active client library and workflow graph are updating now so this tab can use the new files as soon as indexing completes."
               />
             ) : (
               <>
                 <p className="heading-kicker mb-1">Command Center Document Intake</p>
                 <p className="text-xs text-slate-300">
-                  Drop files here to ingest into the shared Document Center library, or click to upload.
+                  Drop files here to save them to this client and feed the active workspace flow, or click to upload.
                 </p>
               </>
             )}

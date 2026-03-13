@@ -61,6 +61,8 @@ export interface OriginalExtractedLeaseSnapshot {
 export interface ScenarioInput {
   clientId?: string;
   name: string;
+  source_document_id?: string;
+  source_document_name?: string;
   document_type_detected?: string;
   building_name?: string;
   suite?: string;

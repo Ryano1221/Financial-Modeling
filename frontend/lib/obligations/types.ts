@@ -48,6 +48,7 @@ export interface ObligationRecord {
 export interface ObligationDocumentRecord {
   id: string;
   clientId: string;
+  sourceDocumentId?: string;
   companyId: string;
   obligationId: string;
   fileName: string;

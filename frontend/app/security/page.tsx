@@ -87,9 +87,9 @@ export default function SecurityPage() {
             <section className="space-y-3">
               <h2 className="heading-section">Single Intake Surface</h2>
               <p className="text-sm sm:text-base text-slate-300">
-                File ingestion is centralized to one shared Document Center library. Whether a file is uploaded in
-                Document Center, or dropped anywhere in the active workspace,
-                ingestion follows the same account-scoped processing controls.
+                File ingestion is centralized to one shared client document library. Whether a file is uploaded in
+                Document Center or dropped anywhere on an active workspace tab, the file remains bound to the active
+                client and follows the same account-scoped processing controls before module workflows consume it.
               </p>
             </section>
 
