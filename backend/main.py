@@ -7996,6 +7996,7 @@ _NORMALIZE_PRIMARY_PATH_BY_FIELD: dict[str, str] = {
     "rent_schedule": "rent_steps",
     "free_rent_months": "concessions.free_rent_months",
     "free_rent_periods": "abatements",
+    "free_rent_scope": "abatement_analysis",
     "parking_abatement_periods": "parking_abatements",
     "opex_psf_year_1": "opex.base_psf_year_1",
     "opex_growth_rate": "opex.growth_rate",
@@ -8032,7 +8033,7 @@ def _preview_merge_value(value: Any) -> str:
 
 def _legacy_merge_value_available(canonical: CanonicalLease, field_name: str) -> bool:
     value = getattr(canonical, field_name, None)
-    if field_name in {"building_name", "suite", "floor", "address", "lease_type", "expense_structure_type"}:
+    if field_name in {"building_name", "suite", "floor", "address", "lease_type", "expense_structure_type", "free_rent_scope"}:
         return bool(str(value or "").strip())
     if field_name in {"commencement_date", "expiration_date"}:
         return isinstance(value, date)
@@ -8054,7 +8055,212 @@ def _legacy_merge_value_available(canonical: CanonicalLease, field_name: str) ->
         return (_coerce_float_token(value, 0.0) or 0.0) > 0
     if field_name in {"rent_schedule", "free_rent_periods"}:
         return bool(list(value or []))
+    if field_name == "parking_abatement_periods":
+        return bool(list(value or []))
     return value is not None
+
+
+_STACK_OVERRIDE_DOC_ROLES = {
+    "lease",
+    "prime_lease",
+    "sublease",
+    "amendment",
+    "redline",
+    "counter_proposal",
+    "proposal",
+    "renewal_or_extension",
+    "renewal_proposal",
+}
+_STACK_OVERRIDE_CUES = (
+    "hereby amended",
+    "superseded",
+    "replaced",
+    "deleted and replaced",
+    "notwithstanding",
+    "amended and restated",
+    "amended to read",
+    "amended as follows",
+)
+
+
+def _materially_different_merge_value(field_name: str, primary_value: Any, legacy_value: Any) -> bool:
+    if field_name in {"commencement_date", "expiration_date"}:
+        return str(primary_value or "") != str(legacy_value or "")
+    if field_name in {"term_months", "parking_count", "free_rent_months"}:
+        return (_coerce_int_token(primary_value, 0) or 0) != (_coerce_int_token(legacy_value, 0) or 0)
+    if field_name in {
+        "rsf",
+        "ti_allowance_psf",
+        "ti_budget_total",
+        "ti_total",
+        "parking_ratio",
+        "parking_rate_monthly",
+        "opex_psf_year_1",
+        "opex_growth_rate",
+    }:
+        return abs((_coerce_float_token(primary_value, 0.0) or 0.0) - (_coerce_float_token(legacy_value, 0.0) or 0.0)) > 0.01
+    if field_name in {"building_name", "suite", "floor", "address", "lease_type", "expense_structure_type", "free_rent_scope"}:
+        return str(primary_value or "").strip() != str(legacy_value or "").strip()
+    if field_name in {"rent_schedule", "free_rent_periods", "parking_abatement_periods"}:
+        return _preview_merge_value(primary_value) != _preview_merge_value(legacy_value)
+    return primary_value != legacy_value
+
+
+def _field_spans_from_primary_extraction(primary_extraction: dict, field_names: list[str]) -> list[dict]:
+    extraction_provenance = primary_extraction.get("provenance") if isinstance(primary_extraction.get("provenance"), dict) else {}
+    spans: list[dict] = []
+    for field_name in field_names:
+        extraction_key = _NORMALIZE_PRIMARY_PATH_BY_FIELD.get(field_name, "")
+        raw_spans = extraction_provenance.get(extraction_key) if isinstance(extraction_provenance.get(extraction_key), list) else []
+        spans.extend([span for span in raw_spans if isinstance(span, dict)])
+    return spans
+
+
+def _primary_doc_role_for_merge(primary_extraction: dict) -> str:
+    document = primary_extraction.get("document") if isinstance(primary_extraction.get("document"), dict) else {}
+    doc_role = str(document.get("doc_role") or "").strip().lower()
+    doc_type = str(document.get("doc_type") or "").strip().lower()
+    return doc_role or doc_type or "unknown"
+
+
+def _spans_show_override_intent(spans: list[dict]) -> bool:
+    for span in spans or []:
+        source = str(span.get("source") or "").strip().lower()
+        snippet = str(span.get("snippet") or "").strip().lower()
+        if any(role in source for role in ("::amendment::", "::counter::", "::redline::", "::override::")):
+            return True
+        if any(cue in snippet for cue in _STACK_OVERRIDE_CUES):
+            return True
+    return False
+
+
+def _append_override_review_task(
+    tasks: list[dict],
+    *,
+    issue_code: str,
+    message: str,
+    fields: list[str],
+    evidence: list[dict],
+) -> None:
+    tasks.append(
+        {
+            "field_path": "normalize.merge",
+            "severity": "warn",
+            "issue_code": issue_code,
+            "message": message,
+            "candidates": [{"field": field} for field in fields],
+            "recommended_value": None,
+            "evidence": evidence[:8],
+        }
+    )
+
+
+def _apply_stack_override_precedence(
+    *,
+    primary_updates: dict[str, Any],
+    primary_extraction: dict,
+    legacy_canonical: CanonicalLease,
+) -> tuple[dict[str, Any], list[str], list[dict]]:
+    filtered = dict(primary_updates or {})
+    warnings: list[str] = []
+    review_tasks: list[dict] = []
+    doc_role = _primary_doc_role_for_merge(primary_extraction)
+    role_is_override_capable = doc_role in _STACK_OVERRIDE_DOC_ROLES
+
+    free_rent_fields = ["free_rent_periods", "free_rent_months", "free_rent_scope"]
+    if any(field in filtered for field in free_rent_fields):
+        free_rent_spans = _field_spans_from_primary_extraction(primary_extraction, free_rent_fields)
+        if filtered.get("free_rent_months") == 0:
+            filtered["free_rent_periods"] = []
+            if "free_rent_scope" not in filtered and str(getattr(legacy_canonical, "free_rent_scope", "") or "").strip():
+                filtered["free_rent_scope"] = str(getattr(legacy_canonical, "free_rent_scope", "base") or "base")
+        has_structured_periods = "free_rent_periods" in filtered
+        legacy_has_free_rent = bool(getattr(legacy_canonical, "free_rent_periods", []) or int(getattr(legacy_canonical, "free_rent_months", 0) or 0) > 0)
+        if legacy_has_free_rent and not has_structured_periods and (_coerce_int_token(filtered.get("free_rent_months"), 0) or 0) > 0:
+            for field in free_rent_fields:
+                filtered.pop(field, None)
+            warnings.append("Retained legacy free-rent package because the later document only supplied a partial concession override.")
+            _append_override_review_task(
+                review_tasks,
+                issue_code="FREE_RENT_OVERRIDE_PARTIAL",
+                message="Later document references free rent, but did not resolve a structured concession period package. Legacy free-rent economics were retained.",
+                fields=free_rent_fields,
+                evidence=free_rent_spans,
+            )
+        elif legacy_has_free_rent and not role_is_override_capable and not _spans_show_override_intent(free_rent_spans):
+            for field in free_rent_fields:
+                filtered.pop(field, None)
+            warnings.append("Retained legacy free-rent package because override intent was weak in the uploaded document.")
+            _append_override_review_task(
+                review_tasks,
+                issue_code="FREE_RENT_OVERRIDE_AMBIGUOUS",
+                message="Later document carried free-rent changes, but override intent was weak. Legacy concession economics were retained for review.",
+                fields=free_rent_fields,
+                evidence=free_rent_spans,
+            )
+
+    rent_fields = ["rent_schedule"]
+    if "rent_schedule" in filtered and _legacy_merge_value_available(legacy_canonical, "rent_schedule"):
+        rent_spans = _field_spans_from_primary_extraction(primary_extraction, rent_fields)
+        if not role_is_override_capable and not _spans_show_override_intent(rent_spans):
+            filtered.pop("rent_schedule", None)
+            warnings.append("Retained legacy rent schedule because override intent was weak in the uploaded document.")
+            _append_override_review_task(
+                review_tasks,
+                issue_code="RENT_OVERRIDE_AMBIGUOUS",
+                message="Later document produced a conflicting rent schedule, but override intent was weak. Legacy rent schedule was retained for review.",
+                fields=rent_fields,
+                evidence=rent_spans,
+            )
+
+    term_fields = ["commencement_date", "expiration_date", "term_months"]
+    if any(field in filtered for field in term_fields):
+        term_spans = _field_spans_from_primary_extraction(primary_extraction, term_fields)
+        if not role_is_override_capable and not _spans_show_override_intent(term_spans):
+            conflicting = [
+                field
+                for field in term_fields
+                if field in filtered and _legacy_merge_value_available(legacy_canonical, field)
+                and _materially_different_merge_value(field, filtered.get(field), getattr(legacy_canonical, field, None))
+            ]
+            for field in conflicting:
+                filtered.pop(field, None)
+            if conflicting:
+                warnings.append("Retained legacy term package because override intent was weak in the uploaded document.")
+                _append_override_review_task(
+                    review_tasks,
+                    issue_code="TERM_OVERRIDE_AMBIGUOUS",
+                    message="Later document produced conflicting term economics, but override intent was weak. Legacy term fields were retained for review.",
+                    fields=conflicting,
+                    evidence=term_spans,
+                )
+
+    parking_fields = ["parking_ratio", "parking_count", "parking_rate_monthly", "parking_abatement_periods"]
+    if "parking_abatement_periods" in filtered and _legacy_merge_value_available(legacy_canonical, "parking_abatement_periods"):
+        parking_spans = _field_spans_from_primary_extraction(primary_extraction, parking_fields)
+        if not role_is_override_capable and not _spans_show_override_intent(parking_spans):
+            filtered.pop("parking_abatement_periods", None)
+            warnings.append("Retained legacy parking-abatement periods because override intent was weak in the uploaded document.")
+            _append_override_review_task(
+                review_tasks,
+                issue_code="PARKING_ABATEMENT_OVERRIDE_AMBIGUOUS",
+                message="Later document produced parking-abatement periods, but override intent was weak. Legacy parking-abatement timing was retained for review.",
+                fields=["parking_abatement_periods"],
+                evidence=parking_spans,
+            )
+
+    rights_options = primary_extraction.get("rights_options") if isinstance(primary_extraction.get("rights_options"), dict) else {}
+    if any(str(rights_options.get(field) or "").strip() for field in ("renewal_option", "termination_right", "expansion_option", "contraction_option", "rofr_rofo")):
+        rights_spans = _field_spans_from_primary_extraction(primary_extraction, [])
+        _append_override_review_task(
+            review_tasks,
+            issue_code="RIGHTS_OPTIONS_OVERRIDE_REVIEW",
+            message="Later document includes rights/options language that is not yet merged into structured canonical override fields. Review notice and option mechanics manually.",
+            fields=["rights_options"],
+            evidence=rights_spans,
+        )
+
+    return filtered, warnings, review_tasks
 
 
 def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict[str, Any]:
@@ -8124,6 +8330,7 @@ def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict
     if abatement_classification != "phase_in":
         free_rent_periods: list[FreeRentPeriod] = []
         period_rows: list[dict[str, Any]] = []
+        scope_values: set[str] = set()
         for raw_period in list(extraction.get("abatements") or []):
             if not isinstance(raw_period, dict):
                 continue
@@ -8133,6 +8340,7 @@ def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict
                 continue
             scope_raw = str(raw_period.get("scope") or "").strip().lower()
             scope = "gross" if "gross" in scope_raw else "base"
+            scope_values.add(scope)
             start_i = max(0, int(start_m))
             end_i = max(start_i, int(end_m))
             period_rows.append({"start_month": start_i, "end_month": end_i, "scope": scope})
@@ -8147,6 +8355,17 @@ def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict
                     period_rows,
                     term_months=_coerce_int_token(updates.get("term_months"), 0) or 0,
                 )
+            if len(scope_values) == 1:
+                updates["free_rent_scope"] = next(iter(scope_values))
+        elif updates.get("free_rent_months") == 0:
+            updates["free_rent_periods"] = []
+
+    abatement_scope = str(abatement_analysis.get("scope") or "").strip().lower()
+    if "free_rent_scope" not in updates:
+        if abatement_scope == "gross_rent":
+            updates["free_rent_scope"] = "gross"
+        elif abatement_scope == "base_rent_only":
+            updates["free_rent_scope"] = "base"
 
     parking_abatement_periods: list[ParkingAbatementPeriod] = []
     for raw_period in list(extraction.get("parking_abatements") or []):
@@ -8232,7 +8451,12 @@ def _merge_canonical_primary_then_legacy(
     legacy_field_confidence: dict[str, Any] | None = None,
 ) -> tuple[CanonicalLease, dict[str, Any]]:
     tracked_fields = list(_NORMALIZE_PRIMARY_PATH_BY_FIELD.keys())
-    primary_updates = _collect_primary_updates_from_canonical_extraction(primary_extraction)
+    raw_primary_updates = _collect_primary_updates_from_canonical_extraction(primary_extraction)
+    primary_updates, precedence_warnings, precedence_review_tasks = _apply_stack_override_precedence(
+        primary_updates=raw_primary_updates,
+        primary_extraction=primary_extraction,
+        legacy_canonical=legacy_canonical,
+    )
     merged_canonical = legacy_canonical.model_copy(update=primary_updates) if primary_updates else legacy_canonical
 
     extraction_provenance = (
@@ -8281,8 +8505,8 @@ def _merge_canonical_primary_then_legacy(
                 )
             ]
 
-    warnings: list[str] = []
-    review_tasks: list[dict] = []
+    warnings: list[str] = list(precedence_warnings)
+    review_tasks: list[dict] = list(precedence_review_tasks)
     if fallback_fields:
         preview = ", ".join(fallback_fields[:8])
         if len(fallback_fields) > 8:

@@ -201,6 +201,139 @@ def test_collect_primary_updates_from_canonical_extraction_maps_parking_abatemen
     assert parking_periods[1].end_month == 25
 
 
+def test_merge_canonical_primary_then_legacy_retains_legacy_free_rent_when_override_is_partial() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "Legacy Tower",
+            "suite": "500",
+            "address": "500 Legacy Blvd",
+            "rsf": 10000,
+            "commencement_date": "2026-01-01",
+            "expiration_date": "2030-12-31",
+            "term_months": 60,
+            "free_rent_months": 6,
+            "free_rent_scope": "gross",
+            "free_rent_periods": [{"start_month": 0, "end_month": 5, "scope": "gross"}],
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
+        }
+    )
+    extraction = {
+        "document": {"doc_type": "amendment", "doc_role": "amendment"},
+        "term": {"commencement_date": "2026-01-01", "expiration_date": "2030-12-31", "term_months": 60},
+        "premises": {"building_name": "Legacy Tower", "suite": "500", "address": "500 Legacy Blvd", "rsf": 10000},
+        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 41.0}],
+        "abatements": [],
+        "abatement_analysis": {"classification": "none", "scope": None},
+        "concessions": {"free_rent_months": 3},
+        "tenant_improvements": {},
+        "parking": {},
+        "opex": {"mode": "nnn", "base_psf_year_1": 8.0, "growth_rate": 0.03},
+        "provenance": {
+            "concessions.free_rent_months": [
+                {"source": "pdf_text_regex", "source_confidence": 0.82, "snippet": "Tenant shall receive three (3) months of free rent.", "page": 1, "bbox": None}
+            ]
+        },
+        "confidence": {"overall": 0.88},
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={},
+    )
+
+    assert merged.free_rent_months == 6
+    assert [(p.start_month, p.end_month) for p in merged.free_rent_periods] == [(0, 5)]
+    issue_codes = {task.get("issue_code") for task in meta.get("review_tasks") or []}
+    assert "FREE_RENT_OVERRIDE_PARTIAL" in issue_codes
+
+
+def test_merge_canonical_primary_then_legacy_clears_legacy_free_rent_on_explicit_zero() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "Legacy Tower",
+            "suite": "500",
+            "address": "500 Legacy Blvd",
+            "rsf": 10000,
+            "commencement_date": "2026-01-01",
+            "expiration_date": "2030-12-31",
+            "term_months": 60,
+            "free_rent_months": 6,
+            "free_rent_scope": "gross",
+            "free_rent_periods": [{"start_month": 0, "end_month": 5, "scope": "gross"}],
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
+        }
+    )
+    extraction = {
+        "document": {"doc_type": "amendment", "doc_role": "amendment"},
+        "term": {"commencement_date": "2026-01-01", "expiration_date": "2030-12-31", "term_months": 60},
+        "premises": {"building_name": "Legacy Tower", "suite": "500", "address": "500 Legacy Blvd", "rsf": 10000},
+        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 41.0}],
+        "abatements": [],
+        "abatement_analysis": {"classification": "none", "scope": None},
+        "concessions": {"free_rent_months": 0},
+        "tenant_improvements": {},
+        "parking": {},
+        "opex": {"mode": "nnn", "base_psf_year_1": 8.0, "growth_rate": 0.03},
+        "provenance": {},
+        "confidence": {"overall": 0.88},
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={},
+    )
+
+    assert merged.free_rent_months == 0
+    assert merged.free_rent_periods == []
+    assert meta["field_sources"]["free_rent_months"] == "canonical_pipeline"
+    assert meta["field_sources"]["free_rent_periods"] == "canonical_pipeline"
+
+
+def test_merge_canonical_primary_then_legacy_retains_legacy_rent_when_override_intent_is_weak() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "Legacy Tower",
+            "suite": "500",
+            "address": "500 Legacy Blvd",
+            "rsf": 10000,
+            "commencement_date": "2026-01-01",
+            "expiration_date": "2030-12-31",
+            "term_months": 60,
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
+        }
+    )
+    extraction = {
+        "document": {"doc_type": "unknown", "doc_role": "unknown"},
+        "term": {"commencement_date": "2026-01-01", "expiration_date": "2030-12-31", "term_months": 60},
+        "premises": {"building_name": "Legacy Tower", "suite": "500", "address": "500 Legacy Blvd", "rsf": 10000},
+        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 47.5}],
+        "abatements": [],
+        "abatement_analysis": {"classification": "none", "scope": None},
+        "concessions": {},
+        "tenant_improvements": {},
+        "parking": {},
+        "opex": {"mode": "nnn", "base_psf_year_1": 8.0, "growth_rate": 0.03},
+        "provenance": {
+            "rent_steps": [
+                {"source": "pdf_text_regex", "source_confidence": 0.74, "snippet": "Base Rent: $47.50 PSF", "page": 1, "bbox": None}
+            ]
+        },
+        "confidence": {"overall": 0.8},
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={},
+    )
+
+    assert [step.rent_psf_annual for step in merged.rent_schedule] == [41.0]
+    issue_codes = {task.get("issue_code") for task in meta.get("review_tasks") or []}
+    assert "RENT_OVERRIDE_AMBIGUOUS" in issue_codes
+
+
 def test_supplemental_quality_checks_flags_rent_schedule_coverage_gap() -> None:
     canonical = main._dict_to_canonical(
         {
