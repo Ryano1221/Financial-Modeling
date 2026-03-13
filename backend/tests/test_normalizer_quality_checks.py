@@ -177,6 +177,30 @@ def test_merge_canonical_primary_then_legacy_uses_legacy_only_for_missing_primar
     assert any("legacy fallback populated" in str(w).lower() for w in list(meta.get("warnings") or []))
 
 
+def test_collect_primary_updates_from_canonical_extraction_maps_parking_abatements() -> None:
+    updates = main._collect_primary_updates_from_canonical_extraction(
+        {
+            "term": {"commencement_date": "2026-01-01", "expiration_date": "2030-12-31", "term_months": 60},
+            "premises": {"building_name": "Signal Tower", "suite": "700", "address": "123 Main", "rsf": 12000},
+            "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 42.0}],
+            "abatements": [{"start_month": 0, "end_month": 2, "scope": "base_rent_only"}],
+            "parking_abatements": [{"start_month": 0, "end_month": 2}, {"start_month": 24, "end_month": 25}],
+            "abatement_analysis": {"classification": "rent_abatement"},
+            "concessions": {"free_rent_months": 3},
+            "tenant_improvements": {},
+            "parking": {},
+            "opex": {"mode": "nnn", "base_psf_year_1": 8.5, "growth_rate": 0.03},
+        }
+    )
+
+    parking_periods = updates.get("parking_abatement_periods") or []
+    assert len(parking_periods) == 2
+    assert parking_periods[0].start_month == 0
+    assert parking_periods[0].end_month == 2
+    assert parking_periods[1].start_month == 24
+    assert parking_periods[1].end_month == 25
+
+
 def test_supplemental_quality_checks_flags_rent_schedule_coverage_gap() -> None:
     canonical = main._dict_to_canonical(
         {

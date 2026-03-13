@@ -129,6 +129,43 @@ def _detect_abatement_scope_from_line(line: str) -> str | None:
     return "unspecified"
 
 
+def _has_strong_ti_allowance_context(line: str) -> bool:
+    return bool(
+        re.search(
+            r"(?i)\b(?:tenant\s+improvement(?:s)?\s+allowance|ti\s+allowance|tenant\s+allowance|subtenant\s+allowance|improvement\s+allowance|tia)\b",
+            str(line or ""),
+        )
+    )
+
+
+def _has_non_ti_allowance_context(line: str) -> bool:
+    low = str(line or "").lower()
+    excluded_cues = (
+        "test fit",
+        "test-fit",
+        "moving allowance",
+        "moving expenses",
+        "moving cost",
+        "relocation allowance",
+        "relocation expense",
+        "furniture allowance",
+        "furniture package",
+        "ff&e",
+        "ffe",
+        "signage allowance",
+        "door signage",
+        "building signage",
+        "cabling allowance",
+        "security network",
+        "work letter",
+        "landlord work",
+        "landlord's work",
+        "turnkey",
+        "turn-key",
+    )
+    return any(cue in low for cue in excluded_cues)
+
+
 def _parse_date_token(token: str) -> str | None:
     raw = str(token or "").strip()
     if not raw:
@@ -389,7 +426,12 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 r"(?i)(?:tenant\s+improvement(?:s)?|improvement\s+allowance|tia?|allowance)\D{0,40}\$\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/\s*(?:rsf|sf)|per\s+(?:rsf|sf))",
                 scan_line,
             )
-            if ti_psf_match and "operating" not in low and "opex" not in low:
+            if (
+                ti_psf_match
+                and "operating" not in low
+                and "opex" not in low
+                and not (_has_non_ti_allowance_context(scan_line) and not _has_strong_ti_allowance_context(scan_line))
+            ):
                 out["ti_allowance_psf"].append(
                     _mk_candidate("ti_allowance_psf", float(ti_psf_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.76)
                 )
@@ -398,7 +440,12 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 r"(?i)(?:tenant\s+improvement(?:s)?|improvement\s+allowance|tia?|allowance|buildout)\D{0,40}\$\s*([0-9]{1,3}(?:,[0-9]{3})+|\d{4,9})(?!\s*(?:/|per)\s*(?:rsf|sf))",
                 scan_line,
             )
-            if ti_total_match and "operating" not in low and "opex" not in low:
+            if (
+                ti_total_match
+                and "operating" not in low
+                and "opex" not in low
+                and not (_has_non_ti_allowance_context(scan_line) and not _has_strong_ti_allowance_context(scan_line))
+            ):
                 out["ti_allowance_total"].append(
                     _mk_candidate("ti_allowance_total", float(ti_total_match.group(1).replace(",", "")), page.page_number, ln, "pdf_text_regex", 0.7)
                 )

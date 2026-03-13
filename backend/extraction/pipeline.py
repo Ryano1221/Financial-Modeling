@@ -400,7 +400,12 @@ def run_extraction_pipeline(
     classification = classify_document(normalized)
     llm = structured_extract(snippets=snippets, table_candidates=rent_step_candidates, regex_candidates=regex_candidates)
 
-    reconciled = reconcile(regex_candidates=regex_candidates, rent_step_candidates=rent_step_candidates, llm_output=llm)
+    reconciled = reconcile(
+        regex_candidates=regex_candidates,
+        rent_step_candidates=rent_step_candidates,
+        llm_output=llm,
+        full_text=normalized.full_text,
+    )
     resolved = reconciled.get("resolved") or {}
     provenance = reconciled.get("provenance") or {}
     reconcile_margin = float(reconciled.get("reconcile_margin") or 0.5)
@@ -413,6 +418,7 @@ def run_extraction_pipeline(
         "premises": dict(resolved.get("premises") or {}),
         "rent_steps": list(resolved.get("rent_steps") or []),
         "abatements": list(resolved.get("abatements") or []),
+        "parking_abatements": list(resolved.get("parking_abatements") or []),
         "abatement_analysis": {
             "classification": "none",
             "phase_in_detected": False,
@@ -425,7 +431,7 @@ def run_extraction_pipeline(
         "parking": dict(resolved.get("parking") or {}),
         "rights_options": dict(resolved.get("rights_options") or {}),
         "opex": dict(resolved.get("opex") or {}),
-        "review_tasks": list((llm or {}).get("review_tasks") or []) + list(rent_row_review_tasks or []),
+        "review_tasks": list((llm or {}).get("review_tasks") or []) + list(rent_row_review_tasks or []) + list(reconciled.get("review_tasks") or []),
         "provenance": provenance,
         "evidence": _flatten_evidence(
             provenance,

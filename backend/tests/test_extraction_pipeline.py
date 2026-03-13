@@ -308,6 +308,74 @@ def test_validate_extraction_reports_missing_information_for_model_ready_fields(
     assert "MISSING_TENANT_IMPROVEMENTS_TI_ALLOWANCE_PSF" in issue_codes
 
 
+def test_reconcile_derives_ti_total_from_ti_psf_and_rsf() -> None:
+    normalized = NormalizedDocument(
+        sha256="ti-derive",
+        filename="proposal.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text="Premises: 5,000 RSF. Tenant Improvement Allowance: $40.00 per RSF.",
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text="Premises and TI allowance",
+    )
+
+    reconciled = reconcile(regex_candidates=mine_candidates(normalized), rent_step_candidates=[], llm_output=None)
+    tenant_improvements = (reconciled.get("resolved") or {}).get("tenant_improvements") or {}
+
+    assert tenant_improvements.get("ti_allowance_psf") == 40.0
+    assert tenant_improvements.get("ti_allowance_total") == 200000.0
+
+
+def test_validate_extraction_flags_concession_and_ti_incompleteness() -> None:
+    extraction = {
+        "document": {"doc_type": "proposal", "doc_role": "proposal", "confidence": 0.9, "evidence_spans": []},
+        "term": {
+            "commencement_date": "2026-01-01",
+            "expiration_date": "2030-12-31",
+            "rent_commencement_date": "2026-01-01",
+            "term_months": 60,
+        },
+        "premises": {"building_name": "A", "suite": "100", "floor": None, "address": "A", "rsf": 0},
+        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 40.0}],
+        "abatements": [],
+        "abatement_analysis": {"classification": "none", "phase_in_detected": False, "phase_in_confidence": 0.0, "scope": None},
+        "concessions": {},
+        "tenant_improvements": {"ti_allowance_total": 50000.0},
+        "parking": {},
+        "rights_options": {},
+        "opex": {"mode": "nnn", "base_psf_year_1": 10.0, "growth_rate": 0.03, "cues": ["nnn"]},
+        "provenance": {},
+        "review_tasks": [],
+        "evidence": [
+            {
+                "source": "pdf_text_regex",
+                "source_confidence": 0.9,
+                "snippet": (
+                    "Tenant Improvement Allowance: $50,000 total. "
+                    "Moving Allowance: $2.50 per RSF. "
+                    "Tenant shall receive free rent during the initial term."
+                ),
+                "page": 1,
+                "bbox": None,
+            }
+        ],
+        "confidence": {"overall": 0.5, "status": "yellow", "export_allowed": True},
+        "export_allowed": True,
+    }
+
+    result = validate_extraction(extraction, source_quality=0.8, reconcile_margin=0.5)
+    issue_codes = {t.get("issue_code") for t in result.get("review_tasks") or []}
+    assert "TI_ALLOWANCE_NORMALIZATION_INCOMPLETE" in issue_codes
+    assert "FREE_RENT_INCOMPLETE" in issue_codes
+    assert "MOVING_ALLOWANCE_DETECTED" in issue_codes
+
+
 def test_rule_classifier_detects_flyer_and_floorplan() -> None:
     flyer = NormalizedDocument(
         sha256="flyer",
@@ -441,3 +509,97 @@ def test_run_extraction_pipeline_surfaces_rejected_rent_rows_as_review_tasks(mon
     rent_review = next(task for task in result.get("review_tasks") or [] if task.get("issue_code") == "RENT_ROW_REJECTED_MONTHLY_TOTAL")
     assert rent_review.get("metadata", {}).get("rejection_category") == "monthly_total"
     assert "Monthly Rent" in rent_review.get("metadata", {}).get("row_text", "")
+
+
+def test_reconcile_parses_distributed_abatements_and_parking_tie() -> None:
+    normalized = NormalizedDocument(
+        sha256="distributed-abatement",
+        filename="proposal.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text=(
+                    "Lease Term: 72 months.\n"
+                    "Landlord shall provide three (3) months of base rent abatement and an additional four (4) months "
+                    "of base rent abatement allocated as follows: two (2) months in the beginning of lease year 3 and "
+                    "two (2) months in the beginning of lease year 5.\n"
+                    "Parking costs shall be abated during the Abatement Period.\n"
+                ),
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text=(
+            "Lease Term: 72 months. "
+            "Landlord shall provide three (3) months of base rent abatement and an additional four (4) months "
+            "of base rent abatement allocated as follows: two (2) months in the beginning of lease year 3 and "
+            "two (2) months in the beginning of lease year 5. "
+            "Parking costs shall be abated during the Abatement Period."
+        ),
+    )
+
+    reconciled = reconcile(
+        regex_candidates=mine_candidates(normalized),
+        rent_step_candidates=[],
+        llm_output=None,
+        full_text=normalized.full_text,
+    )
+    resolved = reconciled.get("resolved") or {}
+
+    assert (resolved.get("concessions") or {}).get("free_rent_months") == 7
+    assert (resolved.get("abatements") or []) == [
+        {"start_month": 0, "end_month": 2, "scope": "base_rent_only", "classification": "rent_abatement"},
+        {"start_month": 24, "end_month": 25, "scope": "base_rent_only", "classification": "rent_abatement"},
+        {"start_month": 48, "end_month": 49, "scope": "base_rent_only", "classification": "rent_abatement"},
+    ]
+    assert (resolved.get("parking_abatements") or []) == [
+        {"start_month": 0, "end_month": 2},
+        {"start_month": 24, "end_month": 25},
+        {"start_month": 48, "end_month": 49},
+    ]
+
+
+def test_run_extraction_pipeline_flags_unresolved_parking_abatement_period(monkeypatch) -> None:
+    normalized = NormalizedDocument(
+        sha256="parking-unclear",
+        filename="lease.pdf",
+        content_type="application/pdf",
+        pages=[
+            PageData(
+                page_number=1,
+                text=(
+                    "Parking costs shall be abated during the Abatement Period.\n"
+                    "Tenant shall receive gross rent abatement, as otherwise set forth herein.\n"
+                ),
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text=(
+            "Parking costs shall be abated during the Abatement Period. "
+            "Tenant shall receive gross rent abatement, as otherwise set forth herein."
+        ),
+    )
+
+    monkeypatch.setattr(extraction_pipeline, "normalize_document", lambda *args, **kwargs: normalized)
+    monkeypatch.setattr(extraction_pipeline, "extract_rent_step_candidates_with_review", lambda *args, **kwargs: ([], []))
+    monkeypatch.setattr(extraction_pipeline, "retrieve_section_snippets", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        extraction_pipeline,
+        "classify_document",
+        lambda *args, **kwargs: {"doc_type": "lease", "doc_role": "prime_lease", "confidence": 0.9, "evidence_spans": []},
+    )
+    monkeypatch.setattr(extraction_pipeline, "structured_extract", lambda *args, **kwargs: {"review_tasks": []})
+
+    result = extraction_pipeline.run_extraction_pipeline(
+        file_bytes=b"%PDF-1.4 parking unclear",
+        filename="lease.pdf",
+        content_type="application/pdf",
+    )
+
+    issue_codes = {task.get("issue_code") for task in result.get("review_tasks") or []}
+    assert "FREE_RENT_INCOMPLETE" in issue_codes
+    assert "PARKING_ABATEMENT_PERIOD_UNRESOLVED" in issue_codes

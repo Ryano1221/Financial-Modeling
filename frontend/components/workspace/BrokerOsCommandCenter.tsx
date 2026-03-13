@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { PlatformPanel } from "@/components/platform/PlatformShell";
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
+import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { getDisplayErrorMessage } from "@/lib/api";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
@@ -34,6 +35,7 @@ export function BrokerOsCommandCenter() {
 
   const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
     if (!activeClient) return;
+    if (uploading) return;
     const files = Array.from(incoming ?? []);
     if (files.length === 0) return;
     setUploading(true);
@@ -65,7 +67,7 @@ export function BrokerOsCommandCenter() {
     } finally {
       setUploading(false);
     }
-  }, [activeClient, registerDocument]);
+  }, [activeClient, registerDocument, uploading]);
 
   if (!activeClient) return null;
 
@@ -95,7 +97,10 @@ export function BrokerOsCommandCenter() {
           <div
             role="button"
             tabIndex={0}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (uploading) return;
+              fileInputRef.current?.click();
+            }}
             onDragOver={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -116,17 +121,32 @@ export function BrokerOsCommandCenter() {
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
+                if (uploading) return;
                 fileInputRef.current?.click();
               }
             }}
             className={`mb-3 cursor-pointer border border-dashed p-4 text-center transition-colors ${
-              dragOver ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
+              uploading
+                ? "border-cyan-300/60 bg-cyan-500/10"
+                : dragOver
+                  ? "border-cyan-300 bg-cyan-500/10"
+                  : "border-white/20 bg-black/20"
             }`}
           >
-            <p className="heading-kicker mb-1">Command Center Document Intake</p>
-            <p className="text-xs text-slate-300">
-              Drop files here to ingest into the shared Document Center library, or click to upload.
-            </p>
+            {uploading ? (
+              <DocumentIngestionLoader
+                compact
+                status={uploadStatus || "Ingesting documents into Document Center..."}
+                detail="The shared client library is updating now, so workflows can use the new files as soon as indexing completes."
+              />
+            ) : (
+              <>
+                <p className="heading-kicker mb-1">Command Center Document Intake</p>
+                <p className="text-xs text-slate-300">
+                  Drop files here to ingest into the shared Document Center library, or click to upload.
+                </p>
+              </>
+            )}
           </div>
           <textarea
             value={command}

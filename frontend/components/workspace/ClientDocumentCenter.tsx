@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { CLIENT_DOCUMENT_TYPES, type ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { getDisplayErrorMessage } from "@/lib/api";
@@ -209,6 +210,7 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
 
   const processFiles = useCallback(async (incoming: FileList | File[] | null | undefined) => {
     if (!activeClient) return;
+    if (loading) return;
     const files = Array.from(incoming ?? []);
     if (files.length === 0) return;
     setLoading(true);
@@ -241,7 +243,7 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
     } finally {
       setLoading(false);
     }
-  }, [activeClient, registerDocument]);
+  }, [activeClient, loading, registerDocument]);
 
   const isFileDragEvent = useCallback((event: DragEvent): boolean => {
     const dt = event.dataTransfer;
@@ -307,10 +309,11 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
             </div>
             <button
               type="button"
+              disabled={loading}
               onClick={() => fileInputRef.current?.click()}
-              className="btn-premium btn-premium-primary"
+              className="btn-premium btn-premium-primary disabled:opacity-60"
             >
-              Upload Documents
+              {loading ? "Indexing Documents..." : "Upload Documents"}
             </button>
           </div>
 
@@ -318,7 +321,10 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
             <div
               role="button"
               tabIndex={0}
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                if (loading) return;
+                fileInputRef.current?.click();
+              }}
               onDragOver={(event) => {
                 event.preventDefault();
                 setDragOver(true);
@@ -335,15 +341,29 @@ export function ClientDocumentCenter({ showDropZone = true }: ClientDocumentCent
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
+                  if (loading) return;
                   fileInputRef.current?.click();
                 }
               }}
               className={`mt-4 cursor-pointer border border-dashed px-4 py-8 text-center transition-colors ${
-                dragOver || globalDragActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/20 bg-black/20"
+                loading
+                  ? "border-cyan-300/60 bg-cyan-500/10"
+                  : dragOver || globalDragActive
+                    ? "border-cyan-300 bg-cyan-500/10"
+                    : "border-white/20 bg-black/20"
               }`}
             >
-              <p className="heading-kicker mb-2">Drag and drop upload</p>
-              <p className="text-sm text-slate-200">Supports bulk files. You can also drop files anywhere on this screen. Parseable files are automatically classified and indexed.</p>
+              {loading ? (
+                <DocumentIngestionLoader
+                  status={status}
+                  detail="We are classifying each file, building previews, and attaching everything to this client's shared document library."
+                />
+              ) : (
+                <>
+                  <p className="heading-kicker mb-2">Drag and drop upload</p>
+                  <p className="text-sm text-slate-200">Supports bulk files. You can also drop files anywhere on this screen. Parseable files are automatically classified and indexed.</p>
+                </>
+              )}
             </div>
           ) : null}
           <input

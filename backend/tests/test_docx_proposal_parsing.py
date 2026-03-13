@@ -266,6 +266,37 @@ def test_regex_prefill_does_not_treat_test_fit_or_opex_as_ti_allowance() -> None
     assert prefill.get("ti_allowance_psf") is None
 
 
+def test_regex_prefill_does_not_treat_moving_furniture_or_signage_allowances_as_ti() -> None:
+    text = (
+        "Moving Allowance: Landlord shall reimburse up to $2.50 per RSF for relocation costs.\n"
+        "Furniture Allowance: Landlord shall provide a $7.00 per RSF furniture allowance.\n"
+        "Signage Allowance: Landlord shall provide $3,000 for exterior building signage.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") is None
+    assert prefill.get("ti_allowance_total") is None
+
+
+def test_regex_prefill_does_not_treat_turnkey_or_landlord_work_as_ti_allowance() -> None:
+    text = (
+        "Landlord Work: Premises shall be delivered on a turnkey basis pursuant to the Work Letter.\n"
+        "Landlord shall complete the buildout and turnkey improvements at its sole cost.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") is None
+    assert prefill.get("ti_allowance_total") is None
+
+
+def test_regex_prefill_keeps_true_ti_allowance_when_other_allowances_are_present() -> None:
+    text = (
+        "Tenant Improvement Allowance: Landlord shall provide $22.00 per RSF.\n"
+        "Moving Allowance: Landlord shall reimburse up to $2.50 per RSF for relocation costs.\n"
+        "Furniture Allowance: $7.00 per RSF.\n"
+    )
+    prefill = _regex_prefill(text)
+    assert prefill.get("ti_allowance_psf") == 22.0
+
+
 def test_regex_prefill_prefers_counter_ti_allowance_and_supports_square_foot_unit() -> None:
     text = (
         "Tenant Improvements | Landlord to provide Tenant with a Tenant Improvement Allowance of $18.00 per square foot.\n"

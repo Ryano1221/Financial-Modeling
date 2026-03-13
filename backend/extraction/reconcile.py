@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from itertools import product
+import re
 from typing import Any
+
+from .concessions import parse_concession_text
 
 SOURCE_WEIGHTS = {
     "table_parser": 0.45,
@@ -625,27 +628,6 @@ def _collect_rent_schedule_candidates(
     return ranked[:10]
 
 
-def _extract_abatement_windows(snippet: str) -> list[dict[str, int]]:
-    low = (snippet or "").lower()
-    if not any(k in low for k in ("free rent", "abatement", "abated", "waived")):
-        return []
-
-    windows: list[dict[str, int]] = []
-    for m in __import__("re").finditer(r"(?i)months?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})", snippet or ""):
-        s = max(1, int(m.group(1)))
-        e = max(s, int(m.group(2)))
-        windows.append({"start_month": s - 1, "end_month": e - 1})
-    for m in __import__("re").finditer(r"(?i)\b(\d{1,2})\s+months?\b", snippet or ""):
-        count = int(m.group(1))
-        if 0 < count <= 24:
-            windows.append({"start_month": 0, "end_month": count - 1})
-    dedup: dict[tuple[int, int], dict[str, int]] = {}
-    for w in windows:
-        key = (int(w["start_month"]), int(w["end_month"]))
-        dedup[key] = w
-    return [dedup[k] for k in sorted(dedup)]
-
-
 def _infer_abatement_scope(snippet: str, definitions_hint: str) -> str:
     low = f" {(snippet or '').lower()} "
     if any(k in low for k in ("gross rent", "all rent", "base rent and operating", "rent and operating expenses", "base rent plus operating", "base rent and cam")):
@@ -662,7 +644,9 @@ def _infer_abatement_scope(snippet: str, definitions_hint: str) -> str:
 def _collect_abatement_candidates(
     by_field: dict[str, list[dict[str, Any]]],
     llm_output: dict[str, Any] | None,
-) -> tuple[list[dict[str, Any]], bool, float, list[dict[str, Any]]]:
+    *,
+    full_text: str = "",
+) -> tuple[list[dict[str, Any]], bool, float, list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     scope_items = list(by_field.get("abatement_scope", []) or [])
     class_items = list(by_field.get("abatement_classification", []) or [])
     phase_items = list(by_field.get("phase_in_detected", []) or [])
@@ -678,13 +662,92 @@ def _collect_abatement_candidates(
     if "rent means" in gl and ("additional rent" in gl or "operating expenses" in gl or "cam" in gl):
         def_hint = "additional rent"
 
-    windows_pool: list[tuple[list[dict[str, int]], float, list[dict[str, Any]]]] = []
+    def _make_concession_review_task(signal: dict[str, Any], evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
+        category = str(signal.get("category") or "").strip().lower()
+        row_text = str(signal.get("row_text") or "").strip()
+        reason = str(signal.get("reason") or "").strip()
+        issue_map = {
+            "timing_incomplete": (
+                "concessions.free_rent_months",
+                "FREE_RENT_INCOMPLETE",
+                "Free rent or rent abatement was referenced, but concession timing was not confidently extracted.",
+            ),
+            "scope_incomplete": (
+                "abatements",
+                "ABATEMENT_SCOPE_UNSPECIFIED",
+                "Abatement timing was parsed, but the text does not clearly state whether the concession is base-rent-only or gross-rent.",
+            ),
+            "parking_period_incomplete": (
+                "parking_abatements",
+                "PARKING_ABATEMENT_PERIOD_UNRESOLVED",
+                "Parking abatement was referenced, but the concession period could not be resolved confidently.",
+            ),
+        }
+        field_path, issue_code, message = issue_map.get(
+            category,
+            ("abatements", "ABATEMENT_REVIEW_REQUIRED", "Concession language requires manual review."),
+        )
+        return {
+            "field_path": field_path,
+            "severity": "warn",
+            "issue_code": issue_code,
+            "message": message,
+            "candidates": [{"row_text": row_text, "rejection_reason": reason, "rejection_category": category}] if row_text or reason else [],
+            "recommended_value": None,
+            "evidence": _evidence_from_candidates(evidence_items, limit=6),
+        }
+
+    windows_pool: list[tuple[list[dict[str, Any]], float, list[dict[str, Any]]]] = []
+    parking_abatement_pool: list[tuple[list[dict[str, Any]], float, list[dict[str, Any]]]] = []
+    review_tasks: list[dict[str, Any]] = []
+    parsed_contexts: list[tuple[dict[str, Any], float, list[dict[str, Any]]]] = []
     for item in scope_items + class_items:
         snippet = str(item.get("snippet") or "")
-        win = _extract_abatement_windows(snippet)
-        if not win:
+        if not snippet.strip():
             continue
-        windows_pool.append((win, _candidate_score(item), [item]))
+        parsed_contexts.append((parse_concession_text(snippet, definitions_hint=def_hint), _candidate_score(item), [item]))
+    if full_text and full_text.strip():
+        parsed_contexts.append(
+            (
+                parse_concession_text(full_text, definitions_hint=def_hint),
+                0.52,
+                [
+                    {
+                        "page": None,
+                        "snippet": re.sub(r"\s+", " ", full_text)[:280],
+                        "bbox": None,
+                        "source": "pdf_text_regex",
+                        "source_confidence": 0.58,
+                    }
+                ],
+            )
+        )
+
+    for parsed, score, evidence_items in parsed_contexts:
+        win = [
+            {
+                "start_month": int(row.get("start_month") or 0),
+                "end_month": int(row.get("end_month") or 0),
+                "row_text": str(row.get("row_text") or ""),
+            }
+            for row in list(parsed.get("abatements") or [])
+            if isinstance(row, dict)
+        ]
+        if win:
+            windows_pool.append((win, score, evidence_items))
+        parking_rows = [
+            {
+                "start_month": int(row.get("start_month") or 0),
+                "end_month": int(row.get("end_month") or 0),
+                "row_text": str(row.get("row_text") or ""),
+            }
+            for row in list(parsed.get("parking_abatements") or [])
+            if isinstance(row, dict)
+        ]
+        if parking_rows:
+            parking_abatement_pool.append((parking_rows, score, evidence_items))
+        for signal in list(parsed.get("signals") or []):
+            review_tasks.append(_make_concession_review_task(signal, evidence_items))
 
     llm_abatements = []
     if isinstance(llm_output, dict) and isinstance(llm_output.get("abatements"), list):
@@ -798,7 +861,29 @@ def _collect_abatement_candidates(
         ranked.append({"abatements": [], "score": max(0.0, 0.22 - 0.02 * len(ranked)), "evidence": []})
 
     analysis_evidence = [*scope_items[:4], *class_items[:4], *phase_items[:4], *definition_items[:4]]
-    return ranked[:8], phase_detected, phase_conf, analysis_evidence
+
+    deduped_parking: dict[tuple[tuple[int, int], ...], dict[str, Any]] = {}
+    for parking_rows, score, evidence_items in parking_abatement_pool:
+        key = tuple((int(row.get("start_month") or 0), int(row.get("end_month") or 0)) for row in parking_rows)
+        payload = {
+            "parking_abatements": [
+                {
+                    "start_month": int(row.get("start_month") or 0),
+                    "end_month": int(row.get("end_month") or 0),
+                }
+                for row in parking_rows
+            ],
+            "score": float(score),
+            "evidence": list(evidence_items),
+        }
+        current = deduped_parking.get(key)
+        if current is None or float(payload.get("score") or 0.0) > float(current.get("score") or 0.0):
+            deduped_parking[key] = payload
+    parking_ranked = sorted(
+        deduped_parking.values(),
+        key=lambda row: (-float(row.get("score") or 0.0), str(row.get("parking_abatements") or "")),
+    )
+    return ranked[:8], phase_detected, phase_conf, analysis_evidence, parking_ranked[:3], review_tasks
 
 
 def _collect_opex_candidates(
@@ -1078,6 +1163,7 @@ def _resolve_from_candidate_set(
     rights_options: dict[str, Any],
     rent_steps: list[dict[str, Any]],
     abatements: list[dict[str, Any]],
+    parking_abatements: list[dict[str, Any]],
     phase_detected: bool,
     phase_conf: float,
     opex: dict[str, Any],
@@ -1092,8 +1178,17 @@ def _resolve_from_candidate_set(
         classification = "rent_abatement"
 
     free_rent_months = concessions.get("free_rent_months")
-    if free_rent_months in (None, "") and abatements:
-        free_rent_months = sum(max(0, int(a.get("end_month") or 0) - int(a.get("start_month") or 0) + 1) for a in abatements)
+    abatement_months = sum(max(0, int(a.get("end_month") or 0) - int(a.get("start_month") or 0) + 1) for a in abatements)
+    if abatements and (free_rent_months in (None, "") or int(free_rent_months or 0) < abatement_months):
+        free_rent_months = abatement_months
+
+    rsf_value = _safe_float(premises.get("rsf"), None)
+    ti_psf_value = _safe_float(tenant_improvements.get("ti_allowance_psf"), None)
+    ti_total_value = _safe_float(tenant_improvements.get("ti_allowance_total"), None)
+    if ti_psf_value is None and ti_total_value is not None and rsf_value and rsf_value > 0:
+        ti_psf_value = max(0.0, float(ti_total_value) / float(rsf_value))
+    if ti_total_value is None and ti_psf_value is not None and rsf_value and rsf_value > 0:
+        ti_total_value = max(0.0, float(ti_psf_value) * float(rsf_value))
 
     return {
         "term": {
@@ -1131,12 +1226,19 @@ def _resolve_from_candidate_set(
             "phase_in_confidence": round(float(phase_conf or 0.0), 4),
             "scope": (str(abatements[0].get("scope") or "unspecified") if abatements else None),
         },
+        "parking_abatements": [
+            {
+                "start_month": int(a.get("start_month") or 0),
+                "end_month": int(a.get("end_month") or 0),
+            }
+            for a in parking_abatements
+        ],
         "concessions": {
             "free_rent_months": (None if free_rent_months in (None, "") else int(free_rent_months)),
         },
         "tenant_improvements": {
-            "ti_allowance_psf": (None if tenant_improvements.get("ti_allowance_psf") is None else float(tenant_improvements.get("ti_allowance_psf") or 0.0)),
-            "ti_allowance_total": (None if tenant_improvements.get("ti_allowance_total") is None else float(tenant_improvements.get("ti_allowance_total") or 0.0)),
+            "ti_allowance_psf": (None if ti_psf_value is None else float(round(ti_psf_value, 4))),
+            "ti_allowance_total": (None if ti_total_value is None else float(round(ti_total_value, 2))),
         },
         "parking": {
             "ratio_per_1000_rsf": (None if parking.get("ratio_per_1000_rsf") is None else float(parking.get("ratio_per_1000_rsf") or 0.0)),
@@ -1163,6 +1265,8 @@ def reconcile(
     regex_candidates: dict[str, list[dict[str, Any]]],
     rent_step_candidates: list[dict[str, Any]],
     llm_output: dict[str, Any] | None,
+    *,
+    full_text: str = "",
 ) -> dict[str, Any]:
     by_field: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -1259,7 +1363,11 @@ def reconcile(
 
     term_sets = _collect_term_sets(by_field)
     rent_sets = _collect_rent_schedule_candidates(by_field, llm_output)
-    abatement_sets, phase_detected, phase_conf, abatement_analysis_evidence = _collect_abatement_candidates(by_field, llm_output)
+    abatement_sets, phase_detected, phase_conf, abatement_analysis_evidence, parking_abatement_sets, concession_review_tasks = _collect_abatement_candidates(
+        by_field,
+        llm_output,
+        full_text=full_text,
+    )
     opex_sets, opex_cues = _collect_opex_candidates(by_field, llm_output)
 
     best: dict[str, Any] | None = None
@@ -1409,6 +1517,7 @@ def reconcile(
         rights_options=rights_options,
         rent_steps=list((best.get("rent") or {}).get("materialized_steps") or []),
         abatements=list((best.get("abatement") or {}).get("abatements") or []),
+        parking_abatements=list((parking_abatement_sets[0] if parking_abatement_sets else {}).get("parking_abatements") or []),
         phase_detected=phase_detected,
         phase_conf=phase_conf,
         opex=best.get("opex") or {},
@@ -1424,6 +1533,7 @@ def reconcile(
     provenance["rent_steps"] = _evidence_from_candidates(list((best.get("rent") or {}).get("evidence") or []), limit=16)
     provenance["abatements"] = _evidence_from_candidates(list((best.get("abatement") or {}).get("evidence") or []), limit=10)
     provenance["abatement_analysis"] = _evidence_from_candidates(list(abatement_analysis_evidence or []), limit=10)
+    provenance["parking_abatements"] = _evidence_from_candidates(list((parking_abatement_sets[0] if parking_abatement_sets else {}).get("evidence") or []), limit=10)
     provenance["opex"] = _evidence_from_candidates(list((best.get("opex") or {}).get("evidence") or []), limit=10)
 
     # Compute reconcile margin from first two viable scores when available.
@@ -1459,4 +1569,5 @@ def reconcile(
         "reconcile_margin": max(0.0, min(1.0, float(reconcile_margin))),
         "solver_debug": solver_debug,
         "degraded": bool(best.get("degraded", False)),
+        "review_tasks": concession_review_tasks,
     }

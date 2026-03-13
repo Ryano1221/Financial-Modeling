@@ -896,6 +896,44 @@ def _has_ti_context_token(text: str) -> bool:
     )
 
 
+def _has_strong_ti_allowance_context(text: str) -> bool:
+    low = str(text or "").lower()
+    return bool(
+        re.search(
+            r"(?i)\b(?:tenant\s+improvement(?:s)?\s+allowance|ti\s+allowance|tenant\s+allowance|subtenant\s+allowance|improvement\s+allowance|tia)\b",
+            low,
+        )
+    )
+
+
+def _has_non_ti_allowance_context(text: str) -> bool:
+    low = str(text or "").lower()
+    excluded_cues = (
+        "test fit",
+        "test-fit",
+        "moving allowance",
+        "moving expenses",
+        "moving cost",
+        "relocation allowance",
+        "relocation expense",
+        "furniture allowance",
+        "furniture package",
+        "ff&e",
+        "ffe",
+        "signage allowance",
+        "door signage",
+        "building signage",
+        "cabling allowance",
+        "security network",
+        "work letter",
+        "landlord work",
+        "landlord's work",
+        "turnkey",
+        "turn-key",
+    )
+    return any(cue in low for cue in excluded_cues)
+
+
 def _extract_annual_rent_escalation_pct(text: str) -> float | None:
     if not text:
         return None
@@ -2048,7 +2086,9 @@ def _regex_prefill(text: str) -> dict:
         low_window = window.lower()
         if "e.g" in low_window or "example" in low_window:
             continue
-        if "outside of the tenant improvement allowance" in line_low or "test-fit" in line_low or "test fit" in line_low:
+        if "outside of the tenant improvement allowance" in line_low:
+            continue
+        if _has_non_ti_allowance_context(line_low) and not _has_strong_ti_allowance_context(line_low):
             continue
         for amount_match in _RE_PSF_AMOUNT.finditer(window):
             local = window[max(0, amount_match.start() - 80): min(len(window), amount_match.end() + 36)]
@@ -2057,7 +2097,7 @@ def _regex_prefill(text: str) -> dict:
                 continue
             if not re.search(r"(?i)\b(?:allowance|tenant improvements?|tia|ti)\b", local):
                 continue
-            if "test fit" in local_low or "test-fit" in local_low:
+            if _has_non_ti_allowance_context(local_low) and not _has_strong_ti_allowance_context(local_low):
                 continue
             if re.search(r"(?i)\b(?:base rent|rental rate)\b", local):
                 continue
@@ -2095,7 +2135,7 @@ def _regex_prefill(text: str) -> dict:
                 score += 4
             if re.search(r"(?i)\b(?:operating expenses?|opex|cam|base year)\b", local):
                 score -= 10
-            if "outside of the tenant improvement allowance" in local_low or "test-fit" in local_low or "test fit" in local_low:
+            if _has_non_ti_allowance_context(local_low) and not _has_strong_ti_allowance_context(local_low):
                 score -= 8
             if "not to exceed" in local_low:
                 score += 8
@@ -2112,6 +2152,8 @@ def _regex_prefill(text: str) -> dict:
             local = window[max(0, total_match.start() - 80): min(len(window), total_match.end() + 90)]
             local_low = local.lower()
             if "outside of the tenant improvement allowance" in local_low:
+                continue
+            if _has_non_ti_allowance_context(local_low) and not _has_strong_ti_allowance_context(local_low):
                 continue
             if psf_unit_pat.search(local):
                 continue
@@ -2139,7 +2181,7 @@ def _regex_prefill(text: str) -> dict:
             seg_low = seg.lower()
             if "outside of the tenant improvement allowance" in seg_low:
                 continue
-            if "test fit" in seg_low or "test-fit" in seg_low:
+            if _has_non_ti_allowance_context(seg_low) and not _has_strong_ti_allowance_context(seg_low):
                 continue
             for amount_match in _RE_PSF_AMOUNT.finditer(seg):
                 if "$" not in (amount_match.group(0) or ""):
@@ -2162,6 +2204,8 @@ def _regex_prefill(text: str) -> dict:
                 continue
             seg = (m.group(0) or "").lower()
             context = text[max(0, m.start() - 80): min(len(text), m.end() + 120)]
+            if _has_non_ti_allowance_context(context) and not _has_strong_ti_allowance_context(context):
+                continue
             if psf_unit_pat.search(seg) or psf_unit_pat.search(context):
                 continue
             score = 2

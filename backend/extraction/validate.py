@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import re
 from typing import Any
 
 
@@ -292,6 +293,172 @@ def _validate_opex(opex: dict[str, Any], evidence: list[dict[str, Any]], review_
     return True
 
 
+def _validate_ti_and_concessions(
+    extraction: dict[str, Any],
+    evidence: list[dict[str, Any]],
+    review_tasks: list[dict[str, Any]],
+) -> bool:
+    text = " ".join(str(e.get("snippet") or "") for e in evidence).lower()
+    tenant_improvements = extraction.get("tenant_improvements") or {}
+    abatements = extraction.get("abatements") or []
+    parking_abatements = extraction.get("parking_abatements") or []
+    concessions = extraction.get("concessions") or {}
+    premises = extraction.get("premises") or {}
+
+    ti_psf = tenant_improvements.get("ti_allowance_psf")
+    ti_total = tenant_improvements.get("ti_allowance_total")
+    rsf = premises.get("rsf")
+    free_rent_months = concessions.get("free_rent_months")
+
+    ti_cues = bool(
+        re.search(
+            r"(?i)\b(?:tenant\s+improvement(?:s)?\s+allowance|ti\s+allowance|tenant\s+allowance|improvement\s+allowance|tia)\b",
+            text,
+        )
+    )
+    free_rent_cues = bool(re.search(r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b", text))
+    gross_abatement_cues = bool(re.search(r"(?i)\b(?:gross\s+rent\s+abatement|gross\s+abatement|base\s+rent\s+and\s+operating\s+expenses\s+abated)\b", text))
+    base_abatement_cues = bool(re.search(r"(?i)\b(?:base\s+rent\s+only\s+abatement|base\s+rent\s+abatement|base\s+free\s+rent)\b", text))
+    parking_abatement_cues = bool(re.search(r"(?i)\bparking(?:\s+charges?|\s+costs?|\s+rent|\s+fees?)?[^\n]{0,60}\b(?:abated|abatement|waived|free)\b", text))
+    parking_references_abatement_period = bool(re.search(r"(?is)\bparking(?:\s+costs?|\s+charges?|\s+rent|\s+fees?)?\b[\s\S]{0,220}\babatement\s+period\b", text))
+    landlord_work_cues = bool(
+        re.search(r"(?i)\b(?:turn[\s-]?key|work\s+letter|landlord'?s?\s+work|landlord\s+work)\b", text)
+    )
+    other_concession_patterns = {
+        "MOVING_ALLOWANCE_DETECTED": r"(?i)\b(?:moving|relocation)\s+allowance\b",
+        "FURNITURE_ALLOWANCE_DETECTED": r"(?i)\b(?:furniture|ff&e|ffe)\s+allowance\b",
+        "SIGNAGE_ALLOWANCE_DETECTED": r"(?i)\b(?:signage|door\s+signage|building\s+signage)\s+allowance\b",
+    }
+
+    valid = True
+    if ti_cues and ti_psf in (None, "") and ti_total in (None, ""):
+        review_tasks.append(
+            _make_task(
+                "tenant_improvements",
+                "warn",
+                "TI_ALLOWANCE_INCOMPLETE",
+                "Document references TI allowance economics, but no model-ready TI allowance was confidently extracted.",
+                evidence=evidence[:8],
+            )
+        )
+        valid = False
+
+    if ti_total not in (None, "") and ti_psf in (None, "") and (rsf in (None, "") or float(rsf or 0) <= 0):
+        review_tasks.append(
+            _make_task(
+                "tenant_improvements.ti_allowance_psf",
+                "warn",
+                "TI_ALLOWANCE_NORMALIZATION_INCOMPLETE",
+                "A total TI allowance was found, but TI per-RSF could not be normalized because RSF is missing.",
+                evidence=evidence[:8],
+            )
+        )
+        valid = False
+
+    if ti_psf not in (None, "") and ti_total not in (None, "") and rsf not in (None, "") and float(rsf or 0) > 0:
+        implied_total = float(ti_psf or 0.0) * float(rsf or 0.0)
+        actual_total = float(ti_total or 0.0)
+        if implied_total > 0 and abs(implied_total - actual_total) / implied_total > 0.25:
+            review_tasks.append(
+                _make_task(
+                    "tenant_improvements",
+                    "warn",
+                    "TI_ALLOWANCE_INCONSISTENT",
+                    "TI allowance per-RSF and total-dollar allowance do not reconcile within tolerance.",
+                    evidence=evidence[:8],
+                )
+            )
+            valid = False
+
+    if free_rent_cues and free_rent_months in (None, "") and not abatements:
+        review_tasks.append(
+            _make_task(
+                "concessions.free_rent_months",
+                "warn",
+                "FREE_RENT_INCOMPLETE",
+                "Document references free rent or rent abatement, but concession timing was not confidently extracted.",
+                evidence=evidence[:8],
+            )
+        )
+        valid = False
+
+    if abatements and gross_abatement_cues and any(str(a.get("scope") or "").strip().lower() != "gross_rent" for a in abatements):
+        review_tasks.append(
+            _make_task(
+                "abatements",
+                "warn",
+                "ABATEMENT_SCOPE_GROSS_CONFLICT",
+                "Gross-rent abatement cues were detected, but the resolved abatement scope is not consistently gross-rent.",
+                candidates=abatements,
+                evidence=evidence[:8],
+            )
+        )
+        valid = False
+
+    if abatements and base_abatement_cues and any(str(a.get("scope") or "").strip().lower() != "base_rent_only" for a in abatements):
+        review_tasks.append(
+            _make_task(
+                "abatements",
+                "warn",
+                "ABATEMENT_SCOPE_BASE_CONFLICT",
+                "Base-rent-only abatement cues were detected, but the resolved abatement scope is not consistently base-rent-only.",
+                candidates=abatements,
+                evidence=evidence[:8],
+            )
+        )
+        valid = False
+
+    if parking_abatement_cues and not parking_abatements:
+        review_tasks.append(
+            _make_task(
+                "parking_abatements",
+                "warn",
+                "PARKING_ABATEMENT_INCOMPLETE",
+                "Parking abatement was referenced, but no structured parking-abatement periods were resolved.",
+                evidence=evidence[:8],
+            )
+        )
+        valid = False
+
+    if parking_references_abatement_period and not parking_abatements:
+        review_tasks.append(
+            _make_task(
+                "parking_abatements",
+                "warn",
+                "PARKING_ABATEMENT_PERIOD_UNRESOLVED",
+                "Parking abatement references the abatement period, but the shared concession timing could not be resolved confidently.",
+                evidence=evidence[:8],
+            )
+        )
+        valid = False
+
+    if landlord_work_cues and not ti_cues and ti_psf in (None, "") and ti_total in (None, ""):
+        review_tasks.append(
+            _make_task(
+                "tenant_improvements",
+                "warn",
+                "LANDLORD_WORK_CONCESSION_DETECTED",
+                "Document references turnkey or landlord work concessions. Review separately from TI allowance economics.",
+                evidence=evidence[:8],
+            )
+        )
+
+    for issue_code, pattern in other_concession_patterns.items():
+        if not re.search(pattern, text):
+            continue
+        review_tasks.append(
+            _make_task(
+                "concessions",
+                "warn",
+                issue_code,
+                "Document references a one-time concession that is not mapped into model-ready TI or free-rent fields.",
+                evidence=evidence[:8],
+            )
+        )
+
+    return valid
+
+
 def _collect_missing_information(extraction: dict[str, Any], review_tasks: list[dict[str, Any]]) -> list[str]:
     missing: list[str] = []
 
@@ -365,6 +532,7 @@ def validate_extraction(
     checks.append(_validate_abatement_scope(abatements, review_tasks))
     checks.append(_validate_abatement_classification(abatements, abatement_analysis, review_tasks))
     checks.append(_validate_opex(opex, evidence, review_tasks))
+    checks.append(_validate_ti_and_concessions(extraction, evidence, review_tasks))
 
     missing_information = _collect_missing_information(extraction, review_tasks)
     extraction["missing_information"] = missing_information

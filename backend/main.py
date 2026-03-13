@@ -7996,6 +7996,7 @@ _NORMALIZE_PRIMARY_PATH_BY_FIELD: dict[str, str] = {
     "rent_schedule": "rent_steps",
     "free_rent_months": "concessions.free_rent_months",
     "free_rent_periods": "abatements",
+    "parking_abatement_periods": "parking_abatements",
     "opex_psf_year_1": "opex.base_psf_year_1",
     "opex_growth_rate": "opex.growth_rate",
     "lease_type": "opex.mode",
@@ -8146,6 +8147,23 @@ def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict
                     period_rows,
                     term_months=_coerce_int_token(updates.get("term_months"), 0) or 0,
                 )
+
+    parking_abatement_periods: list[ParkingAbatementPeriod] = []
+    for raw_period in list(extraction.get("parking_abatements") or []):
+        if not isinstance(raw_period, dict):
+            continue
+        start_m = _coerce_int_token(raw_period.get("start_month"), None)
+        end_m = _coerce_int_token(raw_period.get("end_month"), start_m)
+        if start_m is None or end_m is None:
+            continue
+        start_i = max(0, int(start_m))
+        end_i = max(start_i, int(end_m))
+        try:
+            parking_abatement_periods.append(ParkingAbatementPeriod(start_month=start_i, end_month=end_i))
+        except Exception:
+            continue
+    if parking_abatement_periods:
+        updates["parking_abatement_periods"] = parking_abatement_periods
 
     if "base_psf_year_1" in opex and opex.get("base_psf_year_1") is not None:
         base_opex = _coerce_float_token(opex.get("base_psf_year_1"), None)

@@ -81,6 +81,18 @@ CANONICAL_EXTRACTION_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        "parking_abatements": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start_month": {"type": "integer", "minimum": 0},
+                    "end_month": {"type": "integer", "minimum": 0},
+                    "source": {"type": ["string", "null"]},
+                    "classification": {"type": ["string", "null"]},
+                },
+            },
+        },
         "abatement_analysis": {
             "type": "object",
             "properties": {
