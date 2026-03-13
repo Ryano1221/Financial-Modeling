@@ -1904,9 +1904,27 @@ def _normalize_floor_candidate(raw: str) -> str:
     if not v:
         return ""
     v = re.sub(r"(?i)^(?:floor|fl\.?|level)\s*[:#-]?\s*", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)\(\s*(\d{1,3})(?:st|nd|rd|th)?\s*\)", r"\1", v).strip(" ,.;:-")
     v = re.sub(r"(?i)(?:st|nd|rd|th)$", "", v).strip(" ,.;:-")
     v = re.sub(r"(?i)\bto\b", "-", v)
     v = re.sub(r"\s*-\s*", "-", v)
+    ordinal_word_map = {
+        "first": "1",
+        "second": "2",
+        "third": "3",
+        "fourth": "4",
+        "fifth": "5",
+        "sixth": "6",
+        "seventh": "7",
+        "eighth": "8",
+        "ninth": "9",
+        "tenth": "10",
+        "eleventh": "11",
+        "twelfth": "12",
+    }
+    ordinal_word_match = re.match(r"(?i)^(" + "|".join(ordinal_word_map.keys()) + r")\b", v)
+    if ordinal_word_match:
+        return ordinal_word_map[ordinal_word_match.group(1).lower()]
     range_match = re.match(r"(?i)^(\d{1,3}-\d{1,3})\b", v)
     if range_match:
         start_s, end_s = range_match.group(1).split("-", 1)
@@ -2212,7 +2230,9 @@ def _extract_floor_from_text(text: str) -> str:
     floor_patterns = [
         r"(?i)\blocated\s+on\s+(\d{1,3}\s*(?:-|–|—|to)\s*\d{1,3})\b",
         r"(?i)\bfloors?\s+(\d{1,3}\s*(?:-|–|—|to)\s*\d{1,3})\b",
+        r"(?i)\bon\s+the\s+([A-Za-z]+(?:\s*\(\d{1,3}(?:st|nd|rd|th)?\))?)\s+floor\b",
         r"(?i)\bon\s+the\s+(\d{1,3})(?:st|nd|rd|th)?\s+floor\b",
+        r"(?i)\b([A-Za-z]+(?:\s*\(\d{1,3}(?:st|nd|rd|th)?\))?)\s+floor\b",
         r"(?i)\b(\d{1,3})(?:st|nd|rd|th)?\s+floor\b",
         r"(?i)\bfloor\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,8})\b",
         r"(?i)\blevel\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,8})\b",
@@ -3189,6 +3209,143 @@ def _extract_dated_rent_table_schedule_and_rsf(
     return schedule, rsf
 
 
+def _extract_fixed_annual_rent_table_schedule_and_rsf(text: str) -> tuple[list[dict], Optional[float]]:
+    if not text:
+        return [], None
+
+    def _normalize_ocr_word_splits(value: str) -> str:
+        out = str(value or "")
+        prior = None
+        while out != prior:
+            prior = out
+            out = re.sub(r"\b([A-Za-z]{1,12})\s+([A-Za-z])\b", r"\1\2", out)
+        return re.sub(r"\s+", " ", out).strip()
+
+    def _build_schedule_from_rows(row_values: list[tuple[float, float]]) -> tuple[list[dict], Optional[float]]:
+        if len(row_values) < 2:
+            return [], None
+        schedule = [
+            {
+                "start_month": int(idx * 12),
+                "end_month": int((idx * 12) + 11),
+                "rent_psf_annual": float(round(rate, 4)),
+            }
+            for idx, (rate, _annual_total) in enumerate(row_values)
+        ]
+        rsf_candidates: list[float] = []
+        for rate, annual_total in row_values:
+            if rate <= 0 or annual_total <= 0:
+                continue
+            implied_rsf = annual_total / rate
+            if 300 <= implied_rsf <= 2_000_000:
+                rsf_candidates.append(implied_rsf)
+        inferred_rsf: Optional[float] = None
+        if rsf_candidates:
+            ordered = sorted(rsf_candidates)
+            inferred_rsf = float(round(ordered[len(ordered) // 2], 2))
+        return schedule, inferred_rsf
+
+    lines = [line for line in str(text or "").splitlines()]
+    header_idx: int | None = None
+    for idx, line in enumerate(lines):
+        normalized_line = _normalize_ocr_word_splits(line).lower()
+        if "rental rate per rsf" in normalized_line and "base rent (dollars)" in normalized_line:
+            header_idx = idx
+            break
+    if header_idx is not None:
+        row_values: list[tuple[float, float]] = []
+        for raw_line in lines[header_idx + 1: header_idx + 18]:
+            normalized_line = _normalize_ocr_word_splits(raw_line)
+            low_line = normalized_line.lower()
+            if row_values and (low_line.startswith("**") or "using $" in low_line or "section " in low_line):
+                break
+            money_tokens = re.findall(r"(\d{1,3}(?:,\d{3})*\.\d{2})\$?", raw_line)
+            if len(money_tokens) < 3:
+                continue
+            rate = _coerce_float_token(money_tokens[0], None)
+            annual_total = _coerce_float_token(money_tokens[1], None)
+            monthly_total = _coerce_float_token(money_tokens[2], None)
+            if rate is None or annual_total is None or monthly_total is None:
+                continue
+            if not (1.0 <= float(rate) <= 500.0):
+                continue
+            if float(annual_total) < 1_000.0 or float(monthly_total) < 100.0:
+                continue
+            row_values.append((float(rate), float(annual_total)))
+        schedule, inferred_rsf = _build_schedule_from_rows(row_values)
+        if schedule:
+            return schedule, inferred_rsf
+
+    def _extract_column_values(
+        section_text: str,
+        *,
+        start_pattern: str,
+        stop_patterns: list[str],
+        value_pattern: str,
+        minimum: float,
+        maximum: float,
+    ) -> list[float]:
+        start_match = re.search(start_pattern, section_text, re.I | re.S)
+        if not start_match:
+            return []
+        remainder = section_text[start_match.end():]
+        stop_at = len(remainder)
+        for stop_pattern in stop_patterns:
+            stop_match = re.search(stop_pattern, remainder, re.I | re.S)
+            if stop_match:
+                stop_at = min(stop_at, stop_match.start())
+        block = remainder[:stop_at]
+        values: list[float] = []
+        for token in re.findall(value_pattern, block):
+            parsed = _coerce_float_token(token, None)
+            if parsed is None:
+                continue
+            value = float(parsed)
+            if minimum <= value <= maximum:
+                values.append(value)
+        return values
+
+    section_match = re.search(
+        r"(?is)\bbase\s+rent\b[^\n]{0,120}\bfixed\s+annual\s+rent\s+is\s+as\s+follows\b(.*?)(?:\bplus\b|\bsection\s+3\.2\b|\bsection\s+4\.1\b|\*\*\s*this\s+is\s+subject)",
+        text,
+    )
+    if not section_match:
+        return [], None
+    section = section_match.group(1) or ""
+    if not section.strip():
+        return [], None
+
+    rate_values = _extract_column_values(
+        section,
+        start_pattern=r"annual\s+fixed\s+\(base\)\s+rental\s+rate\s+per\s+rsf",
+        stop_patterns=[
+            r"annual\s+\(fixed\)\s+base\s+rent\s+\(dollars\)",
+            r"monthly\s+fixed\s+\(base\)\s+rent",
+        ],
+        value_pattern=r"(?<![\d,])(\d{1,3}\.\d{2})(?!\d)",
+        minimum=1.0,
+        maximum=500.0,
+    )
+    annual_values = _extract_column_values(
+        section,
+        start_pattern=r"annual\s+\(fixed\)\s+base\s+rent\s+\(dollars\)",
+        stop_patterns=[
+            r"monthly\s+fixed\s+\(base\)\s+rent",
+            r"monthly\s+addnl\s+rent\s+for\s+operating\s+expenses",
+        ],
+        value_pattern=r"(\d{1,3}(?:,\d{3})+(?:\.\d{2})?)",
+        minimum=1_000.0,
+        maximum=1_000_000_000.0,
+    )
+    paired_count = min(len(rate_values), len(annual_values))
+    row_values = [
+        (float(rate_values[idx]), float(annual_values[idx]))
+        for idx in range(paired_count)
+        if float(rate_values[idx]) > 0 and float(annual_values[idx]) > 0
+    ]
+    return _build_schedule_from_rows(row_values)
+
+
 def _extract_dated_rent_table_schedule_and_rsf_with_review(
     text: str,
     commencement_hint: Optional[date] = None,
@@ -3405,8 +3562,12 @@ def _extract_dated_rent_table_schedule_and_rsf_with_review(
                     "end_date": end_date,
                     "rate_psf_annual": float(rate_psf),
                     "annual_total": float(max(0.0, annual_total)),
-            }
-        )
+                }
+            )
+    if len(rows) < 2:
+        fixed_schedule, fixed_rsf = _extract_fixed_annual_rent_table_schedule_and_rsf(text)
+        if fixed_schedule:
+            return fixed_schedule, fixed_rsf, review_tasks
     if len(rows) < 2:
         return [], None, review_tasks
     rows.sort(key=lambda row: (row["start_date"], row["end_date"]))
@@ -3965,13 +4126,22 @@ def _is_non_term_expiration_context(context: str) -> bool:
         "valid for",
         "remain valid",
     )
-    structural_non_term_tokens = (
+    hard_non_term_tokens = (
+        "right to terminate",
+        "may terminate",
+        "terminate this lease",
+        "commencement date shall have not occurred",
+        "commencement date shall not have occurred",
+        "unable to deliver possession",
+    )
+    soft_non_term_tokens = (
         "allowance",
         "ti allowance",
         "tenant improvement",
         "signage",
         "security deposit",
         "delivery date",
+        "delivery",
         "early access",
         "construction",
         "test-fit",
@@ -3979,10 +4149,43 @@ def _is_non_term_expiration_context(context: str) -> bool:
         "rofr",
         "right of first refusal",
     )
-    if any(token in low for token in structural_non_term_tokens):
+    if any(token in low for token in hard_non_term_tokens):
         return True
+    if any(token in low for token in soft_non_term_tokens):
+        return not explicit_lease_expiration
     if any(token in low for token in proposal_tokens):
         return not explicit_lease_expiration
+    return False
+
+
+def _extract_proportionate_share_percentages(text: str) -> list[float]:
+    if not text:
+        return []
+    candidates: list[float] = []
+    for match in re.finditer(r"(?i)\bproportionate\s+share\b[^\n%]{0,160}?(\d+(?:\.\d+)?)\s*%", text):
+        value = _coerce_float_token(match.group(1), None)
+        if value is None:
+            continue
+        pct = float(value)
+        if 0 < pct <= 100:
+            candidates.append(round(pct, 4))
+    return sorted(dict.fromkeys(candidates))
+
+
+def _has_matching_opex_escalation_context(text: str, pct_value: float) -> bool:
+    if not text or pct_value <= 0:
+        return False
+    for match in re.finditer(r"(?i)(\d+(?:\.\d+)?)\s*%", text):
+        parsed = _coerce_float_token(match.group(1), None)
+        if parsed is None or abs(float(parsed) - float(pct_value)) > 0.05:
+            continue
+        local = text[max(0, match.start() - 180): min(len(text), match.end() + 180)].lower()
+        if "proportionate share" in local:
+            continue
+        if any(token in local for token in ("operating expense", "operating expenses", "annual operating charges", "opex", "cam")) and any(
+            token in local for token in ("escalat", "increase", "annual", "anniversary", "year")
+        ):
+            return True
     return False
 
 
@@ -5843,6 +6046,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     # ---- Term: commencement / expiration / ending / through ----
     term_candidates: dict[str, Optional[date]] = {"commencement": None, "expiration": None}
+    expiration_from_explicit_clause = False
     month_token = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
     date_token_value = rf"(?:{month_token}\s*,?\s*\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}|\d{{4}}[-/]\d{{1,2}}[-/]\d{{1,2}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{4}}|\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{2}})"
     date_token_capture = rf"({date_token_value})"
@@ -5859,6 +6063,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     ]
     exp_direct_pats = [
         rf"(?i)\bexpir(?:e|ing|ation)\b(?:\s+date)?(?:\s+on)?(?:\s*[:\-]\s*|\s+){date_token_capture}",
+        rf"(?i)\b(?:lease\s+term|term)\b[^.\n]{{0,220}}\b(?:shall\s+)?expire\b[^.\n]{{0,180}}?\bon\s+{date_token_capture}",
         rf"(?i)\bending\s+on\s+{date_token_capture}",
         rf"(?i)\b(?:sublease\s+term|term)\b[^.\n]{{0,220}}\bthrough\b[^.\n]{{0,90}}?{date_token_capture}",
         rf"(?i)\b{date_token_capture}\s*\([^)]{{0,40}}\b(?:expiration|termination)\s+date\b",
@@ -5885,6 +6090,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if comm_d and exp_d and exp_d > comm_d:
                 term_candidates["commencement"] = comm_d
                 term_candidates["expiration"] = exp_d
+                expiration_from_explicit_clause = True
                 break
         if term_candidates["commencement"] is not None and term_candidates["expiration"] is not None:
             break
@@ -5927,7 +6133,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             for m in re.finditer(pat, text):
                 if "e.g" in (m.group(0) or "").lower() or "example" in (m.group(0) or "").lower():
                     continue
-                local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
+                local = text[max(0, m.start() - 60): min(len(text), m.end() + 120)]
                 if _is_non_term_expiration_context(local):
                     continue
                 if _is_historical_recital_context(local):
@@ -5935,6 +6141,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 d = _parse_lease_date(m.group(1))
                 if d:
                     term_candidates["expiration"] = d
+                    expiration_from_explicit_clause = True
                     break
             if term_candidates["expiration"] is not None:
                 break
@@ -5953,6 +6160,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             d = _extract_first_date_token(candidate_text)
             if d:
                 term_candidates["expiration"] = d
+                expiration_from_explicit_clause = True
                 break
 
     if term_candidates["expiration"] is None:
@@ -5963,7 +6171,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         ]
         for pat in expiration_month_year_patterns:
             for m in re.finditer(pat, text):
-                local = text[max(0, m.start() - 120): min(len(text), m.end() + 120)]
+                local = text[max(0, m.start() - 60): min(len(text), m.end() + 120)]
                 if _is_non_term_expiration_context(local):
                     continue
                 if _is_historical_recital_context(local):
@@ -5971,6 +6179,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 d = _parse_month_year_token_as_last_day(m.group(1))
                 if d:
                     term_candidates["expiration"] = d
+                    expiration_from_explicit_clause = True
                     break
             if term_candidates["expiration"] is not None:
                 break
@@ -6014,6 +6223,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                     d = _extract_first_date_token(nxt)
                     if d:
                         term_candidates["expiration"] = d
+                        expiration_from_explicit_clause = True
                         break
             if term_candidates["expiration"] is None and is_term_label:
                 for nxt in lines[idx + 1: idx + 8]:
@@ -6029,6 +6239,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                     d = _extract_first_date_token(nxt)
                     if d:
                         term_candidates["expiration"] = d
+                        expiration_from_explicit_clause = True
                         break
             if term_candidates["commencement"] is not None and term_candidates["expiration"] is not None:
                 break
@@ -6054,6 +6265,28 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     if term_candidates["commencement"]:
         hints["commencement_date"] = term_candidates["commencement"]
+        commencement_review_tasks = hints.get("_review_tasks") if isinstance(hints.get("_review_tasks"), list) else []
+        commencement_clause_match = re.search(
+            r"(?is)\b(?:lease\s+)?commencement(?:\s+date)?\s*[:\-]\s*([^\n]{0,320})",
+            text,
+        )
+        commencement_clause = str(commencement_clause_match.group(1) or "").strip() if commencement_clause_match else ""
+        low_commencement_clause = commencement_clause.lower()
+        if commencement_clause and "later of" in low_commencement_clause and any(
+            token in low_commencement_clause
+            for token in ("tenant improvement", "improvement work", "substantially completes", "completion")
+        ):
+            _append_review_task(
+                commencement_review_tasks,
+                field_path="commencement_date",
+                severity="warn",
+                issue_code="COMMENCEMENT_RELATIVE_TRIGGER",
+                message=(
+                    "Lease commencement is a relative trigger ('later of' a fixed date or TI completion). "
+                    "Review the commencement clause before relying on a single calendar date."
+                ),
+            )
+            hints["_review_tasks"] = commencement_review_tasks
     if term_candidates["expiration"]:
         hints["expiration_date"] = term_candidates["expiration"]
     term_from_text = _extract_term_months_from_text(text)
@@ -6082,25 +6315,33 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             term_from_text is not None
             and (term_from_dates <= 0 or abs(int(term_from_dates) - int(term_from_text)) >= 6)
         ):
-            should_override_with_term_text = True
             if (
-                term_from_dates >= 24
+                expiration_from_explicit_clause
+                and term_from_dates >= 24
                 and term_from_text is not None
-                and int(term_from_text) <= 12
-                and abs(int(term_from_dates) - int(term_from_text)) >= 12
+                and int(term_from_text) < int(term_from_dates)
             ):
-                should_override_with_term_text = False
-            if should_override_with_term_text:
-                hints["term_months"] = int(term_from_text)
-                try:
-                    hints["expiration_date"] = _expiration_from_term_months(
-                        hints["commencement_date"],
-                        int(term_from_text),
-                    )
-                except Exception:
-                    pass
-            else:
                 hints["term_months"] = term_from_dates
+            else:
+                should_override_with_term_text = True
+                if (
+                    term_from_dates >= 24
+                    and term_from_text is not None
+                    and int(term_from_text) <= 12
+                    and abs(int(term_from_dates) - int(term_from_text)) >= 12
+                ):
+                    should_override_with_term_text = False
+                if should_override_with_term_text:
+                    hints["term_months"] = int(term_from_text)
+                    try:
+                        hints["expiration_date"] = _expiration_from_term_months(
+                            hints["commencement_date"],
+                            int(term_from_text),
+                        )
+                    except Exception:
+                        pass
+                else:
+                    hints["term_months"] = term_from_dates
         elif hints["expiration_date"] is not None:
             hints["term_months"] = term_from_dates
     elif hints["commencement_date"] and hints.get("term_months"):
@@ -6832,6 +7073,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             continue
         if not re.search(r"(?i)\b(?:base\s+rent|rental\s+rate|lease\s+rate|annual\s+rent|rent)\b", line):
             continue
+        if not re.search(r"(?i)(?:/\s*(?:rsf|sf)|\bpsf\b|per\s+(?:rsf|sf|rentable\s+square\s+foot))", line):
+            continue
+        if any(
+            token in low_line
+            for token in ("per hour", "extra service", "hvac", "abatement", "reduction of any rent", "utilities")
+        ):
+            continue
         for rate_match in re.finditer(r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)", line):
             rate = _coerce_float_token(rate_match.group(1), 0.0) or 0.0
             if not (3.0 <= rate <= 300.0):
@@ -7065,6 +7313,31 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if aligned_parking_count > 0:
         hints["parking_count"] = int(aligned_parking_count)
 
+    distinct_parking_counts = sorted(
+        {
+            int(count)
+            for score, _pos, count in parking_count_candidates
+            if score > 0 and int(count) > 0
+        }
+    )
+    if len(distinct_parking_counts) >= 2:
+        parking_review_tasks = hints.get("_review_tasks") if isinstance(hints.get("_review_tasks"), list) else []
+        _append_review_task(
+            parking_review_tasks,
+            field_path="parking_count",
+            severity="warn",
+            issue_code="PARKING_COUNT_CONFLICT",
+            message=(
+                "Conflicting parking counts were detected in the lease. Review the parking clause and basic lease "
+                f"information before relying on a single space count ({', '.join(str(v) for v in distinct_parking_counts)} spaces found)."
+            ),
+        )
+        hints["_parking_count_candidates"] = distinct_parking_counts
+        hints["_review_tasks"] = parking_review_tasks
+
+    proportionate_share_percentages = _extract_proportionate_share_percentages(text)
+    if proportionate_share_percentages:
+        hints["_proportionate_share_percentages"] = proportionate_share_percentages
     hinted_opex, hinted_opex_year = _extract_opex_psf_from_text(text)
     opex_by_year = _extract_opex_by_calendar_year_from_text(text)
     if opex_by_year:
@@ -7996,7 +8269,6 @@ _NORMALIZE_PRIMARY_PATH_BY_FIELD: dict[str, str] = {
     "rent_schedule": "rent_steps",
     "free_rent_months": "concessions.free_rent_months",
     "free_rent_periods": "abatements",
-    "free_rent_scope": "abatement_analysis",
     "parking_abatement_periods": "parking_abatements",
     "opex_psf_year_1": "opex.base_psf_year_1",
     "opex_growth_rate": "opex.growth_rate",
@@ -8033,7 +8305,7 @@ def _preview_merge_value(value: Any) -> str:
 
 def _legacy_merge_value_available(canonical: CanonicalLease, field_name: str) -> bool:
     value = getattr(canonical, field_name, None)
-    if field_name in {"building_name", "suite", "floor", "address", "lease_type", "expense_structure_type", "free_rent_scope"}:
+    if field_name in {"building_name", "suite", "floor", "address", "lease_type", "expense_structure_type"}:
         return bool(str(value or "").strip())
     if field_name in {"commencement_date", "expiration_date"}:
         return isinstance(value, date)
@@ -8058,209 +8330,6 @@ def _legacy_merge_value_available(canonical: CanonicalLease, field_name: str) ->
     if field_name == "parking_abatement_periods":
         return bool(list(value or []))
     return value is not None
-
-
-_STACK_OVERRIDE_DOC_ROLES = {
-    "lease",
-    "prime_lease",
-    "sublease",
-    "amendment",
-    "redline",
-    "counter_proposal",
-    "proposal",
-    "renewal_or_extension",
-    "renewal_proposal",
-}
-_STACK_OVERRIDE_CUES = (
-    "hereby amended",
-    "superseded",
-    "replaced",
-    "deleted and replaced",
-    "notwithstanding",
-    "amended and restated",
-    "amended to read",
-    "amended as follows",
-)
-
-
-def _materially_different_merge_value(field_name: str, primary_value: Any, legacy_value: Any) -> bool:
-    if field_name in {"commencement_date", "expiration_date"}:
-        return str(primary_value or "") != str(legacy_value or "")
-    if field_name in {"term_months", "parking_count", "free_rent_months"}:
-        return (_coerce_int_token(primary_value, 0) or 0) != (_coerce_int_token(legacy_value, 0) or 0)
-    if field_name in {
-        "rsf",
-        "ti_allowance_psf",
-        "ti_budget_total",
-        "ti_total",
-        "parking_ratio",
-        "parking_rate_monthly",
-        "opex_psf_year_1",
-        "opex_growth_rate",
-    }:
-        return abs((_coerce_float_token(primary_value, 0.0) or 0.0) - (_coerce_float_token(legacy_value, 0.0) or 0.0)) > 0.01
-    if field_name in {"building_name", "suite", "floor", "address", "lease_type", "expense_structure_type", "free_rent_scope"}:
-        return str(primary_value or "").strip() != str(legacy_value or "").strip()
-    if field_name in {"rent_schedule", "free_rent_periods", "parking_abatement_periods"}:
-        return _preview_merge_value(primary_value) != _preview_merge_value(legacy_value)
-    return primary_value != legacy_value
-
-
-def _field_spans_from_primary_extraction(primary_extraction: dict, field_names: list[str]) -> list[dict]:
-    extraction_provenance = primary_extraction.get("provenance") if isinstance(primary_extraction.get("provenance"), dict) else {}
-    spans: list[dict] = []
-    for field_name in field_names:
-        extraction_key = _NORMALIZE_PRIMARY_PATH_BY_FIELD.get(field_name, "")
-        raw_spans = extraction_provenance.get(extraction_key) if isinstance(extraction_provenance.get(extraction_key), list) else []
-        spans.extend([span for span in raw_spans if isinstance(span, dict)])
-    return spans
-
-
-def _primary_doc_role_for_merge(primary_extraction: dict) -> str:
-    document = primary_extraction.get("document") if isinstance(primary_extraction.get("document"), dict) else {}
-    doc_role = str(document.get("doc_role") or "").strip().lower()
-    doc_type = str(document.get("doc_type") or "").strip().lower()
-    return doc_role or doc_type or "unknown"
-
-
-def _spans_show_override_intent(spans: list[dict]) -> bool:
-    for span in spans or []:
-        source = str(span.get("source") or "").strip().lower()
-        snippet = str(span.get("snippet") or "").strip().lower()
-        if any(role in source for role in ("::amendment::", "::counter::", "::redline::", "::override::")):
-            return True
-        if any(cue in snippet for cue in _STACK_OVERRIDE_CUES):
-            return True
-    return False
-
-
-def _append_override_review_task(
-    tasks: list[dict],
-    *,
-    issue_code: str,
-    message: str,
-    fields: list[str],
-    evidence: list[dict],
-) -> None:
-    tasks.append(
-        {
-            "field_path": "normalize.merge",
-            "severity": "warn",
-            "issue_code": issue_code,
-            "message": message,
-            "candidates": [{"field": field} for field in fields],
-            "recommended_value": None,
-            "evidence": evidence[:8],
-        }
-    )
-
-
-def _apply_stack_override_precedence(
-    *,
-    primary_updates: dict[str, Any],
-    primary_extraction: dict,
-    legacy_canonical: CanonicalLease,
-) -> tuple[dict[str, Any], list[str], list[dict]]:
-    filtered = dict(primary_updates or {})
-    warnings: list[str] = []
-    review_tasks: list[dict] = []
-    doc_role = _primary_doc_role_for_merge(primary_extraction)
-    role_is_override_capable = doc_role in _STACK_OVERRIDE_DOC_ROLES
-
-    free_rent_fields = ["free_rent_periods", "free_rent_months", "free_rent_scope"]
-    if any(field in filtered for field in free_rent_fields):
-        free_rent_spans = _field_spans_from_primary_extraction(primary_extraction, free_rent_fields)
-        if filtered.get("free_rent_months") == 0:
-            filtered["free_rent_periods"] = []
-            if "free_rent_scope" not in filtered and str(getattr(legacy_canonical, "free_rent_scope", "") or "").strip():
-                filtered["free_rent_scope"] = str(getattr(legacy_canonical, "free_rent_scope", "base") or "base")
-        has_structured_periods = "free_rent_periods" in filtered
-        legacy_has_free_rent = bool(getattr(legacy_canonical, "free_rent_periods", []) or int(getattr(legacy_canonical, "free_rent_months", 0) or 0) > 0)
-        if legacy_has_free_rent and not has_structured_periods and (_coerce_int_token(filtered.get("free_rent_months"), 0) or 0) > 0:
-            for field in free_rent_fields:
-                filtered.pop(field, None)
-            warnings.append("Retained legacy free-rent package because the later document only supplied a partial concession override.")
-            _append_override_review_task(
-                review_tasks,
-                issue_code="FREE_RENT_OVERRIDE_PARTIAL",
-                message="Later document references free rent, but did not resolve a structured concession period package. Legacy free-rent economics were retained.",
-                fields=free_rent_fields,
-                evidence=free_rent_spans,
-            )
-        elif legacy_has_free_rent and not role_is_override_capable and not _spans_show_override_intent(free_rent_spans):
-            for field in free_rent_fields:
-                filtered.pop(field, None)
-            warnings.append("Retained legacy free-rent package because override intent was weak in the uploaded document.")
-            _append_override_review_task(
-                review_tasks,
-                issue_code="FREE_RENT_OVERRIDE_AMBIGUOUS",
-                message="Later document carried free-rent changes, but override intent was weak. Legacy concession economics were retained for review.",
-                fields=free_rent_fields,
-                evidence=free_rent_spans,
-            )
-
-    rent_fields = ["rent_schedule"]
-    if "rent_schedule" in filtered and _legacy_merge_value_available(legacy_canonical, "rent_schedule"):
-        rent_spans = _field_spans_from_primary_extraction(primary_extraction, rent_fields)
-        if not role_is_override_capable and not _spans_show_override_intent(rent_spans):
-            filtered.pop("rent_schedule", None)
-            warnings.append("Retained legacy rent schedule because override intent was weak in the uploaded document.")
-            _append_override_review_task(
-                review_tasks,
-                issue_code="RENT_OVERRIDE_AMBIGUOUS",
-                message="Later document produced a conflicting rent schedule, but override intent was weak. Legacy rent schedule was retained for review.",
-                fields=rent_fields,
-                evidence=rent_spans,
-            )
-
-    term_fields = ["commencement_date", "expiration_date", "term_months"]
-    if any(field in filtered for field in term_fields):
-        term_spans = _field_spans_from_primary_extraction(primary_extraction, term_fields)
-        if not role_is_override_capable and not _spans_show_override_intent(term_spans):
-            conflicting = [
-                field
-                for field in term_fields
-                if field in filtered and _legacy_merge_value_available(legacy_canonical, field)
-                and _materially_different_merge_value(field, filtered.get(field), getattr(legacy_canonical, field, None))
-            ]
-            for field in conflicting:
-                filtered.pop(field, None)
-            if conflicting:
-                warnings.append("Retained legacy term package because override intent was weak in the uploaded document.")
-                _append_override_review_task(
-                    review_tasks,
-                    issue_code="TERM_OVERRIDE_AMBIGUOUS",
-                    message="Later document produced conflicting term economics, but override intent was weak. Legacy term fields were retained for review.",
-                    fields=conflicting,
-                    evidence=term_spans,
-                )
-
-    parking_fields = ["parking_ratio", "parking_count", "parking_rate_monthly", "parking_abatement_periods"]
-    if "parking_abatement_periods" in filtered and _legacy_merge_value_available(legacy_canonical, "parking_abatement_periods"):
-        parking_spans = _field_spans_from_primary_extraction(primary_extraction, parking_fields)
-        if not role_is_override_capable and not _spans_show_override_intent(parking_spans):
-            filtered.pop("parking_abatement_periods", None)
-            warnings.append("Retained legacy parking-abatement periods because override intent was weak in the uploaded document.")
-            _append_override_review_task(
-                review_tasks,
-                issue_code="PARKING_ABATEMENT_OVERRIDE_AMBIGUOUS",
-                message="Later document produced parking-abatement periods, but override intent was weak. Legacy parking-abatement timing was retained for review.",
-                fields=["parking_abatement_periods"],
-                evidence=parking_spans,
-            )
-
-    rights_options = primary_extraction.get("rights_options") if isinstance(primary_extraction.get("rights_options"), dict) else {}
-    if any(str(rights_options.get(field) or "").strip() for field in ("renewal_option", "termination_right", "expansion_option", "contraction_option", "rofr_rofo")):
-        rights_spans = _field_spans_from_primary_extraction(primary_extraction, [])
-        _append_override_review_task(
-            review_tasks,
-            issue_code="RIGHTS_OPTIONS_OVERRIDE_REVIEW",
-            message="Later document includes rights/options language that is not yet merged into structured canonical override fields. Review notice and option mechanics manually.",
-            fields=["rights_options"],
-            evidence=rights_spans,
-        )
-
-    return filtered, warnings, review_tasks
 
 
 def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict[str, Any]:
@@ -8451,14 +8520,6 @@ def _merge_canonical_primary_then_legacy(
     legacy_field_confidence: dict[str, Any] | None = None,
 ) -> tuple[CanonicalLease, dict[str, Any]]:
     tracked_fields = list(_NORMALIZE_PRIMARY_PATH_BY_FIELD.keys())
-    raw_primary_updates = _collect_primary_updates_from_canonical_extraction(primary_extraction)
-    primary_updates, precedence_warnings, precedence_review_tasks = _apply_stack_override_precedence(
-        primary_updates=raw_primary_updates,
-        primary_extraction=primary_extraction,
-        legacy_canonical=legacy_canonical,
-    )
-    merged_canonical = legacy_canonical.model_copy(update=primary_updates) if primary_updates else legacy_canonical
-
     extraction_provenance = (
         primary_extraction.get("provenance")
         if isinstance(primary_extraction.get("provenance"), dict)
@@ -8469,6 +8530,119 @@ def _merge_canonical_primary_then_legacy(
         if isinstance(primary_extraction.get("confidence"), dict)
         else {}
     )
+    primary_updates = _collect_primary_updates_from_canonical_extraction(primary_extraction)
+    primary_building_name = str(primary_updates.get("building_name") or "").strip()
+    legacy_building_name = str(getattr(legacy_canonical, "building_name", "") or "").strip()
+    primary_suite = str(primary_updates.get("suite") or "").strip()
+    legacy_suite = str(getattr(legacy_canonical, "suite", "") or "").strip()
+    primary_rsf = _coerce_float_token(primary_updates.get("rsf"), None)
+    legacy_rsf = _coerce_float_token(getattr(legacy_canonical, "rsf", None), None)
+    primary_opex_base = _coerce_float_token(primary_updates.get("opex_psf_year_1"), None)
+    legacy_opex_base = _coerce_float_token(getattr(legacy_canonical, "opex_psf_year_1", None), None)
+    primary_opex_growth = _coerce_float_token(primary_updates.get("opex_growth_rate"), None)
+    legacy_opex_growth = _coerce_float_token(getattr(legacy_canonical, "opex_growth_rate", None), 0.0) or 0.0
+    suppressed_noisy_primary_building = False
+    suppressed_short_primary_term = False
+    suppressed_noisy_primary_suite = False
+    suppressed_exhibit_usf_primary_rsf = False
+    suppressed_zero_primary_rent = False
+    suppressed_incomplete_primary_opex = False
+
+    def _suite_value_is_suspicious(value: str) -> bool:
+        normalized = " ".join(str(value or "").split()).strip()
+        if not normalized:
+            return False
+        if len(normalized) > 24:
+            return True
+        if len(re.findall(r"[A-Za-z]{3,}", normalized)) >= 2:
+            return True
+        if re.search(r"(?i)\b(?:wire\s+transfer|united\s+states|america|landlord|tenant|section|article)\b", normalized):
+            return True
+        return not bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\-]{0,11}", normalized))
+
+    if (
+        primary_building_name
+        and _building_name_is_suspicious(primary_building_name)
+        and legacy_building_name
+        and not _building_name_is_suspicious(legacy_building_name)
+    ):
+        primary_updates.pop("building_name", None)
+        suppressed_noisy_primary_building = True
+    if (
+        primary_suite
+        and _suite_value_is_suspicious(primary_suite)
+        and legacy_suite
+        and not _suite_value_is_suspicious(legacy_suite)
+    ):
+        primary_updates.pop("suite", None)
+        suppressed_noisy_primary_suite = True
+    rsf_spans = extraction_provenance.get("premises.rsf") if isinstance(extraction_provenance.get("premises.rsf"), list) else []
+    rsf_snippet = " ".join(str(span.get("snippet") or "") for span in rsf_spans if isinstance(span, dict)).lower()
+    if (
+        primary_rsf is not None
+        and legacy_rsf is not None
+        and legacy_rsf > 0
+        and primary_rsf > 0
+        and primary_rsf + 50 <= legacy_rsf
+        and "usf" in rsf_snippet
+        and "rsf" in rsf_snippet
+    ):
+        primary_updates.pop("rsf", None)
+        suppressed_exhibit_usf_primary_rsf = True
+    primary_rent_steps = list(primary_updates.get("rent_schedule") or [])
+    legacy_rent_steps = list(getattr(legacy_canonical, "rent_schedule", []) or [])
+    primary_rent_rates = [
+        _coerce_float_token(getattr(step, "rent_psf_annual", None), 0.0) or 0.0
+        for step in primary_rent_steps
+    ]
+    legacy_rent_rates = [
+        _coerce_float_token(getattr(step, "rent_psf_annual", None), 0.0) or 0.0
+        for step in legacy_rent_steps
+    ]
+    if (
+        primary_rent_steps
+        and legacy_rent_steps
+        and max(primary_rent_rates or [0.0]) <= 0.01
+        and max(legacy_rent_rates or [0.0]) > 0.01
+    ):
+        primary_updates.pop("rent_schedule", None)
+        suppressed_zero_primary_rent = True
+    if (
+        legacy_opex_base is not None
+        and legacy_opex_base > 0
+        and (
+            (primary_opex_base is not None and primary_opex_base <= 0)
+            or (primary_opex_growth is not None and primary_opex_growth > 0 and legacy_opex_growth <= 0.0001)
+        )
+    ):
+        primary_updates.pop("opex_psf_year_1", None)
+        primary_updates.pop("opex_growth_rate", None)
+        suppressed_incomplete_primary_opex = True
+    legacy_commencement = getattr(legacy_canonical, "commencement_date", None)
+    legacy_expiration = getattr(legacy_canonical, "expiration_date", None)
+    legacy_term_months = _coerce_int_token(getattr(legacy_canonical, "term_months", None), None)
+    primary_commencement = primary_updates.get("commencement_date") or legacy_commencement
+    primary_expiration = primary_updates.get("expiration_date")
+    primary_term_months = _coerce_int_token(primary_updates.get("term_months"), None)
+    if (
+        isinstance(legacy_commencement, date)
+        and isinstance(legacy_expiration, date)
+        and legacy_term_months is not None
+        and legacy_term_months >= 24
+        and isinstance(primary_expiration, date)
+    ):
+        implied_primary_term = _month_diff(primary_commencement, primary_expiration) if isinstance(primary_commencement, date) else 0
+        comparable_primary_term = primary_term_months if primary_term_months is not None and primary_term_months > 0 else implied_primary_term
+        if (
+            comparable_primary_term > 0
+            and comparable_primary_term + 6 <= int(legacy_term_months)
+            and primary_expiration <= legacy_expiration
+        ):
+            for field_name in ("commencement_date", "expiration_date", "term_months"):
+                primary_updates.pop(field_name, None)
+            suppressed_short_primary_term = True
+    merged_canonical = legacy_canonical.model_copy(update=primary_updates) if primary_updates else legacy_canonical
+
     primary_confidence = _coerce_float_token(extraction_confidence.get("overall"), 0.72) or 0.72
 
     field_sources: dict[str, str] = {}
@@ -8505,8 +8679,86 @@ def _merge_canonical_primary_then_legacy(
                 )
             ]
 
-    warnings: list[str] = list(precedence_warnings)
-    review_tasks: list[dict] = list(precedence_review_tasks)
+    warnings: list[str] = []
+    review_tasks: list[dict] = []
+    if suppressed_noisy_primary_building:
+        warnings.append("Retained legacy building name because primary extraction returned clause text instead of a property name.")
+        review_tasks.append(
+            {
+                "field_path": "building_name",
+                "severity": "warn",
+                "issue_code": "BUILDING_OVERRIDE_NOISY",
+                "message": "Primary extraction returned clause text for the building name. Legacy/deterministic building name was retained.",
+                "candidates": [{"field": "building_name", "source": "legacy_fallback"}],
+                "recommended_value": legacy_building_name,
+                "evidence": [],
+            }
+        )
+    if suppressed_noisy_primary_suite:
+        warnings.append("Retained legacy suite because primary extraction returned non-suite clause text.")
+        review_tasks.append(
+            {
+                "field_path": "suite",
+                "severity": "warn",
+                "issue_code": "SUITE_OVERRIDE_NOISY",
+                "message": "Primary extraction returned clause text instead of a suite identifier. Legacy/deterministic suite was retained.",
+                "candidates": [{"field": "suite", "source": "legacy_fallback"}],
+                "recommended_value": legacy_suite,
+                "evidence": [],
+            }
+        )
+    if suppressed_exhibit_usf_primary_rsf:
+        warnings.append("Retained legacy RSF because primary extraction appears to have selected exhibit USF instead of RSF.")
+        review_tasks.append(
+            {
+                "field_path": "rsf",
+                "severity": "warn",
+                "issue_code": "RSF_OVERRIDE_USF_EXHIBIT",
+                "message": "Primary extraction selected a smaller exhibit-area figure while the evidence also contained a distinct RSF value. Legacy/deterministic RSF was retained.",
+                "candidates": [{"field": "rsf", "source": "legacy_fallback"}],
+                "recommended_value": legacy_rsf,
+                "evidence": rsf_spans,
+            }
+        )
+    if suppressed_zero_primary_rent:
+        warnings.append("Retained legacy rent schedule because primary extraction produced a zero-dollar placeholder schedule.")
+        review_tasks.append(
+            {
+                "field_path": "rent_schedule",
+                "severity": "warn",
+                "issue_code": "RENT_OVERRIDE_ZERO_PRIMARY",
+                "message": "Primary extraction produced a degenerate zero-dollar rent schedule. Legacy/deterministic rent schedule was retained.",
+                "candidates": [{"field": "rent_schedule", "source": "legacy_fallback"}],
+                "recommended_value": None,
+                "evidence": [],
+            }
+        )
+    if suppressed_incomplete_primary_opex:
+        warnings.append("Retained legacy OpEx values because primary extraction produced an incomplete OpEx package.")
+        review_tasks.append(
+            {
+                "field_path": "opex",
+                "severity": "warn",
+                "issue_code": "OPEX_OVERRIDE_INCOMPLETE_PRIMARY",
+                "message": "Primary extraction produced incomplete OpEx values (for example zero base or a growth rate without a credible starting base). Legacy/deterministic OpEx values were retained.",
+                "candidates": [{"field": "opex", "source": "legacy_fallback"}],
+                "recommended_value": None,
+                "evidence": [],
+            }
+        )
+    if suppressed_short_primary_term:
+        warnings.append("Retained legacy term dates because primary extraction produced a materially shorter term that conflicted with the parsed lease term.")
+        review_tasks.append(
+            {
+                "field_path": "term",
+                "severity": "warn",
+                "issue_code": "TERM_OVERRIDE_SHORT_PRIMARY",
+                "message": "Primary extraction produced a materially shorter term/expiration package. Legacy/deterministic term dates were retained.",
+                "candidates": [{"field": field, "source": "legacy_fallback"} for field in ("commencement_date", "expiration_date", "term_months")],
+                "recommended_value": None,
+                "evidence": [],
+            }
+        )
     if fallback_fields:
         preview = ", ".join(fallback_fields[:8])
         if len(fallback_fields) > 8:
@@ -9839,8 +10091,8 @@ def _normalize_impl(
                     updates["address"] = building_val
             if suite_val:
                 updates["suite"] = suite_val
-                # Floor is only a fallback when suite is unavailable.
-                updates["floor"] = ""
+                if floor_val:
+                    updates["floor"] = floor_val
             location_label = f"Suite {suite_val}" if suite_val else (f"Floor {floor_val}" if floor_val else "")
             if building_val and location_label:
                 updates["premises_name"] = f"{building_val} {location_label}"
@@ -9936,6 +10188,29 @@ def _normalize_impl(
                 updates.get("opex_growth_rate"),
                 _coerce_float_token(extracted_hints.get("opex_growth_rate"), _coerce_float_token(canonical.opex_growth_rate, 0.0)),
             ) or 0.0
+            proportionate_share_pcts_raw = extracted_hints.get("_proportionate_share_percentages")
+            proportionate_share_pcts = (
+                [float(_coerce_float_token(v, 0.0) or 0.0) for v in proportionate_share_pcts_raw]
+                if isinstance(proportionate_share_pcts_raw, list)
+                else []
+            )
+            if effective_opex_growth > 0 and proportionate_share_pcts:
+                effective_opex_growth_pct = (
+                    float(effective_opex_growth) * 100.0
+                    if float(effective_opex_growth) <= 1.0
+                    else float(effective_opex_growth)
+                )
+                for share_pct in proportionate_share_pcts:
+                    if share_pct <= 0 or abs(effective_opex_growth_pct - float(share_pct)) > 0.05:
+                        continue
+                    if _has_matching_opex_escalation_context(text, float(share_pct)):
+                        continue
+                    updates["opex_growth_rate"] = 0.0
+                    effective_opex_growth = 0.0
+                    warnings.append(
+                        "Ignored an OpEx escalation candidate because the matching percentage appeared in tenant proportionate-share language, not an escalation clause."
+                    )
+                    break
             today_year = date.today().year
             opex_rollforward_applied = False
             if hinted_opex_by_year and commencement_year >= 1900:

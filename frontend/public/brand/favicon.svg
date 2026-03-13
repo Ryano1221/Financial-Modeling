@@ -1,13 +1,35 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <circle cx="128" cy="128" r="124" fill="#000"/>
-  <!-- Solid stepped silhouette with exaggerated taper -->
-  <rect x="28" y="188" width="200" height="24" fill="#fff"/>
-  <rect x="44" y="164" width="168" height="24" fill="#fff"/>
-  <rect x="62" y="140" width="132" height="24" fill="#fff"/>
-  <rect x="80" y="116" width="96" height="24" fill="#fff"/>
-  <rect x="98" y="92" width="60" height="24" fill="#fff"/>
-  <rect x="110" y="68" width="36" height="24" fill="#fff"/>
-  <!-- Subtle notch crown -->
-  <rect x="120" y="68" width="16" height="18" fill="#000"/>
+
+  <!-- tower body -->
+  <path fill="#ffffff" d="
+    M72 204
+    L72 96
+    L92 74
+    L164 74
+    L184 96
+    L184 204
+    Z
+  "/>
+
+  <!-- roof crown -->
+  <rect x="104" y="52" width="48" height="22" fill="#ffffff"/>
+
+  <!-- vertical glazing -->
+  <g fill="#000">
+    <rect x="104" y="96" width="10" height="94"/>
+    <rect x="123" y="96" width="10" height="94"/>
+    <rect x="142" y="96" width="10" height="94"/>
+  </g>
+
+  <!-- floor bands -->
+  <g fill="#000">
+    <rect x="72" y="118" width="112" height="4"/>
+    <rect x="72" y="142" width="112" height="4"/>
+    <rect x="72" y="166" width="112" height="4"/>
+  </g>
+
+  <!-- lobby -->
+  <rect x="120" y="178" width="16" height="26" fill="#000"/>
 </svg>

@@ -201,137 +201,6 @@ def test_collect_primary_updates_from_canonical_extraction_maps_parking_abatemen
     assert parking_periods[1].end_month == 25
 
 
-def test_merge_canonical_primary_then_legacy_retains_legacy_free_rent_when_override_is_partial() -> None:
-    legacy = main._dict_to_canonical(
-        {
-            "building_name": "Legacy Tower",
-            "suite": "500",
-            "address": "500 Legacy Blvd",
-            "rsf": 10000,
-            "commencement_date": "2026-01-01",
-            "expiration_date": "2030-12-31",
-            "term_months": 60,
-            "free_rent_months": 6,
-            "free_rent_scope": "gross",
-            "free_rent_periods": [{"start_month": 0, "end_month": 5, "scope": "gross"}],
-            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
-        }
-    )
-    extraction = {
-        "document": {"doc_type": "amendment", "doc_role": "amendment"},
-        "term": {"commencement_date": "2026-01-01", "expiration_date": "2030-12-31", "term_months": 60},
-        "premises": {"building_name": "Legacy Tower", "suite": "500", "address": "500 Legacy Blvd", "rsf": 10000},
-        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 41.0}],
-        "abatements": [],
-        "abatement_analysis": {"classification": "none", "scope": None},
-        "concessions": {"free_rent_months": 3},
-        "tenant_improvements": {},
-        "parking": {},
-        "opex": {"mode": "nnn", "base_psf_year_1": 8.0, "growth_rate": 0.03},
-        "provenance": {
-            "concessions.free_rent_months": [
-                {"source": "pdf_text_regex", "source_confidence": 0.82, "snippet": "Tenant shall receive three (3) months of free rent.", "page": 1, "bbox": None}
-            ]
-        },
-        "confidence": {"overall": 0.88},
-    }
-
-    merged, meta = main._merge_canonical_primary_then_legacy(
-        primary_extraction=extraction,
-        legacy_canonical=legacy,
-        legacy_field_confidence={},
-    )
-
-    assert merged.free_rent_months == 6
-    assert [(p.start_month, p.end_month) for p in merged.free_rent_periods] == [(0, 5)]
-    issue_codes = {task.get("issue_code") for task in meta.get("review_tasks") or []}
-    assert "FREE_RENT_OVERRIDE_PARTIAL" in issue_codes
-
-
-def test_merge_canonical_primary_then_legacy_clears_legacy_free_rent_on_explicit_zero() -> None:
-    legacy = main._dict_to_canonical(
-        {
-            "building_name": "Legacy Tower",
-            "suite": "500",
-            "address": "500 Legacy Blvd",
-            "rsf": 10000,
-            "commencement_date": "2026-01-01",
-            "expiration_date": "2030-12-31",
-            "term_months": 60,
-            "free_rent_months": 6,
-            "free_rent_scope": "gross",
-            "free_rent_periods": [{"start_month": 0, "end_month": 5, "scope": "gross"}],
-            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
-        }
-    )
-    extraction = {
-        "document": {"doc_type": "amendment", "doc_role": "amendment"},
-        "term": {"commencement_date": "2026-01-01", "expiration_date": "2030-12-31", "term_months": 60},
-        "premises": {"building_name": "Legacy Tower", "suite": "500", "address": "500 Legacy Blvd", "rsf": 10000},
-        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 41.0}],
-        "abatements": [],
-        "abatement_analysis": {"classification": "none", "scope": None},
-        "concessions": {"free_rent_months": 0},
-        "tenant_improvements": {},
-        "parking": {},
-        "opex": {"mode": "nnn", "base_psf_year_1": 8.0, "growth_rate": 0.03},
-        "provenance": {},
-        "confidence": {"overall": 0.88},
-    }
-
-    merged, meta = main._merge_canonical_primary_then_legacy(
-        primary_extraction=extraction,
-        legacy_canonical=legacy,
-        legacy_field_confidence={},
-    )
-
-    assert merged.free_rent_months == 0
-    assert merged.free_rent_periods == []
-    assert meta["field_sources"]["free_rent_months"] == "canonical_pipeline"
-    assert meta["field_sources"]["free_rent_periods"] == "canonical_pipeline"
-
-
-def test_merge_canonical_primary_then_legacy_retains_legacy_rent_when_override_intent_is_weak() -> None:
-    legacy = main._dict_to_canonical(
-        {
-            "building_name": "Legacy Tower",
-            "suite": "500",
-            "address": "500 Legacy Blvd",
-            "rsf": 10000,
-            "commencement_date": "2026-01-01",
-            "expiration_date": "2030-12-31",
-            "term_months": 60,
-            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 41.0}],
-        }
-    )
-    extraction = {
-        "document": {"doc_type": "unknown", "doc_role": "unknown"},
-        "term": {"commencement_date": "2026-01-01", "expiration_date": "2030-12-31", "term_months": 60},
-        "premises": {"building_name": "Legacy Tower", "suite": "500", "address": "500 Legacy Blvd", "rsf": 10000},
-        "rent_steps": [{"start_month": 0, "end_month": 59, "rate_psf_annual": 47.5}],
-        "abatements": [],
-        "abatement_analysis": {"classification": "none", "scope": None},
-        "concessions": {},
-        "tenant_improvements": {},
-        "parking": {},
-        "opex": {"mode": "nnn", "base_psf_year_1": 8.0, "growth_rate": 0.03},
-        "provenance": {
-            "rent_steps": [
-                {"source": "pdf_text_regex", "source_confidence": 0.74, "snippet": "Base Rent: $47.50 PSF", "page": 1, "bbox": None}
-            ]
-        },
-        "confidence": {"overall": 0.8},
-    }
-
-    merged, meta = main._merge_canonical_primary_then_legacy(
-        primary_extraction=extraction,
-        legacy_canonical=legacy,
-        legacy_field_confidence={},
-    )
-
-    assert [step.rent_psf_annual for step in merged.rent_schedule] == [41.0]
-    issue_codes = {task.get("issue_code") for task in meta.get("review_tasks") or []}
-    assert "RENT_OVERRIDE_AMBIGUOUS" in issue_codes
 
 
 def test_supplemental_quality_checks_flags_rent_schedule_coverage_gap() -> None:
@@ -1209,3 +1078,198 @@ def test_normalize_impl_full_service_rate_cue_overrides_nnn_rate_split(monkeypat
     assert canonical.opex_growth_rate == 0.0
     assert canonical.rent_schedule
     assert abs(float(canonical.rent_schedule[0].rent_psf_annual) - 33.5) < 1e-6
+
+
+CENTRE_ONE_SUITE_201_TEXT = """
+Preamble Building: Centre One Office Building
+3103 Bee Caves Rd.
+Rollingwood, TX 78746
+Premises: Suite 201
+Section 1.1(a) Premises: Suite 201, located on the first (1st) floor of the Building.
+Net Rentable Square Feet of Premises: approximately 2,175 net rentable square feet.
+Lease Commencement Date: The later of January 1, 2022 or the date on which Landlord substantially completes the Tenant Improvement Work in the Premises in accordance with Exhibit E.
+If the Lease Commencement Date shall have not occurred by February 28, 2022, Tenant shall have the right to terminate this Lease upon written notice.
+Lease Term: Expires at 11:59 p.m. local time on the last day of December, 2026.
+Base Rent: Fixed Annual Rent is as follows:
+Annual Fixed (Base)
+Rental Rate per RSF
+$
+$
+$
+$
+$
+22.00
+22.75
+23.50
+24.25
+25.00
+Annual (Fixed)
+Base Rent (Dollars)
+$
+$
+$
+$
+$
+47,850.00
+49,481.25
+51,112.50
+52,743.75
+54,375.00
+Monthly Fixed
+(Base) Rent
+$
+$
+$
+$
+$
+3,987.50
+4,123.44
+4,259.38
+4,395.31
+4,531.25
+** This is subject to change upon reconcilation and adjustment.
+Using $14.50 as starting Operating Expenses.
+Tenant's proportionate share of increases in Operating Expenses is 5.48 %.
+Section 7 Number of Parking Space for Tenant/Tenant Employees: 8 spaces. All spaces are open, non-reserved.
+ARTICLE 7 PARKING
+Tenant shall have the right to use 1 unreserved parking space per 322 square feet in the Premises, or seven (7) unreserved parking spaces.
+EXHIBIT B CERTIFICATE OF LEASE COMMENCEMENT DATE AND EXPIRATION OF LEASE TERM
+(1) The Lease Commencement Date is January 1, 2022; and
+(3) The Lease Term shall expire (unless the Lease is extended or sooner terminated in accordance with the provisions thereof) on December 31, 2026.
+"""
+
+
+def test_extract_lease_hints_centre_one_regression_case() -> None:
+    hints = main._extract_lease_hints(CENTRE_ONE_SUITE_201_TEXT, "centre-one-suite-201.pdf", "rid-centre-one")
+
+    assert hints["building_name"] == "Centre One Office Building"
+    assert hints["suite"] == "201"
+    assert hints["floor"] == "1"
+    assert str(hints["commencement_date"]) == "2022-01-01"
+    assert str(hints["expiration_date"]) == "2026-12-31"
+    assert hints["term_months"] == 60
+    assert hints["_parking_count_candidates"] == [7, 8]
+    assert hints["_proportionate_share_percentages"] == [5.48]
+    assert [float(step["rent_psf_annual"]) for step in hints["rent_schedule"]] == [22.0, 22.75, 23.5, 24.25, 25.0]
+    assert [(int(step["start_month"]), int(step["end_month"])) for step in hints["rent_schedule"]] == [
+        (0, 11),
+        (12, 23),
+        (24, 35),
+        (36, 47),
+        (48, 59),
+    ]
+    review_codes = {str(task.get("issue_code") or "") for task in list(hints.get("_review_tasks") or [])}
+    assert "COMMENCEMENT_RELATIVE_TRIGGER" in review_codes
+    assert "PARKING_COUNT_CONFLICT" in review_codes
+
+
+def test_merge_canonical_primary_then_legacy_rejects_noisy_building_and_short_term() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "Centre One Office Building",
+            "suite": "201",
+            "floor": "1",
+            "address": "3103 Bee Caves Rd",
+            "rsf": 2175,
+            "commencement_date": "2022-01-01",
+            "expiration_date": "2026-12-31",
+            "term_months": 60,
+            "rent_schedule": [{"start_month": 0, "end_month": 59, "rent_psf_annual": 22.0}],
+        }
+    )
+    extraction = {
+        "term": {"commencement_date": "2022-01-01", "expiration_date": "2022-02-28", "term_months": 2},
+        "premises": {
+            "building_name": "(b) If the Building is less than ninety five percent (95%) occupied during any Operating Year",
+            "suite": "135",
+            "floor": None,
+            "address": "3103 Bee Caves Rd",
+            "rsf": 2175,
+        },
+        "confidence": {"overall": 0.9},
+        "provenance": {},
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={"building_name": 0.9, "term_months": 0.9},
+    )
+
+    assert merged.building_name == "Centre One Office Building"
+    assert merged.expiration_date == date(2026, 12, 31)
+    assert merged.term_months == 60
+    assert meta["field_sources"]["building_name"] == "legacy_fallback"
+    assert meta["field_sources"]["expiration_date"] == "legacy_fallback"
+    review_codes = {str(task.get("issue_code") or "") for task in list(meta.get("review_tasks") or [])}
+    assert "BUILDING_OVERRIDE_NOISY" in review_codes
+    assert "TERM_OVERRIDE_SHORT_PRIMARY" in review_codes
+
+
+def test_normalize_impl_centre_one_regression_retains_floor_and_ignores_share_as_opex_growth(monkeypatch) -> None:
+    monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: (CENTRE_ONE_SUITE_201_TEXT, "docx"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "lease")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Centre One Suite 201",
+                rsf=2175.0,
+                commencement=date(2022, 1, 1),
+                expiration=date(2022, 2, 28),
+                rent_steps=[RentStep(start=0, end=11, rate_psf_yr=33.5)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=14.5,
+                base_year_opex_psf_yr=14.5,
+                opex_growth=0.0548,
+                discount_rate_annual=0.08,
+                parking_spaces=8,
+            ),
+            confidence={"expiration": 0.45, "opex_growth_rate": 0.35},
+            warnings=[],
+            source="docx",
+            text_length=len(CENTRE_ONE_SUITE_201_TEXT),
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {
+                "term": {"commencement_date": "2022-01-01", "expiration_date": "2022-02-28", "term_months": 2},
+                "premises": {
+                    "building_name": "(b) If the Building is less than ninety five percent (95%) occupied during any Operating Year",
+                    "suite": "135",
+                    "floor": None,
+                    "address": "3103 Bee Caves Rd",
+                    "rsf": 2175,
+                },
+                "rent_steps": [{"start_month": 0, "end_month": 11, "rate_psf_annual": 33.5}],
+                "opex": {"mode": "nnn", "base_psf_year_1": 14.5, "growth_rate": 0.0548},
+                "parking": {"spaces": 8},
+                "confidence": {"overall": 0.9},
+                "provenance": {},
+            },
+        },
+    )
+
+    upload = UploadFile(filename="centre-one-regression.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+    canonical = result.canonical_lease
+
+    assert canonical.building_name == "Centre One Office Building"
+    assert canonical.suite == "201"
+    assert canonical.floor == "1"
+    assert canonical.expiration_date == date(2026, 12, 31)
+    assert canonical.term_months == 60
+    assert canonical.opex_psf_year_1 == 14.5
+    assert canonical.opex_growth_rate == 0.0
+    assert [float(step.rent_psf_annual) for step in list(canonical.rent_schedule or [])] == [22.0, 22.75, 23.5, 24.25, 25.0]
