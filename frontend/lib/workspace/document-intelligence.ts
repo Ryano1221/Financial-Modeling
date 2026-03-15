@@ -57,6 +57,7 @@ export function classifyDocument(input: {
     surveys: "surveys",
     obligations: "leases",
     deals: "other",
+    documents: "other",
   };
   const fallback = moduleType[input.sourceModule] || "other";
   return { type: fallback, classification: fallback };
@@ -111,4 +112,3 @@ export function buildDocumentFingerprint(input: {
   ];
   return bits.join("::");
 }
-

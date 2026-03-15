@@ -11,18 +11,15 @@ import { getApiUrl, fetchApiProxy, getAuthHeaders, getDisplayErrorMessage } from
 import { ExtractUpload } from "@/components/ExtractUpload";
 import { FeatureTiles } from "@/components/FeatureTiles";
 import {
-  PlatformDisclosure,
+  PlatformFlowIndicator,
   PlatformModuleTabs,
-  PlatformPageHeader,
-  PlatformPanel,
   PlatformMetricStrip,
-  PlatformCard,
-  PlatformStepList,
+  PlatformPanel,
+  PlatformTag,
 } from "@/components/platform/PlatformShell";
 import {
   FINANCIAL_ANALYSES_TOOL_TABS,
   getDefaultPlatformModuleId,
-  isPlatformModuleId,
   isFinancialAnalysesToolId,
   resolveActivePlatformModule,
   type FinancialAnalysesToolId,
@@ -100,13 +97,7 @@ import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCen
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import type { ClientDocumentSourceModule, ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
-import {
-  getWorkspaceLabel,
-  getWorkspaceTabsForMode,
-  resolveNavToWorkspaceTab,
-  resolveWorkspaceTab,
-  type WorkspaceTabId,
-} from "@/lib/platform/workspace-navigation";
+import { buildCrmRelationshipSnapshot } from "@/lib/crm/relationship-intelligence";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -574,24 +565,6 @@ function scenarioToPayload(s: ScenarioWithId): Omit<ScenarioWithId, "id"> {
   return payload;
 }
 
-function getPlatformModuleForWorkspaceTab(
-  tabId: WorkspaceTabId,
-  representationMode: typeof TENANT_REP_MODE | typeof LANDLORD_REP_MODE | null | undefined,
-): PlatformModuleId {
-  const isLandlord = representationMode === LANDLORD_REP_MODE;
-  if (tabId === "deals") return "deals";
-  if (tabId === "documents") return "completed-leases";
-  if (tabId === "analyses") return "financial-analyses";
-  if (tabId === "market-survey" || tabId === "locations" || tabId === "availabilities") return "surveys";
-  if (tabId === "obligations" || tabId === "activity" || tabId === "tenants" || tabId === "insights") return "obligations";
-  return isLandlord ? "deals" : "deals";
-}
-
-function asSortTime(value: string | null | undefined): number {
-  const parsed = Date.parse(String(value || "").trim());
-  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
-}
-
 function HomeContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -680,29 +653,10 @@ function HomeContent() {
   const [heroAiError, setHeroAiError] = useState<string | null>(null);
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
   const rawModuleParam = String(searchParams?.get("module") || "").trim().toLowerCase();
-  const rawWorkspaceParam = String(searchParams?.get("workspace") || "").trim().toLowerCase();
-  const rawNavParam = String(searchParams?.get("nav") || "").trim().toLowerCase();
-  const legacyModuleParam = isPlatformModuleId(rawModuleParam)
-    ? resolveActivePlatformModule(rawModuleParam, Boolean(authSession), representationMode)
-    : null;
-  const navWorkspaceTab = useMemo(
-    () => resolveNavToWorkspaceTab(rawNavParam, representationMode),
-    [rawNavParam, representationMode],
-  );
-  const resolvedWorkspaceTab = useMemo(
-    () => resolveWorkspaceTab(rawWorkspaceParam || navWorkspaceTab, representationMode, legacyModuleParam),
-    [rawWorkspaceParam, navWorkspaceTab, representationMode, legacyModuleParam],
-  );
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<WorkspaceTabId>(resolvedWorkspaceTab);
-  const workspaceTabs = useMemo(
-    () => getWorkspaceTabsForMode(representationMode),
-    [representationMode],
-  );
-  const workspaceLabel = getWorkspaceLabel(representationMode);
-  const workspacePlatformModule = useMemo(
-    () => getPlatformModuleForWorkspaceTab(activeWorkspaceTab, representationMode),
-    [activeWorkspaceTab, representationMode],
-  );
+  const openPlatformModule = useCallback((moduleId: PlatformModuleId) => {
+    setActivePlatformModule(moduleId);
+    router.push(`/?module=${encodeURIComponent(moduleId)}`);
+  }, [router]);
 
   const activeDocumentDropSourceModule = useMemo<ClientDocumentSourceModule>(() => {
     if (activePlatformModule === "financial-analyses" && activeTopTab === "sublease-recovery") {
@@ -721,6 +675,9 @@ function HomeContent() {
     if (activePlatformModule === "completed-leases") {
       return "Drop files anywhere to save into this client and load Lease Abstract documents";
     }
+    if (activePlatformModule === "documents") {
+      return "Drop files anywhere to save into this client and link them across CRM, surveys, analyses, leases, and obligations";
+    }
     if (activePlatformModule === "surveys") {
       return "Drop files anywhere to save into this client and create Survey entries";
     }
@@ -737,12 +694,15 @@ function HomeContent() {
   );
 
   useEffect(() => {
-    if (activeWorkspaceTab !== resolvedWorkspaceTab) setActiveWorkspaceTab(resolvedWorkspaceTab);
-  }, [activeWorkspaceTab, resolvedWorkspaceTab]);
+    const resolved = resolveActivePlatformModule(rawModuleParam, Boolean(authSession), representationMode);
+    if (activePlatformModule !== resolved) setActivePlatformModule(resolved);
+  }, [rawModuleParam, authSession, representationMode, activePlatformModule]);
 
   useEffect(() => {
-    if (activePlatformModule !== workspacePlatformModule) setActivePlatformModule(workspacePlatformModule);
-  }, [activePlatformModule, workspacePlatformModule]);
+    if (rawModuleParam.length > 0) return;
+    if (activePlatformModule === defaultPlatformModuleId) return;
+    setActivePlatformModule(defaultPlatformModuleId);
+  }, [rawModuleParam, activePlatformModule, defaultPlatformModuleId]);
 
   useEffect(() => {
     if (representationMode === LANDLORD_REP_MODE) {
@@ -2044,6 +2004,186 @@ function HomeContent() {
     scenarios.length,
     scopedDocuments.length,
   ]);
+  const crmRelationshipSnapshot = useMemo(
+    () =>
+      buildCrmRelationshipSnapshot({
+        client: activeClient ?? null,
+        deals: scopedDeals,
+        documents: scopedDocuments,
+        scenariosCount: scenarios.length,
+        representationMode,
+      }),
+    [activeClient, scopedDeals, scopedDocuments, scenarios.length, representationMode],
+  );
+  const relationshipMetricItems = useMemo(
+    () => [
+      {
+        label: "CRM",
+        value: crmRelationshipSnapshot.connectedCounts.deals,
+        detail: "Company and pipeline records",
+        emphasis: activePlatformModule === "deals",
+        onClick: () => openPlatformModule("deals"),
+      },
+      {
+        label: "Surveys",
+        value: crmRelationshipSnapshot.connectedCounts.surveys,
+        detail: "Market inputs linked to this client",
+        emphasis: activePlatformModule === "surveys",
+        onClick: () => openPlatformModule("surveys"),
+      },
+      {
+        label: "Analyses",
+        value: crmRelationshipSnapshot.connectedCounts["financial-analyses"],
+        detail: "Financial and proposal comparisons",
+        emphasis: activePlatformModule === "financial-analyses",
+        onClick: () => openPlatformModule("financial-analyses"),
+      },
+      {
+        label: "Lease Abstracts",
+        value: crmRelationshipSnapshot.connectedCounts["completed-leases"],
+        detail: "Lease and amendment records",
+        emphasis: activePlatformModule === "completed-leases",
+        onClick: () => openPlatformModule("completed-leases"),
+      },
+      {
+        label: "Obligations",
+        value: crmRelationshipSnapshot.connectedCounts.obligations,
+        detail: "Expiration and notice signals",
+        emphasis: activePlatformModule === "obligations",
+        onClick: () => openPlatformModule("obligations"),
+      },
+      {
+        label: "Documents",
+        value: crmRelationshipSnapshot.connectedCounts.documents,
+        detail: "Files linked across workflows",
+        emphasis: activePlatformModule === "documents",
+        onClick: () => openPlatformModule("documents"),
+      },
+    ],
+    [crmRelationshipSnapshot, activePlatformModule, openPlatformModule],
+  );
+  const moduleFlowSteps = useMemo(() => {
+    const flow = [
+      {
+        label: "Client / CRM",
+        detail: `${crmRelationshipSnapshot.connectedCounts.deals} tracked`,
+        active: activePlatformModule === "deals",
+        onClick: () => openPlatformModule("deals"),
+      },
+      {
+        label: "Survey",
+        detail: `${crmRelationshipSnapshot.connectedCounts.surveys} sources`,
+        active: activePlatformModule === "surveys",
+        onClick: () => openPlatformModule("surveys"),
+      },
+      {
+        label: "Analysis",
+        detail: `${crmRelationshipSnapshot.connectedCounts["financial-analyses"]} loaded`,
+        active: activePlatformModule === "financial-analyses",
+        onClick: () => openPlatformModule("financial-analyses"),
+      },
+      {
+        label: "Lease",
+        detail: `${crmRelationshipSnapshot.connectedCounts["completed-leases"]} abstracts`,
+        active: activePlatformModule === "completed-leases",
+        onClick: () => openPlatformModule("completed-leases"),
+      },
+      {
+        label: "Obligation",
+        detail: `${crmRelationshipSnapshot.connectedCounts.obligations} signals`,
+        active: activePlatformModule === "obligations",
+        onClick: () => openPlatformModule("obligations"),
+      },
+      {
+        label: "Documents",
+        detail: `${crmRelationshipSnapshot.connectedCounts.documents} linked`,
+        active: activePlatformModule === "documents",
+        onClick: () => openPlatformModule("documents"),
+      },
+    ];
+    if (isLandlordMode) {
+      flow[0] = {
+        label: "CRM / Building",
+        detail: `${crmRelationshipSnapshot.connectedCounts.deals} relationships`,
+        active: activePlatformModule === "deals",
+        onClick: () => openPlatformModule("deals"),
+      };
+    }
+    return flow;
+  }, [crmRelationshipSnapshot, activePlatformModule, isLandlordMode, openPlatformModule]);
+  const moduleNextActions = useMemo(() => {
+    if (activePlatformModule === "financial-analyses") {
+      return [
+        { label: "Upload lease or proposal", detail: "Start extraction from source documents.", action: () => openPlatformModule("financial-analyses") },
+        { label: "Review linked survey options", detail: "Move back into Surveys if option context is thin.", action: () => openPlatformModule("surveys") },
+        { label: "Push lease into abstracting", detail: "Send executed documents into Lease Abstracts next.", action: () => openPlatformModule("completed-leases") },
+      ];
+    }
+    if (activePlatformModule === "surveys") {
+      return [
+        { label: "Import market flyers", detail: "Add more listing inputs to improve comparison depth.", action: () => openPlatformModule("surveys") },
+        { label: "Run financial analysis", detail: "Move shortlisted options into pricing comparison.", action: () => openPlatformModule("financial-analyses") },
+        { label: "Update CRM requirement", detail: "Keep the deal stage aligned with the current survey.", action: () => openPlatformModule("deals") },
+      ];
+    }
+    if (activePlatformModule === "completed-leases") {
+      return [
+        { label: "Confirm controlling terms", detail: "Validate the lease stack before exporting the abstract.", action: () => openPlatformModule("completed-leases") },
+        { label: "Update obligation tracking", detail: "Push dates and renewals into the obligations module.", action: () => openPlatformModule("obligations") },
+        { label: "Open document links", detail: "See all documents tied to this lease record.", action: () => openPlatformModule("documents") },
+      ];
+    }
+    if (activePlatformModule === "obligations") {
+      return [
+        { label: "Review near-term expirations", detail: `${crmRelationshipSnapshot.expirations12Months} items fall inside the next 12 months.`, action: () => openPlatformModule("obligations") },
+        { label: "Open CRM follow-up", detail: "Take action on renewals, prospects, and stalled deals.", action: () => openPlatformModule("deals") },
+        { label: "Inspect source lease", detail: "Trace the obligation back to its document stack.", action: () => openPlatformModule("completed-leases") },
+      ];
+    }
+    if (activePlatformModule === "documents") {
+      return [
+        { label: "Audit linked records", detail: "Check where each document is already being used.", action: () => openPlatformModule("documents") },
+        { label: "Open lease abstracts", detail: "Parse executed leases into abstract-ready records.", action: () => openPlatformModule("completed-leases") },
+        { label: "Run AI workflow", detail: "Use linked files to draft analysis, survey, or follow-up actions.", action: () => openPlatformModule("deals") },
+      ];
+    }
+    return [
+      { label: "Review connected items", detail: "Open the modules tied to this client relationship.", action: () => openPlatformModule("deals") },
+      { label: "Create or advance a deal", detail: "Keep pipeline stages aligned with documents and deadlines.", action: () => openPlatformModule("deals") },
+      { label: "Inspect expirations", detail: `${crmRelationshipSnapshot.expirations24Months} signals fall inside the next 24 months.`, action: () => openPlatformModule("obligations") },
+    ];
+  }, [activePlatformModule, crmRelationshipSnapshot, openPlatformModule]);
+  const moduleAiSuggestions = useMemo(() => {
+    if (isLandlordMode) {
+      return [
+        "Show me tenants in this building expiring in the next 12 months.",
+        "Which availabilities in this building should we prioritize first?",
+        "Draft follow-up for proposals that have not been answered.",
+      ];
+    }
+    return [
+      "Show me tenants in downtown Austin expiring next year.",
+      "Run a sublease recovery for this obligation and linked proposals.",
+      "Draft renewal outreach for clients expiring in the next 12 months.",
+    ];
+  }, [isLandlordMode]);
+  const expirationTimelineBuckets = useMemo(() => {
+    return Array.from({ length: 24 }, (_, index) => {
+      const bucketMonth = index + 1;
+      const count = crmRelationshipSnapshot.expirationSignals.filter(
+        (signal) => signal.monthsOut >= 0 && signal.monthsOut < bucketMonth && signal.monthsOut >= bucketMonth - 1,
+      ).length;
+      return { label: `M${bucketMonth}`, count };
+    });
+  }, [crmRelationshipSnapshot.expirationSignals]);
+  const currentModuleTitle = useMemo(() => {
+    if (activePlatformModule === "deals") return "CRM";
+    if (activePlatformModule === "completed-leases") return "Lease Abstracts";
+    if (activePlatformModule === "financial-analyses") return "Financial Analyses";
+    if (activePlatformModule === "surveys") return "Surveys";
+    if (activePlatformModule === "documents") return "Documents";
+    return "Obligations";
+  }, [activePlatformModule]);
   const heroPipelineActions = useMemo(
     () => {
       if (isLandlordMode) {
@@ -2200,315 +2340,170 @@ function HomeContent() {
       setHeroAiRunning(false);
     }
   }, [heroAiPrompt, authSession, activeClientId, runAiCommand]);
-  const openWorkspaceHref = authSession ? "/?workspace=overview" : "/account?mode=signin";
+  const openWorkspaceHref = authSession ? "/?module=deals" : "/account?mode=signin";
   const heroClientName = activeClient?.name || coverMetaPreview.prepared_for || "Client Workspace";
   const heroPreparedBy = coverMetaPreview.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
   const heroCapabilitiesLabel = isLandlordMode
-    ? "Deals • Availabilities • Marketing • Lease Tracking • Reporting • AI Workflows"
-    : "Financial Analyses • Surveys • Lease Abstracts • CRM • Obligations • AI Workflows";
+    ? "CRM • Availabilities • Marketing • Lease Tracking • Reporting • Documents • AI Workflows"
+    : "CRM • Financial Analyses • Surveys • Lease Abstracts • Obligations • Documents • AI Workflows";
   const heroWorkflowFooterLabel = isLandlordMode
     ? `${landlordSignedDealsCount} signed · ${workflowCoverageCount} workflows active`
     : `${parsedDocumentsCount} parsed · ${workflowCoverageCount} workflows active`;
-  const recentDocuments = useMemo(
-    () =>
-      [...scopedDocuments]
-        .sort((left, right) => asSortTime(right.uploadedAt) - asSortTime(left.uploadedAt))
-        .slice(0, 5),
-    [scopedDocuments],
-  );
-  const workspaceLocationRows = useMemo(() => {
-    const rows = new Map<string, { label: string; building: string; address: string; suiteCount: number; documentCount: number }>();
-    scopedDocuments.forEach((document) => {
-      const building = String(document.building || "").trim();
-      const address = String(document.address || "").trim();
-      const suite = String(document.suite || "").trim();
-      const key = `${building}::${address}`.toLowerCase();
-      if (!building && !address) return;
-      const current = rows.get(key) || {
-        label: building || address,
-        building,
-        address,
-        suiteCount: 0,
-        documentCount: 0,
-      };
-      current.documentCount += 1;
-      if (suite) current.suiteCount += 1;
-      rows.set(key, current);
-    });
-    return Array.from(rows.values()).slice(0, 8);
-  }, [scopedDocuments]);
-  const dealsNeedingAttention = useMemo(() => {
-    return [...scopedDeals]
-      .filter((deal) => deal.status !== "won" && deal.status !== "lost")
-      .sort((left, right) => asSortTime(left.expirationDate) - asSortTime(right.expirationDate))
-      .slice(0, 5);
-  }, [scopedDeals]);
-  const workspaceHeaderMeta = useMemo(() => {
-    if (isLandlordMode) {
-      switch (activeWorkspaceTab) {
-        case "overview":
-          return {
-            title: `${heroClientName} Building Workspace`,
-            description: "Run listing, proposal, lease, and reporting workflows from one building-centered operating system.",
-            primaryActionLabel: "Open availabilities",
-            primaryActionTab: "availabilities" as WorkspaceTabId,
-          };
-        case "tenants":
-          return {
-            title: "Tenant Roster",
-            description: "Review current tenants, lease dates, and occupancy context without leaving the building workspace.",
-            primaryActionLabel: "Review documents",
-            primaryActionTab: "documents" as WorkspaceTabId,
-          };
-        case "availabilities":
-          return {
-            title: "Availabilities",
-            description: "Upload flyers, floorplans, and listing materials, then review the active availability stack.",
-            primaryActionLabel: "Upload listing documents",
-            primaryActionTab: "documents" as WorkspaceTabId,
-          };
-        case "deals":
-          return {
-            title: "Deal Pipeline",
-            description: "Track inquiries, tours, proposals, and lease execution inside the building workspace.",
-            primaryActionLabel: "Open deal workflow",
-            primaryActionTab: "deals" as WorkspaceTabId,
-          };
-        case "documents":
-          return {
-            title: "Documents",
-            description: "Manage the building document stack, parse lease files, and keep lease abstracts aligned.",
-            primaryActionLabel: "Upload documents",
-            primaryActionTab: "documents" as WorkspaceTabId,
-          };
-        default:
-          return {
-            title: "Insights",
-            description: "See expirations, portfolio signals, and AI guidance tied to this building workspace.",
-            primaryActionLabel: "Review expirations",
-            primaryActionTab: "insights" as WorkspaceTabId,
-          };
-      }
-    }
-    switch (activeWorkspaceTab) {
-      case "overview":
-        return {
-          title: `${heroClientName} Client Workspace`,
-          description: "Keep client strategy, deal execution, documents, analyses, and obligations in one guided workspace.",
-          primaryActionLabel: "Review active deals",
-          primaryActionTab: "deals" as WorkspaceTabId,
-        };
-      case "locations":
-        return {
-          title: "Locations",
-          description: "See the client’s active buildings, suites, and market context before moving deeper into survey or analysis.",
-          primaryActionLabel: "Open market survey",
-          primaryActionTab: "market-survey" as WorkspaceTabId,
-        };
-      case "deals":
-        return {
-          title: "Deals",
-          description: "Advance requirements, negotiations, and execution from the client workspace instead of jumping across modules.",
-          primaryActionLabel: "Open pipeline",
-          primaryActionTab: "deals" as WorkspaceTabId,
-        };
-      case "market-survey":
-        return {
-          title: "Market Survey",
-          description: "Upload flyers, review extracted options, and build a cleaner shortlist around the active requirement.",
-          primaryActionLabel: "Add survey inputs",
-          primaryActionTab: "market-survey" as WorkspaceTabId,
-        };
-      case "analyses":
-        return {
-          title: "Analyses",
-          description: "Start from lease and proposal documents, review extracted terms, then run financial comparisons or recovery workflows.",
-          primaryActionLabel: "Run analysis",
-          primaryActionTab: "analyses" as WorkspaceTabId,
-        };
-      case "documents":
-        return {
-          title: "Documents",
-          description: "Centralize leases, amendments, proposals, and lease abstracts inside the client workspace.",
-          primaryActionLabel: "Upload documents",
-          primaryActionTab: "documents" as WorkspaceTabId,
-        };
-      case "obligations":
-        return {
-          title: "Obligations",
-          description: "Track expirations, notices, renewals, and portfolio risk for this client in one place.",
-          primaryActionLabel: "Review obligations",
-          primaryActionTab: "obligations" as WorkspaceTabId,
-        };
-      default:
-        return {
-          title: "Activity",
-          description: "See recent workflow activity, suggested next steps, and AI-assisted actions tied to the active client.",
-          primaryActionLabel: "Open AI guide",
-          primaryActionTab: "activity" as WorkspaceTabId,
-        };
-    }
-  }, [activeWorkspaceTab, heroClientName, isLandlordMode]);
-  const workspaceMetricItems = useMemo(() => {
-    if (isLandlordMode) {
-      if (activeWorkspaceTab === "tenants") {
-        return [
-          { label: "Tenants", value: scopedDocuments.filter((doc) => String(doc.building || doc.address || "").trim()).length, detail: "Lease-backed tenant records." },
-          { label: "Expiring Leases", value: dealsNeedingAttention.length, detail: "Nearest lease dates needing review.", emphasis: dealsNeedingAttention.length > 0 },
-          { label: "Active Tours", value: landlordActiveToursCount, detail: "Deals in tour stages." },
-          { label: "Signed Deals", value: landlordSignedDealsCount, detail: "Executed or won records." },
-        ];
-      }
-      if (activeWorkspaceTab === "availabilities") {
-        return [
-          { label: "Available Spaces", value: landlordAvailableSpacesCount, detail: "Suites or spaces currently represented.", emphasis: landlordAvailableSpacesCount > 0 },
-          { label: "Marketing Docs", value: scopedDocuments.filter((doc) => ["surveys", "flyers", "floorplans"].includes(doc.type)).length, detail: "Flyers and marketing collateral." },
-          { label: "Active Proposals", value: landlordActiveProposalsCount, detail: "Proposal or counter stages in motion." },
-          { label: "Tours", value: landlordActiveToursCount, detail: "Tour activity in the pipeline." },
-        ];
-      }
-      return [
-        { label: "Properties", value: landlordPropertyCount, detail: "Buildings or addresses with active data." },
-        { label: "Availabilities", value: landlordAvailableSpacesCount, detail: "Available suites or spaces.", emphasis: landlordAvailableSpacesCount > 0 },
-        { label: "Active Deals", value: activeDealsCount, detail: "Open inquiry-to-execution records.", emphasis: activeDealsCount > 0 },
-        { label: "Proposals", value: landlordActiveProposalsCount, detail: "Outstanding proposal activity." },
-      ];
-    }
-    if (activeWorkspaceTab === "locations") {
-      return [
-        { label: "Locations", value: workspaceLocationRows.length, detail: "Tracked buildings or addresses." },
-        { label: "Documents", value: scopedDocuments.length, detail: "Client files tied to locations." },
-        { label: "Parsed", value: parsedDocumentsCount, detail: "Documents with extracted structure." },
-        { label: "Deals", value: activeDealsCount, detail: "Open opportunities linked to this client." },
-      ];
-    }
-    if (activeWorkspaceTab === "documents") {
-      return [
-        { label: "Documents", value: scopedDocuments.length, detail: "Files in the active client library.", emphasis: scopedDocuments.length > 0 },
-        { label: "Parsed", value: parsedDocumentsCount, detail: "Documents with structured outputs." },
-        { label: "Abstracts", value: scopedDocuments.filter((doc) => doc.type === "leases" || doc.type === "amendments" || doc.type === "abstracts").length, detail: "Lease abstract source files." },
-        { label: "Recent Uploads", value: recentDocuments.length, detail: "Most recent visible files." },
-      ];
-    }
-    if (activeWorkspaceTab === "obligations" || activeWorkspaceTab === "activity") {
-      return [
-        { label: "Expiring Deals", value: dealsNeedingAttention.length, detail: "Nearest expirations in the workspace.", emphasis: dealsNeedingAttention.length > 0 },
-        { label: "Open Deals", value: activeDealsCount, detail: "Live deal records." },
-        { label: "Documents", value: scopedDocuments.length, detail: "Files supporting current obligations." },
-        { label: "AI Status", value: workspaceStatus, detail: "Current workflow state." },
-      ];
-    }
-    return [
-      { label: "Active Deals", value: activeDealsCount, detail: "Open requirement or negotiation records.", emphasis: activeDealsCount > 0 },
-      { label: "Analyses", value: scenarios.length, detail: "Financial scenarios currently loaded." },
-      { label: "Documents", value: scopedDocuments.length, detail: "Client files available in the workspace." },
-      { label: "Parsed", value: parsedDocumentsCount, detail: "Structured files ready for downstream workflows." },
-    ];
-  }, [
-    isLandlordMode,
-    activeWorkspaceTab,
-    scopedDocuments,
-    parsedDocumentsCount,
-    scenarios.length,
-    activeDealsCount,
-    landlordPropertyCount,
-    landlordAvailableSpacesCount,
-    landlordActiveProposalsCount,
-    landlordActiveToursCount,
-    landlordSignedDealsCount,
-    dealsNeedingAttention.length,
-    recentDocuments.length,
-    workspaceLocationRows.length,
-    workspaceStatus,
-  ]);
-  const workspaceSteps = useMemo(() => {
-    if (isLandlordMode) {
-      if (activeWorkspaceTab === "availabilities") {
-        return [
-          { title: "Load listing material", description: "Upload flyers, floorplans, and lease docs into the building document stack." },
-          { title: "Review extracted space detail", description: "Confirm suites, asking terms, and marketing fields before sharing externally." },
-          { title: "Move prospects through pipeline", description: "Advance inquiries into tours, proposals, negotiation, and execution." },
-        ];
-      }
-      return [
-        { title: "Start from the building", description: "Keep deals, tenants, availabilities, and lease documents inside one building workspace." },
-        { title: "Work the live pipeline", description: "Track tours, proposals, and negotiations without switching products." },
-        { title: "Report from the workspace", description: "Use insights and AI outputs to create landlord-ready reporting." },
-      ];
-    }
-    if (activeWorkspaceTab === "analyses") {
-      return [
-        { title: "Upload lease and proposal documents", description: "Bring the core source files into the client workspace first." },
-        { title: "Review extracted terms", description: "Check commencement, expiration, rent, and other key fields before computing." },
-        { title: "Run analysis and export", description: "Generate comparison outputs, client-ready decks, or recovery workflows." },
-      ];
-    }
-    if (activeWorkspaceTab === "documents") {
-      return [
-        { title: "Centralize source files", description: "Upload leases, amendments, proposals, and supporting files once." },
-        { title: "Let the parser structure them", description: "Extract the core dates, economics, and obligations into reusable records." },
-        { title: "Push into downstream workflows", description: "Use those same documents for abstracts, obligations, and analyses." },
-      ];
-    }
-    return [
-      { title: "Start from the workspace", description: "Choose the client, then run deals, documents, survey, analysis, and obligations from here." },
-      { title: "Advance one workflow at a time", description: "Primary actions sit at the top, with supporting detail expanding only when needed." },
-      { title: "Use AI as a guide", description: "Let the command center suggest the next best action after uploads and edits." },
-    ];
-  }, [activeWorkspaceTab, isLandlordMode]);
-  const workspaceActionLinks = useMemo(() => {
-    if (isLandlordMode) {
-      return [
-        { label: "Open overview", tab: "overview" as WorkspaceTabId },
-        { label: "Manage deals", tab: "deals" as WorkspaceTabId },
-        { label: "Review documents", tab: "documents" as WorkspaceTabId },
-      ];
-    }
-    return [
-      { label: "Open deals", tab: "deals" as WorkspaceTabId },
-      { label: "Run analyses", tab: "analyses" as WorkspaceTabId },
-      { label: "Review obligations", tab: "obligations" as WorkspaceTabId },
-    ];
-  }, [isLandlordMode]);
-  const sharedExportBranding = useMemo(
-    () => ({
-      brokerageName: authSession
-        ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
-        : CRE_DEFAULT_BROKERAGE_NAME,
-      clientName: reportMeta.prepared_for.trim() || "Client",
-      reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
-      preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
-      brokerageLogoDataUrl: authSession
-        ? (
-          organizationBranding?.logo_data_url
-          || (organizationBranding?.logo_asset_bytes
-            ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
-            : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
-        )
-        : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
-      clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
-    }),
-    [
-      authSession,
-      organizationBranding?.brokerage_name,
-      organizationBranding?.logo_data_url,
-      organizationBranding?.logo_asset_bytes,
-      organizationBranding?.logo_content_type,
-      reportMeta.prepared_for,
-      reportMeta.report_date,
-      reportMeta.prepared_by,
-      defaultPreparedByFromAuth,
-      clientLogoDataUrl,
-    ],
-  );
-  const openWorkspaceTab = useCallback((tab: WorkspaceTabId) => {
-    router.push(`/?workspace=${encodeURIComponent(tab)}`);
-  }, [router]);
-  const showHomeHero = !authSession && rawModuleParam.length === 0 && rawWorkspaceParam.length === 0 && rawNavParam.length === 0;
+  const showHomeHero = rawModuleParam.length === 0;
   const topNavOffsetClass = "pt-24 sm:pt-28";
-  const moduleHasDedicatedTopTabs = Boolean(authSession) && activeWorkspaceTab === "analyses" && activePlatformModule === "financial-analyses";
-  const mainTopOffsetClass = !showHomeHero ? topNavOffsetClass : "";
-  const tabTopOffsetClass = !showHomeHero ? "mt-6" : "mt-8";
+  const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === "financial-analyses";
+  const mainTopOffsetClass = !showHomeHero ? "mt-6" : "";
+  const tabTopOffsetClass = !showHomeHero ? topNavOffsetClass : "mt-8";
+  const moduleContextHeader = !showHomeHero ? (
+    <section className={`relative z-10 app-container ${moduleHasDedicatedTopTabs ? "mt-6" : tabTopOffsetClass}`}>
+      <div className="mx-auto w-full max-w-[96vw] space-y-4">
+        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <PlatformPanel kicker="Connected Items" title={`${currentModuleTitle} in the CRE workflow`}>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <PlatformTag label={representationMode === LANDLORD_REP_MODE ? "Landlord Rep" : "Tenant Rep"} tone="accent" />
+              {crmRelationshipSnapshot.roles.map((role) => (
+                <PlatformTag
+                  key={role}
+                  label={role.replace(/_/g, " ")}
+                  tone={role === "active_client" || role === "landlord" ? "success" : role === "prospect" ? "warning" : "neutral"}
+                />
+              ))}
+              {activeClient?.industry ? <PlatformTag label={activeClient.industry} /> : null}
+            </div>
+            <PlatformMetricStrip
+              items={relationshipMetricItems}
+              columnsClassName="sm:grid-cols-3 xl:grid-cols-6"
+            />
+            <div className="mt-4 border-t border-white/10 pt-4">
+              <p className="heading-kicker mb-2">Workflow Flow</p>
+              <PlatformFlowIndicator steps={moduleFlowSteps} />
+            </div>
+          </PlatformPanel>
+          <div className="space-y-4">
+            <PlatformPanel kicker="Next Actions" title="What to do next">
+              <div className="space-y-3">
+                {moduleNextActions.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={item.action}
+                    className="w-full border border-white/15 bg-black/20 p-3 text-left transition-colors hover:bg-white/5"
+                  >
+                    <p className="text-sm text-white">{item.label}</p>
+                    <p className="mt-1 text-xs text-slate-400">{item.detail}</p>
+                  </button>
+                ))}
+              </div>
+            </PlatformPanel>
+            <PlatformPanel kicker="AI Suggestions" title="Suggested CRE workflows">
+              <div className="space-y-2">
+                {moduleAiSuggestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => {
+                      setHeroAiPrompt(suggestion);
+                      setHeroAiStatus("AI suggestion loaded into the command bar.");
+                      setHeroAiError(null);
+                    }}
+                    className="w-full border border-white/15 bg-black/20 p-3 text-left text-sm text-slate-200 transition-colors hover:bg-white/5"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </PlatformPanel>
+          </div>
+        </div>
+        <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+          <PlatformPanel kicker="Location Context" title="Market / Building hierarchy">
+            <div className="flex flex-wrap gap-2">
+              {crmRelationshipSnapshot.hierarchyOptions.length > 0 ? crmRelationshipSnapshot.hierarchyOptions.map((item) => (
+                <button
+                  key={`${item.key}-${item.value}`}
+                  type="button"
+                  onClick={() => openPlatformModule(item.key === "suite" || item.key === "building" ? "documents" : "deals")}
+                  className="border border-white/20 bg-black/20 px-3 py-2 text-left transition-colors hover:bg-white/5"
+                >
+                  <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">{item.label}</p>
+                  <p className="text-sm text-white">{item.value}</p>
+                </button>
+              )) : (
+                <p className="text-sm text-slate-400">No market or building context has been structured yet. Upload more documents or complete CRM fields.</p>
+              )}
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="border border-white/10 bg-black/20 p-3">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Expiring 12 Mo.</p>
+                <p className="mt-1 text-2xl text-white">{crmRelationshipSnapshot.expirations12Months}</p>
+              </div>
+              <div className="border border-white/10 bg-black/20 p-3">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Expiring 24 Mo.</p>
+                <p className="mt-1 text-2xl text-white">{crmRelationshipSnapshot.expirations24Months}</p>
+              </div>
+              <div className="border border-white/10 bg-black/20 p-3">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Multi-location</p>
+                <p className="mt-1 text-2xl text-white">{crmRelationshipSnapshot.multiLocationCount}</p>
+              </div>
+              <div className="border border-white/10 bg-black/20 p-3">
+                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Large Tenants</p>
+                <p className="mt-1 text-2xl text-white">{crmRelationshipSnapshot.largeOccupancyCount}</p>
+              </div>
+            </div>
+          </PlatformPanel>
+          <PlatformPanel kicker="Visual Timeline" title="Lease expirations timeline">
+            <div className="grid grid-cols-6 gap-2 sm:grid-cols-8 xl:grid-cols-12">
+              {expirationTimelineBuckets.map((bucket) => (
+                <button
+                  key={bucket.label}
+                  type="button"
+                  onClick={() => openPlatformModule("obligations")}
+                  className="border border-white/15 bg-black/20 p-2 text-center transition-colors hover:bg-white/5"
+                >
+                  <p className="text-[10px] uppercase tracking-[0.08em] text-slate-400">{bucket.label}</p>
+                  <div className="mt-2 h-14 border border-cyan-300/20 bg-black/30 px-1">
+                    <div
+                      className="w-full bg-cyan-300/75"
+                      style={{ height: `${Math.max(8, Math.min(56, bucket.count * 10))}px`, marginTop: `${56 - Math.max(8, Math.min(56, bucket.count * 10))}px` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-sm text-white">{bucket.count}</p>
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-slate-400">
+              Click any month bucket to jump into Obligations and review upcoming expirations and notice deadlines.
+            </p>
+          </PlatformPanel>
+        </div>
+        {(activePlatformModule === "documents" || activePlatformModule === "completed-leases") ? (
+          <PlatformPanel kicker="Document Linking" title="Where documents are used">
+            <div className="grid gap-3 lg:grid-cols-2">
+              {crmRelationshipSnapshot.documentUsage.length > 0 ? crmRelationshipSnapshot.documentUsage.map((document) => (
+                <div key={document.id} className="border border-white/15 bg-black/20 p-3">
+                  <p className="text-sm text-white break-words">{document.name}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {document.uses.map((use) => (
+                      <button
+                        key={`${document.id}-${use}`}
+                        type="button"
+                        onClick={() => openPlatformModule(use)}
+                        className="border border-white/20 px-2 py-1 text-[11px] uppercase tracking-[0.08em] text-slate-300 transition-colors hover:bg-white/5"
+                      >
+                        {use === "deals" ? "CRM" : use === "financial-analyses" ? "Analyses" : use === "completed-leases" ? "Lease Abstracts" : use === "obligations" ? "Obligations" : "Surveys"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )) : (
+                <p className="text-sm text-slate-400">No document linkages are available yet.</p>
+              )}
+            </div>
+          </PlatformPanel>
+        ) : null}
+      </div>
+    </section>
+  ) : null;
 
   if (Boolean(authSession) && (!representationMode || !activeClient)) {
     return (
@@ -2715,498 +2710,450 @@ function HomeContent() {
         </>
       ) : null}
 
-      {!showHomeHero ? (
-        <>
-          <section className={`relative z-10 app-container ${topNavOffsetClass}`}>
-            <div className="mx-auto w-full max-w-[96vw] space-y-4">
-              <PlatformPageHeader
-                kicker={workspaceLabel}
-                title={workspaceHeaderMeta.title}
-                description={workspaceHeaderMeta.description}
-                actions={(
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openWorkspaceTab(workspaceHeaderMeta.primaryActionTab)}
-                      className="btn-premium btn-premium-primary"
-                    >
-                      {workspaceHeaderMeta.primaryActionLabel}
-                    </button>
-                    <Link href={settingsHref} className="btn-premium btn-premium-secondary">
-                      {settingsCtaLabel}
-                    </Link>
+      {!showHomeHero && moduleHasDedicatedTopTabs ? (
+        <section className={`relative z-10 app-container ${tabTopOffsetClass}`}>
+          <div className="mx-auto w-full max-w-[96vw]">
+            <PlatformModuleTabs
+              tabs={FINANCIAL_ANALYSES_TOOL_TABS}
+              activeId={activeTopTab}
+              onChange={(id) => {
+                if (isFinancialAnalysesToolId(id)) setActiveTopTab(id);
+              }}
+              dense
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {moduleContextHeader}
+
+      {!showHomeHero ? (() => {
+        if (activePlatformModule === "financial-analyses") {
+          return activeTopTab === "lease-comparison" ? (
+      <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+        <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+        <section id="extract" className="scroll-mt-24 bg-grid">
+        <div className="mx-auto w-full max-w-[96vw] space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
+          <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
+            <div className="mx-auto w-full max-w-[1800px] text-center">
+              <h2 className="heading-section mb-3">Extract From Client Documents</h2>
+              <p className="text-sm text-slate-300 mb-3">
+                Drop files anywhere on this tab to save them to this client and build analysis scenarios automatically.
+              </p>
+              <ExtractUpload
+                showAdvancedOptions={showDiagnostics}
+                showInlineDropZone={false}
+                onPersistDocument={async ({ file, normalize, parsed }) => {
+                  if (!activeClientId) return;
+                  await registerDocument({
+                    clientId: activeClientId,
+                    name: file.name,
+                    file,
+                    sourceModule: "financial-analyses",
+                    normalize,
+                    parsed,
+                  });
+                }}
+                onSuccess={(data, context) =>
+                  handleNormalizeSuccess(data, {
+                    name: context?.fileName,
+                    file: context?.file,
+                    sourceModule: "financial-analyses",
+                    skipDocumentRegister: true,
+                  })
+                }
+                onError={handleExtractError}
+              />
+              {activeClient ? (
+                <div className="mt-3">
+                  <ClientDocumentPicker
+                    buttonLabel="Select Existing Client Document"
+                    buttonAlign="center"
+                    allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
+                    onSelectDocument={handleExistingDocumentSelection}
+                  />
+                </div>
+              ) : null}
+              {extractError && (
+                <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-200">
+                  {extractError}
+                </div>
+              )}
+              {showDiagnostics && (
+                <div className="mt-4 text-left">
+                  <Diagnostics />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <ResultsActionsCard>
+        <ScenarioList
+          scenarios={scenarios}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onDuplicate={duplicateFromList}
+          onDelete={deleteScenario}
+          onRename={renameScenario}
+          onReorder={reorderScenario}
+          onToggleIncludeInSummary={toggleIncludeInSummary}
+          onChangeLeaseObligationMode={changeScenarioObligationMode}
+          includedInSummary={includedInSummary}
+        />
+
+        <ScenarioForm
+          scenario={selectedScenario}
+          onUpdate={updateScenario}
+          onAddScenario={addScenario}
+          onDuplicateScenario={duplicateScenario}
+          onDeleteScenario={deleteScenario}
+          onAcceptChanges={acceptScenarioChanges}
+        />
+
+        <section className="pt-7 border-t border-slate-300/20">
+          <p className="heading-kicker mb-2">Exports</p>
+          <h2 className="heading-section mb-2">COMPUTE AND REPORT</h2>
+          <p className="text-sm text-slate-300 mb-4">
+            Export Excel or PDF directly from your current scenarios. Analysis refresh is optional.
+          </p>
+          <p className="text-sm text-slate-300 mb-4">
+            Uses per-scenario discount rate overrides when set; otherwise defaults to 8%.
+          </p>
+          {!authSession && (
+            <div className="mb-5 border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
+              <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
+              <div className="flex flex-wrap gap-2">
+                <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+                  Sign in
+                </a>
+                <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
+                  Create account
+                </a>
+              </div>
+            </div>
+          )}
+          <div className="mb-5 border border-slate-300/20 bg-slate-950/30 p-4">
+            <p className="heading-kicker mb-2">Report + Branding Settings</p>
+            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
+              <div>
+                <p className="text-sm text-slate-200">
+                  Use account dashboard/settings to manage brokerage branding, and client cover assets.
+                </p>
+                <p className="mt-2 text-xs text-slate-400">
+                  Brokerage: {brokerageName || "The CRE Model"} · Prepared for: {reportMeta.prepared_for.trim() || "Client"}
+                </p>
+              </div>
+              <a href={settingsHref} className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                {settingsCtaLabel}
+              </a>
+            </div>
+            {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading settings…</p>}
+          </div>
+          <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={exportExcelDeck}
+                disabled={exportExcelLoading || scenarios.length === 0 || !authSession}
+                className="btn-premium btn-premium-success w-full sm:w-auto disabled:opacity-50"
+              >
+                {exportExcelLoading ? "Exporting…" : "Export Excel"}
+              </button>
+              <button
+                type="button"
+                onClick={exportPdfDeck}
+                disabled={exportPdfLoading || scenarios.length === 0 || !authSession}
+                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
+              >
+                {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void copyFinancialAnalysisShareLink(); }}
+                disabled={includedScenarios.length === 0}
+                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
+              >
+                Copy Share Link
+              </button>
+          </div>
+          {shareLinkStatus ? <p className="mt-2 text-sm text-cyan-200">{shareLinkStatus}</p> : null}
+          {(exportPdfError || exportExcelError || shareLinkError) && (
+            <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError || shareLinkError}</p>
+          )}
+        </section>
+
+            {resultErrors.length > 0 && (
+              <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4">
+                <h3 className="text-sm font-medium text-red-200 mb-2">
+                  Errors by scenario
+                </h3>
+                <ul className="text-sm text-red-100/90 space-y-1">
+                  {resultErrors.map(({ name, error }) => (
+                    <li key={name}>
+                      <strong>{name}:</strong> {error}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {engineResults.length > 0 && (
+              <>
+                {equalizedUi.needsCustomWindow && (
+                  <div className="mb-4 border border-amber-500/40 bg-amber-500/10 p-4">
+                    <p className="text-sm font-medium text-amber-200">
+                      {equalizedUi.message || "No overlapping lease term for equalized comparison."}
+                    </p>
+                    <p className="text-xs text-amber-100/80 mt-1">
+                      Enter a custom equalized comparison period (MM.DD.YYYY) to compute equalized metrics.
+                    </p>
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="text-xs text-amber-100/80">Custom start</span>
+                        <input
+                          type="text"
+                          value={equalizedCustomWindow.start}
+                          onChange={(e) =>
+                            setEqualizedCustomWindow((prev) => ({ ...prev, start: e.target.value }))
+                          }
+                          onBlur={(e) =>
+                            setEqualizedCustomWindow((prev) => ({
+                              ...prev,
+                              start: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
+                            }))
+                          }
+                          className="input-premium mt-1"
+                          placeholder="MM.DD.YYYY"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs text-amber-100/80">Custom end</span>
+                        <input
+                          type="text"
+                          value={equalizedCustomWindow.end}
+                          onChange={(e) =>
+                            setEqualizedCustomWindow((prev) => ({ ...prev, end: e.target.value }))
+                          }
+                          onBlur={(e) =>
+                            setEqualizedCustomWindow((prev) => ({
+                              ...prev,
+                              end: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
+                            }))
+                          }
+                          className="input-premium mt-1"
+                          placeholder="MM.DD.YYYY"
+                        />
+                      </label>
+                    </div>
                   </div>
                 )}
-              />
-              <PlatformMetricStrip items={workspaceMetricItems} />
-              <PlatformModuleTabs
-                tabs={workspaceTabs}
-                activeId={activeWorkspaceTab}
-                onChange={(id) => {
-                  if (id !== activeWorkspaceTab) openWorkspaceTab(id as WorkspaceTabId);
-                }}
-              />
-            </div>
-          </section>
-
-          {moduleHasDedicatedTopTabs ? (
-            <section className={`relative z-10 app-container ${tabTopOffsetClass}`}>
-              <div className="mx-auto w-full max-w-[96vw]">
-                <PlatformModuleTabs
-                  tabs={FINANCIAL_ANALYSES_TOOL_TABS}
-                  activeId={activeTopTab}
-                  onChange={(id) => {
-                    if (isFinancialAnalysesToolId(id)) setActiveTopTab(id);
-                  }}
-                  dense
+                <SummaryMatrix
+                  results={engineResults}
+                  equalized={equalizedUi}
+                  scenariosById={scenariosById}
+                  onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
                 />
+                <AnalyticsWorkbench
+                  results={engineResults}
+                  canonicalByScenarioId={canonicalComputeCache}
+                  onCustomChartsChange={setCustomChartsForExport}
+                />
+              </>
+            )}
+              </ResultsActionsCard>
+        </div>
+        </section>
+        <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
+      </main>
+      ) : (
+        <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+          <section className="scroll-mt-24 bg-grid mt-6 space-y-4">
+            <div className="mx-auto w-full max-w-[96vw] space-y-4">
+              {!authSession && (
+                <div className="border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
+                  <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+                      Sign in
+                    </a>
+                    <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
+                      Create account
+                    </a>
+                  </div>
+                </div>
+              )}
+              <div className="border border-slate-300/20 bg-slate-950/30 p-4">
+                <p className="heading-kicker mb-2">Report + Branding Settings</p>
+                <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
+                  <div>
+                    <p className="text-sm text-slate-200">
+                      Use account dashboard/settings to manage brokerage branding, and client cover assets.
+                    </p>
+                    <p className="mt-2 text-xs text-slate-400">
+                      Brokerage: {brokerageName || "The CRE Model"} · Prepared for: {reportMeta.prepared_for.trim() || "Client"}
+                    </p>
+                  </div>
+                  <a href={settingsHref} className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                    {settingsCtaLabel}
+                  </a>
+                </div>
+                {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading settings…</p>}
               </div>
-            </section>
-          ) : null}
+            </div>
 
-          <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-            <div className="mx-auto w-full max-w-[96vw] space-y-6">
-              {activeWorkspaceTab === "overview" ? (
-                <>
-                  <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-                    <PlatformPanel kicker="Primary Workflow" title="Work the active workspace">
-                      <PlatformStepList steps={workspaceSteps} />
-                      <div className="mt-5 flex flex-wrap gap-2">
-                        {workspaceActionLinks.map((item) => (
+            <SubleaseRecoveryAnalysis
+              clientId={workspaceScopeId}
+              sourceScenario={selectedScenario ?? scenarios[0] ?? null}
+              exportBranding={{
+                brokerageName: authSession
+                  ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+                  : CRE_DEFAULT_BROKERAGE_NAME,
+                clientName: reportMeta.prepared_for.trim() || "Client",
+                reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
+                preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+                brokerageLogoDataUrl: authSession
+                  ? (
+                    organizationBranding?.logo_data_url
+                    || (organizationBranding?.logo_asset_bytes
+                      ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+                      : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
+                  )
+                  : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
+                clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
+              }}
+            />
+          </section>
+          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
+        </main>
+          );
+        }
+        if (activePlatformModule === "completed-leases") {
+          return (
+        <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+          <CompletedLeasesWorkspace
+            clientId={workspaceScopeId}
+            exportBranding={{
+              brokerageName: authSession
+                ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+                : CRE_DEFAULT_BROKERAGE_NAME,
+              clientName: reportMeta.prepared_for.trim() || "Client",
+              reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
+              preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+              brokerageLogoDataUrl: authSession
+                ? (
+                  organizationBranding?.logo_data_url
+                  || (organizationBranding?.logo_asset_bytes
+                    ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+                    : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
+                )
+                : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
+              clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
+            }}
+          />
+          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
+        </main>
+          );
+        }
+        if (activePlatformModule === "surveys") {
+          return (
+        <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+          <SurveysWorkspace
+            clientId={workspaceScopeId}
+            exportBranding={{
+              brokerageName: authSession
+                ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
+                : CRE_DEFAULT_BROKERAGE_NAME,
+              clientName: reportMeta.prepared_for.trim() || "Client",
+              reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
+              preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+              brokerageLogoDataUrl: authSession
+                ? (
+                  organizationBranding?.logo_data_url
+                  || (organizationBranding?.logo_asset_bytes
+                    ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
+                    : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
+                )
+                : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
+              clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
+            }}
+          />
+          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
+        </main>
+          );
+        }
+        if (activePlatformModule === "documents") {
+          return (
+        <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+          <section className="scroll-mt-24 bg-grid mt-6">
+            <div className="mx-auto w-full max-w-[96vw] grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+              <PlatformPanel kicker="Document Hub" title="Linked document ecosystem">
+                <p className="text-sm text-slate-300">
+                  Documents connect CRM, surveys, analyses, lease abstracts, and obligations. Use this hub to see the shared source material.
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {crmRelationshipSnapshot.documentUsage.length > 0 ? crmRelationshipSnapshot.documentUsage.map((document) => (
+                    <div key={document.id} className="border border-white/15 bg-black/20 p-3">
+                      <p className="text-sm text-white break-words">{document.name}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {document.uses.map((use) => (
                           <button
-                            key={item.label}
+                            key={`${document.id}-${use}`}
                             type="button"
-                            onClick={() => openWorkspaceTab(item.tab)}
-                            className="btn-premium btn-premium-secondary"
+                            onClick={() => openPlatformModule(use)}
+                            className="border border-white/20 px-2 py-1 text-[11px] uppercase tracking-[0.08em] text-slate-300 transition-colors hover:bg-white/5"
                           >
-                            {item.label}
+                            {use === "deals" ? "CRM" : use === "financial-analyses" ? "Analyses" : use === "completed-leases" ? "Lease Abstracts" : use === "obligations" ? "Obligations" : "Surveys"}
                           </button>
                         ))}
                       </div>
-                    </PlatformPanel>
-                    <PlatformPanel kicker="Supporting Insight" title="Needs attention now">
-                      <div className="space-y-3">
-                        {dealsNeedingAttention.length > 0 ? dealsNeedingAttention.map((deal) => (
-                          <div key={deal.id} className="border border-white/15 bg-black/20 p-3">
-                            <p className="text-sm text-white">{deal.dealName || deal.requirementName || deal.stage || "Deal"}</p>
-                            <p className="mt-1 text-xs text-slate-400">
-                              {deal.stage || "Stage not set"} · {deal.expirationDate ? formatDateISO(deal.expirationDate) : "No expiration"}
-                            </p>
-                          </div>
-                        )) : (
-                          <p className="text-sm text-slate-400">No deals need immediate attention in this workspace.</p>
-                        )}
-                      </div>
-                    </PlatformPanel>
-                  </div>
-                  <PlatformDisclosure
-                    kicker="Contextual Tools"
-                    title="Recent documents and AI guidance"
-                    description="Secondary tools stay tucked under the workspace until you need them."
-                    defaultOpen
-                  >
-                    <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                      <PlatformCard kicker="Recent Documents" title="Latest files in this workspace">
-                        <div className="space-y-3">
-                          {recentDocuments.length > 0 ? recentDocuments.map((document) => (
-                            <div key={document.id} className="border border-white/15 bg-black/20 p-3">
-                              <p className="text-sm text-white break-words">{document.name}</p>
-                              <p className="mt-1 text-xs text-slate-400">
-                                {document.type} · {document.building || document.address || "No location"} · {document.parsed ? "Parsed" : "Uploaded"}
-                              </p>
-                            </div>
-                          )) : (
-                            <p className="text-sm text-slate-400">No documents uploaded in this workspace yet.</p>
-                          )}
-                        </div>
-                      </PlatformCard>
-                      <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
                     </div>
-                  </PlatformDisclosure>
-                </>
-              ) : null}
-
-              {activeWorkspaceTab === "locations" ? (
-                <>
-                  <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                    <PlatformPanel kicker="Primary Workflow" title="Location context">
-                      <PlatformStepList steps={workspaceSteps} />
-                    </PlatformPanel>
-                    <PlatformPanel kicker="Supporting Insight" title="Tracked buildings and addresses">
-                      <div className="space-y-3">
-                        {workspaceLocationRows.length > 0 ? workspaceLocationRows.map((row) => (
-                          <div key={`${row.label}-${row.address}`} className="border border-white/15 bg-black/20 p-3">
-                            <p className="text-sm text-white">{row.label}</p>
-                            <p className="mt-1 text-xs text-slate-400">{row.address || row.building || "Location pending"}</p>
-                            <p className="mt-1 text-xs text-slate-500">{row.documentCount} docs · {row.suiteCount} suites</p>
-                          </div>
-                        )) : (
-                          <p className="text-sm text-slate-400">No location metadata has been extracted yet.</p>
-                        )}
-                      </div>
-                    </PlatformPanel>
-                  </div>
-                  <PlatformDisclosure
-                    kicker="Details"
-                    title={isLandlordMode ? "Availability workspace" : "Market survey workspace"}
-                    description="Use the same source documents to move from location context into survey and marketing workflows."
-                    defaultOpen
-                  >
-                    <SurveysWorkspace clientId={workspaceScopeId} exportBranding={sharedExportBranding} />
-                  </PlatformDisclosure>
-                </>
-              ) : null}
-
-              {activeWorkspaceTab === "deals" ? (
-                <>
-                  <PlatformPanel kicker="Primary Workflow" title="Manage pipeline from this workspace">
-                    <PlatformStepList steps={workspaceSteps} />
-                  </PlatformPanel>
-                  <DealsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
-                </>
-              ) : null}
-
-              {activeWorkspaceTab === "market-survey" || activeWorkspaceTab === "availabilities" ? (
-                <>
-                  <PlatformPanel kicker="Primary Workflow" title={isLandlordMode ? "Manage availabilities" : "Build the market survey"}>
-                    <PlatformStepList steps={workspaceSteps} />
-                  </PlatformPanel>
-                  <SurveysWorkspace clientId={workspaceScopeId} exportBranding={sharedExportBranding} />
-                </>
-              ) : null}
-
-              {activeWorkspaceTab === "analyses" ? (
-                <>
-                  {activeTopTab === "lease-comparison" ? (
-                    <>
-                      <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
-                      <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                        <PlatformPanel kicker="Primary Workflow" title="Run analysis from source documents">
-                          <PlatformStepList steps={workspaceSteps} />
-                          {extractError ? (
-                            <div className="mt-4 border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-                              {extractError}
-                            </div>
-                          ) : null}
-                        </PlatformPanel>
-                        <PlatformPanel kicker="Supporting Actions" title="Upload or select analysis inputs">
-                          <ExtractUpload
-                            showAdvancedOptions={showDiagnostics}
-                            showInlineDropZone={false}
-                            onPersistDocument={async ({ file, normalize, parsed }) => {
-                              if (!activeClientId) return;
-                              await registerDocument({
-                                clientId: activeClientId,
-                                name: file.name,
-                                file,
-                                sourceModule: "financial-analyses",
-                                normalize,
-                                parsed,
-                              });
-                            }}
-                            onSuccess={(data, context) =>
-                              handleNormalizeSuccess(data, {
-                                name: context?.fileName,
-                                file: context?.file,
-                                sourceModule: "financial-analyses",
-                                skipDocumentRegister: true,
-                              })
-                            }
-                            onError={handleExtractError}
-                          />
-                          {activeClient ? (
-                            <div className="mt-3">
-                              <ClientDocumentPicker
-                                buttonLabel="Select Existing Client Document"
-                                buttonAlign="left"
-                                allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
-                                onSelectDocument={handleExistingDocumentSelection}
-                              />
-                            </div>
-                          ) : null}
-                          {showDiagnostics ? (
-                            <div className="mt-4 text-left">
-                              <Diagnostics />
-                            </div>
-                          ) : null}
-                        </PlatformPanel>
-                      </div>
-                      <ResultsActionsCard>
-                        <ScenarioList
-                          scenarios={scenarios}
-                          selectedId={selectedId}
-                          onSelect={setSelectedId}
-                          onDuplicate={duplicateFromList}
-                          onDelete={deleteScenario}
-                          onRename={renameScenario}
-                          onReorder={reorderScenario}
-                          onToggleIncludeInSummary={toggleIncludeInSummary}
-                          onChangeLeaseObligationMode={changeScenarioObligationMode}
-                          includedInSummary={includedInSummary}
-                        />
-
-                        <ScenarioForm
-                          scenario={selectedScenario}
-                          onUpdate={updateScenario}
-                          onAddScenario={addScenario}
-                          onDuplicateScenario={duplicateScenario}
-                          onDeleteScenario={deleteScenario}
-                          onAcceptChanges={acceptScenarioChanges}
-                        />
-
-                        <section className="pt-7 border-t border-slate-300/20">
-                          <p className="heading-kicker mb-2">Exports</p>
-                          <h2 className="heading-section mb-2">COMPUTE AND REPORT</h2>
-                          <p className="text-sm text-slate-300 mb-4">
-                            Export Excel or PDF directly from your current scenarios. Analysis refresh is optional.
-                          </p>
-                          <p className="text-sm text-slate-300 mb-4">
-                            Uses per-scenario discount rate overrides when set; otherwise defaults to 8%.
-                          </p>
-                          {!authSession ? (
-                            <div className="mb-5 border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
-                              <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
-                              <div className="flex flex-wrap gap-2">
-                                <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">Sign in</a>
-                                <a href="/account?mode=signup" className="btn-premium btn-premium-primary">Create account</a>
-                              </div>
-                            </div>
-                          ) : null}
-                          <div className="mb-5 border border-slate-300/20 bg-slate-950/30 p-4">
-                            <p className="heading-kicker mb-2">Report + Branding Settings</p>
-                            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
-                              <div>
-                                <p className="text-sm text-slate-200">
-                                  Use account dashboard/settings to manage brokerage branding, and client cover assets.
-                                </p>
-                                <p className="mt-2 text-xs text-slate-400">
-                                  Brokerage: {brokerageName || "The CRE Model"} · Prepared for: {reportMeta.prepared_for.trim() || "Client"}
-                                </p>
-                              </div>
-                              <a href={settingsHref} className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                                {settingsCtaLabel}
-                              </a>
-                            </div>
-                            {brandingLoading ? <p className="mt-2 text-xs text-slate-500">Loading settings…</p> : null}
-                          </div>
-                          <div className="flex flex-wrap gap-3">
-                            <button
-                              type="button"
-                              onClick={exportExcelDeck}
-                              disabled={exportExcelLoading || scenarios.length === 0 || !authSession}
-                              className="btn-premium btn-premium-success w-full sm:w-auto disabled:opacity-50"
-                            >
-                              {exportExcelLoading ? "Exporting…" : "Export Excel"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={exportPdfDeck}
-                              disabled={exportPdfLoading || scenarios.length === 0 || !authSession}
-                              className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
-                            >
-                              {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { void copyFinancialAnalysisShareLink(); }}
-                              disabled={includedScenarios.length === 0}
-                              className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
-                            >
-                              Copy Share Link
-                            </button>
-                          </div>
-                          {shareLinkStatus ? <p className="mt-2 text-sm text-cyan-200">{shareLinkStatus}</p> : null}
-                          {(exportPdfError || exportExcelError || shareLinkError) ? (
-                            <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError || shareLinkError}</p>
-                          ) : null}
-                        </section>
-
-                        {resultErrors.length > 0 ? (
-                          <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4">
-                            <h3 className="text-sm font-medium text-red-200 mb-2">Errors by scenario</h3>
-                            <ul className="text-sm text-red-100/90 space-y-1">
-                              {resultErrors.map(({ name, error }) => (
-                                <li key={name}>
-                                  <strong>{name}:</strong> {error}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
-
-                        {engineResults.length > 0 ? (
-                          <>
-                            {equalizedUi.needsCustomWindow ? (
-                              <div className="mb-4 border border-amber-500/40 bg-amber-500/10 p-4">
-                                <p className="text-sm font-medium text-amber-200">
-                                  {equalizedUi.message || "No overlapping lease term for equalized comparison."}
-                                </p>
-                                <p className="text-xs text-amber-100/80 mt-1">
-                                  Enter a custom equalized comparison period (MM.DD.YYYY) to compute equalized metrics.
-                                </p>
-                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  <label className="block">
-                                    <span className="text-xs text-amber-100/80">Custom start</span>
-                                    <input
-                                      type="text"
-                                      value={equalizedCustomWindow.start}
-                                      onChange={(e) => setEqualizedCustomWindow((prev) => ({ ...prev, start: e.target.value }))}
-                                      onBlur={(e) =>
-                                        setEqualizedCustomWindow((prev) => ({
-                                          ...prev,
-                                          start: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
-                                        }))
-                                      }
-                                      className="input-premium mt-1"
-                                      placeholder="MM.DD.YYYY"
-                                    />
-                                  </label>
-                                  <label className="block">
-                                    <span className="text-xs text-amber-100/80">Custom end</span>
-                                    <input
-                                      type="text"
-                                      value={equalizedCustomWindow.end}
-                                      onChange={(e) => setEqualizedCustomWindow((prev) => ({ ...prev, end: e.target.value }))}
-                                      onBlur={(e) =>
-                                        setEqualizedCustomWindow((prev) => ({
-                                          ...prev,
-                                          end: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
-                                        }))
-                                      }
-                                      className="input-premium mt-1"
-                                      placeholder="MM.DD.YYYY"
-                                    />
-                                  </label>
-                                </div>
-                              </div>
-                            ) : null}
-                            <SummaryMatrix
-                              results={engineResults}
-                              equalized={equalizedUi}
-                              scenariosById={scenariosById}
-                              onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
-                            />
-                            <AnalyticsWorkbench
-                              results={engineResults}
-                              canonicalByScenarioId={canonicalComputeCache}
-                              onCustomChartsChange={setCustomChartsForExport}
-                            />
-                          </>
-                        ) : null}
-                      </ResultsActionsCard>
-                    </>
-                  ) : (
-                    <>
-                      <PlatformPanel kicker="Primary Workflow" title="Sublease recovery">
-                        <PlatformStepList steps={workspaceSteps} />
-                      </PlatformPanel>
-                      <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
-                      <SubleaseRecoveryAnalysis
-                        clientId={workspaceScopeId}
-                        sourceScenario={selectedScenario ?? scenarios[0] ?? null}
-                        exportBranding={sharedExportBranding}
-                      />
-                    </>
+                  )) : (
+                    <p className="text-sm text-slate-400">No documents are linked yet.</p>
                   )}
-                </>
-              ) : null}
-
-              {activeWorkspaceTab === "documents" ? (
-                <>
-                  <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                    <PlatformPanel kicker="Primary Workflow" title="Ingest and structure documents">
-                      <PlatformStepList steps={workspaceSteps} />
-                    </PlatformPanel>
-                    <PlatformPanel kicker="Supporting Insight" title="Recent file activity">
-                      <div className="space-y-3">
-                        {recentDocuments.length > 0 ? recentDocuments.map((document) => (
-                          <div key={document.id} className="border border-white/15 bg-black/20 p-3">
-                            <p className="text-sm text-white break-words">{document.name}</p>
-                            <p className="mt-1 text-xs text-slate-400">
-                              {document.type} · {document.uploadedAt ? formatDateISO(document.uploadedAt) : "Recent"} · {document.parsed ? "Parsed" : "Pending parse"}
-                            </p>
-                          </div>
-                        )) : (
-                          <p className="text-sm text-slate-400">No documents uploaded in this workspace yet.</p>
-                        )}
-                      </div>
-                    </PlatformPanel>
-                  </div>
-                  <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
-                  <PlatformDisclosure
-                    kicker="Details"
-                    title="Lease abstracts and closeout tools"
-                    description="Document parsing is the entry point. Abstract review stays one step deeper."
-                    defaultOpen
-                  >
-                    <CompletedLeasesWorkspace clientId={workspaceScopeId} exportBranding={sharedExportBranding} />
-                  </PlatformDisclosure>
-                </>
-              ) : null}
-
-              {activeWorkspaceTab === "obligations" || activeWorkspaceTab === "tenants" || activeWorkspaceTab === "insights" ? (
-                <>
-                  <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                    <PlatformPanel kicker="Primary Workflow" title={activeWorkspaceTab === "tenants" ? "Review tenant and lease risk" : "Review obligations and risk"}>
-                      <PlatformStepList steps={workspaceSteps} />
-                    </PlatformPanel>
-                    <PlatformPanel kicker="Supporting Insight" title="Upcoming expirations">
-                      <div className="space-y-3">
-                        {dealsNeedingAttention.length > 0 ? dealsNeedingAttention.map((deal) => (
-                          <div key={deal.id} className="border border-white/15 bg-black/20 p-3">
-                            <p className="text-sm text-white">{deal.dealName || deal.requirementName || "Deal"}</p>
-                            <p className="mt-1 text-xs text-slate-400">
-                              {deal.expirationDate ? formatDateISO(deal.expirationDate) : "No expiration"} · {deal.stage || "Stage not set"}
-                            </p>
-                          </div>
-                        )) : (
-                          <p className="text-sm text-slate-400">No upcoming expirations are currently flagged.</p>
-                        )}
-                      </div>
-                    </PlatformPanel>
-                  </div>
-                  <ObligationsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
-                  {activeWorkspaceTab === "insights" ? (
-                    <PlatformDisclosure
-                      kicker="AI Guide"
-                      title="Recommended next actions"
-                      description="Use the AI workspace guide only after the portfolio signals are visible."
-                      defaultOpen
-                    >
-                      <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
-                    </PlatformDisclosure>
-                  ) : null}
-                </>
-              ) : null}
-
-              {activeWorkspaceTab === "activity" ? (
-                <>
-                  <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                    <PlatformPanel kicker="Primary Workflow" title="Review activity and follow-up queue">
-                      <PlatformStepList steps={workspaceSteps} />
-                    </PlatformPanel>
-                    <PlatformPanel kicker="Supporting Insight" title="Recent workflow activity">
-                      <div className="space-y-3">
-                        {recentDocuments.length > 0 ? recentDocuments.map((document) => (
-                          <div key={document.id} className="border border-white/15 bg-black/20 p-3">
-                            <p className="text-sm text-white break-words">{document.name}</p>
-                            <p className="mt-1 text-xs text-slate-400">
-                              {document.sourceModule || "workspace"} · {document.parsed ? "Structured" : "Awaiting review"}
-                            </p>
-                          </div>
-                        )) : (
-                          <p className="text-sm text-slate-400">No recent activity has been captured yet.</p>
-                        )}
-                      </div>
-                    </PlatformPanel>
-                  </div>
-                  <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
-                </>
-              ) : null}
+                </div>
+              </PlatformPanel>
+              <PlatformPanel kicker="Follow Through" title="Where to use these files next">
+                <div className="space-y-3">
+                  <button type="button" onClick={() => openPlatformModule("completed-leases")} className="w-full border border-white/15 bg-black/20 p-3 text-left transition-colors hover:bg-white/5">
+                    <p className="text-sm text-white">Create or refine lease abstracts</p>
+                    <p className="mt-1 text-xs text-slate-400">Push executed lease files into abstract review.</p>
+                  </button>
+                  <button type="button" onClick={() => openPlatformModule("financial-analyses")} className="w-full border border-white/15 bg-black/20 p-3 text-left transition-colors hover:bg-white/5">
+                    <p className="text-sm text-white">Run financial analysis</p>
+                    <p className="mt-1 text-xs text-slate-400">Use proposals and leases to compare economics.</p>
+                  </button>
+                  <button type="button" onClick={() => openPlatformModule("obligations")} className="w-full border border-white/15 bg-black/20 p-3 text-left transition-colors hover:bg-white/5">
+                    <p className="text-sm text-white">Update obligation tracking</p>
+                    <p className="mt-1 text-xs text-slate-400">Carry key dates and clauses into renewal and notice management.</p>
+                  </button>
+                </div>
+              </PlatformPanel>
             </div>
+          </section>
+          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
+        </main>
+          );
+        }
+        if (activePlatformModule === "deals") {
+          return (
+          <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+            <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+            <DealsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
+            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
           </main>
-        </>
-      ) : null}
+          );
+        }
+        return (
+          <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+            <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+            <ObligationsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
+            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
+          </main>
+        );
+      })() : null}
     </>
   );
 }

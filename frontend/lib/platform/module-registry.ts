@@ -6,7 +6,7 @@ import {
 } from "@/lib/workspace/representation-mode";
 
 type PlatformModuleDefinition = {
-  id: "deals" | "financial-analyses" | "surveys" | "completed-leases" | "obligations";
+  id: "deals" | "financial-analyses" | "surveys" | "completed-leases" | "obligations" | "documents";
   label: string;
   description: string;
   requiresAuth: boolean;
@@ -38,6 +38,11 @@ const MODULE_DEFINITION_BY_ID: Record<PlatformModuleDefinition["id"], Omit<Platf
     description: "Track obligation timelines, documents, and portfolio risk.",
     requiresAuth: true,
   },
+  documents: {
+    label: "Documents",
+    description: "Document library, linkage, and connected record visibility.",
+    requiresAuth: true,
+  },
 };
 
 const TENANT_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
@@ -46,6 +51,7 @@ const TENANT_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
   "surveys",
   "completed-leases",
   "obligations",
+  "documents",
 ];
 
 const LANDLORD_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
@@ -54,6 +60,7 @@ const LANDLORD_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
   "surveys",
   "completed-leases",
   "obligations",
+  "documents",
 ];
 
 const LANDLORD_MODULE_LABEL_OVERRIDES: Partial<Record<PlatformModuleDefinition["id"], string>> = {
@@ -61,6 +68,7 @@ const LANDLORD_MODULE_LABEL_OVERRIDES: Partial<Record<PlatformModuleDefinition["
   surveys: "Marketing",
   "completed-leases": "Lease Tracking",
   obligations: "Reporting",
+  documents: "Documents",
 };
 
 const LANDLORD_MODULE_DESCRIPTION_OVERRIDES: Partial<Record<PlatformModuleDefinition["id"], string>> = {
@@ -69,6 +77,7 @@ const LANDLORD_MODULE_DESCRIPTION_OVERRIDES: Partial<Record<PlatformModuleDefini
   surveys: "Marketing package workflows, flyers, and listing collateral.",
   "completed-leases": "Lease execution tracking and closed package records.",
   obligations: "Property performance, expirations, and landlord reporting.",
+  documents: "Document intelligence, linkage, and building-level file context.",
 };
 
 export const DEFAULT_PLATFORM_MODULE_ID_BY_MODE: Record<RepresentationMode, PlatformModuleDefinition["id"]> = {

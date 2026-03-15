@@ -1,11 +1,11 @@
 const FAQ_ITEMS = [
   {
-    q: "Where should I start in each workspace?",
-    a: "Every client or building workspace now leads with one primary action first. Documents, analyses, surveys, lease abstracts, deals, and obligations all open from that workspace shell.",
+    q: "Where should I start in each module?",
+    a: "Each module still has its own destination, but the top of the page now shows connected items, next actions, AI suggestions, and workflow links so you can see what belongs together.",
   },
   {
     q: "Do uploads still go to the same client library?",
-    a: "Yes. Files dropped inside a workspace still save into the active document library and then feed the relevant workflow automatically.",
+    a: "Yes. Files dropped inside a module still save into the active client document library and then feed the relevant workflow automatically.",
   },
   {
     q: "Where are advanced controls now?",
@@ -30,8 +30,8 @@ export default function DocsPage() {
             <p className="heading-kicker">Docs</p>
             <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Platform Guide</h1>
             <p className="body-lead max-w-3xl">
-              The CRE Model is structured around guided workflows. Each workspace surfaces one primary action first,
-              then reveals deeper controls only when you need them.
+              The CRE Model keeps its module structure, but now makes relationships between CRM, Surveys, Financial
+              Analyses, Lease Abstracts, Obligations, and Documents much easier to understand.
             </p>
           </div>
 
@@ -40,7 +40,7 @@ export default function DocsPage() {
               <p className="heading-kicker">Primary Action</p>
               <h2 className="text-xl text-white">Start Here</h2>
               <p className="text-sm sm:text-base text-slate-300">
-                Workspace tabs guide the primary action first. Documents, analyses, surveys, lease abstracts, and obligations begin with intake. Deals begin with pipeline creation or review.
+                Each module leads with one clear action first. Connected-item panels, flow indicators, and summary strips help you move to the next relevant module without getting lost.
               </p>
             </article>
             <article className="surface-card p-5 space-y-2">
@@ -60,38 +60,38 @@ export default function DocsPage() {
           </section>
 
           <section className="space-y-4">
-            <h2 className="heading-section">Workspace Pattern</h2>
+            <h2 className="heading-section">Module Pattern</h2>
             <div className="grid gap-4 lg:grid-cols-2">
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Client Workspace</h3>
+                <h3 className="text-lg text-white">CRM and Deals</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>Start with Overview, Deals, Documents, or Obligations.</li>
-                  <li>Open Market Survey or Analyses only when the workflow needs it.</li>
-                  <li>Export after review instead of from the first screen.</li>
+                  <li>Start with the company, relationship, deal stage, and next follow-up.</li>
+                  <li>Use connected-item counts to jump into Surveys, Analyses, Lease Abstracts, Obligations, or Documents.</li>
+                  <li>Track expirations, buildings, suites, and linked documents without leaving the CRM context.</li>
                 </ol>
               </article>
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Building Workspace</h3>
+                <h3 className="text-lg text-white">Surveys and Analyses</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>Start from Overview, Tenants, Availabilities, or Deals.</li>
-                  <li>Use Documents and Insights as supporting layers, not separate products.</li>
-                  <li>Keep listing, lease, and reporting workflows inside one building shell.</li>
+                  <li>Surveys connect market options, flyers, and floorplans back to the active relationship and deal.</li>
+                  <li>Financial Analyses connect proposals and lease terms into pricing comparison and negotiation support.</li>
+                  <li>Flow indicators show the path from client to survey to analysis to lease.</li>
                 </ol>
               </article>
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Progressive Disclosure</h3>
+                <h3 className="text-lg text-white">Lease Abstracts, Obligations, and Documents</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>See only the essential workflow first.</li>
-                  <li>Open detail editors, tables, and associations when needed.</li>
-                  <li>Use AI and exports after the core workflow is clean.</li>
+                  <li>Lease files feed abstracts, obligations, and the document hub together.</li>
+                  <li>Expiration timelines and notice signals stay visible near the top of the module.</li>
+                  <li>Document linkage panels show where each file is already being used.</li>
                 </ol>
               </article>
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Shared Architecture</h3>
+                <h3 className="text-lg text-white">Relationship Intelligence</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>Document intelligence, AI orchestration, auth, exports, and settings remain shared.</li>
-                  <li>The experience adapts by representation mode and workspace context.</li>
-                  <li>You keep one platform, not two disconnected products.</li>
+                  <li>Markets, submarkets, buildings, floors, suites, companies, and expirations are surfaced visually.</li>
+                  <li>Next Actions and AI Suggestions turn relationship context into guided workflow steps.</li>
+                  <li>The architecture stays shared while the UI makes cross-module relationships obvious.</li>
                 </ol>
               </article>
             </div>

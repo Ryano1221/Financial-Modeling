@@ -4,13 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  getPlatformModulesForMode,
+  resolveActivePlatformModule,
+} from "@/lib/platform/module-registry";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { representationModeLabel } from "@/lib/workspace/representation-mode";
-import {
-  getPrimaryWorkspaceNavForMode,
-  resolveNavToWorkspaceTab,
-  resolveWorkspaceTab,
-} from "@/lib/platform/workspace-navigation";
 
 function truncateLabel(value: string, maxChars: number): string {
   const clean = String(value || "").trim();
@@ -47,13 +46,12 @@ export function TopNav() {
   // Keep exported report and share routes presentation-only (no app chrome).
   if (pathname?.startsWith("/report") || pathname?.endsWith("/share")) return null;
 
-  const rawWorkspace = String(searchParams?.get("workspace") || "").trim().toLowerCase();
-  const rawNav = String(searchParams?.get("nav") || "").trim().toLowerCase();
-  const primaryNavItems = getPrimaryWorkspaceNavForMode(representationMode);
-  const activeWorkspaceTab = resolveWorkspaceTab(rawWorkspace, representationMode);
-  const navTargetTab = resolveNavToWorkspaceTab(rawNav, representationMode);
-  const activeNavId =
-    primaryNavItems.find((item) => item.targetTab === (navTargetTab || activeWorkspaceTab))?.id || primaryNavItems[0]?.id;
+  const rawModule = String(searchParams?.get("module") || "").trim().toLowerCase();
+  const hasExplicitModule = rawModule.length > 0;
+  const platformModules = getPlatformModulesForMode(representationMode);
+  const activeModule = hasExplicitModule
+    ? resolveActivePlatformModule(rawModule, Boolean(session), representationMode)
+    : null;
   const accountTabActive = pathname?.startsWith("/account");
   const syncTime =
     cloudLastSyncedAt && Number.isFinite(new Date(cloudLastSyncedAt).getTime())
@@ -118,43 +116,42 @@ export function TopNav() {
               ) : null}
               <div className="lg:hidden min-w-[190px]">
                 <select
-                  aria-label="Workspace navigation"
+                  aria-label="Module navigation"
                   className="input-premium !h-9 !py-1.5 !text-xs"
-                  value={activeNavId || ""}
+                  value={activeModule || ""}
                   onChange={(event) => {
-                    const navId = asText(event.target.value);
-                    const item = primaryNavItems.find((entry) => entry.id === navId);
-                    if (!item) return;
-                    router.push(`/?nav=${encodeURIComponent(item.id)}&workspace=${encodeURIComponent(item.targetTab)}`);
+                    const moduleId = asText(event.target.value);
+                    if (!moduleId) return;
+                    router.push(`/?module=${encodeURIComponent(moduleId)}`);
                   }}
                 >
-                  <option value="">Open workspace</option>
-                  {primaryNavItems.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label}
+                  <option value="">Select module</option>
+                  {platformModules.map((tab) => (
+                    <option key={tab.id} value={tab.id}>
+                      {tab.label}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="hidden lg:flex items-center gap-2">
-                {primaryNavItems.map((item) => {
-                  const isActive = item.id === activeNavId;
+                {platformModules.map((tab) => {
+                  const isActive = tab.id === activeModule;
                   return (
                     <Link
-                      key={item.id}
-                      href={`/?nav=${item.id}&workspace=${item.targetTab}`}
+                      key={tab.id}
+                      href={`/?module=${tab.id}`}
                       className={`btn-premium !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
                         isActive ? "btn-premium-primary" : "btn-premium-secondary"
                       }`}
                     >
-                      {item.label}
+                      {tab.label}
                     </Link>
                   );
                 })}
               </div>
               {ready && session ? (
                 <select
-                  aria-label="Active workspace"
+                  aria-label="Active client workspace"
                   className="input-premium !h-8 !py-1 !text-[11px] max-w-[160px] xl:max-w-[190px]"
                   value={activeClientId || ""}
                   onChange={(event) => {
@@ -164,7 +161,7 @@ export function TopNav() {
                   }}
                 >
                   <option value="" disabled>
-                    Select workspace
+                    Select client
                   </option>
                   {clients.map((client) => (
                     <option key={client.id} value={client.id}>
@@ -203,24 +200,24 @@ export function TopNav() {
                   {cloudSyncLabel}
                 </div>
               ) : null}
-              {primaryNavItems.map((item) => {
-                const isActive = item.id === activeNavId;
+              {platformModules.map((tab) => {
+                const isActive = tab.id === activeModule;
                 return (
                   <Link
-                    key={item.id}
-                    href={`/?nav=${item.id}&workspace=${item.targetTab}`}
+                    key={tab.id}
+                    href={`/?module=${tab.id}`}
                     onClick={() => setMobileMenuOpen(false)}
                     className={`btn-premium text-xs ${
                       isActive ? "btn-premium-primary" : "btn-premium-secondary"
                     }`}
                   >
-                    {item.label}
+                    {tab.label}
                   </Link>
                 );
               })}
               {ready && session ? (
                 <select
-                  aria-label="Active workspace"
+                  aria-label="Active client workspace"
                   className="input-premium !text-xs"
                   value={activeClientId || ""}
                   onChange={(event) => {
@@ -230,7 +227,7 @@ export function TopNav() {
                   }}
                 >
                   <option value="" disabled>
-                    Select workspace
+                    Select client
                   </option>
                   {clients.map((client) => (
                     <option key={client.id} value={client.id}>

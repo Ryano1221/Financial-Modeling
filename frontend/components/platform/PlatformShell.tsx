@@ -55,6 +55,8 @@ type PlatformMetricItem = {
   value: ReactNode;
   detail?: string;
   emphasis?: boolean;
+  onClick?: () => void;
+  buttonLabel?: string;
 };
 
 type PlatformMetricStripProps = {
@@ -78,6 +80,23 @@ type PlatformDisclosureProps = {
   children: ReactNode;
   defaultOpen?: boolean;
   className?: string;
+};
+
+type PlatformFlowStep = {
+  label: string;
+  detail?: string;
+  active?: boolean;
+  onClick?: () => void;
+};
+
+type PlatformFlowIndicatorProps = {
+  steps: PlatformFlowStep[];
+  className?: string;
+};
+
+type PlatformTagProps = {
+  label: string;
+  tone?: "neutral" | "accent" | "success" | "warning";
 };
 
 export function PlatformModuleTabs({
@@ -297,18 +316,22 @@ export function PlatformMetricStrip({
   return (
     <div className={`grid grid-cols-2 gap-3 ${columnsClassName} ${className}`.trim()}>
       {items.map((item) => (
-        <div
+        <button
           key={item.label}
+          type="button"
+          onClick={item.onClick}
+          disabled={!item.onClick}
           className={`border p-3 ${
             item.emphasis
               ? "border-cyan-300/35 bg-cyan-500/10"
               : "border-white/15 bg-black/20"
-          }`}
+          } ${item.onClick ? "text-left transition-colors hover:bg-white/5" : "text-left cursor-default"}`}
+          aria-label={item.buttonLabel || item.label}
         >
           <p className={`text-xs ${item.emphasis ? "text-cyan-100" : "text-slate-400"}`}>{item.label}</p>
           <div className={`mt-1 text-2xl ${item.emphasis ? "text-cyan-100" : "text-white"}`}>{item.value}</div>
           {item.detail ? <p className="mt-1 text-xs text-slate-400">{item.detail}</p> : null}
-        </div>
+        </button>
       ))}
     </div>
   );
@@ -330,6 +353,43 @@ export function PlatformStepList({ steps, className = "" }: PlatformStepListProp
       ))}
     </ol>
   );
+}
+
+export function PlatformFlowIndicator({ steps, className = "" }: PlatformFlowIndicatorProps) {
+  return (
+    <div className={`flex flex-wrap items-center gap-2 ${className}`.trim()}>
+      {steps.map((step, index) => (
+        <div key={`${step.label}-${index}`} className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={step.onClick}
+            disabled={!step.onClick}
+            className={`border px-3 py-2 text-left text-xs uppercase tracking-[0.08em] ${
+              step.active
+                ? "border-cyan-300/60 bg-cyan-500/15 text-cyan-100"
+                : "border-white/20 bg-black/20 text-slate-200"
+            } ${step.onClick ? "hover:bg-white/5 transition-colors" : "cursor-default"}`}
+          >
+            <div>{step.label}</div>
+            {step.detail ? <div className="mt-1 text-[10px] normal-case tracking-normal text-slate-400">{step.detail}</div> : null}
+          </button>
+          {index < steps.length - 1 ? <span className="text-slate-500">→</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function PlatformTag({ label, tone = "neutral" }: PlatformTagProps) {
+  const toneClass =
+    tone === "accent"
+      ? "border-cyan-300/50 bg-cyan-500/10 text-cyan-100"
+      : tone === "success"
+        ? "border-emerald-300/50 bg-emerald-500/10 text-emerald-100"
+        : tone === "warning"
+          ? "border-amber-300/50 bg-amber-500/10 text-amber-100"
+          : "border-white/20 bg-black/20 text-slate-300";
+  return <span className={`inline-flex border px-2 py-1 text-[11px] uppercase tracking-[0.08em] ${toneClass}`}>{label}</span>;
 }
 
 export function PlatformDisclosure({
