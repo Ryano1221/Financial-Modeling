@@ -47,7 +47,7 @@ export default function SecurityPage() {
               <article className="surface-card p-5 space-y-2">
                 <h3 className="text-lg text-white">Client workspace boundaries</h3>
                 <p className="text-sm sm:text-base text-slate-300">
-                  Documents, CRM records, lease abstracts, surveys, and obligations remain tied to the active client workspace to prevent cross-client leakage.
+                  Documents, CRM records, lease abstracts, surveys, and obligations remain tied to the active client workspace or building workspace to prevent cross-scope leakage.
                 </p>
               </article>
               <article className="surface-card p-5 space-y-2">
