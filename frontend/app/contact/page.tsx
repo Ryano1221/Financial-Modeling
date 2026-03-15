@@ -8,9 +8,9 @@ function isValidEmail(value: string): boolean {
 }
 
 const CONTACT_TIPS = [
-  "Include the active module and whether you were in Tenant Rep or Landlord Rep mode.",
+  "Include the active workspace tab and whether you were in Tenant Rep or Landlord Rep mode.",
   "For layout issues, include device type, browser, and screen size.",
-  "For upload issues, note whether the file was dropped on the module page or selected from the client library.",
+  "For upload issues, note whether the file was dropped in the workspace or selected from the document library.",
   "For CRM issues, include the client name and the deal stage you expected to see.",
 ];
 
@@ -127,7 +127,7 @@ export default function ContactPage() {
                   className="textarea-premium mt-1 min-h-[180px]"
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  placeholder="What happened, what you expected, and which module you were using."
+                  placeholder="What happened, what you expected, and which workspace tab you were using."
                   maxLength={5000}
                   required
                 />

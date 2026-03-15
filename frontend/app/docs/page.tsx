@@ -1,11 +1,11 @@
 const FAQ_ITEMS = [
   {
-    q: "Where should I start in each module?",
-    a: "Every major workspace now leads with one primary action first. Upload or select documents in analysis, survey, lease abstract, and obligations pages. Create the opportunity first in CRM.",
+    q: "Where should I start in each workspace?",
+    a: "Every client or building workspace now leads with one primary action first. Documents, analyses, surveys, lease abstracts, deals, and obligations all open from that workspace shell.",
   },
   {
     q: "Do uploads still go to the same client library?",
-    a: "Yes. Files dropped on a module page still save into the active client document library and then feed that module's workflow automatically.",
+    a: "Yes. Files dropped inside a workspace still save into the active document library and then feed the relevant workflow automatically.",
   },
   {
     q: "Where are advanced controls now?",
@@ -40,7 +40,7 @@ export default function DocsPage() {
               <p className="heading-kicker">Primary Action</p>
               <h2 className="text-xl text-white">Start Here</h2>
               <p className="text-sm sm:text-base text-slate-300">
-                Analysis, Surveys, Lease Abstracts, and Obligations begin with document intake. CRM begins with deal creation.
+                Workspace tabs guide the primary action first. Documents, analyses, surveys, lease abstracts, and obligations begin with intake. Deals begin with pipeline creation or review.
               </p>
             </article>
             <article className="surface-card p-5 space-y-2">
@@ -60,38 +60,38 @@ export default function DocsPage() {
           </section>
 
           <section className="space-y-4">
-            <h2 className="heading-section">Module Pattern</h2>
+            <h2 className="heading-section">Workspace Pattern</h2>
             <div className="grid gap-4 lg:grid-cols-2">
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Financial Analyses</h3>
+                <h3 className="text-lg text-white">Client Workspace</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>Upload or select lease / proposal documents.</li>
-                  <li>Review extracted terms and scenarios.</li>
-                  <li>Run analysis and export only after validation.</li>
+                  <li>Start with Overview, Deals, Documents, or Obligations.</li>
+                  <li>Open Market Survey or Analyses only when the workflow needs it.</li>
+                  <li>Export after review instead of from the first screen.</li>
                 </ol>
               </article>
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Surveys</h3>
+                <h3 className="text-lg text-white">Building Workspace</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>Upload flyers, brochures, or floorplans.</li>
-                  <li>Confirm extracted survey rows.</li>
-                  <li>Export a clean client-ready survey.</li>
+                  <li>Start from Overview, Tenants, Availabilities, or Deals.</li>
+                  <li>Use Documents and Insights as supporting layers, not separate products.</li>
+                  <li>Keep listing, lease, and reporting workflows inside one building shell.</li>
                 </ol>
               </article>
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Lease Abstracts</h3>
+                <h3 className="text-lg text-white">Progressive Disclosure</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>Upload the executed lease or amendment stack.</li>
-                  <li>Confirm controlling terms and overrides.</li>
-                  <li>Export the abstract package.</li>
+                  <li>See only the essential workflow first.</li>
+                  <li>Open detail editors, tables, and associations when needed.</li>
+                  <li>Use AI and exports after the core workflow is clean.</li>
                 </ol>
               </article>
               <article className="surface-card p-5 space-y-3">
-                <h3 className="text-lg text-white">Obligations and CRM</h3>
+                <h3 className="text-lg text-white">Shared Architecture</h3>
                 <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
-                  <li>Create the deal or ingest the next obligation document.</li>
-                  <li>Review risk, stage, and next steps.</li>
-                  <li>Open detailed editors only when necessary.</li>
+                  <li>Document intelligence, AI orchestration, auth, exports, and settings remain shared.</li>
+                  <li>The experience adapts by representation mode and workspace context.</li>
+                  <li>You keep one platform, not two disconnected products.</li>
                 </ol>
               </article>
             </div>
