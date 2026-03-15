@@ -1,43 +1,23 @@
 const FAQ_ITEMS = [
   {
-    q: "Why did extraction return warnings?",
-    a: "Warnings mean one or more terms were low confidence or missing in the source document. Review the scenario editor fields and confirm values before exporting.",
+    q: "Where should I start in each module?",
+    a: "Every major workspace now leads with one primary action first. Upload or select documents in analysis, survey, lease abstract, and obligations pages. Create the opportunity first in CRM.",
   },
   {
-    q: "Can I upload multiple files at once?",
-    a: "Yes. Drag and drop multiple PDF, DOCX, or DOC files in one action. Each file is processed into its own scenario for side-by-side comparison.",
+    q: "Do uploads still go to the same client library?",
+    a: "Yes. Files dropped on a module page still save into the active client document library and then feed that module's workflow automatically.",
   },
   {
-    q: "Why do I see fallback values?",
-    a: "When a document does not clearly contain a required term, the app keeps processing and applies safe defaults so you can continue. Update those fields before final exports.",
+    q: "Where are advanced controls now?",
+    a: "Advanced fields, editors, document associations, and full tables are still available, but they live in expandable workflow sections so the first screen is easier to understand.",
   },
   {
-    q: "Why is my logo not showing in exports?",
-    a: "Sign in first, then upload your brokerage logo in Branding settings. If no logo is saved, theCREmodel branding is used automatically.",
+    q: "How do CRM stages work?",
+    a: "Open Account > Settings > CRM Settings for the active client. Stage order, stage automation, and default Deals view are managed there.",
   },
   {
-    q: "How do CRM stages fit on one screen?",
-    a: "On large monitors, the CRM board expands columns to use the available width so stage lanes can be reviewed at once. On smaller screens, the board keeps horizontal scroll so cards remain readable.",
-  },
-  {
-    q: "Where do I configure deal stages?",
-    a: "Open Account dashboard, switch to Settings, then open CRM Settings for the active client. You can add, reorder, remove, and load tenant/landlord templates.",
-  },
-  {
-    q: "What CRM settings can I control per client?",
-    a: "In Account > Settings > CRM Settings you can manage stage order, toggle document-driven stage automation, and set the default Deals view (board, table, timeline, or client grouped).",
-  },
-  {
-    q: "Where do I choose Tenant Rep vs Landlord Rep mode?",
-    a: "Mode selection is required during first-time onboarding and can be changed later in Account settings. This mode changes dashboard defaults, navigation emphasis, pipeline templates, AI suggestions, and export orientation.",
-  },
-  {
-    q: "Where should I upload files in workspace modules?",
-    a: "Use the active workspace tab. Files dropped anywhere on that tab still save into the same client library, and they also trigger that module's workflow automatically.",
-  },
-  {
-    q: "Can survey entries show map pins?",
-    a: "Yes. The Surveys workspace includes a location map that drops a pin for each entry with a mappable address.",
+    q: "What changes between Tenant Rep and Landlord Rep mode?",
+    a: "The architecture stays shared, but module emphasis, defaults, terminology, stage templates, AI guidance, and dashboards adapt to the selected representation mode.",
   },
 ];
 
@@ -46,133 +26,99 @@ export default function DocsPage() {
     <main className="relative z-10 section-shell">
       <div className="app-container max-w-5xl">
         <section className="section-panel p-6 sm:p-10 space-y-8">
-            <div className="space-y-3">
-              <p className="heading-kicker">Docs</p>
-              <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Using The CRE Model</h1>
-              <p className="body-lead max-w-3xl">
-                The CRE Model is a client-scoped brokerage operating system that supports both Tenant Rep and
-                Landlord Rep workflows on one shared architecture.
+          <div className="space-y-3">
+            <p className="heading-kicker">Docs</p>
+            <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Platform Guide</h1>
+            <p className="body-lead max-w-3xl">
+              The CRE Model is structured around guided workflows. Each workspace surfaces one primary action first,
+              then reveals deeper controls only when you need them.
+            </p>
+          </div>
+
+          <section className="grid gap-4 lg:grid-cols-3">
+            <article className="surface-card p-5 space-y-2">
+              <p className="heading-kicker">Primary Action</p>
+              <h2 className="text-xl text-white">Start Here</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Analysis, Surveys, Lease Abstracts, and Obligations begin with document intake. CRM begins with deal creation.
               </p>
+            </article>
+            <article className="surface-card p-5 space-y-2">
+              <p className="heading-kicker">Workflow</p>
+              <h2 className="text-xl text-white">Review Second</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Once intake is complete, open the workflow sections for review tables, editors, document links, and timeline management.
+              </p>
+            </article>
+            <article className="surface-card p-5 space-y-2">
+              <p className="heading-kicker">Output</p>
+              <h2 className="text-xl text-white">Export Last</h2>
+              <p className="text-sm sm:text-base text-slate-300">
+                Export controls stay available, but the platform now encourages validation before PDF, Excel, or share-link delivery.
+              </p>
+            </article>
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="heading-section">Module Pattern</h2>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <article className="surface-card p-5 space-y-3">
+                <h3 className="text-lg text-white">Financial Analyses</h3>
+                <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
+                  <li>Upload or select lease / proposal documents.</li>
+                  <li>Review extracted terms and scenarios.</li>
+                  <li>Run analysis and export only after validation.</li>
+                </ol>
+              </article>
+              <article className="surface-card p-5 space-y-3">
+                <h3 className="text-lg text-white">Surveys</h3>
+                <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
+                  <li>Upload flyers, brochures, or floorplans.</li>
+                  <li>Confirm extracted survey rows.</li>
+                  <li>Export a clean client-ready survey.</li>
+                </ol>
+              </article>
+              <article className="surface-card p-5 space-y-3">
+                <h3 className="text-lg text-white">Lease Abstracts</h3>
+                <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
+                  <li>Upload the executed lease or amendment stack.</li>
+                  <li>Confirm controlling terms and overrides.</li>
+                  <li>Export the abstract package.</li>
+                </ol>
+              </article>
+              <article className="surface-card p-5 space-y-3">
+                <h3 className="text-lg text-white">Obligations and CRM</h3>
+                <ol className="list-decimal pl-5 text-sm sm:text-base text-slate-300 space-y-2">
+                  <li>Create the deal or ingest the next obligation document.</li>
+                  <li>Review risk, stage, and next steps.</li>
+                  <li>Open detailed editors only when necessary.</li>
+                </ol>
+              </article>
             </div>
+          </section>
 
-            <section className="space-y-3">
-              <h2 className="heading-section">Brokerage OS Modules</h2>
-              <ul className="space-y-2 text-sm sm:text-base text-slate-300 list-disc pl-5">
-                <li>
-                  <strong>CRM (Deals):</strong> Pipeline lifecycle with stages, timeline activity, tasks, linked documents, and workspace context.
-                </li>
-                <li>
-                  <strong>Surveys:</strong> Structured survey entries, occupancy cost calculations, and client share outputs.
-                </li>
-                <li>
-                  <strong>Financial Analyses:</strong> Lease comparison and sublease recovery workflows using client-scoped source documents.
-                </li>
-                <li>
-                  <strong>Lease Abstract:</strong> Executed lease/amendment parsing, abstract generation, and export output.
-                </li>
-                <li>
-                  <strong>Obligations:</strong> Lease obligation tracking, timeline visibility, and portfolio metrics.
-                </li>
-              </ul>
-              <p className="text-sm sm:text-base text-slate-300">
-                In <strong>Tenant Rep</strong> mode, emphasis is on client requirements, analyses, surveys, lease abstracts, and obligations.
-                In <strong>Landlord Rep</strong> mode, emphasis shifts to availabilities, listing marketing, inquiry/tour/proposal pipeline, lease tracking, and reporting.
-              </p>
-            </section>
+          <section className="space-y-3">
+            <h2 className="heading-section">Representation Mode</h2>
+            <p className="text-sm sm:text-base text-slate-300">
+              Tenant Rep mode emphasizes clients, deals, analyses, surveys, lease abstracts, and obligations.
+              Landlord Rep mode emphasizes properties, availabilities, proposals, tours, and reporting.
+            </p>
+            <p className="text-sm sm:text-base text-slate-300">
+              The design system, auth, document intelligence, AI orchestration, and export architecture remain shared.
+            </p>
+          </section>
 
-            <section className="space-y-3">
-              <h2 className="heading-section">Upload and Analysis Flow</h2>
-              <ol className="space-y-2 text-sm sm:text-base text-slate-300 list-decimal pl-5">
-                <li>Upload one or more lease or proposal files (PDF, DOCX, or DOC).</li>
-                <li>Extraction reads terms and maps them into scenario fields.</li>
-                <li>Review the scenario editor and confirm or adjust values.</li>
-                <li>Compare options in the matrix, charts, and scenario detail blocks.</li>
-                <li>Export Excel or PDF once all scenarios are validated.</li>
-              </ol>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Rent Schedule Normalization</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Rent terms from leases, LOIs, proposals, and amendments are normalized into month-based periods so every
-                option can be analyzed on the same timeline. If periods overlap, are partial, or missing details, the
-                app flags them for review and preserves the best available interpretation instead of blocking workflow.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">CRM Pipeline Layout</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                The CRM pipeline is responsive by design. Desktop layouts prioritize showing all stage columns in one
-                view, while smaller displays maintain smooth horizontal scrolling to preserve deal-card readability.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                Stage definitions are configured in Account Settings under CRM Settings and then applied to the Deals module.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                Use the Account page <strong>Settings</strong> area, then open <strong>CRM Settings</strong> to edit stage order, default CRM view, and
-                document-driven stage automation for the active client.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Unified Upload Flow</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Client workspaces use one shared client-scoped document library. You can upload in Document Center, or
-                drop files anywhere on the active workspace tab. In both cases the file stays with the active client,
-                and tab-based drops also feed the workflow for that specific module.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">AI Command Center</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                The Brokerage OS Command Center runs structured actions across shared entities, workflows, and documents.
-                Use natural language prompts (for example, compare proposals or create workflow tasks), then review
-                planned tools, execution results, and audit entries.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Survey Location Map</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Survey entries are plotted on a map using building and address fields. Click any map pin to jump to the
-                corresponding survey row and edit details.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Branding Instructions</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Open <strong>Branding settings</strong>, upload your brokerage logo (PNG, SVG, or JPG), and save your
-                brokerage name. Saved branding is scoped to your account and is reused for future PDF exports.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Export Instructions</h2>
-              <ul className="space-y-2 text-sm sm:text-base text-slate-300 list-disc pl-5">
-                <li>
-                  <strong>Excel:</strong> Exports the scenario comparison workbook with financial outputs and assumptions.
-                </li>
-                <li>
-                  <strong>PDF:</strong> Exports the Lease Economics Comparison Deck with cover, matrix, visuals, abstracts,
-                  scenario details, and disclosures.
-                </li>
-              </ul>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">FAQ</h2>
-              <div className="space-y-3">
-                {FAQ_ITEMS.map((item) => (
-                  <article key={item.q} className="surface-card p-4 sm:p-5">
-                    <h3 className="text-base sm:text-lg font-semibold text-white">{item.q}</h3>
-                    <p className="mt-2 text-sm sm:text-base text-slate-300">{item.a}</p>
-                  </article>
-                ))}
-              </div>
-            </section>
+          <section className="space-y-3">
+            <h2 className="heading-section">FAQ</h2>
+            <div className="space-y-3">
+              {FAQ_ITEMS.map((item) => (
+                <article key={item.q} className="surface-card p-4 sm:p-5">
+                  <h3 className="text-base sm:text-lg font-semibold text-white">{item.q}</h3>
+                  <p className="mt-2 text-sm sm:text-base text-slate-300">{item.a}</p>
+                </article>
+              ))}
+            </div>
+          </section>
         </section>
       </div>
     </main>

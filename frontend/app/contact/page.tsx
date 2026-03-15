@@ -7,6 +7,13 @@ function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
 }
 
+const CONTACT_TIPS = [
+  "Include the active module and whether you were in Tenant Rep or Landlord Rep mode.",
+  "For layout issues, include device type, browser, and screen size.",
+  "For upload issues, note whether the file was dropped on the module page or selected from the client library.",
+  "For CRM issues, include the client name and the deal stage you expected to see.",
+];
+
 export default function ContactPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -68,37 +75,26 @@ export default function ContactPage() {
 
   return (
     <main className="relative z-10 section-shell">
-      <div className="app-container max-w-4xl">
+      <div className="app-container max-w-5xl">
         <section className="section-panel p-6 sm:p-10 space-y-8">
-            <div className="space-y-3">
-              <p className="heading-kicker">Contact</p>
-              <h1 className="heading-display !text-[clamp(2rem,5vw,3.5rem)]">Contact Support</h1>
-              <p className="body-lead">
-                Email support directly at{" "}
-                <a className="underline decoration-white/40 hover:decoration-white" href="mailto:info@thecremodel.com">
-                  info@thecremodel.com
-                </a>{" "}
-                or send a message below.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For workspace or CRM layout issues, include your screen size, browser, representation mode
-                (Tenant Rep or Landlord Rep), and current module.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For deal stage configuration issues, include the active client name and confirm changes were made in
-                Account dashboard Settings {" > "} CRM Settings (stage order, automation toggle, and default view).
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For upload issues, include the active client name and confirm whether files were dropped in Document Center,
-                the Brokerage OS Command Center, or directly on a specific workspace tab.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For AI workflow issues, include the command you ran and the module where you executed it.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For map pin issues, include the survey building/address values so we can diagnose geocoding quickly.
-              </p>
-            </div>
+          <div className="space-y-3">
+            <p className="heading-kicker">Contact</p>
+            <h1 className="heading-display !text-[clamp(2rem,5vw,3.5rem)]">Contact Support</h1>
+            <p className="body-lead max-w-3xl">
+              Use the form below or email <a className="underline decoration-white/40 hover:decoration-white" href="mailto:info@thecremodel.com">info@thecremodel.com</a>.
+            </p>
+          </div>
+
+          <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+            <article className="surface-card p-5 space-y-3">
+              <p className="heading-kicker">Before You Send</p>
+              <h2 className="text-xl text-white">Helpful details</h2>
+              <ul className="list-disc pl-5 text-sm sm:text-base text-slate-300 space-y-2">
+                {CONTACT_TIPS.map((tip) => (
+                  <li key={tip}>{tip}</li>
+                ))}
+              </ul>
+            </article>
 
             <form onSubmit={onSubmit} className="surface-card p-4 sm:p-6 space-y-4">
               <label className="block">
@@ -128,10 +124,10 @@ export default function ContactPage() {
               <label className="block">
                 <span className="text-xs sm:text-sm text-slate-300">Message</span>
                 <textarea
-                  className="textarea-premium mt-1 min-h-[160px]"
+                  className="textarea-premium mt-1 min-h-[180px]"
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  placeholder="How can we help?"
+                  placeholder="What happened, what you expected, and which module you were using."
                   maxLength={5000}
                   required
                 />
@@ -144,6 +140,7 @@ export default function ContactPage() {
               {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
               {error ? <p className="text-sm text-red-300">{error}</p> : null}
             </form>
+          </section>
         </section>
       </div>
     </main>

@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
+import {
+  PlatformDisclosure,
+  PlatformMetricStrip,
+  PlatformPanel,
+  PlatformSection,
+  PlatformStepList,
+} from "@/components/platform/PlatformShell";
 import { getDisplayErrorMessage } from "@/lib/api";
 import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
@@ -343,6 +349,11 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
   }, [selected, documents]);
 
   const leaseOptions = useMemo(() => documents.filter((doc) => doc.kind === "lease"), [documents]);
+  const amendmentCount = useMemo(() => documents.filter((doc) => doc.kind === "amendment").length, [documents]);
+  const reviewTaskCount = useMemo(
+    () => documents.reduce((sum, doc) => sum + doc.reviewTasks.length, 0),
+    [documents],
+  );
 
   const updateSelectedCanonical = useCallback((key: keyof BackendCanonicalLease, value: string) => {
     if (!selected) return;
@@ -520,8 +531,8 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
   return (
     <PlatformSection
       kicker="Lease Abstract"
-      title="Completed Lease Abstraction"
-      description="Review executed leases and amendments for this client, confirm controlling terms, and export polished abstract outputs."
+      title="Lease Abstract Workflow"
+      description="Start with one executed lease or amendment, confirm the controlling terms, and export the abstract only after the review stack is clean."
       headerAlign="center"
       actions={
         <div className="flex flex-wrap justify-center gap-2">
@@ -552,493 +563,494 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
         </div>
       }
     >
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <PlatformPanel kicker="Intake" title="Lease Document Intake" className="lg:col-span-4">
-          <div className="border border-dashed border-white/20 bg-black/20 px-4 py-8 text-center">
-            <p className="heading-kicker mb-2">Unified Document Intake</p>
-            <p className="text-sm text-slate-200">
-              Drop lease files anywhere on this tab to save them to this client and load them into the lease abstract stack.
-            </p>
-            <p className="text-xs text-slate-400 mt-2">
-              Amendment files can then be linked to a base lease for controlling-term overrides.
-            </p>
-          </div>
-          <p className="text-xs text-slate-400 mt-3">{status}</p>
-          <div className="mt-3">
-            <ClientDocumentPicker
-              buttonLabel="Select Existing Lease/Amendment"
-              allowedTypes={["leases", "amendments", "redlines", "other"]}
-              onSelectDocument={(doc) => {
-                void onSelectExistingDocument(doc);
-              }}
-            />
-          </div>
-          {error ? <p className="text-xs text-red-300 mt-2">{error}</p> : null}
-        </PlatformPanel>
-
-        <PlatformPanel kicker="Repository" title="Document Stack" className="lg:col-span-8 min-w-0">
-          <div className="space-y-3 md:hidden">
-            {documents.length === 0 ? (
-              <p className="py-4 text-sm text-slate-400">No documents yet.</p>
-            ) : (
-              documents.map((doc) => {
-                const selectedRow = doc.id === selected?.id;
-                return (
-                  <div key={doc.id} className={`border p-3 space-y-2 ${selectedRow ? "border-cyan-400/50 bg-cyan-500/10" : "border-white/15 bg-black/20"}`}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(doc.id)}
-                      className={`text-left text-sm break-words ${selectedRow ? "text-cyan-100" : "text-slate-100"}`}
-                    >
-                      {doc.fileName}
-                    </button>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <p className="text-slate-400">Type: <span className="text-slate-200">{doc.kind === "amendment" ? "Amendment" : "Lease"}</span></p>
-                      <p className="text-slate-400">Uploaded: <span className="text-slate-200">{formatDate(doc.uploadedAtIso.slice(0, 10))}</span></p>
-                      <p className="text-slate-400">Review: <span className={doc.reviewTasks.length > 0 ? "text-amber-200" : "text-emerald-200"}>{doc.reviewTasks.length > 0 ? `${doc.reviewTasks.length} task(s)` : "Ready"}</span></p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400 mb-1">Link to Lease</p>
-                      {doc.kind === "amendment" ? (
-                        <select
-                          value={doc.linkedLeaseId || ""}
-                          onChange={(event) => updateDocumentMeta(doc.id, { linkedLeaseId: event.target.value || undefined })}
-                          className="input-premium !py-1.5 !px-2 text-xs w-full"
-                        >
-                          <option value="">Unlinked</option>
-                          {leaseOptions.map((lease) => (
-                            <option key={lease.id} value={lease.id}>
-                              {lease.fileName}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <p className="text-xs text-slate-400">Base lease</p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-          <div className="hidden md:block w-full overflow-x-auto">
-            <table className="w-full min-w-[980px] border-collapse text-sm whitespace-nowrap">
-              <thead>
-                <tr className="border-b border-white/20">
-                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Document</th>
-                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Type</th>
-                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Uploaded</th>
-                  <th className="text-left py-2 pr-3 text-slate-300 font-medium">Link to Lease</th>
-                  <th className="text-left py-2 text-slate-300 font-medium">Review</th>
-                </tr>
-              </thead>
-              <tbody>
-                {documents.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-slate-400">
-                      No documents yet.
-                    </td>
-                  </tr>
-                ) : (
-                  documents.map((doc) => {
-                    const selectedRow = doc.id === selected?.id;
-                    return (
-                      <tr key={doc.id} className={`border-b border-white/10 ${selectedRow ? "bg-cyan-500/10" : ""}`}>
-                        <td className="py-2 pr-3">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedId(doc.id)}
-                            className={`text-left ${selectedRow ? "text-cyan-100" : "text-slate-100"} hover:text-cyan-100`}
-                          >
-                            {doc.fileName}
-                          </button>
-                        </td>
-                        <td className="py-2 pr-3 text-slate-200">{doc.kind === "amendment" ? "Amendment" : "Lease"}</td>
-                        <td className="py-2 pr-3 text-slate-300">{formatDate(doc.uploadedAtIso.slice(0, 10))}</td>
-                        <td className="py-2 pr-3">
-                          {doc.kind === "amendment" ? (
-                            <select
-                              value={doc.linkedLeaseId || ""}
-                              onChange={(event) => updateDocumentMeta(doc.id, { linkedLeaseId: event.target.value || undefined })}
-                              className="input-premium !py-1 !px-2 text-xs"
-                            >
-                              <option value="">Unlinked</option>
-                              {leaseOptions.map((lease) => (
-                                <option key={lease.id} value={lease.id}>
-                                  {lease.fileName}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="text-slate-400">Base lease</span>
-                          )}
-                        </td>
-                        <td className="py-2">
-                          {doc.reviewTasks.length > 0 ? (
-                            <span className="text-amber-200">{doc.reviewTasks.length} task(s)</span>
-                          ) : (
-                            <span className="text-emerald-200">Ready</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </PlatformPanel>
-
-        <PlatformPanel kicker="Review" title="Extraction Review" className="lg:col-span-5">
-          {!selected ? (
-            <p className="text-sm text-slate-400">Select a document to review extracted fields.</p>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <label className="text-xs text-slate-400">
-                  Kind
-                  <select
-                    value={selected.kind}
-                    onChange={(e) => updateDocumentMeta(selected.id, { kind: e.target.value as CompletedLeaseDocumentKind })}
-                    className="input-premium mt-1 !py-2"
-                  >
-                    <option value="lease">Lease</option>
-                    <option value="amendment">Amendment</option>
-                  </select>
-                </label>
-                <label className="text-xs text-slate-400">
-                  RSF
-                  <input
-                    type="number"
-                    value={asNumber(selected.canonical.rsf)}
-                    onChange={(e) => updateSelectedCanonical("rsf", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Commencement
-                  <input
-                    type="date"
-                    value={String(selected.canonical.commencement_date || "")}
-                    onChange={(e) => updateSelectedCanonical("commencement_date", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Expiration
-                  <input
-                    type="date"
-                    value={String(selected.canonical.expiration_date || "")}
-                    onChange={(e) => updateSelectedCanonical("expiration_date", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Lease Type
-                  <input
-                    type="text"
-                    value={String(selected.canonical.lease_type || "")}
-                    onChange={(e) => updateSelectedCanonical("lease_type", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Parking Count
-                  <input
-                    type="number"
-                    value={asNumber(selected.canonical.parking_count)}
-                    onChange={(e) => updateSelectedCanonical("parking_count", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Tenant
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.tenant_name)}
-                    onChange={(e) => updateSelectedCanonical("tenant_name", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Landlord
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.landlord_name)}
-                    onChange={(e) => updateSelectedCanonical("landlord_name", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Building
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.building_name)}
-                    onChange={(e) => updateSelectedCanonical("building_name", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Address
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.address)}
-                    onChange={(e) => updateSelectedCanonical("address", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Suite
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.suite)}
-                    onChange={(e) => updateSelectedCanonical("suite", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Floor
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.floor)}
-                    onChange={(e) => updateSelectedCanonical("floor", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Rent Commencement
-                  <input
-                    type="date"
-                    value={asText(selected.canonical.rent_commencement_date)}
-                    onChange={(e) => updateSelectedCanonical("rent_commencement_date", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Term (months)
-                  <input
-                    type="number"
-                    value={asNumber(selected.canonical.term_months)}
-                    onChange={(e) => updateSelectedCanonical("term_months", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Free Rent (months)
-                  <input
-                    type="number"
-                    value={asNumber(selected.canonical.free_rent_months)}
-                    onChange={(e) => updateSelectedCanonical("free_rent_months", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  TI Allowance ($/SF)
-                  <input
-                    type="number"
-                    value={asNumber(selected.canonical.ti_allowance_psf)}
-                    onChange={(e) => updateSelectedCanonical("ti_allowance_psf", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Parking Rate (Monthly)
-                  <input
-                    type="number"
-                    value={asNumber(selected.canonical.parking_rate_monthly)}
-                    onChange={(e) => updateSelectedCanonical("parking_rate_monthly", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  OpEx Structure
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.expense_structure_type)}
-                    onChange={(e) => updateSelectedCanonical("expense_structure_type", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Base OpEx ($/SF/YR)
-                  <input
-                    type="number"
-                    value={asNumber(selected.canonical.opex_psf_year_1)}
-                    onChange={(e) => updateSelectedCanonical("opex_psf_year_1", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Deposit
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.security_deposit)}
-                    onChange={(e) => updateSelectedCanonical("security_deposit", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400">
-                  Guaranty
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.guaranty)}
-                    onChange={(e) => updateSelectedCanonical("guaranty", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400 md:col-span-2">
-                  Options
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.options || selected.canonical.renewal_options)}
-                    onChange={(e) => updateSelectedCanonical("options", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-                <label className="text-xs text-slate-400 md:col-span-2">
-                  Notice Dates
-                  <input
-                    type="text"
-                    value={asText(selected.canonical.notice_dates)}
-                    onChange={(e) => updateSelectedCanonical("notice_dates", e.target.value)}
-                    className="input-premium mt-1 !py-2"
-                  />
-                </label>
-              </div>
-
-              <div className="border border-white/10 bg-black/25 p-3">
-                <p className="text-xs text-slate-400 uppercase tracking-[0.08em] mb-2">Base Rent Schedule + Escalations</p>
-                <p className="text-xs text-slate-200">{getRentScheduleSummary(selected.canonical)}</p>
-                <p className="text-xs text-slate-400 mt-1">Estimated escalation: {formatPercent(estimateEscalationPct(selected.canonical))}</p>
-              </div>
-
-              {selected.extractionSummary ? (
-                <div className="border border-white/10 bg-black/25 p-3">
-                  <p className="text-xs text-slate-400 uppercase tracking-[0.08em]">Document classification</p>
-                  <p className="text-sm text-slate-100 mt-1">{selected.extractionSummary.document_type_detected || "unknown"}</p>
-                  {selected.extractionSummary.sections_searched.length > 0 ? (
-                    <p className="text-xs text-slate-400 mt-1">Sections searched: {selected.extractionSummary.sections_searched.join(", ")}</p>
-                  ) : null}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <div className="space-y-4 xl:col-span-8">
+          <PlatformPanel kicker="Primary Action" title="Upload or select the executed lease stack">
+            <div className="space-y-4">
+              <PlatformStepList
+                steps={[
+                  {
+                    title: "Add the executed lease or amendment",
+                    description: "Drop files on this tab or pull an existing client document into the abstract stack.",
+                  },
+                  {
+                    title: "Link amendments to the base lease",
+                    description: "Use the stack review below to tell the system which lease each amendment should override.",
+                  },
+                  {
+                    title: "Export when the controlling abstract is clean",
+                    description: "Generate Excel, PDF, or a share link once key fields and override notes are confirmed.",
+                  },
+                ]}
+              />
+              <div className="flex flex-col gap-3 border border-dashed border-white/20 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm text-white">Use one intake surface for this page.</p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    Files dropped here stay with the active client and load directly into the lease abstract stack.
+                  </p>
                 </div>
-              ) : null}
-
-              {selected.reviewTasks.length > 0 ? (
-                <div className="border border-amber-500/40 bg-amber-500/10 p-3">
-                  <p className="text-xs text-amber-100 uppercase tracking-[0.08em] mb-1">Needs Review</p>
-                  <ul className="text-xs text-amber-100/90 space-y-1">
-                    {selected.reviewTasks.slice(0, 8).map((task, idx) => (
-                      <li key={`${task.field_path}-${idx}`}>
-                        <strong>{task.field_path}:</strong> {task.message}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+                <ClientDocumentPicker
+                  buttonLabel="Select Existing Lease/Amendment"
+                  allowedTypes={["leases", "amendments", "redlines", "other"]}
+                  onSelectDocument={(doc) => {
+                    void onSelectExistingDocument(doc);
+                  }}
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-slate-400">{status}</p>
+                {error ? <p className="text-xs text-red-300">{error}</p> : null}
+              </div>
             </div>
-          )}
-        </PlatformPanel>
+          </PlatformPanel>
 
-        <PlatformPanel kicker="Abstract" title="Controlling Lease Abstract" className="lg:col-span-7">
-          {!controllingAbstract ? (
-            <p className="text-sm text-slate-400">Upload documents to build the controlling abstract.</p>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Tenant</p>
-                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.tenant_name) || "-"}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Landlord</p>
-                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.landlord_name) || "-"}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Premises</p>
-                  <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.premises_name || controllingAbstract.controllingCanonical.building_name || "-")}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Address</p>
-                  <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.address || "-")}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Commencement</p>
-                  <p className="text-sm text-white">{formatDate(String(controllingAbstract.controllingCanonical.commencement_date || ""))}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Expiration</p>
-                  <p className="text-sm text-white">{formatDate(String(controllingAbstract.controllingCanonical.expiration_date || ""))}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">RSF</p>
-                  <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.rsf).toLocaleString("en-US")}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Lease Type</p>
-                  <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.lease_type || "-")}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Rent Commencement</p>
-                  <p className="text-sm text-white">{formatDate(asText(controllingAbstract.controllingCanonical.rent_commencement_date))}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Term (Months)</p>
-                  <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.term_months) || "-"}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2 md:col-span-2">
-                  <p className="text-xs text-slate-400">Base Rent Schedule</p>
-                  <p className="text-sm text-white">{getRentScheduleSummary(controllingAbstract.controllingCanonical)}</p>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Escalations: {formatPercent(estimateEscalationPct(controllingAbstract.controllingCanonical))}
-                  </p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">OpEx Structure</p>
-                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.expense_structure_type) || "-"}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Free Rent (Months)</p>
-                  <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.free_rent_months) || 0}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">TI Allowance ($/SF)</p>
-                  <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.ti_allowance_psf) || "-"}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Parking</p>
-                  <p className="text-sm text-white">
-                    {asNumber(controllingAbstract.controllingCanonical.parking_count) || 0} spaces @ {asNumber(controllingAbstract.controllingCanonical.parking_rate_monthly) || 0}/mo
-                  </p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Deposit</p>
-                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.security_deposit) || "-"}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Guaranty</p>
-                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.guaranty) || "-"}</p>
-                </div>
-                <div className="border border-white/10 bg-black/20 p-2 md:col-span-2">
-                  <p className="text-xs text-slate-400">Options / Notice Dates</p>
-                  <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.options || controllingAbstract.controllingCanonical.renewal_options) || "-"}</p>
-                  <p className="text-xs text-slate-400 mt-1">{asText(controllingAbstract.controllingCanonical.notice_dates) || "-"}</p>
-                </div>
-              </div>
-
-              {controllingAbstract.overrideNotes.length > 0 ? (
-                <div className="border border-cyan-400/40 bg-cyan-500/10 p-3">
-                  <p className="text-xs text-cyan-100 uppercase tracking-[0.08em] mb-1">Override audit</p>
-                  <ul className="text-xs text-cyan-100/90 space-y-1">
-                    {controllingAbstract.overrideNotes.map((note, idx) => (
-                      <li key={`${note}-${idx}`}>• {note}</li>
-                    ))}
-                  </ul>
-                </div>
+          <PlatformDisclosure
+            kicker="Workflow"
+            title="Review the document stack"
+            description="Keep the stack focused on the current lease package. Open this when you need to relink amendments or choose the active source document."
+            defaultOpen
+          >
+            <div className="space-y-3 md:hidden">
+              {documents.length === 0 ? (
+                <p className="py-4 text-sm text-slate-400">No documents yet.</p>
               ) : (
-                <p className="text-xs text-slate-400">No amendment overrides were applied in this abstract.</p>
+                documents.map((doc) => {
+                  const selectedRow = doc.id === selected?.id;
+                  return (
+                    <div key={doc.id} className={`border p-3 space-y-2 ${selectedRow ? "border-cyan-400/50 bg-cyan-500/10" : "border-white/15 bg-black/20"}`}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedId(doc.id)}
+                        className={`text-left text-sm break-words ${selectedRow ? "text-cyan-100" : "text-slate-100"}`}
+                      >
+                        {doc.fileName}
+                      </button>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <p className="text-slate-400">Type: <span className="text-slate-200">{doc.kind === "amendment" ? "Amendment" : "Lease"}</span></p>
+                        <p className="text-slate-400">Uploaded: <span className="text-slate-200">{formatDate(doc.uploadedAtIso.slice(0, 10))}</span></p>
+                        <p className="text-slate-400">Review: <span className={doc.reviewTasks.length > 0 ? "text-amber-200" : "text-emerald-200"}>{doc.reviewTasks.length > 0 ? `${doc.reviewTasks.length} task(s)` : "Ready"}</span></p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400 mb-1">Link to Lease</p>
+                        {doc.kind === "amendment" ? (
+                          <select
+                            value={doc.linkedLeaseId || ""}
+                            onChange={(event) => updateDocumentMeta(doc.id, { linkedLeaseId: event.target.value || undefined })}
+                            className="input-premium !py-1.5 !px-2 text-xs w-full"
+                          >
+                            <option value="">Unlinked</option>
+                            {leaseOptions.map((lease) => (
+                              <option key={lease.id} value={lease.id}>
+                                {lease.fileName}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <p className="text-xs text-slate-400">Base lease</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
-          )}
-        </PlatformPanel>
+            <div className="hidden w-full overflow-x-auto md:block">
+              <table className="w-full min-w-[980px] border-collapse text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="border-b border-white/20">
+                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Document</th>
+                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Type</th>
+                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Uploaded</th>
+                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Link to Lease</th>
+                    <th className="text-left py-2 text-slate-300 font-medium">Review</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {documents.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-6 text-slate-400">
+                        No documents yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    documents.map((doc) => {
+                      const selectedRow = doc.id === selected?.id;
+                      return (
+                        <tr key={doc.id} className={`border-b border-white/10 ${selectedRow ? "bg-cyan-500/10" : ""}`}>
+                          <td className="py-2 pr-3">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedId(doc.id)}
+                              className={`text-left ${selectedRow ? "text-cyan-100" : "text-slate-100"} hover:text-cyan-100`}
+                            >
+                              {doc.fileName}
+                            </button>
+                          </td>
+                          <td className="py-2 pr-3 text-slate-200">{doc.kind === "amendment" ? "Amendment" : "Lease"}</td>
+                          <td className="py-2 pr-3 text-slate-300">{formatDate(doc.uploadedAtIso.slice(0, 10))}</td>
+                          <td className="py-2 pr-3">
+                            {doc.kind === "amendment" ? (
+                              <select
+                                value={doc.linkedLeaseId || ""}
+                                onChange={(event) => updateDocumentMeta(doc.id, { linkedLeaseId: event.target.value || undefined })}
+                                className="input-premium !py-1 !px-2 text-xs"
+                              >
+                                <option value="">Unlinked</option>
+                                {leaseOptions.map((lease) => (
+                                  <option key={lease.id} value={lease.id}>
+                                    {lease.fileName}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-slate-400">Base lease</span>
+                            )}
+                          </td>
+                          <td className="py-2">
+                            {doc.reviewTasks.length > 0 ? (
+                              <span className="text-amber-200">{doc.reviewTasks.length} task(s)</span>
+                            ) : (
+                              <span className="text-emerald-200">Ready</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </PlatformDisclosure>
+
+          <PlatformDisclosure
+            kicker="Details"
+            title={selected ? `Edit ${selected.fileName}` : "Extraction review"}
+            description="Open the extracted field editor only when you need to correct terms or inspect review tasks."
+          >
+            {!selected ? (
+              <p className="text-sm text-slate-400">Select a document to review extracted fields.</p>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  <label className="text-xs text-slate-400">
+                    Kind
+                    <select
+                      value={selected.kind}
+                      onChange={(e) => updateDocumentMeta(selected.id, { kind: e.target.value as CompletedLeaseDocumentKind })}
+                      className="input-premium mt-1 !py-2"
+                    >
+                      <option value="lease">Lease</option>
+                      <option value="amendment">Amendment</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    RSF
+                    <input
+                      type="number"
+                      value={asNumber(selected.canonical.rsf)}
+                      onChange={(e) => updateSelectedCanonical("rsf", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Commencement
+                    <input
+                      type="date"
+                      value={String(selected.canonical.commencement_date || "")}
+                      onChange={(e) => updateSelectedCanonical("commencement_date", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Expiration
+                    <input
+                      type="date"
+                      value={String(selected.canonical.expiration_date || "")}
+                      onChange={(e) => updateSelectedCanonical("expiration_date", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Lease Type
+                    <input
+                      type="text"
+                      value={String(selected.canonical.lease_type || "")}
+                      onChange={(e) => updateSelectedCanonical("lease_type", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Parking Count
+                    <input
+                      type="number"
+                      value={asNumber(selected.canonical.parking_count)}
+                      onChange={(e) => updateSelectedCanonical("parking_count", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Tenant
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.tenant_name)}
+                      onChange={(e) => updateSelectedCanonical("tenant_name", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Landlord
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.landlord_name)}
+                      onChange={(e) => updateSelectedCanonical("landlord_name", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Building
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.building_name)}
+                      onChange={(e) => updateSelectedCanonical("building_name", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Address
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.address)}
+                      onChange={(e) => updateSelectedCanonical("address", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Suite
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.suite)}
+                      onChange={(e) => updateSelectedCanonical("suite", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Floor
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.floor)}
+                      onChange={(e) => updateSelectedCanonical("floor", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Rent Commencement
+                    <input
+                      type="date"
+                      value={asText(selected.canonical.rent_commencement_date)}
+                      onChange={(e) => updateSelectedCanonical("rent_commencement_date", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Term (months)
+                    <input
+                      type="number"
+                      value={asNumber(selected.canonical.term_months)}
+                      onChange={(e) => updateSelectedCanonical("term_months", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Free Rent (months)
+                    <input
+                      type="number"
+                      value={asNumber(selected.canonical.free_rent_months)}
+                      onChange={(e) => updateSelectedCanonical("free_rent_months", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    TI Allowance ($/SF)
+                    <input
+                      type="number"
+                      value={asNumber(selected.canonical.ti_allowance_psf)}
+                      onChange={(e) => updateSelectedCanonical("ti_allowance_psf", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Parking Rate (Monthly)
+                    <input
+                      type="number"
+                      value={asNumber(selected.canonical.parking_rate_monthly)}
+                      onChange={(e) => updateSelectedCanonical("parking_rate_monthly", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    OpEx Structure
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.expense_structure_type)}
+                      onChange={(e) => updateSelectedCanonical("expense_structure_type", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Base OpEx ($/SF/YR)
+                    <input
+                      type="number"
+                      value={asNumber(selected.canonical.opex_psf_year_1)}
+                      onChange={(e) => updateSelectedCanonical("opex_psf_year_1", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Deposit
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.security_deposit)}
+                      onChange={(e) => updateSelectedCanonical("security_deposit", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400">
+                    Guaranty
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.guaranty)}
+                      onChange={(e) => updateSelectedCanonical("guaranty", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400 md:col-span-2">
+                    Options
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.options || selected.canonical.renewal_options)}
+                      onChange={(e) => updateSelectedCanonical("options", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-400 md:col-span-2">
+                    Notice Dates
+                    <input
+                      type="text"
+                      value={asText(selected.canonical.notice_dates)}
+                      onChange={(e) => updateSelectedCanonical("notice_dates", e.target.value)}
+                      className="input-premium mt-1 !py-2"
+                    />
+                  </label>
+                </div>
+
+                <div className="border border-white/10 bg-black/25 p-3">
+                  <p className="text-xs text-slate-400 uppercase tracking-[0.08em] mb-2">Base Rent Schedule + Escalations</p>
+                  <p className="text-xs text-slate-200">{getRentScheduleSummary(selected.canonical)}</p>
+                  <p className="text-xs text-slate-400 mt-1">Estimated escalation: {formatPercent(estimateEscalationPct(selected.canonical))}</p>
+                </div>
+
+                {selected.extractionSummary ? (
+                  <div className="border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs text-slate-400 uppercase tracking-[0.08em]">Document classification</p>
+                    <p className="text-sm text-slate-100 mt-1">{selected.extractionSummary.document_type_detected || "unknown"}</p>
+                    {selected.extractionSummary.sections_searched.length > 0 ? (
+                      <p className="text-xs text-slate-400 mt-1">Sections searched: {selected.extractionSummary.sections_searched.join(", ")}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {selected.reviewTasks.length > 0 ? (
+                  <div className="border border-amber-500/40 bg-amber-500/10 p-3">
+                    <p className="text-xs text-amber-100 uppercase tracking-[0.08em] mb-1">Needs Review</p>
+                    <ul className="text-xs text-amber-100/90 space-y-1">
+                      {selected.reviewTasks.slice(0, 8).map((task, idx) => (
+                        <li key={`${task.field_path}-${idx}`}>
+                          <strong>{task.field_path}:</strong> {task.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </PlatformDisclosure>
+        </div>
+
+        <div className="space-y-4 xl:col-span-4">
+          <PlatformPanel kicker="Insights" title="Abstract snapshot">
+            <PlatformMetricStrip
+              items={[
+                { label: "Documents", value: documents.length },
+                { label: "Base Leases", value: leaseOptions.length },
+                { label: "Amendments", value: amendmentCount },
+                { label: "Review Tasks", value: reviewTaskCount, emphasis: reviewTaskCount > 0 },
+              ]}
+              columnsClassName="sm:grid-cols-2"
+            />
+          </PlatformPanel>
+
+          <PlatformPanel kicker="Controlling Abstract" title={controllingAbstract ? "Current controlling terms" : "Awaiting lease stack"}>
+            {!controllingAbstract ? (
+              <p className="text-sm text-slate-400">Upload documents to build the controlling abstract.</p>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Tenant</p>
+                    <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.tenant_name) || "-"}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Landlord</p>
+                    <p className="text-sm text-white">{asText(controllingAbstract.controllingCanonical.landlord_name) || "-"}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Premises</p>
+                    <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.premises_name || controllingAbstract.controllingCanonical.building_name || "-")}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Address</p>
+                    <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.address || "-")}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Commencement</p>
+                    <p className="text-sm text-white">{formatDate(String(controllingAbstract.controllingCanonical.commencement_date || ""))}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Expiration</p>
+                    <p className="text-sm text-white">{formatDate(String(controllingAbstract.controllingCanonical.expiration_date || ""))}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">RSF</p>
+                    <p className="text-sm text-white">{asNumber(controllingAbstract.controllingCanonical.rsf).toLocaleString("en-US")}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Lease Type</p>
+                    <p className="text-sm text-white">{String(controllingAbstract.controllingCanonical.lease_type || "-")}</p>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-2 sm:col-span-2">
+                    <p className="text-xs text-slate-400">Base Rent Schedule</p>
+                    <p className="text-sm text-white">{getRentScheduleSummary(controllingAbstract.controllingCanonical)}</p>
+                    <p className="text-xs text-slate-400 mt-1">Escalations: {formatPercent(estimateEscalationPct(controllingAbstract.controllingCanonical))}</p>
+                  </div>
+                </div>
+
+                {controllingAbstract.overrideNotes.length > 0 ? (
+                  <div className="border border-cyan-400/40 bg-cyan-500/10 p-3">
+                    <p className="text-xs text-cyan-100 uppercase tracking-[0.08em] mb-1">Override audit</p>
+                    <ul className="text-xs text-cyan-100/90 space-y-1">
+                      {controllingAbstract.overrideNotes.map((note, idx) => (
+                        <li key={`${note}-${idx}`}>• {note}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">No amendment overrides were applied in this abstract.</p>
+                )}
+              </div>
+            )}
+          </PlatformPanel>
+        </div>
       </div>
     </PlatformSection>
   );

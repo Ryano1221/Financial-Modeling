@@ -50,6 +50,36 @@ type PlatformActionButtonProps = {
   className?: string;
 };
 
+type PlatformMetricItem = {
+  label: string;
+  value: ReactNode;
+  detail?: string;
+  emphasis?: boolean;
+};
+
+type PlatformMetricStripProps = {
+  items: PlatformMetricItem[];
+  className?: string;
+  columnsClassName?: string;
+};
+
+type PlatformStepListProps = {
+  steps: Array<{
+    title: string;
+    description: string;
+  }>;
+  className?: string;
+};
+
+type PlatformDisclosureProps = {
+  kicker?: string;
+  title: string;
+  description?: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+};
+
 export function PlatformModuleTabs({
   tabs,
   activeId,
@@ -256,5 +286,76 @@ export function PlatformActionButton({
     >
       {children}
     </button>
+  );
+}
+
+export function PlatformMetricStrip({
+  items,
+  className = "",
+  columnsClassName = "sm:grid-cols-2 xl:grid-cols-4",
+}: PlatformMetricStripProps) {
+  return (
+    <div className={`grid grid-cols-2 gap-3 ${columnsClassName} ${className}`.trim()}>
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className={`border p-3 ${
+            item.emphasis
+              ? "border-cyan-300/35 bg-cyan-500/10"
+              : "border-white/15 bg-black/20"
+          }`}
+        >
+          <p className={`text-xs ${item.emphasis ? "text-cyan-100" : "text-slate-400"}`}>{item.label}</p>
+          <div className={`mt-1 text-2xl ${item.emphasis ? "text-cyan-100" : "text-white"}`}>{item.value}</div>
+          {item.detail ? <p className="mt-1 text-xs text-slate-400">{item.detail}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function PlatformStepList({ steps, className = "" }: PlatformStepListProps) {
+  return (
+    <ol className={`space-y-3 ${className}`.trim()}>
+      {steps.map((step, index) => (
+        <li key={step.title} className="grid grid-cols-[28px_minmax(0,1fr)] gap-3">
+          <div className="flex h-7 w-7 items-center justify-center border border-cyan-300/35 bg-cyan-500/10 text-xs text-cyan-100">
+            {index + 1}
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm text-white">{step.title}</p>
+            <p className="text-sm text-slate-300">{step.description}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function PlatformDisclosure({
+  kicker,
+  title,
+  description,
+  children,
+  defaultOpen = false,
+  className = "",
+}: PlatformDisclosureProps) {
+  return (
+    <details
+      open={defaultOpen}
+      className={`border border-white/15 bg-black/20 p-4 ${className}`.trim()}
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            {kicker ? <p className="heading-kicker mb-2">{kicker}</p> : null}
+            <h3 className="text-base sm:text-lg text-white">{title}</h3>
+            {description ? <p className="mt-2 max-w-3xl text-sm text-slate-300">{description}</p> : null}
+          </div>
+          <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Expand</span>
+        </div>
+      </summary>
+      <div className="mt-4">{children}</div>
+    </details>
   );
 }

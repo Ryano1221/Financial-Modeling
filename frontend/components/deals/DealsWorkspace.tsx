@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
+import {
+  PlatformDisclosure,
+  PlatformMetricStrip,
+  PlatformPanel,
+  PlatformSection,
+  PlatformStepList,
+} from "@/components/platform/PlatformShell";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import type { ClientWorkspaceDeal, DealsViewMode } from "@/lib/workspace/types";
@@ -337,12 +343,12 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
 
   return (
     <PlatformSection
-      kicker="Deals"
-      title={isLandlordMode ? "Landlord Representation Deal Operating System" : "Tenant Representation Deal Operating System"}
+      kicker="CRM"
+      title={isLandlordMode ? "Landlord Rep CRM Workflow" : "Tenant Rep CRM Workflow"}
       description={
         isLandlordMode
-          ? "Operate inquiry-to-execution listing pipeline: track tours, proposals, negotiation, lease drafting, and executed deals."
-          : "Operate your client pipeline like a CRM: drag deals across stages, attach documents, and let AI auto-advance stages when classified documents arrive."
+          ? "Focus the page on one action at a time: create the inquiry, move it through the listing pipeline, then open detail when you need it."
+          : "Create the deal first, then use the pipeline and deal detail views only when you are ready to move the opportunity forward."
       }
       maxWidthClassName="max-w-[96vw]"
       headerAlign="center"
@@ -379,485 +385,44 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </div>
       }
     >
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <PlatformPanel
-          kicker="Pipeline Overview"
-          title={`${asText(clientName) || "Active Client"} CRM Metrics`}
-          className="xl:col-span-12"
-        >
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
-            <div className="border border-white/15 bg-black/25 p-3">
-              <p className="text-xs text-slate-400">Total deals</p>
-              <p className="text-2xl text-white">{pipelineMetrics.total}</p>
-            </div>
-            <div className="border border-white/15 bg-black/25 p-3">
-              <p className="text-xs text-slate-400">Open</p>
-              <p className="text-2xl text-white">{pipelineMetrics.open}</p>
-            </div>
-            <div className="border border-white/15 bg-black/25 p-3">
-              <p className="text-xs text-slate-400">Won</p>
-              <p className="text-2xl text-white">{pipelineMetrics.won}</p>
-            </div>
-            <div className="border border-white/15 bg-black/25 p-3 col-span-2 lg:col-span-1">
-              <p className="text-xs text-slate-400">Open pipeline value</p>
-              <p className="text-2xl text-white">{formatCurrency(pipelineMetrics.pipelineValue)}</p>
-            </div>
-            <div className="border border-cyan-300/30 bg-cyan-500/5 p-3 col-span-2 lg:col-span-1">
-              <p className="heading-kicker mb-1">AI stage assistant</p>
-              <p className="text-xs text-slate-200">
-                {isLandlordMode
-                  ? "Deals auto-advance when listing documents are classified (proposal, LOI/counter, lease, amendment, marketing docs)."
-                  : "Deals auto-advance when linked documents are classified (proposal, LOI, lease, amendment, analysis, survey)."}
-              </p>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <input
-              className="input-premium sm:max-w-md"
-              placeholder="Search deals by name, market, property, city"
-              value={pipelineQuery}
-              onChange={(event) => setPipelineQuery(event.target.value)}
-            />
-            <p className="text-xs text-slate-400">Drag any deal card and drop into a stage column to move it.</p>
-          </div>
-        </PlatformPanel>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <div className="space-y-4 xl:col-span-8">
+          <PlatformPanel kicker="Primary Action" title="Create or advance a deal">
+            <div className="space-y-4">
+              <PlatformStepList
+                steps={[
+                  {
+                    title: isLandlordMode ? "Create the inquiry or listing opportunity" : "Create the client requirement or opportunity",
+                    description: "Start with the core fields only so the team can move immediately without filling every optional field.",
+                  },
+                  {
+                    title: "Advance the stage as the workflow changes",
+                    description: "Use the board, table, timeline, or grouped view when you are ready to inspect the pipeline.",
+                  },
+                  {
+                    title: "Attach documents and next steps only when needed",
+                    description: "Deal detail stays collapsed until you want to edit tasks, activity, or linked files.",
+                  },
+                ]}
+              />
 
-        <PlatformPanel kicker="Create Deal" title="Quick Intake" className="xl:col-span-12">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <input
-              className="input-premium sm:col-span-2"
-              placeholder="Deal name*"
-              value={form.dealName}
-              onChange={(event) => setForm((prev) => ({ ...prev, dealName: event.target.value }))}
-            />
-            <input
-              className="input-premium sm:col-span-2"
-              placeholder={isLandlordMode ? "Listing / suite summary" : "Requirement name"}
-              value={form.requirementName}
-              onChange={(event) => setForm((prev) => ({ ...prev, requirementName: event.target.value }))}
-            />
-            <select
-              className="input-premium"
-              value={form.stage}
-              onChange={(event) => setForm((prev) => ({ ...prev, stage: event.target.value }))}
-            >
-              {dealStages.map((stage) => (
-                <option key={stage} value={stage}>
-                  {stage}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input-premium"
-              value={form.priority}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, priority: event.target.value as ClientWorkspaceDeal["priority"] }))
-              }
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="critical">Critical</option>
-            </select>
-            <input
-              className="input-premium"
-              placeholder="City"
-              value={form.city}
-              onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
-            />
-            <input
-              className="input-premium"
-              placeholder="Target market"
-              value={form.targetMarket}
-              onChange={(event) => setForm((prev) => ({ ...prev, targetMarket: event.target.value }))}
-            />
-            <input
-              className="input-premium"
-              placeholder="Min SF"
-              value={form.squareFootageMin}
-              onChange={(event) => setForm((prev) => ({ ...prev, squareFootageMin: event.target.value }))}
-            />
-            <input
-              className="input-premium"
-              placeholder="Max SF"
-              value={form.squareFootageMax}
-              onChange={(event) => setForm((prev) => ({ ...prev, squareFootageMax: event.target.value }))}
-            />
-            <input
-              className="input-premium sm:col-span-2"
-              placeholder="Budget"
-              value={form.budget}
-              onChange={(event) => setForm((prev) => ({ ...prev, budget: event.target.value }))}
-            />
-          </div>
-          <details className="mt-3 border border-white/15 bg-black/20 p-2">
-            <summary className="cursor-pointer text-xs text-slate-300 tracking-[0.12em] uppercase">Advanced Fields</summary>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-              <input
-                className="input-premium"
-                placeholder="Submarket"
-                value={form.submarket}
-                onChange={(event) => setForm((prev) => ({ ...prev, submarket: event.target.value }))}
-              />
-              <input
-                className="input-premium"
-                placeholder="Deal type"
-                value={form.dealType}
-                onChange={(event) => setForm((prev) => ({ ...prev, dealType: event.target.value }))}
-              />
-              <input
-                className="input-premium"
-                placeholder={isLandlordMode ? "Listing broker" : "Tenant rep broker"}
-                value={form.tenantRepBroker}
-                onChange={(event) => setForm((prev) => ({ ...prev, tenantRepBroker: event.target.value }))}
-              />
-              <input
-                className="input-premium"
-                placeholder="Selected property"
-                value={form.selectedProperty}
-                onChange={(event) => setForm((prev) => ({ ...prev, selectedProperty: event.target.value }))}
-              />
-              <input
-                className="input-premium"
-                placeholder="Selected suite"
-                value={form.selectedSuite}
-                onChange={(event) => setForm((prev) => ({ ...prev, selectedSuite: event.target.value }))}
-              />
-              <input
-                className="input-premium"
-                placeholder={isLandlordMode ? "Prospect / tenant" : "Selected landlord"}
-                value={form.selectedLandlord}
-                onChange={(event) => setForm((prev) => ({ ...prev, selectedLandlord: event.target.value }))}
-              />
-              <input
-                type="date"
-                className="input-premium"
-                value={form.occupancyDateGoal}
-                onChange={(event) => setForm((prev) => ({ ...prev, occupancyDateGoal: event.target.value }))}
-              />
-              <input
-                type="date"
-                className="input-premium"
-                value={form.expirationDate}
-                onChange={(event) => setForm((prev) => ({ ...prev, expirationDate: event.target.value }))}
-              />
-              <textarea
-                className="input-premium sm:col-span-2 min-h-[70px]"
-                placeholder="Notes"
-                value={form.notes}
-                onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-              />
-            </div>
-          </details>
-          <div className="mt-3 flex justify-end">
-            <button type="button" className="btn-premium btn-premium-primary" onClick={createDealFromForm}>
-              Create Deal
-            </button>
-          </div>
-          <div className="mt-4 border-t border-white/15 pt-3">
-            <p className="heading-kicker mb-2">Stage Settings</p>
-            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
-              <p className="text-xs text-slate-300">
-                Stage order, default CRM view, and document-driven automation are managed in Account Settings, inside CRM Settings.
-              </p>
-              <a href="/account?section=settings&settings=crm" className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                Open Settings
-              </a>
-            </div>
-          </div>
-          <p className="mt-3 text-xs text-slate-400">{status}</p>
-          {error ? <p className="mt-1 text-xs text-red-300">{error}</p> : null}
-        </PlatformPanel>
-
-        <PlatformPanel
-          kicker="CRM Views"
-          title={`${asText(clientName) || "Active Client"} Pipeline`}
-          className="xl:col-span-12"
-        >
-          {view === "board" ? (
-            <div>
-              <div className="overflow-x-auto">
-                <div
-                  className="grid gap-3 pb-2 [grid-template-columns:repeat(var(--stage-count),minmax(220px,1fr))]"
-                  style={boardGridStyle}
-                >
-                  {dealStages.map((stage) => {
-                    const stageDeals = filteredDeals.filter((deal) => asText(deal.stage) === stage);
-                    const isDropActive = dragOverStage === stage;
-                    return (
-                      <div
-                        key={stage}
-                        className={`min-h-[420px] border p-3 transition-colors ${
-                          isDropActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20"
-                        }`}
-                        onDragEnter={(event) => {
-                          event.preventDefault();
-                          setDragOverStage(stage);
-                        }}
-                        onDragOver={(event) => {
-                          event.preventDefault();
-                          setDragOverStage(stage);
-                        }}
-                        onDragLeave={(event) => {
-                          event.preventDefault();
-                          if (dragOverStage === stage) setDragOverStage("");
-                        }}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          handleDropToStage(stage);
-                        }}
-                      >
-                        <div className="mb-3 flex items-center justify-between border-b border-white/15 pb-2">
-                          <p className="text-sm text-white">{stage}</p>
-                          <span className="text-xs text-slate-300">{countsByStage.get(stage) || 0}</span>
-                        </div>
-                        <div className="space-y-2">
-                          {stageDeals.length === 0 ? (
-                            <p className="text-xs text-slate-500">Drop a deal here.</p>
-                          ) : (
-                            stageDeals.map((deal) => {
-                              const linkedDocs = linkedDocumentMap.get(deal.id) || [];
-                              const stageIndex = stageOrder.get(deal.stage) ?? 0;
-                              const previousStage = dealStages[Math.max(0, stageIndex - 1)] || "";
-                              const nextStage = dealStages[Math.min(dealStages.length - 1, stageIndex + 1)] || "";
-                              return (
-                                <div
-                                  key={deal.id}
-                                  draggable
-                                  onDragStart={() => {
-                                    setDraggingDealId(deal.id);
-                                    setSelectedDealId(deal.id);
-                                  }}
-                                  onDragEnd={() => {
-                                    setDraggingDealId("");
-                                    setDragOverStage("");
-                                  }}
-                                  className={`cursor-grab border p-2 transition-colors active:cursor-grabbing ${
-                                    selectedDeal?.id === deal.id
-                                      ? "border-cyan-300 bg-cyan-500/15"
-                                      : "border-white/20 bg-black/30 hover:bg-white/5"
-                                  } ${draggingDealId === deal.id ? "opacity-60" : "opacity-100"}`}
-                                  onClick={() => setSelectedDealId(deal.id)}
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <p className="text-sm text-white leading-5">{deal.dealName}</p>
-                                    <span className={`border px-1 py-[2px] text-[10px] uppercase tracking-[0.12em] ${priorityBadgeClass(deal.priority)}`}>
-                                      {deal.priority}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-slate-300 mt-1">{deal.requirementName || "No requirement summary"}</p>
-                                  <div className="mt-2 flex flex-wrap gap-1">
-                                    <span className={`border px-1 py-[2px] text-[10px] uppercase tracking-[0.12em] ${statusBadgeClass(deal.status)}`}>
-                                      {deal.status.replace("_", " ")}
-                                    </span>
-                                    <span className="border border-white/20 px-1 py-[2px] text-[10px] text-slate-300">
-                                      Docs {linkedDocs.length}
-                                    </span>
-                                  </div>
-                                  <p className="mt-2 text-[11px] text-slate-400">
-                                    {[deal.city, deal.submarket].filter(Boolean).join(" - ") || "Location pending"}
-                                  </p>
-                                  <p className="text-[11px] text-slate-400">
-                                    {deal.squareFootageMin || 0}-{deal.squareFootageMax || 0} SF | {formatCurrency(deal.budget)}
-                                  </p>
-                                  <div className="mt-2 flex items-center justify-between">
-                                    <button
-                                      type="button"
-                                      className="border border-white/25 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 disabled:opacity-30"
-                                      disabled={!previousStage || previousStage === deal.stage}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        if (previousStage) moveDealToStage(deal, previousStage, "quick back");
-                                      }}
-                                    >
-                                      Back
-                                    </button>
-                                    <p className="text-[10px] text-slate-400">Updated {formatDate(deal.updatedAt)}</p>
-                                    <button
-                                      type="button"
-                                      className="border border-white/25 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 disabled:opacity-30"
-                                      disabled={!nextStage || nextStage === deal.stage}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        if (nextStage) moveDealToStage(deal, nextStage, "quick advance");
-                                      }}
-                                    >
-                                      Next
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="mt-3 border border-white/20 bg-black/30 p-3">
-                <div className="flex items-center justify-between border-b border-white/15 pb-2">
-                  <p className="heading-kicker">Current Deals</p>
-                  <span className="text-xs text-slate-300">{filteredDeals.length}</span>
-                </div>
-                {filteredDeals.length === 0 ? (
-                  <p className="mt-2 text-xs text-slate-500">No deals in this workspace yet.</p>
-                ) : (
-                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                    {filteredDeals.map((deal) => (
-                      <div
-                        key={`dock_${deal.id}`}
-                        draggable
-                        onDragStart={() => {
-                          setDraggingDealId(deal.id);
-                          setSelectedDealId(deal.id);
-                        }}
-                        onDragEnd={() => {
-                          setDraggingDealId("");
-                          setDragOverStage("");
-                        }}
-                        onClick={() => setSelectedDealId(deal.id)}
-                        className={`cursor-grab border p-2 transition-colors active:cursor-grabbing ${
-                          selectedDeal?.id === deal.id
-                            ? "border-cyan-300 bg-cyan-500/15"
-                            : "border-white/20 bg-black/35 hover:bg-white/5"
-                        } ${draggingDealId === deal.id ? "opacity-60" : "opacity-100"}`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm text-white leading-5">{deal.dealName}</p>
-                          <span className="border border-white/20 px-1 py-[2px] text-[10px] text-slate-300">
-                            {deal.stage}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {[deal.city, deal.submarket].filter(Boolean).join(" - ") || "Location pending"}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : null}
-
-          {view === "table" ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-white/20">
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Deal</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Stage</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Status</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Priority</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Location</th>
-                    <th className="text-left py-2 pr-3 text-slate-300 font-medium">Budget</th>
-                    <th className="text-left py-2 text-slate-300 font-medium">Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredDeals.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="py-6 text-slate-400">No deals match the current search.</td>
-                    </tr>
-                  ) : (
-                    filteredDeals.map((deal) => (
-                      <tr
-                        key={deal.id}
-                        className={`border-b border-white/10 cursor-pointer ${
-                          selectedDeal?.id === deal.id ? "bg-cyan-500/10" : "hover:bg-white/5"
-                        }`}
-                        onClick={() => setSelectedDealId(deal.id)}
-                      >
-                        <td className="py-2 pr-3 text-white">{deal.dealName}</td>
-                        <td className="py-2 pr-3 text-slate-200">{deal.stage}</td>
-                        <td className="py-2 pr-3 text-slate-200">{deal.status.replace("_", " ")}</td>
-                        <td className="py-2 pr-3 text-slate-200">{deal.priority}</td>
-                        <td className="py-2 pr-3 text-slate-200">{[deal.city, deal.submarket].filter(Boolean).join(", ") || "-"}</td>
-                        <td className="py-2 pr-3 text-slate-200">{formatCurrency(deal.budget)}</td>
-                        <td className="py-2 text-slate-200">{formatDate(deal.updatedAt)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-
-          {view === "timeline" ? (
-            <div className="space-y-2">
-              {filteredDeals.length === 0 ? (
-                <p className="text-sm text-slate-400">No timeline entries yet.</p>
-              ) : (
-                filteredDeals.map((deal) => (
-                  <button
-                    key={deal.id}
-                    type="button"
-                    className={`w-full border px-3 py-3 text-left ${
-                      selectedDeal?.id === deal.id
-                        ? "border-cyan-300 bg-cyan-500/15"
-                        : "border-white/20 bg-black/20 hover:bg-white/5"
-                    }`}
-                    onClick={() => setSelectedDealId(deal.id)}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm text-white">{deal.dealName}</p>
-                        <p className="text-xs text-slate-300 mt-1">{deal.stage} - {deal.status.replace("_", " ")}</p>
-                        <p className="text-xs text-slate-400 mt-1">{deal.timeline[0]?.description || "No activity logged yet."}</p>
-                      </div>
-                      <p className="text-xs text-slate-400">{formatDate(deal.updatedAt)}</p>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : null}
-
-          {view === "client_grouped" ? (
-            <div className="border border-white/15 bg-black/20 p-3">
-              <p className="heading-kicker mb-2">Client Group</p>
-              <h3 className="text-lg text-white mb-2">{asText(clientName) || "Active Client"}</h3>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                <div className="border border-white/15 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Deals</p>
-                  <p className="text-2xl text-white">{sortedDeals.length}</p>
-                </div>
-                <div className="border border-white/15 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Open</p>
-                  <p className="text-2xl text-white">{sortedDeals.filter((deal) => deal.status === "open").length}</p>
-                </div>
-                <div className="border border-white/15 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">Executed</p>
-                  <p className="text-2xl text-white">{sortedDeals.filter((deal) => asText(deal.stage) === "Executed").length}</p>
-                </div>
-                <div className="border border-white/15 bg-black/20 p-2">
-                  <p className="text-xs text-slate-400">On Hold</p>
-                  <p className="text-2xl text-white">{sortedDeals.filter((deal) => deal.status === "on_hold").length}</p>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </PlatformPanel>
-
-        <PlatformPanel
-          kicker="Deal Detail"
-          title={selectedDeal ? selectedDeal.dealName : "Select a deal"}
-          className="xl:col-span-12"
-        >
-          {!selectedDeal ? (
-            <p className="text-sm text-slate-400">Create a deal or select one from the CRM views.</p>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <div className="lg:col-span-7 grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <input
-                  className="input-premium md:col-span-2"
-                  value={selectedDeal.dealName}
-                  onChange={(event) => updateDeal(selectedDeal.id, { dealName: event.target.value })}
+                  className="input-premium sm:col-span-2"
+                  placeholder="Deal name*"
+                  value={form.dealName}
+                  onChange={(event) => setForm((prev) => ({ ...prev, dealName: event.target.value }))}
+                />
+                <input
+                  className="input-premium sm:col-span-2"
+                  placeholder={isLandlordMode ? "Listing / suite summary" : "Requirement name"}
+                  value={form.requirementName}
+                  onChange={(event) => setForm((prev) => ({ ...prev, requirementName: event.target.value }))}
                 />
                 <select
                   className="input-premium"
-                  value={selectedDeal.stage}
-                  onChange={(event) => moveDealToStage(selectedDeal, event.target.value, "manual update")}
+                  value={form.stage}
+                  onChange={(event) => setForm((prev) => ({ ...prev, stage: event.target.value }))}
                 >
                   {dealStages.map((stage) => (
                     <option key={stage} value={stage}>
@@ -867,162 +432,603 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                 </select>
                 <select
                   className="input-premium"
-                  value={selectedDeal.status}
+                  value={form.priority}
                   onChange={(event) =>
-                    updateDeal(selectedDeal.id, { status: event.target.value as ClientWorkspaceDeal["status"] })
+                    setForm((prev) => ({ ...prev, priority: event.target.value as ClientWorkspaceDeal["priority"] }))
                   }
                 >
-                  <option value="open">Open</option>
-                  <option value="won">Won</option>
-                  <option value="lost">Lost</option>
-                  <option value="on_hold">On Hold</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
                 </select>
                 <input
                   className="input-premium"
-                  value={selectedDeal.targetMarket}
-                  placeholder="Target market"
-                  onChange={(event) => updateDeal(selectedDeal.id, { targetMarket: event.target.value })}
-                />
-                <input
-                  className="input-premium"
-                  value={selectedDeal.submarket}
-                  placeholder="Submarket"
-                  onChange={(event) => updateDeal(selectedDeal.id, { submarket: event.target.value })}
-                />
-                <input
-                  className="input-premium"
-                  value={selectedDeal.city}
                   placeholder="City"
-                  onChange={(event) => updateDeal(selectedDeal.id, { city: event.target.value })}
+                  value={form.city}
+                  onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
                 />
                 <input
                   className="input-premium"
-                  value={String(selectedDeal.budget || "")}
-                  placeholder="Budget"
-                  onChange={(event) => updateDeal(selectedDeal.id, { budget: asNumber(event.target.value) })}
+                  placeholder="Target market"
+                  value={form.targetMarket}
+                  onChange={(event) => setForm((prev) => ({ ...prev, targetMarket: event.target.value }))}
                 />
-                <textarea
-                  className="input-premium md:col-span-2 min-h-[72px]"
-                  value={selectedDeal.notes}
-                  placeholder="Notes"
-                  onChange={(event) => updateDeal(selectedDeal.id, { notes: event.target.value })}
-                />
-
-                <div className="md:col-span-2 border border-white/15 bg-black/25 p-3">
-                  <p className="heading-kicker mb-2">Tasks + Next Steps</p>
-                  <div className="flex gap-2">
-                    <input
-                      className="input-premium"
-                      placeholder="Add next step"
-                      value={taskDraft}
-                      onChange={(event) => setTaskDraft(event.target.value)}
-                    />
-                    <button type="button" className="btn-premium btn-premium-primary" onClick={addTaskToSelectedDeal}>
-                      Add
-                    </button>
-                  </div>
-                  <div className="mt-2 space-y-2 max-h-[180px] overflow-y-auto pr-1">
-                    {selectedDeal.tasks.length === 0 ? (
-                      <p className="text-xs text-slate-400">No tasks yet.</p>
-                    ) : (
-                      selectedDeal.tasks.map((task) => (
-                        <label key={task.id} className="flex items-start gap-2 border border-white/15 bg-black/20 p-2">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(task.completed)}
-                            onChange={(event) => {
-                              const nextTasks = selectedDeal.tasks.map((item) =>
-                                item.id === task.id ? { ...item, completed: event.target.checked } : item,
-                              );
-                              updateDeal(selectedDeal.id, { tasks: nextTasks });
-                            }}
-                          />
-                          <span className={`text-xs ${task.completed ? "text-slate-500 line-through" : "text-slate-200"}`}>
-                            {task.title}
-                          </span>
-                        </label>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="md:col-span-2 border border-white/15 bg-black/25 p-3">
-                  <p className="heading-kicker mb-2">Activity Timeline</p>
-                  <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                    {selectedDeal.timeline.length === 0 ? (
-                      <p className="text-xs text-slate-400">No activity yet.</p>
-                    ) : (
-                      selectedDeal.timeline.map((event) => (
-                        <div key={event.id} className="border border-white/15 bg-black/20 p-2">
-                          <p className="text-xs text-white">{event.label}</p>
-                          <p className="text-xs text-slate-300 mt-1">{event.description}</p>
-                          <p className="text-[11px] text-slate-500 mt-1">{formatDateTime(event.createdAt)}</p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
               </div>
 
-              <div className="lg:col-span-5 border border-white/15 bg-black/20 p-3">
-                <p className="heading-kicker mb-2">Linked Documents</p>
-                <ClientDocumentPicker
-                  buttonLabel="Attach Existing Document"
-                  onSelectDocument={(document) => {
-                    updateDeal(selectedDeal.id, {
-                      linkedDocumentIds: Array.from(
-                        new Set([...(linkedDocumentMap.get(selectedDeal.id) || []), document.id]),
-                      ),
-                    });
-                    updateDocument(document.id, { dealId: selectedDeal.id });
-                    setStatus(`Attached ${document.name} to ${selectedDeal.dealName}.`);
-                  }}
-                />
-                <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                  {(linkedDocumentMap.get(selectedDeal.id) || []).length === 0 ? (
-                    <p className="text-xs text-slate-400">No linked documents yet.</p>
-                  ) : (
-                    (linkedDocumentMap.get(selectedDeal.id) || []).map((documentId) => {
-                      const doc = documents.find((item) => item.id === documentId);
-                      if (!doc) return null;
-                      return (
-                        <div key={documentId} className="border border-white/15 bg-black/25 p-2">
-                          <p className="text-xs text-white break-all">{doc.name}</p>
-                          <p className="text-[11px] text-slate-400">{doc.type}</p>
-                          <button
-                            type="button"
-                            className="mt-1 btn-premium btn-premium-danger text-[10px]"
-                            onClick={() => {
-                              updateDeal(selectedDeal.id, {
-                                linkedDocumentIds: (linkedDocumentMap.get(selectedDeal.id) || []).filter((id) => id !== documentId),
-                              });
-                              updateDocument(documentId, { dealId: "" });
-                            }}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
+              <PlatformDisclosure
+                title="Advanced intake fields"
+                description="Open this only when you need submarket, SF range, budget, dates, or property-level metadata."
+              >
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <input
+                    className="input-premium"
+                    placeholder="Min SF"
+                    value={form.squareFootageMin}
+                    onChange={(event) => setForm((prev) => ({ ...prev, squareFootageMin: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder="Max SF"
+                    value={form.squareFootageMax}
+                    onChange={(event) => setForm((prev) => ({ ...prev, squareFootageMax: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder="Budget"
+                    value={form.budget}
+                    onChange={(event) => setForm((prev) => ({ ...prev, budget: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder="Submarket"
+                    value={form.submarket}
+                    onChange={(event) => setForm((prev) => ({ ...prev, submarket: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder="Deal type"
+                    value={form.dealType}
+                    onChange={(event) => setForm((prev) => ({ ...prev, dealType: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder={isLandlordMode ? "Listing broker" : "Tenant rep broker"}
+                    value={form.tenantRepBroker}
+                    onChange={(event) => setForm((prev) => ({ ...prev, tenantRepBroker: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder="Selected property"
+                    value={form.selectedProperty}
+                    onChange={(event) => setForm((prev) => ({ ...prev, selectedProperty: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder="Selected suite"
+                    value={form.selectedSuite}
+                    onChange={(event) => setForm((prev) => ({ ...prev, selectedSuite: event.target.value }))}
+                  />
+                  <input
+                    className="input-premium"
+                    placeholder={isLandlordMode ? "Prospect / tenant" : "Selected landlord"}
+                    value={form.selectedLandlord}
+                    onChange={(event) => setForm((prev) => ({ ...prev, selectedLandlord: event.target.value }))}
+                  />
+                  <input
+                    type="date"
+                    className="input-premium"
+                    value={form.occupancyDateGoal}
+                    onChange={(event) => setForm((prev) => ({ ...prev, occupancyDateGoal: event.target.value }))}
+                  />
+                  <input
+                    type="date"
+                    className="input-premium"
+                    value={form.expirationDate}
+                    onChange={(event) => setForm((prev) => ({ ...prev, expirationDate: event.target.value }))}
+                  />
+                  <textarea
+                    className="input-premium min-h-[70px] sm:col-span-2"
+                    placeholder="Notes"
+                    value={form.notes}
+                    onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+                  />
                 </div>
-                <div className="mt-3 border-t border-white/15 pt-3">
-                  <button
-                    type="button"
-                    className="btn-premium btn-premium-danger w-full"
-                    onClick={() => {
-                      removeDeal(selectedDeal.id);
-                      setSelectedDealId("");
-                      setStatus(`Deleted deal ${selectedDeal.dealName}.`);
-                    }}
-                  >
-                    Delete Deal
+              </PlatformDisclosure>
+
+              <div className="flex flex-col gap-3 border-t border-white/15 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs text-slate-300">Stage order, automation, and default view live under CRM Settings.</p>
+                  <p className="text-xs text-slate-400">{status}</p>
+                  {error ? <p className="text-xs text-red-300">{error}</p> : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <a href="/account?section=settings&settings=crm" className="btn-premium btn-premium-secondary text-center">
+                    Open Settings
+                  </a>
+                  <button type="button" className="btn-premium btn-premium-primary" onClick={createDealFromForm}>
+                    Create Deal
                   </button>
                 </div>
               </div>
             </div>
-          )}
-        </PlatformPanel>
+          </PlatformPanel>
+
+          <PlatformDisclosure
+            kicker="Workflow"
+            title={`Open ${view === "board" ? "pipeline" : view} view`}
+            description="The pipeline stays below the fold so it does not compete with intake. Open it when you want to manage the active queue."
+            defaultOpen
+          >
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <input
+                className="input-premium sm:max-w-md"
+                placeholder="Search deals by name, market, property, city"
+                value={pipelineQuery}
+                onChange={(event) => setPipelineQuery(event.target.value)}
+              />
+              <p className="text-xs text-slate-400">Drag a card into a stage column or use quick back/next on each deal.</p>
+            </div>
+
+            {view === "board" ? (
+              <div>
+                <div className="overflow-x-auto">
+                  <div
+                    className="grid gap-3 pb-2 [grid-template-columns:repeat(var(--stage-count),minmax(220px,1fr))]"
+                    style={boardGridStyle}
+                  >
+                    {dealStages.map((stage) => {
+                      const stageDeals = filteredDeals.filter((deal) => asText(deal.stage) === stage);
+                      const isDropActive = dragOverStage === stage;
+                      return (
+                        <div
+                          key={stage}
+                          className={`min-h-[420px] border p-3 transition-colors ${
+                            isDropActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20"
+                          }`}
+                          onDragEnter={(event) => {
+                            event.preventDefault();
+                            setDragOverStage(stage);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            setDragOverStage(stage);
+                          }}
+                          onDragLeave={(event) => {
+                            event.preventDefault();
+                            if (dragOverStage === stage) setDragOverStage("");
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            handleDropToStage(stage);
+                          }}
+                        >
+                          <div className="mb-3 flex items-center justify-between border-b border-white/15 pb-2">
+                            <p className="text-sm text-white">{stage}</p>
+                            <span className="text-xs text-slate-300">{countsByStage.get(stage) || 0}</span>
+                          </div>
+                          <div className="space-y-2">
+                            {stageDeals.length === 0 ? (
+                              <p className="text-xs text-slate-500">Drop a deal here.</p>
+                            ) : (
+                              stageDeals.map((deal) => {
+                                const linkedDocs = linkedDocumentMap.get(deal.id) || [];
+                                const stageIndex = stageOrder.get(deal.stage) ?? 0;
+                                const previousStage = dealStages[Math.max(0, stageIndex - 1)] || "";
+                                const nextStage = dealStages[Math.min(dealStages.length - 1, stageIndex + 1)] || "";
+                                return (
+                                  <div
+                                    key={deal.id}
+                                    draggable
+                                    onDragStart={() => {
+                                      setDraggingDealId(deal.id);
+                                      setSelectedDealId(deal.id);
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggingDealId("");
+                                      setDragOverStage("");
+                                    }}
+                                    className={`cursor-grab border p-2 transition-colors active:cursor-grabbing ${
+                                      selectedDeal?.id === deal.id
+                                        ? "border-cyan-300 bg-cyan-500/15"
+                                        : "border-white/20 bg-black/30 hover:bg-white/5"
+                                    } ${draggingDealId === deal.id ? "opacity-60" : "opacity-100"}`}
+                                    onClick={() => setSelectedDealId(deal.id)}
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <p className="text-sm text-white leading-5">{deal.dealName}</p>
+                                      <span className={`border px-1 py-[2px] text-[10px] uppercase tracking-[0.12em] ${priorityBadgeClass(deal.priority)}`}>
+                                        {deal.priority}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-slate-300 mt-1">{deal.requirementName || "No requirement summary"}</p>
+                                    <div className="mt-2 flex flex-wrap gap-1">
+                                      <span className={`border px-1 py-[2px] text-[10px] uppercase tracking-[0.12em] ${statusBadgeClass(deal.status)}`}>
+                                        {deal.status.replace("_", " ")}
+                                      </span>
+                                      <span className="border border-white/20 px-1 py-[2px] text-[10px] text-slate-300">
+                                        Docs {linkedDocs.length}
+                                      </span>
+                                    </div>
+                                    <p className="mt-2 text-[11px] text-slate-400">
+                                      {[deal.city, deal.submarket].filter(Boolean).join(" - ") || "Location pending"}
+                                    </p>
+                                    <p className="text-[11px] text-slate-400">
+                                      {deal.squareFootageMin || 0}-{deal.squareFootageMax || 0} SF | {formatCurrency(deal.budget)}
+                                    </p>
+                                    <div className="mt-2 flex items-center justify-between">
+                                      <button
+                                        type="button"
+                                        className="border border-white/25 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 disabled:opacity-30"
+                                        disabled={!previousStage || previousStage === deal.stage}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          if (previousStage) moveDealToStage(deal, previousStage, "quick back");
+                                        }}
+                                      >
+                                        Back
+                                      </button>
+                                      <p className="text-[10px] text-slate-400">Updated {formatDate(deal.updatedAt)}</p>
+                                      <button
+                                        type="button"
+                                        className="border border-white/25 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 disabled:opacity-30"
+                                        disabled={!nextStage || nextStage === deal.stage}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          if (nextStage) moveDealToStage(deal, nextStage, "quick advance");
+                                        }}
+                                      >
+                                        Next
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {view === "table" ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-white/20">
+                      <th className="text-left py-2 pr-3 text-slate-300 font-medium">Deal</th>
+                      <th className="text-left py-2 pr-3 text-slate-300 font-medium">Stage</th>
+                      <th className="text-left py-2 pr-3 text-slate-300 font-medium">Status</th>
+                      <th className="text-left py-2 pr-3 text-slate-300 font-medium">Priority</th>
+                      <th className="text-left py-2 pr-3 text-slate-300 font-medium">Location</th>
+                      <th className="text-left py-2 pr-3 text-slate-300 font-medium">Budget</th>
+                      <th className="text-left py-2 text-slate-300 font-medium">Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredDeals.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-6 text-slate-400">No deals match the current search.</td>
+                      </tr>
+                    ) : (
+                      filteredDeals.map((deal) => (
+                        <tr
+                          key={deal.id}
+                          className={`border-b border-white/10 cursor-pointer ${
+                            selectedDeal?.id === deal.id ? "bg-cyan-500/10" : "hover:bg-white/5"
+                          }`}
+                          onClick={() => setSelectedDealId(deal.id)}
+                        >
+                          <td className="py-2 pr-3 text-white">{deal.dealName}</td>
+                          <td className="py-2 pr-3 text-slate-200">{deal.stage}</td>
+                          <td className="py-2 pr-3 text-slate-200">{deal.status.replace("_", " ")}</td>
+                          <td className="py-2 pr-3 text-slate-200">{deal.priority}</td>
+                          <td className="py-2 pr-3 text-slate-200">{[deal.city, deal.submarket].filter(Boolean).join(", ") || "-"}</td>
+                          <td className="py-2 pr-3 text-slate-200">{formatCurrency(deal.budget)}</td>
+                          <td className="py-2 text-slate-200">{formatDate(deal.updatedAt)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {view === "timeline" ? (
+              <div className="space-y-2">
+                {filteredDeals.length === 0 ? (
+                  <p className="text-sm text-slate-400">No timeline entries yet.</p>
+                ) : (
+                  filteredDeals.map((deal) => (
+                    <button
+                      key={deal.id}
+                      type="button"
+                      className={`w-full border px-3 py-3 text-left ${
+                        selectedDeal?.id === deal.id
+                          ? "border-cyan-300 bg-cyan-500/15"
+                          : "border-white/20 bg-black/20 hover:bg-white/5"
+                      }`}
+                      onClick={() => setSelectedDealId(deal.id)}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-white">{deal.dealName}</p>
+                          <p className="text-xs text-slate-300 mt-1">{deal.stage} - {deal.status.replace("_", " ")}</p>
+                          <p className="text-xs text-slate-400 mt-1">{deal.timeline[0]?.description || "No activity logged yet."}</p>
+                        </div>
+                        <p className="text-xs text-slate-400">{formatDate(deal.updatedAt)}</p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+
+            {view === "client_grouped" ? (
+              <div className="border border-white/15 bg-black/20 p-3">
+                <p className="heading-kicker mb-2">Client Group</p>
+                <h3 className="text-lg text-white mb-2">{asText(clientName) || "Active Client"}</h3>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                  <div className="border border-white/15 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Deals</p>
+                    <p className="text-2xl text-white">{sortedDeals.length}</p>
+                  </div>
+                  <div className="border border-white/15 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Open</p>
+                    <p className="text-2xl text-white">{sortedDeals.filter((deal) => deal.status === "open").length}</p>
+                  </div>
+                  <div className="border border-white/15 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">Executed</p>
+                    <p className="text-2xl text-white">{sortedDeals.filter((deal) => asText(deal.stage) === "Executed").length}</p>
+                  </div>
+                  <div className="border border-white/15 bg-black/20 p-2">
+                    <p className="text-xs text-slate-400">On Hold</p>
+                    <p className="text-2xl text-white">{sortedDeals.filter((deal) => deal.status === "on_hold").length}</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </PlatformDisclosure>
+
+          <PlatformDisclosure
+            kicker="Details"
+            title={selectedDeal ? selectedDeal.dealName : "Deal detail"}
+            description="Open deal detail only when you need notes, tasks, activity, and linked documents."
+          >
+            {!selectedDeal ? (
+              <p className="text-sm text-slate-400">Create a deal or select one from the CRM views.</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:col-span-7">
+                  <input
+                    className="input-premium md:col-span-2"
+                    value={selectedDeal.dealName}
+                    onChange={(event) => updateDeal(selectedDeal.id, { dealName: event.target.value })}
+                  />
+                  <select
+                    className="input-premium"
+                    value={selectedDeal.stage}
+                    onChange={(event) => moveDealToStage(selectedDeal, event.target.value, "manual update")}
+                  >
+                    {dealStages.map((stage) => (
+                      <option key={stage} value={stage}>
+                        {stage}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input-premium"
+                    value={selectedDeal.status}
+                    onChange={(event) =>
+                      updateDeal(selectedDeal.id, { status: event.target.value as ClientWorkspaceDeal["status"] })
+                    }
+                  >
+                    <option value="open">Open</option>
+                    <option value="won">Won</option>
+                    <option value="lost">Lost</option>
+                    <option value="on_hold">On Hold</option>
+                  </select>
+                  <input
+                    className="input-premium"
+                    value={selectedDeal.targetMarket}
+                    placeholder="Target market"
+                    onChange={(event) => updateDeal(selectedDeal.id, { targetMarket: event.target.value })}
+                  />
+                  <input
+                    className="input-premium"
+                    value={selectedDeal.submarket}
+                    placeholder="Submarket"
+                    onChange={(event) => updateDeal(selectedDeal.id, { submarket: event.target.value })}
+                  />
+                  <input
+                    className="input-premium"
+                    value={selectedDeal.city}
+                    placeholder="City"
+                    onChange={(event) => updateDeal(selectedDeal.id, { city: event.target.value })}
+                  />
+                  <input
+                    className="input-premium"
+                    value={String(selectedDeal.budget || "")}
+                    placeholder="Budget"
+                    onChange={(event) => updateDeal(selectedDeal.id, { budget: asNumber(event.target.value) })}
+                  />
+                  <textarea
+                    className="input-premium min-h-[72px] md:col-span-2"
+                    value={selectedDeal.notes}
+                    placeholder="Notes"
+                    onChange={(event) => updateDeal(selectedDeal.id, { notes: event.target.value })}
+                  />
+
+                  <div className="border border-white/15 bg-black/25 p-3 md:col-span-2">
+                    <p className="heading-kicker mb-2">Tasks + Next Steps</p>
+                    <div className="flex gap-2">
+                      <input
+                        className="input-premium"
+                        placeholder="Add next step"
+                        value={taskDraft}
+                        onChange={(event) => setTaskDraft(event.target.value)}
+                      />
+                      <button type="button" className="btn-premium btn-premium-primary" onClick={addTaskToSelectedDeal}>
+                        Add
+                      </button>
+                    </div>
+                    <div className="mt-2 space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                      {selectedDeal.tasks.length === 0 ? (
+                        <p className="text-xs text-slate-400">No tasks yet.</p>
+                      ) : (
+                        selectedDeal.tasks.map((task) => (
+                          <label key={task.id} className="flex items-start gap-2 border border-white/15 bg-black/20 p-2">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(task.completed)}
+                              onChange={(event) => {
+                                const nextTasks = selectedDeal.tasks.map((item) =>
+                                  item.id === task.id ? { ...item, completed: event.target.checked } : item,
+                                );
+                                updateDeal(selectedDeal.id, { tasks: nextTasks });
+                              }}
+                            />
+                            <span className={`text-xs ${task.completed ? "text-slate-500 line-through" : "text-slate-200"}`}>
+                              {task.title}
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border border-white/15 bg-black/25 p-3 md:col-span-2">
+                    <p className="heading-kicker mb-2">Activity Timeline</p>
+                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                      {selectedDeal.timeline.length === 0 ? (
+                        <p className="text-xs text-slate-400">No activity yet.</p>
+                      ) : (
+                        selectedDeal.timeline.map((event) => (
+                          <div key={event.id} className="border border-white/15 bg-black/20 p-2">
+                            <p className="text-xs text-white">{event.label}</p>
+                            <p className="text-xs text-slate-300 mt-1">{event.description}</p>
+                            <p className="text-[11px] text-slate-500 mt-1">{formatDateTime(event.createdAt)}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border border-white/15 bg-black/20 p-3 lg:col-span-5">
+                  <p className="heading-kicker mb-2">Linked Documents</p>
+                  <ClientDocumentPicker
+                    buttonLabel="Attach Existing Document"
+                    onSelectDocument={(document) => {
+                      updateDeal(selectedDeal.id, {
+                        linkedDocumentIds: Array.from(
+                          new Set([...(linkedDocumentMap.get(selectedDeal.id) || []), document.id]),
+                        ),
+                      });
+                      updateDocument(document.id, { dealId: selectedDeal.id });
+                      setStatus(`Attached ${document.name} to ${selectedDeal.dealName}.`);
+                    }}
+                  />
+                  <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                    {(linkedDocumentMap.get(selectedDeal.id) || []).length === 0 ? (
+                      <p className="text-xs text-slate-400">No linked documents yet.</p>
+                    ) : (
+                      (linkedDocumentMap.get(selectedDeal.id) || []).map((documentId) => {
+                        const doc = documents.find((item) => item.id === documentId);
+                        if (!doc) return null;
+                        return (
+                          <div key={documentId} className="border border-white/15 bg-black/25 p-2">
+                            <p className="text-xs text-white break-all">{doc.name}</p>
+                            <p className="text-[11px] text-slate-400">{doc.type}</p>
+                            <button
+                              type="button"
+                              className="mt-1 btn-premium btn-premium-danger text-[10px]"
+                              onClick={() => {
+                                updateDeal(selectedDeal.id, {
+                                  linkedDocumentIds: (linkedDocumentMap.get(selectedDeal.id) || []).filter((id) => id !== documentId),
+                                });
+                                updateDocument(documentId, { dealId: "" });
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                  <div className="mt-3 border-t border-white/15 pt-3">
+                    <button
+                      type="button"
+                      className="btn-premium btn-premium-danger w-full"
+                      onClick={() => {
+                        removeDeal(selectedDeal.id);
+                        setSelectedDealId("");
+                        setStatus(`Deleted deal ${selectedDeal.dealName}.`);
+                      }}
+                    >
+                      Delete Deal
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </PlatformDisclosure>
+        </div>
+
+        <div className="space-y-4 xl:col-span-4">
+          <PlatformPanel kicker="Insights" title={`${asText(clientName) || "Active Client"} snapshot`}>
+            <PlatformMetricStrip
+              items={[
+                { label: "Total Deals", value: pipelineMetrics.total },
+                { label: "Open", value: pipelineMetrics.open },
+                { label: "Won", value: pipelineMetrics.won },
+                { label: "Pipeline Value", value: formatCurrency(pipelineMetrics.pipelineValue), emphasis: pipelineMetrics.pipelineValue > 0 },
+              ]}
+              columnsClassName="sm:grid-cols-2"
+            />
+          </PlatformPanel>
+
+          <PlatformPanel kicker="AI Guide" title="Recommended next move">
+            <p className="text-sm text-slate-300">
+              {isLandlordMode
+                ? "After creating the inquiry, move to tour, proposal, negotiation, and lease execution. Use linked documents to keep the stage current."
+                : "After creating the requirement, push the deal into survey, proposal, analysis, negotiation, and execution as documents arrive."}
+            </p>
+            <div className="mt-3 border border-cyan-300/30 bg-cyan-500/5 p-3">
+              <p className="heading-kicker mb-1">Automation</p>
+              <p className="text-xs text-slate-200">
+                {isLandlordMode
+                  ? "Listing documents can auto-advance inquiries through proposal and lease stages when automation is enabled."
+                  : "Proposals, surveys, analyses, and lease documents can auto-advance the tenant pipeline when automation is enabled."}
+              </p>
+            </div>
+          </PlatformPanel>
+
+          <PlatformPanel kicker="Focus Deal" title={selectedDeal ? selectedDeal.dealName : "Select a deal"}>
+            {!selectedDeal ? (
+              <p className="text-sm text-slate-400">Pick a deal from the pipeline to see the current stage, location, and document count.</p>
+            ) : (
+              <div className="space-y-3">
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs text-slate-400">Stage</p>
+                  <p className="text-sm text-white mt-1">{selectedDeal.stage}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs text-slate-400">Location</p>
+                  <p className="text-sm text-white mt-1">{[selectedDeal.city, selectedDeal.submarket, selectedDeal.targetMarket].filter(Boolean).join(" • ") || "Pending"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs text-slate-400">Linked Documents</p>
+                  <p className="text-sm text-white mt-1">{(linkedDocumentMap.get(selectedDeal.id) || []).length}</p>
+                </div>
+              </div>
+            )}
+          </PlatformPanel>
+        </div>
       </div>
     </PlatformSection>
   );
