@@ -8,7 +8,7 @@ from docx import Document
 
 import main
 from models import Scenario
-from scenario_extract import _apply_safe_defaults, _regex_prefill, extract_text_from_docx
+from scenario_extract import _apply_safe_defaults, _regex_prefill, _should_ocr_docx_images, extract_text_from_docx
 
 
 def test_extract_text_from_docx_includes_table_rows() -> None:
@@ -152,6 +152,21 @@ def test_regex_prefill_prefers_basic_rent_over_opex_line_in_proposal() -> None:
     assert steps[-1]["end"] == 62
 
 
+def test_regex_prefill_tarrytown_name_ignores_legal_entity_suite_noise() -> None:
+    text = (
+        "RE: Lease Proposal - Tarrytown Expocare at Research Park Building 3\n"
+        "Premises: Research Park Building 3, 12515 Research Park Loop, Austin, TX 78759\n"
+        "Landlord Legal Entity: SIR Properties Trust, with an address of 255 Washington Street, Suite 300, Newton, Massachusetts 02458\n"
+        "Lease Commencement Date: January 1, 2028\n"
+        "Term: Ten (10) years and four (4) months from the Lease Commencement Date.\n"
+    )
+
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("term_months") == 124
+    assert prefill.get("name") == "Research Park Building 3"
+
+
 def test_regex_prefill_parses_label_value_annual_base_rent_escalation() -> None:
     text = (
         "Premises: Suite 230 consisting of 3,947 RSF.\n"
@@ -243,6 +258,43 @@ def test_extract_lease_hints_builds_escalated_schedule_from_annual_rental_increa
     hints = main._extract_lease_hints(text, "proposal.docx", "test-rid")
     schedule = hints.get("rent_schedule")
     assert isinstance(schedule, list)
+
+
+def test_regex_prefill_counterproposal_keeps_opex_ti_and_parking_entitlement_separate() -> None:
+    text = (
+        "Premises Suite 1370 for approximately 4,064 rentable square feet.\n"
+        "Commencement Date September 1, 2026\n"
+        "Lease Term Thirty-eight (38) months\n"
+        "Rental Abatement Tenant shall have four (4) months of rental abatement. Tenant shall be responsible for the operating expenses during this abatement period.\n"
+        "Lease Rate $45.00 per square foot per year NNN with 3% annual escalations.\n"
+        "Operating Expenses Tenant shall pay its pro rata share of building expenses, which are estimated to be $24.44 per square foot for 2025 (CAM $12.57, Taxes $11.53, Insurance $0.34).\n"
+        "Initial Fit Plan Landlord shall provide an initial fit plan allowance of $0.15/RSF.\n"
+        "Tenant Improvements Landlord will pay a tenant allowance of $5.00 per square foot.\n"
+        "Parking Tenant shall be entitled to the non-exclusive use of 1 parking space per 600 rentable square feet. The current rate for unreserved parking is $250.00 per space plus tax.\n"
+    )
+
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("rsf") == 4064.0
+    assert prefill.get("term_months") == 38
+    assert prefill.get("rate_psf_yr") == 45.0
+    assert prefill.get("base_opex_psf_yr") == 24.44
+    assert prefill.get("ti_allowance_psf") == 5.0
+    assert prefill.get("parking_ratio_per_1000_rsf") == 1.6667
+    assert prefill.get("parking_spaces") == 7
+
+
+def test_should_ocr_docx_images_skips_clean_counterproposal_text() -> None:
+    text = (
+        "Premises Suite 1370 for approximately 4,064 rentable square feet.\n"
+        "Commencement Date September 1, 2026\n"
+        "Lease Term Thirty-eight (38) months\n"
+        "Lease Rate $45.00 per square foot per year NNN with 3% annual escalations.\n"
+        "Operating Expenses Tenant shall pay its pro rata share of building expenses, which are estimated to be $24.44 per square foot for 2025.\n"
+        "Parking Tenant shall be entitled to the non-exclusive use of 1 parking space per 600 rentable square feet.\n"
+    )
+
+    assert _should_ocr_docx_images(text) is False
     assert schedule[0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 42.0}
     assert schedule[1]["rent_psf_annual"] == 43.26
     assert schedule[-1]["end_month"] == 59
@@ -493,6 +545,28 @@ def test_regex_prefill_handles_access_card_parking_and_nnn_with_base_year_refere
     assert prefill.get("parking_ratio_per_1000_rsf") == 2.0
     assert prefill.get("parking_spaces") == 11
     assert prefill.get("parking_cost_monthly_per_space") == 225.0
+
+
+def test_regex_prefill_counterproposal_ignores_fit_plan_ti_and_derives_parking_from_600_rsf_ratio() -> None:
+    text = (
+        "Premises Suite 1370 for approximately 4,064 rentable square feet.\n"
+        "Commencement Date September 1, 2026\n"
+        "Lease Term Thirty-eight (38) months\n"
+        "Rental Abatement Tenant shall have (4) months of rental abatement. Tenant shall be responsible for the operating expenses during this abatement period.\n"
+        "Lease Rate $45.00 per square foot per year NNN with 3% annual escalations.\n"
+        "Operating Expenses Tenant shall pay its pro rata share of building expenses, which are estimated to be $24.44 per square foot for 2025 (CAM $12.57, Taxes $11.53, Insurance $0.34).\n"
+        "Initial Fit Plan Landlord shall provide an initial fit plan allowance of $0.15/RSF.\n"
+        "Tenant Improvements Landlord will pay a tenant allowance of $5.00 per square foot, inclusive of architectural and engineering fees, as well as a four percent (4%) construction management fee on total costs.\n"
+        "Parking Tenant shall be entitled to the non-exclusive use of 1 parking space per 600 rentable square feet. The current rate for unreserved parking is $250.00 per space plus tax.\n"
+    )
+
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("ti_allowance_psf") == 5.0
+    assert prefill.get("base_opex_psf_yr") == 24.44
+    assert round(float(prefill.get("parking_ratio_per_1000_rsf") or 0.0), 4) == round(1000.0 / 600.0, 4)
+    assert prefill.get("parking_spaces") == 7
+    assert prefill.get("parking_cost_monthly_per_space") == 250.0
 
 
 def test_regex_prefill_free_rent_ignores_renewal_notice_months() -> None:

@@ -118,6 +118,61 @@ def _detect_opex_mode_from_text(raw_text: str) -> str | None:
     return None
 
 
+def _should_ocr_docx_images(current_text: str) -> bool:
+    """
+    DOCX image OCR is useful for image-only rent schedules, but it is also a major
+    contamination source for proposals that already contain clean economics in text.
+
+    Fail closed: only OCR images when the body text still looks materially incomplete
+    or it explicitly references an attached schedule.
+    """
+    text = str(current_text or "")
+    low = text.lower()
+    if not text.strip():
+        return False
+
+    if re.search(r"(?i)\b(as\s+shown\s+on\s+the\s+attached\s+schedule|attached\s+schedule|rent\s+schedule)\b", text):
+        return True
+
+    has_base_rent_amount = bool(
+        re.search(
+            r"(?is)\b(?:lease\s+rate|base\s+(?:annual\s+net\s+)?rental?\s+rate|base\s+rent|basic\s+rent|rental\s+rate)\b"
+            r"[^\n]{0,180}\$\s*[\d,]+(?:\.\d+)?",
+            text,
+        )
+    )
+    has_term = _extract_term_months_from_text(text) is not None
+    has_commencement = bool(
+        re.search(r"(?i)\b(?:estimated\s+)?(?:lease\s+)?commencement(?:\s+date)?\b", text)
+        and _parse_text_date_token(text)
+    )
+    has_structured_parking_data = bool(
+        re.search(
+            r"(?i)\b(?:parking\s+ratio|#\s*reserved\s+(?:paid\s+)?spaces?|#\s*unreserved\s+(?:paid\s+)?spaces?|total\s*#?\s*paid\s+spaces)\b"
+            r"|(?:\d+(?:\.\d+)?)\s*(?:/|per)\s*(?:1,?000|\d{2,5}(?:,\d{3})?)\s*(?:(?:rentable|leasable|usable)\s+)?(?:square\s*feet|sq\.?\s*ft\.?|rsf|sf)\b",
+            text,
+        )
+    )
+    has_explicit_escalation = bool(
+        re.search(
+            r"(?i)\b(?:annual\s+base\s+rent\s+escalation|annual\s+rental\s+increases?|annual\s+escalations?|annual\s+increases?)\b"
+            r"|(?:\d+(?:\.\d+)?)%\s+annual\s+(?:escalations?|increases?)\b"
+            r"|(?:with|plus)\s+\d+(?:\.\d+)?%\s+annual\s+(?:escalations?|increases?)\b",
+            text,
+        )
+    )
+
+    has_core_text_economics = has_base_rent_amount and has_term and has_commencement
+    if has_core_text_economics:
+        return False
+
+    has_parking_language = "parking" in low
+    if has_base_rent_amount and has_term and (has_explicit_escalation or not has_parking_language or has_structured_parking_data):
+        return False
+
+    return (not has_base_rent_amount) or (has_parking_language and not has_structured_parking_data) or (not has_explicit_escalation)
+
+
 def extract_text_from_pdf(file: BinaryIO) -> str:
     """Extract raw text from a PDF using pypdf."""
     try:
@@ -417,29 +472,7 @@ def extract_text_from_docx(file: BinaryIO) -> str:
         # OCR embedded DOCX images only when key economics look incomplete.
         current_text = "\n\n".join(parts)
         current_low = current_text.lower()
-        has_base_rent_amount = bool(
-            re.search(
-                r"(?is)\b(?:base\s+(?:annual\s+net\s+)?rental?\s+rate|base\s+rent)\b[^\n]{0,140}\$\s*[\d,]+(?:\.\d+)?",
-                current_text,
-            )
-        )
-        has_parking_language = "parking" in current_low
-        has_structured_parking_data = bool(
-            re.search(
-                r"(?i)\b(?:parking\s+ratio|#\s*reserved\s+(?:paid\s+)?spaces?|#\s*unreserved\s+(?:paid\s+)?spaces?|total\s*#?\s*paid\s+spaces)\b"
-                r"|(?:\d+(?:\.\d+)?)\s*(?:/|per)\s*1,?000\s*(?:rsf|sf)\b",
-                current_text,
-            )
-        )
-        has_explicit_escalation = bool(
-            re.search(
-                r"(?i)\b(?:annual\s+base\s+rent\s+escalation|annual\s+rental\s+increases?|base\s+rent\b[^\n]{0,140}\d+(?:\.\d+)?%\s*(?:increase|escalat))\b",
-                current_text,
-            )
-        )
-        should_ocr_images = bool(
-            re.search(r"(?i)\b(as\s+shown\s+on\s+the\s+attached\s+schedule|attached\s+schedule|rent\s+schedule)\b", current_text)
-        ) or not has_base_rent_amount or (has_parking_language and not has_structured_parking_data) or not has_explicit_escalation
+        should_ocr_images = _should_ocr_docx_images(current_text)
         if should_ocr_images:
             parts.extend(_extract_docx_image_ocr_chunks(raw_bytes))
 
@@ -701,7 +734,7 @@ _RE_EXP_LABEL = re.compile(
     r"(?i)\b(?:estimated\s+(?:termination|expiration)\s+date|termination(?:\s+date)?|expiration(?:\s+date)?|expires?|expiring|lease\s+expiration)\b[^A-Za-z0-9]{0,20}([^\n]{0,120})"
 )
 _RE_BUILDING = re.compile(r"(?i)\b(?:building|property)\s*(?:name)?\s*[:#-]\s*([^\n,;]{3,80})")
-_RE_SUITE = re.compile(r"(?i)\b(?:suite|ste\.?|unit|space|premises)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,30})")
+_RE_SUITE = re.compile(r"(?i)\b(?:suite|ste\.?|unit)\b\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9\- ]{0,30})")
 _RE_TI = re.compile(
     r"(?i)\b(?:ti\s+allowance|tenant\s+allowance|tenant\s+improvement(?:s)?\s+allowance|improvement\s+allowance)\b[^\n$]{0,260}\$?\s*[\d,]+(?:\.\d+)?",
     re.I,
@@ -729,6 +762,135 @@ _RE_FREE_RENT = re.compile(
     r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement|abated)\b[^\n]{0,50}?\(?(\d{1,2})\)?\s*(?:months?)?",
     re.I,
 )
+
+
+def _looks_like_address(value: str) -> bool:
+    raw = " ".join((value or "").split()).strip()
+    if not raw:
+        return False
+    if re.search(
+        r"\b\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9 .,'-]{2,120}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|loop|highway|hwy\.?)\b",
+        raw,
+        re.I,
+    ):
+        return True
+    return bool(
+        "," in raw
+        and (
+            re.search(r"\b(?:TX|CA|NY|FL|IL|MA|DC)\b", raw)
+            or re.search(r"\b(?:Texas|Massachusetts|California|New York|Florida|Illinois)\b", raw, re.I)
+        )
+    )
+
+
+def _is_notice_or_party_context(segment: str) -> bool:
+    low = (segment or "").lower()
+    return any(
+        token in low
+        for token in (
+            "address for notices",
+            "addresses for notices",
+            "notice:",
+            "notices:",
+            "attn:",
+            "attention:",
+            "c/o",
+            "lessor",
+            "lessee",
+            "sublessor",
+            "sublessee",
+            "address of",
+            "with an address of",
+            "landlord legal entity",
+            "legal entity",
+            "property management",
+            "registered office",
+            "registered agent",
+            "secretary of state",
+            "wire transfer",
+            "remit to",
+        )
+    )
+
+
+def _normalize_suite_candidate(raw: str) -> str:
+    value = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not value:
+        return ""
+    value = re.sub(r"(?i)^(?:suite|ste\.?|unit|space|premises)\s*[:#-]?\s*", "", value).strip(" ,.;:-")
+    token_match = re.match(r"(?i)^([A-Za-z0-9][A-Za-z0-9\-]{0,14})", value)
+    if not token_match:
+        return ""
+    token = token_match.group(1)
+    if re.fullmatch(r"(?i)\d+", token):
+        return token.lstrip("0") or token
+    if not re.search(r"\d", token) and not re.fullmatch(r"(?i)[A-Z]{1,2}", token):
+        return ""
+    return token.upper()
+
+
+def _normalize_suite_value(raw: str) -> str:
+    value = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not value:
+        return ""
+    if "," in value or "/" in value or "&" in value or " and " in value.lower():
+        parts = re.split(r"(?i)\s*(?:,|/|&|\band\b)\s*", value)
+        normalized_parts: list[str] = []
+        seen: set[str] = set()
+        for part in parts:
+            token = _normalize_suite_candidate(part)
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            normalized_parts.append(token)
+        if len(normalized_parts) >= 2:
+            return ",".join(normalized_parts[:6])
+        if normalized_parts:
+            return normalized_parts[0]
+    return _normalize_suite_candidate(value)
+
+
+def _suite_value_contains_address_noise(raw: str) -> bool:
+    low = " ".join((raw or "").split()).strip().lower()
+    if not low:
+        return False
+    if _is_notice_or_party_context(low):
+        return True
+    if any(token in low for token in ("newton", "massachusetts")):
+        return True
+    return bool(re.search(r"(?i),\s*[A-Za-z .'-]{2,40},\s*(?:[A-Z]{2}|[A-Za-z]{4,})(?:\s+\d{5}(?:-\d{4})?)?\b", low))
+
+
+def _clean_building_candidate(raw: str) -> str:
+    value = " ".join((raw or "").split()).strip(" ,.;:|-")
+    if not value:
+        return ""
+    value = re.sub(r"(?i)^(?:building|building name|property|property name|premises|address)\s*[:#-]\s*", "", value).strip(" ,.;:|-")
+    value = re.sub(r"(?i)\b(?:suite|ste\.?|unit|space|floor)\s*#?\s*[A-Za-z0-9\-]+\b", "", value).strip(" ,.;:|-")
+    value = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", value).strip(" ,.;:|-")
+    if re.search(r"(?i)\s+at\s+", value):
+        at_parts = [part.strip(" ,.;:|-") for part in re.split(r"(?i)\s+at\s+", value) if part.strip(" ,.;:|-")]
+        if len(at_parts) >= 2:
+            trailing = at_parts[-1]
+            trailing_low = trailing.lower()
+            if _looks_like_address(trailing) or any(
+                token in trailing_low for token in ("building", "tower", "plaza", "center", "centre", "campus", "park")
+            ):
+                value = trailing
+    value = re.split(r"(?i)\bon\s+behalf\s+of\b", value, maxsplit=1)[0].strip(" ,.;:|-")
+    value = re.split(r"(?i)\bwe\s+are\s+pleased\s+to\b", value, maxsplit=1)[0].strip(" ,.;:|-")
+    value = re.split(r"(?i)\bunder\s+the\s+following\s+terms\b", value, maxsplit=1)[0].strip(" ,.;:|-")
+    value = re.sub(
+        r"(?i)\s+\d{1,6}\s+[A-Za-z0-9 .,'-]{2,120}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|loop|highway|hwy\.?)\b.*$",
+        "",
+        value,
+    ).strip(" ,.;:|-")
+    low = value.lower()
+    if _is_notice_or_party_context(low):
+        return ""
+    if any(token in low for token in ("landlord", "tenant", "proposal", "commencement", "expiration", "lease term")):
+        return ""
+    return value
 _RE_BASE_OPEX = re.compile(
     r"(?i)\b(?:base\s+year\s+)?(?:opex|ope\b|operating\s+expenses?|cam)\b[^\n]{0,220}",
     re.I,
@@ -909,6 +1071,11 @@ def _has_strong_ti_allowance_context(text: str) -> bool:
 def _has_non_ti_allowance_context(text: str) -> bool:
     low = str(text or "").lower()
     excluded_cues = (
+        "fit plan",
+        "fit-plan",
+        "initial fit plan",
+        "initial space plan",
+        "space plan",
         "test fit",
         "test-fit",
         "moving allowance",
@@ -1250,6 +1417,22 @@ def _extract_term_months_from_text(text: str) -> int | None:
 
     candidates: list[tuple[int, int, int]] = []
 
+    def _parse_composite_term_months(snippet: str) -> int | None:
+        if not snippet:
+            return None
+        for pattern in (
+            r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*(?:\+|and)\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b",
+            r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*,\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b",
+        ):
+            match = re.search(pattern, snippet)
+            if not match:
+                continue
+            years = _coerce_int_token(match.group(1), 0)
+            months = _coerce_int_token(match.group(2), 0)
+            if 1 <= years <= 50 and 0 <= months <= 11:
+                return int((years * 12) + months)
+        return None
+
     # Handle split-line term blocks:
     #   RENEWAL TERM:
     #   Ninety(90) months
@@ -1277,6 +1460,15 @@ def _extract_term_months_from_text(text: str) -> int | None:
                 continue
             if _looks_like_non_term_month_context(probe_low):
                 continue
+            composite_months = _parse_composite_term_months(probe)
+            if composite_months is not None:
+                score = 16 - lookahead
+                if "renewal term" in low_line:
+                    score += 2
+                if "primary lease term" in low_line:
+                    score += 3
+                candidates.append((score, idx, composite_months))
+                break
             month_matches = re.findall(
                 r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
                 probe,
@@ -1340,8 +1532,8 @@ def _extract_term_months_from_text(text: str) -> int | None:
             candidates.append((score, match.start(), int(months)))
 
     composite_patterns = [
-        (r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b", 11),
-        (r"(?i)\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\b(?:lease\s+|sublease\s+|initial\s+)?term\b", 12),
+        (r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*(?:\+|and|,)\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b", 11),
+        (r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*(?:\+|and|,)\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\b(?:lease\s+|sublease\s+|initial\s+)?term\b", 12),
     ]
     for pattern, base_score in composite_patterns:
         for match in re.finditer(pattern, text):
@@ -1873,7 +2065,12 @@ def _regex_prefill(text: str) -> dict:
             score += 8
         if any(k in snippet for k in ("project size", "building size", "between two buildings", "entire project")):
             score -= 7
-        if re.search(r"(?i)\bper\s+1,?000\s+rsf\b|/1,?000\s*rsf|ratio", snippet):
+        if re.search(
+            r"(?i)\bper\s+(?:1,?000|\d{2,5}(?:,\d{3})?)\s*(?:(?:rentable|leasable|usable)\s+)?(?:square\s*feet|sq\.?\s*ft\.?|rsf|sf)\b|"
+            r"/\s*(?:1,?000|\d{2,5}(?:,\d{3})?)\s*(?:(?:rentable|leasable|usable)\s+)?(?:square\s*feet|sq\.?\s*ft\.?|rsf|sf)\b|"
+            r"\bratio\b",
+            snippet,
+        ):
             score -= 9
         if re.search(r"(?i)\(\s*\d[\d,]*\s*rsf\s*/\s*\d[\d,]*\s*rsf\s*\)", snippet):
             score -= 8
@@ -2316,12 +2513,17 @@ def _regex_prefill(text: str) -> dict:
                 continue
             if not (0 < value <= 150):
                 continue
+            local = seg[max(0, amount_match.start() - 70): min(len(seg), amount_match.end() + 70)].lower()
+            if not any(tok in local for tok in ("operating", "opex", "cam", "expense")):
+                continue
+            if any(tok in local for tok in ("fit plan", "space plan", "tenant improvement", "allowance", "parking")):
+                continue
             score = 8
-            if "operating expenses" in seg_low or "opex" in seg_low or "cam" in seg_low:
+            if "operating expenses" in local or "opex" in local or "cam" in local:
                 score += 3
-            if "estimated" in seg_low or "currently" in seg_low:
+            if "estimated" in local or "currently" in local:
                 score += 2
-            if "nnn" in seg_low:
+            if "nnn" in local:
                 score += 1
             opex_candidates.append((score, value))
         for amount_match in re.finditer(r"\$\s*([\d,]+(?:\.\d+)?)", seg):
@@ -2332,6 +2534,10 @@ def _regex_prefill(text: str) -> dict:
             if not (0 < value <= 150):
                 continue
             local = seg[max(0, amount_match.start() - 60): min(len(seg), amount_match.end() + 80)].lower()
+            if not any(tok in local for tok in ("operating", "opex", "cam", "expense")):
+                continue
+            if any(tok in local for tok in ("fit plan", "space plan", "tenant improvement", "allowance", "parking")):
+                continue
             if any(tok in local for tok in ("per month", "/month", "monthly", "year ", "yearly")):
                 continue
             score = 5
@@ -2609,21 +2815,22 @@ def _regex_prefill(text: str) -> dict:
     if not building_row_match:
         building_row_match = re.search(r"(?im)^\s*building\s*:\s*([^\n|]+)", text)
     if building_row_match:
-        building = " ".join((building_row_match.group(1) or "").split()).strip(" ,.-")
-        building = re.sub(
-            r"(?i)\s+[–-]\s+\d{1,6}\s+[A-Za-z0-9 .,'-]{2,120}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|highway|hwy\.?)\b.*$",
-            "",
-            building,
-        ).strip(" ,.-")
+        building = _clean_building_candidate(building_row_match.group(1))
     premises_line_match = re.search(r"(?im)^\s*premises\s*:\s*([^\n]+)$", text)
     if premises_line_match:
         premises_line = premises_line_match.group(1)
+        if not building:
+            building = _clean_building_candidate(premises_line.split(",", 1)[0])
         m = re.search(r"(?i)\b(?:suite|ste\.?|unit)\s*([A-Za-z0-9][A-Za-z0-9\-]{0,20})\b", premises_line)
         if m:
-            suite = m.group(1).strip(" ,.-")
+            suite = _normalize_suite_value(m.group(1))
     m = _RE_BUILDING.search(text)
     if m and not building:
-        building = m.group(1).strip(" ,.-")
+        building = _clean_building_candidate(m.group(1))
+    if not building:
+        m = re.search(r"(?im)^\s*re:\s*[^\n]{0,220}?\bat\s+([A-Za-z0-9][A-Za-z0-9&' .-]{3,100})\s*$", text)
+        if m:
+            building = _clean_building_candidate(m.group(1))
     if not building:
         m = re.search(
             r"(?i)\blease\s+(?:space|premises)\s+at\s+([A-Za-z0-9&' .-]{3,80}?)(?:\s*[–-]\s*building\s*([A-Za-z0-9]+))?\b",
@@ -2632,11 +2839,16 @@ def _regex_prefill(text: str) -> dict:
         if m:
             bname = m.group(1).strip(" ,.-")
             bnum = (m.group(2) or "").strip()
-            building = f"{bname} - Building {bnum}".strip(" -") if bnum else bname
+            building = _clean_building_candidate(f"{bname} - Building {bnum}".strip(" -") if bnum else bname)
     if suite is None:
         suite_match = _RE_SUITE.search(text)
         if suite_match:
-            suite = suite_match.group(1).strip(" ,.-")
+            raw_suite = suite_match.group(1).strip(" ,.-")
+            local = text[max(0, suite_match.start() - 120): min(len(text), suite_match.end() + 120)]
+            if not _suite_value_contains_address_noise(raw_suite) and not _is_notice_or_party_context(local):
+                suite = _normalize_suite_value(raw_suite) or None
+    if suite and _suite_value_contains_address_noise(suite):
+        suite = None
     if building and suite:
         prefill["name"] = f"{building} Suite {suite}"
     elif building:
@@ -2673,6 +2885,36 @@ def _regex_prefill(text: str) -> dict:
         if parking_ratio_candidates[0][0] > 0:
             prefill["parking_ratio_per_1000_rsf"] = float(parking_ratio_candidates[0][2])
             parking_ratio_evidence = True
+    if not parking_ratio_evidence:
+        general_ratio_candidates: list[tuple[int, int, float]] = []
+        for pat in (
+            re.compile(
+                r"(?i)\b(\d+(?:\.\d+)?)\s*(?:parking\s+)?(?:spaces?|stalls?|passes?)\s*(?:per|\/)\s*(\d{2,5}(?:,\d{3})?)\s*(?:(?:rentable|leasable|usable)\s+)?(?:square\s*feet|sq\.?\s*ft\.?|rsf|sf)\b"
+            ),
+            re.compile(
+                r"(?i)\b(\d+(?:\.\d+)?)\s*(?:access\s*cards?|cards?)\s*(?:per|\/)\s*(\d{2,5}(?:,\d{3})?)\s*(?:(?:rentable|leasable|usable)\s+)?(?:square\s*feet|sq\.?\s*ft\.?|rsf|sf)\b"
+            ),
+        ):
+            for m in pat.finditer(text):
+                numerator = _coerce_float_token(m.group(1), 0.0) or 0.0
+                denominator = _coerce_float_token(m.group(2), 0.0) or 0.0
+                if numerator <= 0 or denominator <= 0:
+                    continue
+                ratio = float(numerator) * 1000.0 / float(denominator)
+                if not (0.1 <= ratio <= 30):
+                    continue
+                local = text[max(0, m.start() - 90): min(len(text), m.end() + 90)].lower()
+                score = 4
+                if "parking" in local:
+                    score += 3
+                if any(k in local for k in ("density", "desk", "workstation", "occupancy")):
+                    score -= 6
+                general_ratio_candidates.append((score, m.start(), round(float(ratio), 4)))
+        if general_ratio_candidates:
+            general_ratio_candidates.sort(key=lambda row: (-row[0], -row[1], row[2]))
+            if general_ratio_candidates[0][0] > 0:
+                prefill["parking_ratio_per_1000_rsf"] = float(general_ratio_candidates[0][2])
+                parking_ratio_evidence = True
 
     parking_count_patterns = [
         r"(?i)\bparking\s+spaces?\s*[:\-]?\s*(\d{1,4})(?!\.\d)\b",
@@ -2689,7 +2931,10 @@ def _regex_prefill(text: str) -> dict:
             if m.start() > 0 and text[m.start() - 1] == ".":
                 continue
             trailing = text[m.end(): min(len(text), m.end() + 64)].lower()
-            if re.search(r"(?i)\b(?:per|\/)\s*(?:every\s*)?1,?000\b", trailing):
+            if re.search(
+                r"(?i)\b(?:per|\/)\s*(?:every\s*)?(?:\d{2,5}(?:,\d{3})?|1,?000)\s*(?:(?:rentable|leasable|usable)\s+)?(?:square\s*feet|sq\.?\s*ft\.?|rsf|sf)?\b",
+                trailing,
+            ):
                 continue
             local = text[max(0, m.start() - 90): min(len(text), m.end() + 110)].lower()
             score = 1
