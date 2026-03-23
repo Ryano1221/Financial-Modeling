@@ -592,6 +592,24 @@ def _shared_market_inventory_local_path() -> Path:
     return REPORTS_DIR / "shared_market_inventory.json"
 
 
+def _write_shared_market_inventory_local(envelope: dict[str, Any]) -> None:
+    body = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    path = _shared_market_inventory_local_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+
+
+def _read_shared_market_inventory_local() -> tuple[dict[str, Any], bool]:
+    path = _shared_market_inventory_local_path()
+    if not path.exists():
+        return {"records": []}, False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    return (payload if isinstance(payload, dict) else {"records": []}), True
+
+
 def _save_shared_market_inventory(envelope: dict[str, Any]) -> None:
     body = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY:
@@ -609,12 +627,12 @@ def _save_shared_market_inventory(envelope: dict[str, Any]) -> None:
         )
         if status >= 400:
             msg = resp_body.decode("utf-8", errors="ignore")[:300]
-            raise HTTPException(status_code=503, detail=f"Failed to save shared market inventory: {msg}")
+            logging.warning("Shared market inventory storage upload failed; falling back to local storage: %s", msg)
+            _write_shared_market_inventory_local(envelope)
+            return
         return
 
-    path = _shared_market_inventory_local_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(body)
+    _write_shared_market_inventory_local(envelope)
 
 
 def _load_shared_market_inventory() -> tuple[dict[str, Any], bool]:
@@ -629,21 +647,15 @@ def _load_shared_market_inventory() -> tuple[dict[str, Any], bool]:
         if status == 404:
             return {"records": []}, False
         if status >= 400:
-            raise HTTPException(status_code=503, detail="Failed to load shared market inventory.")
+            logging.warning("Shared market inventory storage download failed; falling back to local storage (status=%s).", status)
+            return _read_shared_market_inventory_local()
         try:
             payload = json.loads(body.decode("utf-8", errors="ignore"))
         except Exception:
             payload = {}
         return (payload if isinstance(payload, dict) else {"records": []}), True
 
-    path = _shared_market_inventory_local_path()
-    if not path.exists():
-        return {"records": []}, False
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        payload = {}
-    return (payload if isinstance(payload, dict) else {"records": []}), True
+    return _read_shared_market_inventory_local()
 
 
 @lru_cache(maxsize=1)
