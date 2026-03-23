@@ -156,6 +156,21 @@ def _safe_int(value: Any, default: int | None = None) -> int | None:
         return default
 
 
+def _normalize_suite_value(value: Any) -> str | None:
+    raw = " ".join(str(value or "").split()).strip(" ,.;:-")
+    if not raw:
+        return None
+    if re.search(r"(?i),\s*[A-Za-z .'-]{2,40},\s*(?:[A-Z]{2}|[A-Za-z]{4,})(?:\s+\d{5}(?:-\d{4})?)?\b", raw):
+        raw = raw.split(",", 1)[0].strip(" ,.;:-")
+    token_match = re.match(r"(?i)^([A-Za-z0-9][A-Za-z0-9\-]{0,14})", raw)
+    if not token_match:
+        return None
+    token = token_match.group(1)
+    if re.fullmatch(r"(?i)[A-Za-z]{4,}", token):
+        return None
+    return token.upper() if not token.isdigit() else (token.lstrip("0") or token)
+
+
 def _snippet_score_adjustment(snippet: str, source: str) -> float:
     low = (snippet or "").lower()
     score = 0.0
@@ -1125,7 +1140,7 @@ def _select_scalar_sections(by_field: dict[str, list[dict[str, Any]]]) -> tuple[
 
     field_mapping = {
         "building_name": ("premises", "building_name", lambda v: str(v).strip() if str(v or "").strip() else None),
-        "suite": ("premises", "suite", lambda v: str(v).strip().upper() if str(v or "").strip() else None),
+        "suite": ("premises", "suite", _normalize_suite_value),
         "floor": ("premises", "floor", lambda v: str(v).strip() if str(v or "").strip() else None),
         "address": ("premises", "address", lambda v: str(v).strip() if str(v or "").strip() else None),
         "rsf": ("premises", "rsf", lambda v: max(0.0, float(v)) if _safe_float(v, None) is not None else None),

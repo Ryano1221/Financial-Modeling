@@ -15,6 +15,8 @@ import type { SurveyEntry } from "@/lib/surveys/types";
 import type { ObligationStorageState } from "@/lib/obligations/types";
 import type { CompletedLeaseDocumentRecord } from "@/lib/completed-leases/types";
 import type { SubleaseScenario } from "@/lib/sublease-recovery/types";
+import type { CrmWorkspaceState } from "@/lib/workspace/crm";
+import { buildCrmWorkspaceState, CRM_OS_STORAGE_KEY, emptyCrmWorkspaceState } from "@/lib/workspace/crm";
 import {
   buildWorkflowTransitionLabel,
   getWorkflowStagesForMode,
@@ -22,6 +24,7 @@ import {
   inferWorkflowStageFromDocumentType,
 } from "@/lib/workspace/workflow-engine";
 import { classifyDocument, extractEntitiesFromCanonical } from "@/lib/workspace/document-intelligence";
+import { getRepresentationModeProfile } from "@/lib/workspace/representation-profile";
 import {
   runAiCommandPlan,
   suggestToolPlan,
@@ -56,6 +59,7 @@ import type {
 } from "@/lib/workspace/os-types";
 import type { ClientWorkspaceDeal, ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { fetchSharedMarketInventory, type SharedMarketInventoryResponse } from "@/lib/workspace/market-inventory";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
 
@@ -70,6 +74,7 @@ interface ModuleSnapshots {
   obligations: ObligationStorageState | null;
   completedLeaseDocuments: CompletedLeaseDocumentRecord[];
   subleaseScenarios: SubleaseScenario[];
+  crmState: CrmWorkspaceState | null;
 }
 
 function emptySnapshots(): ModuleSnapshots {
@@ -78,6 +83,7 @@ function emptySnapshots(): ModuleSnapshots {
     obligations: null,
     completedLeaseDocuments: [],
     subleaseScenarios: [],
+    crmState: null,
   };
 }
 
@@ -137,6 +143,10 @@ function parseModuleSnapshotValue(key: string, value: unknown): ModuleSnapshots[
       ? ((value as { scenarios?: SubleaseScenario[] }).scenarios || [])
       : [];
     return scenarios;
+  }
+  if (key === "crmState") {
+    if (!value || typeof value !== "object") return null;
+    return value as CrmWorkspaceState;
   }
   return [];
 }
@@ -421,6 +431,7 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
   } = useClientWorkspace();
   const [moduleSnapshots, setModuleSnapshots] = useState<ModuleSnapshots>(emptySnapshots);
   const [artifacts, setArtifacts] = useState<BrokerageOsArtifactsState>(defaultArtifactsState);
+  const [sharedMarketInventory, setSharedMarketInventory] = useState<SharedMarketInventoryResponse | null>(null);
 
   const activeClientDeals = useMemo(
     () => allDeals.filter((deal) => deal.clientId === activeClientId),
@@ -478,6 +489,22 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadSharedInventory() {
+      try {
+        const payload = await fetchSharedMarketInventory();
+        if (!cancelled) setSharedMarketInventory(payload);
+      } catch {
+        if (!cancelled) setSharedMarketInventory(null);
+      }
+    }
+    void loadSharedInventory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const clientId = asText(activeClientId);
     if (!clientId || typeof window === "undefined") {
       setModuleSnapshots(emptySnapshots());
@@ -515,11 +542,13 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
       const obligationsKey = localStorageKey(OBLIGATIONS_STORAGE_KEY, clientId);
       const completedKey = localStorageKey(COMPLETED_LEASES_STORAGE_KEY, clientId);
       const subleaseKey = localStorageKey(SUBLEASE_RECOVERY_STORAGE_KEY, clientId);
+      const crmKey = localStorageKey(CRM_OS_STORAGE_KEY, clientId);
 
       const localSurveysRaw = parseJson<Record<string, unknown> | null>(window.localStorage.getItem(surveysKey), null);
       const localObligationsRaw = parseJson<Record<string, unknown> | null>(window.localStorage.getItem(obligationsKey), null);
       const localCompletedRaw = parseJson<Record<string, unknown> | null>(window.localStorage.getItem(completedKey), null);
       const localSubleaseRaw = parseJson<Record<string, unknown> | null>(window.localStorage.getItem(subleaseKey), null);
+      const localCrmRaw = parseJson<Record<string, unknown> | null>(window.localStorage.getItem(crmKey), null);
 
       if (!isAuthenticated) {
         if (cancelled) return;
@@ -528,6 +557,7 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
           obligations: parseModuleSnapshotValue("obligations", localObligationsRaw) as ObligationStorageState | null,
           completedLeaseDocuments: parseModuleSnapshotValue("completedLeaseDocuments", localCompletedRaw) as CompletedLeaseDocumentRecord[],
           subleaseScenarios: parseModuleSnapshotValue("subleaseScenarios", localSubleaseRaw) as SubleaseScenario[],
+          crmState: parseModuleSnapshotValue("crmState", localCrmRaw) as CrmWorkspaceState | null,
         });
         return;
       }
@@ -542,11 +572,12 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
         return localValue;
       };
 
-      const [surveysRaw, obligationsRaw, completedRaw, subleaseRaw] = await Promise.all([
+      const [surveysRaw, obligationsRaw, completedRaw, subleaseRaw, crmRaw] = await Promise.all([
         loadRemoteSection(surveysKey, localSurveysRaw),
         loadRemoteSection(obligationsKey, localObligationsRaw),
         loadRemoteSection(completedKey, localCompletedRaw),
         loadRemoteSection(subleaseKey, localSubleaseRaw),
+        loadRemoteSection(crmKey, localCrmRaw),
       ]);
 
       if (cancelled) return;
@@ -555,6 +586,7 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
         obligations: parseModuleSnapshotValue("obligations", obligationsRaw) as ObligationStorageState | null,
         completedLeaseDocuments: parseModuleSnapshotValue("completedLeaseDocuments", completedRaw) as CompletedLeaseDocumentRecord[],
         subleaseScenarios: parseModuleSnapshotValue("subleaseScenarios", subleaseRaw) as SubleaseScenario[],
+        crmState: parseModuleSnapshotValue("crmState", crmRaw) as CrmWorkspaceState | null,
       });
     }
 
@@ -598,6 +630,15 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
         leaseAbstracts: [],
         obligations: [],
         tasks: [],
+        crmCompanies: [],
+        crmBuildings: [],
+        occupancyRecords: [],
+        prospectingRecords: [],
+        clientRelationshipRecords: [],
+        crmTasks: [],
+        crmTemplates: [],
+        crmReminders: [],
+        crmTouchpoints: [],
       };
     }
 
@@ -654,6 +695,30 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
       createdAt: new Date().toISOString(),
       status: "draft",
     }));
+    const crmState = buildCrmWorkspaceState({
+      clientId: activeClientId,
+      clientName: activeClient.name,
+      representationMode,
+      sharedBuildings: sharedMarketInventory?.records,
+      documents: activeClientDocuments,
+      deals: activeClientDeals,
+      properties,
+      spaces,
+      obligations,
+      surveys,
+      surveyEntries,
+      financialAnalyses,
+      leaseAbstracts: [
+        ...leaseAbstracts,
+        ...moduleSnapshots.completedLeaseDocuments.map((record) => ({
+          id: `abstract_record_${record.id}`,
+          name: `${record.fileName} Abstract`,
+          documentId: undefined,
+          createdAt: record.uploadedAtIso,
+        })),
+      ],
+      existingState: moduleSnapshots.crmState || emptyCrmWorkspaceState(representationMode),
+    });
 
     const documents = activeClientDocuments.map((doc) => {
       const cls = classifyDocument({
@@ -716,8 +781,17 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
       ],
       obligations,
       tasks,
+      crmCompanies: crmState.companies,
+      crmBuildings: crmState.buildings,
+      occupancyRecords: crmState.occupancyRecords,
+      prospectingRecords: crmState.prospectingRecords,
+      clientRelationshipRecords: crmState.clientRelationshipRecords,
+      crmTasks: crmState.tasks,
+      crmTemplates: crmState.templates,
+      crmReminders: crmState.reminders,
+      crmTouchpoints: crmState.touchpoints,
     };
-  }, [clients, activeClientId, activeClientDeals, activeClientDocuments, moduleSnapshots]);
+  }, [clients, activeClientId, activeClientDeals, activeClientDocuments, moduleSnapshots, representationMode, sharedMarketInventory?.records]);
 
   const transitionDealStage = useCallback((dealId: string, nextStage: string, source: "user" | "ai" | "automation", reason = ""): BrokerageOsToolResult => {
     const targetDeal = activeClientDeals.find((deal) => deal.id === dealId);
@@ -980,6 +1054,7 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
       const executedDeals = graph.deals.filter((deal) => normalize(deal.stage) === "executed").length;
       const focus = normalize(input.focus);
       const isLandlordMode = representationMode === LANDLORD_REP_MODE;
+      const representationProfile = getRepresentationModeProfile(representationMode);
       const proposalCount = graph.proposals.length;
       const tourCount = graph.deals.filter((deal) => normalize(deal.stage).includes("tour")).length;
       const summary = isLandlordMode
@@ -989,7 +1064,8 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
             : `Portfolio has ${graph.deals.length} inquiry record${graph.deals.length === 1 ? "" : "s"}, ${tourCount} active tour stage item${tourCount === 1 ? "" : "s"}, ${proposalCount} proposal item${proposalCount === 1 ? "" : "s"}, and ${executedDeals} executed deal${executedDeals === 1 ? "" : "s"}.`
         )
         : `Client has ${graph.deals.length} deal(s), ${openDeals} open, ${executedDeals} executed, ${graph.documents.length} document(s), ${graph.obligations.length} obligation(s), and ${graph.surveyEntries.length} survey option(s).`;
-      return { tool, ok: true, message: summary, data: { summary } };
+      const framedSummary = `${representationProfile.summary} ${summary}`;
+      return { tool, ok: true, message: framedSummary, data: { summary: framedSummary } };
     }
 
     if (tool === "exportPdf") {

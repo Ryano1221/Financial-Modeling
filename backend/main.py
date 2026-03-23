@@ -79,6 +79,11 @@ from services.input_normalizer import (
     _dict_to_canonical,
     _compute_confidence_and_missing,
 )
+from services.costar_inventory import (
+    build_market_inventory_envelope,
+    merge_market_inventory,
+    parse_costar_inventory_workbook,
+)
 try:
     from cache.disk_cache import (
         get_cached_extraction,
@@ -137,6 +142,7 @@ MAX_EXTRACTION_ARTIFACTS_BYTES = int(os.environ.get("MAX_EXTRACTION_ARTIFACTS_BY
 SAFE_OCR_MAX_PAGES = int(os.environ.get("SAFE_OCR_MAX_PAGES", "3"))
 SKIP_OCR_ABOVE_BYTES = int(os.environ.get("SKIP_OCR_ABOVE_BYTES", str(8 * 1024 * 1024)))
 MAX_WORKSPACE_STATE_BYTES = int(os.environ.get("MAX_WORKSPACE_STATE_BYTES", str(5 * 1024 * 1024)))
+MAX_MARKET_INVENTORY_UPLOAD_BYTES = int(os.environ.get("MAX_MARKET_INVENTORY_UPLOAD_BYTES", str(25 * 1024 * 1024)))
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip().rstrip("/")
 SUPABASE_ANON_KEY = (os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or "").strip()
 SUPABASE_SERVICE_ROLE_KEY = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
@@ -145,6 +151,7 @@ SUPABASE_WORKSPACE_BUCKET = (
     os.environ.get("SUPABASE_WORKSPACE_BUCKET") or os.environ.get("SUPABASE_LOGOS_BUCKET") or "logos"
 ).strip() or "logos"
 DEFAULT_CREMODEL_BRAND_NAME = "The CRE Model"
+SHARED_MARKET_INVENTORY_OBJECT_PATH = "shared/market_inventory/costar_buildings.json"
 
 
 def _public_branding_path() -> Path:
@@ -212,6 +219,14 @@ class ContactSubmissionRequest(BaseModel):
     name: str
     email: str
     message: str
+
+
+class SharedMarketInventoryResponse(BaseModel):
+    source: str
+    updated_at: str | None = None
+    count: int
+    summary: dict[str, Any] | None = None
+    records: list[dict[str, Any]]
 
 
 def _validate_contact_submission(body: ContactSubmissionRequest) -> tuple[str, str, str]:
@@ -568,6 +583,67 @@ def _storage_download_workspace_state(user_id: str) -> tuple[dict | None, str | 
     workspace_state = raw_state if isinstance(raw_state, dict) else {}
     updated_at = str(payload.get("updated_at") or "").strip() or None
     return workspace_state, updated_at
+
+
+def _shared_market_inventory_local_path() -> Path:
+    configured = (os.environ.get("SHARED_MARKET_INVENTORY_PATH") or "").strip()
+    if configured:
+        return Path(configured)
+    return REPORTS_DIR / "shared_market_inventory.json"
+
+
+def _save_shared_market_inventory(envelope: dict[str, Any]) -> None:
+    body = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY:
+        encoded = urllib_parse.quote(SHARED_MARKET_INVENTORY_OBJECT_PATH, safe="/")
+        status, resp_body = _http_bytes_request(
+            f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+            method="POST",
+            headers={
+                **_admin_headers(),
+                "content-type": "application/json",
+                "x-upsert": "true",
+            },
+            body=body,
+            timeout=30.0,
+        )
+        if status >= 400:
+            msg = resp_body.decode("utf-8", errors="ignore")[:300]
+            raise HTTPException(status_code=503, detail=f"Failed to save shared market inventory: {msg}")
+        return
+
+    path = _shared_market_inventory_local_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+
+
+def _load_shared_market_inventory() -> tuple[dict[str, Any], bool]:
+    if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY:
+        encoded = urllib_parse.quote(SHARED_MARKET_INVENTORY_OBJECT_PATH, safe="/")
+        status, body = _http_bytes_request(
+            f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+            method="GET",
+            headers=_admin_headers(),
+            timeout=30.0,
+        )
+        if status == 404:
+            return {"records": []}, False
+        if status >= 400:
+            raise HTTPException(status_code=503, detail="Failed to load shared market inventory.")
+        try:
+            payload = json.loads(body.decode("utf-8", errors="ignore"))
+        except Exception:
+            payload = {}
+        return (payload if isinstance(payload, dict) else {"records": []}), True
+
+    path = _shared_market_inventory_local_path()
+    if not path.exists():
+        return {"records": []}, False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    return (payload if isinstance(payload, dict) else {"records": []}), True
 
 
 @lru_cache(maxsize=1)
@@ -1003,6 +1079,63 @@ def put_user_workspace_state_section(section_key: str, body: UserWorkspaceSectio
         "section_key": key,
         "value": body.value,
         "updated_at": updated_at,
+    }
+
+
+@app.get("/market-inventory", response_model=SharedMarketInventoryResponse)
+def get_shared_market_inventory():
+    envelope, _ = _load_shared_market_inventory()
+    records = envelope.get("records")
+    summary = envelope.get("summary")
+    return {
+        "source": str(envelope.get("source") or "seed"),
+        "updated_at": str(envelope.get("updated_at") or "").strip() or None,
+        "count": len(records) if isinstance(records, list) else 0,
+        "summary": summary if isinstance(summary, dict) else None,
+        "records": records if isinstance(records, list) else [],
+    }
+
+
+@app.post("/market-inventory/import/costar", response_model=SharedMarketInventoryResponse)
+async def import_costar_market_inventory(request: Request, file: UploadFile = File(...)):
+    user = _require_supabase_user(request)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    filename = file.filename.strip()
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="CoStar import must be an .xlsx file.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > MAX_MARKET_INVENTORY_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"CoStar import exceeds size limit ({MAX_MARKET_INVENTORY_UPLOAD_BYTES} bytes).",
+        )
+    try:
+        imported_records = parse_costar_inventory_workbook(raw, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not imported_records:
+        raise HTTPException(status_code=400, detail="No office inventory rows were found in this CoStar file.")
+
+    existing_envelope, _ = _load_shared_market_inventory()
+    existing_records = existing_envelope.get("records") if isinstance(existing_envelope.get("records"), list) else []
+    merged_records = merge_market_inventory(existing_records, imported_records)
+    envelope = build_market_inventory_envelope(
+        merged_records,
+        filename=filename,
+        imported_by_user_id=user["id"],
+        imported_by_email=user.get("email") or "",
+        previous_count=len(existing_records),
+    )
+    _save_shared_market_inventory(envelope)
+    return {
+        "source": str(envelope.get("source") or "costar_excel_import"),
+        "updated_at": str(envelope.get("updated_at") or "").strip() or None,
+        "count": len(merged_records),
+        "summary": envelope.get("summary") if isinstance(envelope.get("summary"), dict) else None,
+        "records": merged_records,
     }
 
 
@@ -1899,6 +2032,44 @@ def _normalize_suite_value(raw: str) -> str:
     return _normalize_suite_candidate(value)
 
 
+def _suite_value_is_suspicious(value: str) -> bool:
+    normalized = " ".join(str(value or "").split()).strip()
+    if not normalized:
+        return False
+    if len(normalized) > 24:
+        return True
+    if len(re.findall(r"[A-Za-z]{3,}", normalized)) >= 2:
+        return True
+    if re.search(r"(?i)\b(?:wire\s+transfer|united\s+states|america|landlord|tenant|section|article)\b", normalized):
+        return True
+    return not bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\-]{0,11}(?:,[A-Za-z0-9][A-Za-z0-9\-]{0,11}){0,5}", normalized))
+
+
+def _suite_value_contains_address_noise(raw: str) -> bool:
+    low = " ".join(str(raw or "").split()).strip().lower()
+    if not low:
+        return False
+    if _is_notice_or_party_context(low):
+        return True
+    if any(
+        token in low
+        for token in (
+            "with an address of",
+            "address of",
+            "legal entity",
+            "registered office",
+            "registered agent",
+            "property management",
+            "newton",
+            "massachusetts",
+        )
+    ):
+        return True
+    if re.search(r"(?i),\s*[A-Za-z .'-]{2,40},\s*(?:[A-Z]{2}|[A-Za-z]{4,})(?:\s+\d{5}(?:-\d{4})?)?\b", low):
+        return True
+    return False
+
+
 def _normalize_floor_candidate(raw: str) -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:-")
     if not v:
@@ -1979,6 +2150,16 @@ def _is_notice_or_party_context(segment: str) -> bool:
             "lessee",
             "executive managing director",
             "office partner",
+            "address of",
+            "with an address of",
+            "landlord legal entity",
+            "legal entity",
+            "property management",
+            "registered office",
+            "registered agent",
+            "secretary of state",
+            "remit to",
+            "wire transfer",
         )
     )
 
@@ -2283,6 +2464,7 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
         return None, None
     segments = _iter_text_segments(lines, max_lines=320)
     opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|ope|cam|common area maintenance)\b")
+    rent_kw = re.compile(r"(?i)\b(?:lease\s+rate|initial\s+base\s+rent|base\s+rent|rental\s+rate|annual\s+rent)\b")
     value_patterns = [
         re.compile(
             r"(?i)\$?\s*([\d,]+(?:\.\d{1,4})?)\s*(?:/|per)\s*(?:rentable\s+)?(?:rsf|r\.?s\.?f\.?|sf|s\.?f\.?|square\s*feet?|sq\.?\s*ft)\s*(?:/|per)?\s*(?:year|yr|annum|annual)?\b"
@@ -2296,6 +2478,7 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
             continue
         low = seg.lower()
         opex_positions = [m.start() for m in opex_kw.finditer(seg)]
+        rent_positions = [m.start() for m in rent_kw.finditer(seg)]
         for pat_idx, pat in enumerate(value_patterns):
             for m in pat.finditer(seg):
                 value = _coerce_float_token(m.group(1), 0.0)
@@ -2305,6 +2488,7 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
                     continue
                 local = seg[max(0, m.start() - 72): min(len(seg), m.end() + 72)]
                 local_tight = seg[max(0, m.start() - 40): min(len(seg), m.end() + 40)]
+                prefix_tight = seg[max(0, m.start() - 24): m.start()]
                 local_has_opex_kw = bool(
                     re.search(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance|additional rent)\b", local)
                 )
@@ -2324,15 +2508,20 @@ def _extract_opex_psf_from_text(text: str) -> tuple[Optional[float], Optional[in
                     )
                 )
                 nearest_opex_distance = min((abs(m.start() - pos) for pos in opex_positions), default=999)
+                nearest_rent_distance = min((abs(m.start() - pos) for pos in rent_positions), default=999)
                 # Prevent false positives like "$42.00/RSF, net of operating" from base-rent lines.
-                if local_has_base_rent_kw and not local_has_opex_kw:
+                if local_has_base_rent_kw:
+                    continue
+                if re.search(r"(?i)\b(?:cam|taxes?|insurance)\s*$", prefix_tight):
+                    continue
+                if nearest_rent_distance + 8 < nearest_opex_distance:
                     continue
                 if local_has_rent_schedule_cues and not local_has_opex_kw:
                     continue
                 if local_has_ti_kw and not local_has_opex_kw:
                     continue
                 # Avoid mixing values that are far away from the OpEx clause in long merged lines.
-                if nearest_opex_distance > 100 and not local_has_opex_kw:
+                if nearest_opex_distance > 36 and not local_has_opex_kw:
                     continue
                 score = 1
                 if "operating expense" in low or "common area maintenance" in low or "opex" in low or re.search(r"(?i)\bcam\b", seg):
@@ -2464,20 +2653,150 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
     return dict(sorted(results.items()))
 
 
+def _extract_opex_exclusion_uplift_from_text(text: str) -> tuple[float, str]:
+    """
+    Detect OpEx clauses that explicitly exclude tenant-paid utilities,
+    electrical, and/or janitorial from the quoted OpEx figure.
+
+    Business rule:
+    - If quoted OpEx excludes these items, add $3.00/SF to modeled OpEx.
+    - The quoted source sentence should also be preserved in notes.
+    """
+    if not text:
+        return 0.0, ""
+    lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
+    if not lines:
+        return 0.0, ""
+
+    segments = _iter_text_segments(lines, max_lines=320)
+    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance)\b")
+    exclusion_kw = re.compile(
+        r"(?i)\b(?:net of|excluding|exclusive of|does not include|do not include|not included|not include|without)\b"
+    )
+    utility_kw = re.compile(r"(?i)\b(?:utilities?|electric(?:al)?|janitorial|janitrial)\b")
+
+    best_segment = ""
+    best_score = 0
+    best_line = ""
+    for seg in segments:
+        if not opex_kw.search(seg):
+            continue
+        if not exclusion_kw.search(seg):
+            continue
+        if not utility_kw.search(seg):
+            continue
+        score = 0
+        low = seg.lower()
+        if "net of" in low:
+            score += 4
+        if re.search(r"(?i)\b(?:excluding|exclusive of|does not include|not included|without)\b", seg):
+            score += 3
+        if re.search(r"(?i)\bjanitorial|janitrial\b", seg):
+            score += 3
+        if re.search(r"(?i)\belectric(?:al)?\b", seg):
+            score += 3
+        if re.search(r"(?i)\butilities?\b", seg):
+            score += 2
+        if re.search(r"(?i)\bestimated\b", seg):
+            score += 1
+        if score > best_score:
+            best_score = score
+            best_segment = seg
+    if best_score > 0:
+        for line in lines:
+            if not opex_kw.search(line):
+                continue
+            if not exclusion_kw.search(line):
+                continue
+            if not utility_kw.search(line):
+                continue
+            if re.search(r"(?i)\bestimated\b", line):
+                best_line = line
+                break
+
+    if best_score <= 0 or not best_segment:
+        return 0.0, ""
+    if best_line:
+        estimated_slice = re.search(r"(?is)\bEstimated\b.*$", best_line)
+        preferred_line = estimated_slice.group(0) if estimated_slice else best_line
+        return 3.0, " ".join(preferred_line.split()).strip(" \t,;|")
+
+    sentence_match = re.search(
+        r"(?is)\b(Estimated[^.]*\b(?:net of|excluding|exclusive of|does not include|do not include|not included|without)\b[^.]*\.)",
+        best_segment,
+    )
+    if not sentence_match:
+        sentence_match = re.search(
+            r"(?is)([^.]*\b(?:net of|excluding|exclusive of|does not include|do not include|not included|without)\b[^.]*\.)",
+            best_segment,
+        )
+    note = " ".join((sentence_match.group(1) if sentence_match else best_segment).split()).strip(" \t,;|")
+    return 3.0, note
+
+
+def _apply_opex_exclusion_uplift_to_canonical(canonical: CanonicalLease, text: str) -> CanonicalLease:
+    uplift_psf, source_note = _extract_opex_exclusion_uplift_from_text(text)
+    if uplift_psf <= 0:
+        return canonical
+    lease_type_str = str(getattr(canonical.lease_type, "value", canonical.lease_type) or "").strip().lower()
+    if lease_type_str in {"full service", "full_service", "gross"}:
+        return canonical
+    current_opex = _coerce_float_token(getattr(canonical, "opex_psf_year_1", 0.0), 0.0) or 0.0
+    if current_opex <= 0:
+        return canonical
+    notes_text = str(getattr(canonical, "notes", "") or "")
+    uplift_note = (
+        f"Added ${float(uplift_psf):,.2f}/SF to modeled OpEx because the quoted OpEx excludes utilities, electrical, or janitorial costs."
+    )
+    if uplift_note in notes_text:
+        return canonical
+
+    uplifted_opex = float(round(float(current_opex) + float(uplift_psf), 4))
+    commencement_year = getattr(getattr(canonical, "commencement_date", None), "year", None)
+    current_by_year = getattr(canonical, "opex_by_calendar_year", {}) or {}
+    uplifted_by_year: dict[int, float] = {}
+    if isinstance(current_by_year, dict):
+        for year_raw, value_raw in current_by_year.items():
+            year_int = _coerce_int_token(year_raw, None)
+            value_num = _coerce_float_token(value_raw, None)
+            if year_int is None or value_num is None:
+                continue
+            if 1900 <= int(year_int) <= 2200 and float(value_num) >= 0:
+                uplifted_by_year[int(year_int)] = float(round(float(value_num) + float(uplift_psf), 4))
+    if commencement_year and 1900 <= int(commencement_year) <= 2200:
+        uplifted_by_year[int(commencement_year)] = uplifted_opex
+
+    merged_notes = _pack_notes_for_storage(
+        [],
+        extra_note_lines=[source_note, uplift_note] if source_note else [uplift_note],
+        existing_notes=notes_text,
+        max_total_chars=1600,
+        max_line_chars=190,
+    )
+    return canonical.model_copy(
+        update={
+            "opex_psf_year_1": uplifted_opex,
+            "expense_stop_psf": uplifted_opex,
+            "opex_by_calendar_year": dict(sorted(uplifted_by_year.items())) if uplifted_by_year else current_by_year,
+            "notes": merged_notes,
+        }
+    )
+
+
 def _clean_address_candidate(raw: str) -> str:
-    v = " ".join((raw or "").split()).strip(" ,.;:-")
+    v = " ".join((raw or "").split()).strip(" ,.;:|-")
     if not v:
         return ""
-    v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
-    v = re.sub(r'(?i),\s*(?:suite|ste\.?|unit|floor)\s*$', "", v).strip(" ,.;:-")
-    v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)\s+\b(?:contraction|contract)\s+premises\b.*$", "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)\s+\b(?:premises|term|lease term)\b\s*[:#-].*$", "", v).strip(" ,.;:-")
+    v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:|-")
+    v = re.sub(r'(?i),\s*(?:suite|ste\.?|unit|floor)\s*$', "", v).strip(" ,.;:|-")
+    v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:|-")
+    v = re.sub(r"(?i)\s+\b(?:contraction|contract)\s+premises\b.*$", "", v).strip(" ,.;:|-")
+    v = re.sub(r"(?i)\s+\b(?:premises|term|lease term)\b\s*[:#-].*$", "", v).strip(" ,.;:|-")
     v = re.split(
-        r"(?i)\b(?:lease\s+proposal(?:\s+for)?|proposal\s+for|tenant\s+broker|premises|square\s+footage|commencement|term|base\s+rent|operating\s+expenses|escalation|abatement|tenant\s+improvements|parking\s+ratio|hours\s+of\s+operation|after\s+hours\s+hvac|signage|fiber\s+infrastructure|security\s+deposit|commission\s+agreement|contingency)\b",
+        r"(?i)\b(?:lease\s+proposal(?:\s+for)?|proposal\s+for|tenant\s+broker|lease\b|premises|square\s+footage|commencement|term|base\s+rent|operating\s+expenses|escalation|abatement|tenant\s+improvements|parking\s+ratio|hours\s+of\s+operation|after\s+hours\s+hvac|signage|fiber\s+infrastructure|security\s+deposit|commission\s+agreement|contingency)\b",
         v,
         maxsplit=1,
-    )[0].strip(" ,.;:-")
+    )[0].strip(" ,.;:|-")
     return v
 
 
@@ -2495,7 +2814,7 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
     ]
     suite_hint_primary = suite_hint_tokens[0] if suite_hint_tokens else _normalize_suite_candidate(suite_hint)
 
-    street_suffix = r"(?:Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|Lane|Ln\.?|Way|Plaza|Parkway|Pkwy\.?|Expressway|Expy\.?|Highway|Hwy\.?|Circle|Cir\.?|Trail|Trl\.?)"
+    street_suffix = r"(?:Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|Lane|Ln\.?|Way|Plaza|Parkway|Pkwy\.?|Expressway|Expy\.?|Highway|Hwy\.?|Circle|Cir\.?|Trail|Trl\.?|Loop)"
     core_addr = rf"(\d{{1,6}}\s+[A-Za-z0-9\.\- ]{{2,100}}\b{street_suffix}\b(?:\s*,?\s*(?:Suite|Ste\.?|Unit|Floor)\s*[A-Za-z0-9\-]+)?(?:,\s*[A-Za-z0-9 .'-]{{2,50}}){{0,3}})"
     addr_patterns = [
         rf"(?i)\baddress\s*[:#-]\s*{core_addr}",
@@ -2513,6 +2832,8 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
             m = re.search(pat, seg)
             if not m:
                 continue
+            if _is_notice_or_party_context(low) and not any(k in low for k in ("premises", "located", "building")):
+                continue
             candidate = _clean_address_candidate(m.group(1))
             if not _looks_like_address(candidate):
                 continue
@@ -2522,7 +2843,7 @@ def _extract_address_from_text(text: str, suite_hint: str = "") -> str:
             if re.search(r"(?i)\b(austin|texas|tx|california|ca|new york|ny|florida|fl)\b", candidate):
                 score += 1
             if _is_notice_or_party_context(low):
-                score -= 3
+                score -= 8
             if any(k in low for k in ("re:", "executive managing director", "office partner")) and "premises" not in low:
                 score -= 4
             c_low = candidate.lower()
@@ -2543,59 +2864,74 @@ def _looks_like_address(value: str) -> bool:
     v = " ".join((value or "").split()).strip()
     if not v:
         return False
-    if re.search(r"\b\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9\.\- ]{2,100}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|drive|dr\.?|road|rd\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|highway|hwy\.?|circle|cir\.?|trail|trl\.?)\b", v, re.I):
+    if re.search(r"\b\d{1,6}\s+[A-Za-z0-9][A-Za-z0-9\.\- ]{2,100}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|drive|dr\.?|road|rd\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?|highway|hwy\.?|circle|cir\.?|trail|trl\.?|loop)\b", v, re.I):
         low = v.lower()
         if any(k in low for k in ("rsf", "cam", "reconciliation", "rent", "rate per", "month", "year")):
             return False
         return True
-    if "," in v and re.search(r"\b[A-Z]{2}\b|\b(?:Texas|California|New York|Florida|Illinois)\b", v, re.I):
+    if "," in v and (
+        re.search(r"\b(?:TX|CA|NY|FL|IL|MA|DC)\b", v)
+        or re.search(r"\b(?:Texas|California|New York|Florida|Illinois|Massachusetts)\b", v, re.I)
+    ):
         return True
     return False
 
 
 def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
-    v = " ".join((raw or "").split()).strip(" ,.;:-")
+    v = " ".join((raw or "").split()).strip(" ,.;:|-")
     if not v:
         return ""
     # Remove common leading labels.
-    v = re.sub(r"(?i)^(?:premises|premises name|building|building name|property|property name|address)\s*[:#-]\s*", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)^(?:premises|premises name|building|building name|property|property name|address)\s*[:#-]\s*", "", v).strip(" ,.;:|-")
     # Remove suite tokens from candidate building names.
-    v = re.sub(r"(?i)\b(?:suite|ste\.?|unit|space|floor)\s*#?\s*[A-Za-z0-9\-]+\b", "", v).strip(" ,.;:-")
+    v = re.sub(r"(?i)\b(?:suite|ste\.?|unit|space|floor)\s*#?\s*[A-Za-z0-9\-]+\b", "", v).strip(" ,.;:|-")
     if suite_hint:
-        v = re.sub(rf"(?i)\b{re.escape(suite_hint)}\b", "", v).strip(" ,.;:-")
+        v = re.sub(rf"(?i)\b{re.escape(suite_hint)}\b", "", v).strip(" ,.;:|-")
     # Remove weak lead-ins.
     v = re.sub(
         r"(?i)^(?:at|located at|known as|in the building known as|the building known as|the building located at|building located at)\s+",
         "",
         v,
-    ).strip(" ,.;:-")
-    v = re.sub(r"(?i)^lease\s+", "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)^[A-Za-z0-9&' .-]{1,60}\s+for\s+office(?:\s+space)?\s+", "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)^.*?\bas\s+a\s+tenant\s+at\s+", "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)\bhttps?://\S+", "", v).strip(" ,.;:-")
-    v = re.split(r"(?i)\bsection\s+\d{1,2}(?:\.\d+)?(?:\([a-z]\))?\b", v, maxsplit=1)[0].strip(" ,.;:-")
-    v = re.sub(r"(?i)\s+located\s+at\s+\d[\dA-Za-z .,'-]{3,160}(?:\.\s*.*)?$", "", v).strip(" ,.;:-")
+    ).strip(" ,.;:|-")
+    v = re.sub(r"(?i)^lease\s+", "", v).strip(" ,.;:|-")
+    v = re.sub(r"(?i)^[A-Za-z0-9&' .-]{1,60}\s+for\s+office(?:\s+space)?\s+", "", v).strip(" ,.;:|-")
+    v = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", v).strip(" ,.;:|-")
+    v = re.sub(r"(?i)^.*?\bas\s+a\s+tenant\s+at\s+", "", v).strip(" ,.;:|-")
+    v = re.sub(r"(?i)\bhttps?://\S+", "", v).strip(" ,.;:|-")
+    if re.search(r"(?i)\s+at\s+", v):
+        at_parts = [part.strip(" ,.;:|-") for part in re.split(r"(?i)\s+at\s+", v) if part.strip(" ,.;:|-")]
+        if len(at_parts) >= 2:
+            trailing = at_parts[-1]
+            trailing_low = trailing.lower()
+            if _looks_like_address(trailing) or any(
+                token in trailing_low for token in ("building", "tower", "plaza", "center", "centre", "campus", "park")
+            ):
+                v = trailing
+    v = re.split(r"(?i)\bon\s+behalf\s+of\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.split(r"(?i)\bwe\s+are\s+pleased\s+to\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.split(r"(?i)\bunder\s+the\s+following\s+terms\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.split(r"(?i)\bsection\s+\d{1,2}(?:\.\d+)?(?:\([a-z]\))?\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.sub(r"(?i)\s+located\s+at\s+\d[\dA-Za-z .,'-]{3,160}(?:\.\s*.*)?$", "", v).strip(" ,.;:|-")
     # "Summit at Lantana 7171 Southwest Parkway" -> "Summit at Lantana".
     if not re.match(r"^\d", v) and " - " not in v:
         v = re.sub(
             r"(?i)\s+\d{1,6}\s+[A-Za-z0-9 .,'-]{2,120}\b(?:street|st\.?|avenue|ave\.?|boulevard|blvd\.?|road|rd\.?|drive|dr\.?|lane|ln\.?|way|plaza|parkway|pkwy\.?|expressway|expy\.?)\b.*$",
             "",
             v,
-        ).strip(" ,.;:-")
-    v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:-")
-    v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:-")
+        ).strip(" ,.;:|-")
+    v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:|-")
+    v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:|-")
     v = re.sub(
         r"(?i)\s+\b(?:premises|leased\s+premises|sublease\s+premises|lease\s+commencement|commencement\s+date|lease\s+term|term)\b.*$",
         "",
         v,
-    ).strip(" ,.;:-")
-    v = re.split(r"(?i)\bthe\s+land\s+on\s+which\s+the\s+building\s+is\b", v, maxsplit=1)[0].strip(" ,.;:-")
-    v = re.split(r"(?i)\b(?:it is understood and agreed|provided that|subject to|for the avoidance of doubt|shall refer to)\b", v, maxsplit=1)[0].strip(" ,.;:-")
-    v = re.split(r"(?i)\b(?:additional information|can be found at|all other signage)\b", v, maxsplit=1)[0].strip(" ,.;:-")
-    v = re.sub(r"(?i)\s+under\s+the\s+proposed\s+business\s+points.*$", "", v).strip(" ,.;:-")
-    v = re.sub(r"(?i)\s+and$", "", v).strip(" ,.;:-")
-    v = v.strip(" ,.;:-–—")
+    ).strip(" ,.;:|-")
+    v = re.split(r"(?i)\bthe\s+land\s+on\s+which\s+the\s+building\s+is\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.split(r"(?i)\b(?:it is understood and agreed|provided that|subject to|for the avoidance of doubt|shall refer to)\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.split(r"(?i)\b(?:additional information|can be found at|all other signage)\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.sub(r"(?i)\s+under\s+the\s+proposed\s+business\s+points.*$", "", v).strip(" ,.;:|-")
+    v = re.sub(r"(?i)\s+and$", "", v).strip(" ,.;:|-")
+    v = v.strip(" ,.;:|-–—")
     low = v.lower()
     if re.search(r"(?i)\b(?:llc|l\.l\.c\.|inc|corp|corporation|limited partnership|limited liability)\b", v):
         return ""
@@ -3889,6 +4225,23 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
 
     month_candidates: list[tuple[int, int, int]] = []
 
+    def _parse_composite_term_months(snippet: str) -> Optional[int]:
+        if not snippet:
+            return None
+        composite_patterns = (
+            r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*(?:\+|and)\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b",
+            r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*,\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b",
+        )
+        for pat in composite_patterns:
+            m = re.search(pat, snippet)
+            if not m:
+                continue
+            years = _coerce_int_token(m.group(1), 0)
+            extra_months = _coerce_int_token(m.group(2), 0)
+            if 1 <= years <= 50 and 0 <= extra_months <= 11:
+                return int((years * 12) + extra_months)
+        return None
+
     # Handle split-line term blocks:
     #   RENEWAL TERM:
     #   Ninety(90) months
@@ -3925,6 +4278,15 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
                 continue
             if _looks_like_non_term_month_context(probe_low):
                 continue
+            composite_months = _parse_composite_term_months(probe)
+            if composite_months is not None:
+                score = 16 - lookahead
+                if "renewal term" in line_low:
+                    score += 2
+                if "primary lease term" in line_low:
+                    score += 3
+                month_candidates.append((score, idx, composite_months))
+                break
             month_matches = re.findall(
                 r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,3})\)?\s*(?:calendar\s+)?months?\b",
                 probe,
@@ -3997,8 +4359,8 @@ def _extract_term_months_from_text(text: str) -> Optional[int]:
 
     # Handle "12 years + 6 months" expressions in term clauses.
     composite_term_patterns = [
-        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b",
-        r"(?i)\b\(?(\d{1,2})\)?\s*years?\s*\+\s*\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\b(?:lease\s+|sublease\s+|initial\s+)?term\b",
+        r"(?i)\b(?:primary\s+lease\s+term|lease\s+term|sublease\s+term|initial\s+term|term)\b[^.\n]{0,180}?\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*(?:\+|and|,)\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b",
+        r"(?i)\b(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*years?\s*(?:\+|and|,)\s*(?:[a-z\-]+\s*)?\(?(\d{1,2})\)?\s*months?\b[^.\n]{0,80}\b(?:lease\s+|sublease\s+|initial\s+)?term\b",
     ]
     for pat in composite_term_patterns:
         for m in re.finditer(pat, text):
@@ -5141,6 +5503,8 @@ def _looks_like_generated_report_document(text: str) -> bool:
 def _looks_like_generic_scenario_name(name: str) -> bool:
     low = " ".join((name or "").split()).strip().lower()
     if not low:
+        return True
+    if low.startswith("|"):
         return True
     bad_fragments = (
         "extract",
@@ -8351,10 +8715,16 @@ def _collect_primary_updates_from_canonical_extraction(extraction: dict) -> dict
     if term_months is not None and int(term_months) > 0:
         updates["term_months"] = int(term_months)
 
-    building_name = str(premises.get("building_name") or "").strip()
-    suite = str(premises.get("suite") or "").strip()
+    raw_building_name = str(premises.get("building_name") or "").strip()
+    raw_suite = str(premises.get("suite") or "").strip()
     floor = str(premises.get("floor") or "").strip()
-    address = str(premises.get("address") or "").strip()
+    address = _clean_address_candidate(str(premises.get("address") or "").strip())
+    if address and not _looks_like_address(address):
+        address = ""
+    suite = _normalize_suite_value(raw_suite)
+    if raw_suite and (_suite_value_contains_address_noise(raw_suite) or _suite_value_is_suspicious(suite or raw_suite)):
+        suite = ""
+    building_name = _clean_building_candidate(raw_building_name, suite_hint=suite)
     rsf = _coerce_float_token(premises.get("rsf"), None)
     if building_name:
         updates["building_name"] = building_name
@@ -8541,24 +8911,21 @@ def _merge_canonical_primary_then_legacy(
     legacy_opex_base = _coerce_float_token(getattr(legacy_canonical, "opex_psf_year_1", None), None)
     primary_opex_growth = _coerce_float_token(primary_updates.get("opex_growth_rate"), None)
     legacy_opex_growth = _coerce_float_token(getattr(legacy_canonical, "opex_growth_rate", None), 0.0) or 0.0
+    primary_ti_psf = _coerce_float_token(primary_updates.get("ti_allowance_psf"), None)
+    legacy_ti_psf = _coerce_float_token(getattr(legacy_canonical, "ti_allowance_psf", None), None)
+    primary_parking_count = _coerce_int_token(primary_updates.get("parking_count"), None)
+    legacy_parking_count = _coerce_int_token(getattr(legacy_canonical, "parking_count", None), None)
+    primary_parking_ratio = _coerce_float_token(primary_updates.get("parking_ratio"), None)
+    legacy_parking_ratio = _coerce_float_token(getattr(legacy_canonical, "parking_ratio", None), None)
     suppressed_noisy_primary_building = False
     suppressed_short_primary_term = False
     suppressed_noisy_primary_suite = False
     suppressed_exhibit_usf_primary_rsf = False
     suppressed_zero_primary_rent = False
     suppressed_incomplete_primary_opex = False
-
-    def _suite_value_is_suspicious(value: str) -> bool:
-        normalized = " ".join(str(value or "").split()).strip()
-        if not normalized:
-            return False
-        if len(normalized) > 24:
-            return True
-        if len(re.findall(r"[A-Za-z]{3,}", normalized)) >= 2:
-            return True
-        if re.search(r"(?i)\b(?:wire\s+transfer|united\s+states|america|landlord|tenant|section|article)\b", normalized):
-            return True
-        return not bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\-]{0,11}", normalized))
+    suppressed_implausibly_low_primary_opex = False
+    suppressed_implausibly_low_primary_ti = False
+    suppressed_entitlement_primary_parking_count = False
 
     if (
         primary_building_name
@@ -8618,6 +8985,37 @@ def _merge_canonical_primary_then_legacy(
         primary_updates.pop("opex_psf_year_1", None)
         primary_updates.pop("opex_growth_rate", None)
         suppressed_incomplete_primary_opex = True
+    if (
+        legacy_opex_base is not None
+        and legacy_opex_base >= 12.0
+        and primary_opex_base is not None
+        and 0 < primary_opex_base <= min(10.0, legacy_opex_base * 0.45)
+    ):
+        primary_updates.pop("opex_psf_year_1", None)
+        if primary_opex_growth is not None and primary_opex_growth > 0 and legacy_opex_growth <= 0.0001:
+            primary_updates.pop("opex_growth_rate", None)
+        suppressed_implausibly_low_primary_opex = True
+    if (
+        legacy_ti_psf is not None
+        and legacy_ti_psf >= 2.0
+        and primary_ti_psf is not None
+        and 0 <= primary_ti_psf <= min(1.0, legacy_ti_psf * 0.2)
+    ):
+        primary_updates.pop("ti_allowance_psf", None)
+        primary_updates.pop("ti_budget_total", None)
+        primary_updates.pop("ti_total", None)
+        suppressed_implausibly_low_primary_ti = True
+    if (
+        legacy_parking_count is not None
+        and legacy_parking_count >= 3
+        and legacy_parking_ratio is not None
+        and legacy_parking_ratio > 0
+        and primary_parking_count is not None
+        and 0 < primary_parking_count <= 2
+        and (primary_parking_ratio is None or primary_parking_ratio <= 0)
+    ):
+        primary_updates.pop("parking_count", None)
+        suppressed_entitlement_primary_parking_count = True
     legacy_commencement = getattr(legacy_canonical, "commencement_date", None)
     legacy_expiration = getattr(legacy_canonical, "expiration_date", None)
     legacy_term_months = _coerce_int_token(getattr(legacy_canonical, "term_months", None), None)
@@ -8641,6 +9039,15 @@ def _merge_canonical_primary_then_legacy(
             for field_name in ("commencement_date", "expiration_date", "term_months"):
                 primary_updates.pop(field_name, None)
             suppressed_short_primary_term = True
+    elif (
+        legacy_term_months is not None
+        and legacy_term_months >= 24
+        and primary_term_months is not None
+        and 0 < primary_term_months <= 12
+        and primary_expiration is None
+    ):
+        primary_updates.pop("term_months", None)
+        suppressed_short_primary_term = True
     merged_canonical = legacy_canonical.model_copy(update=primary_updates) if primary_updates else legacy_canonical
 
     primary_confidence = _coerce_float_token(extraction_confidence.get("overall"), 0.72) or 0.72
@@ -8743,6 +9150,45 @@ def _merge_canonical_primary_then_legacy(
                 "message": "Primary extraction produced incomplete OpEx values (for example zero base or a growth rate without a credible starting base). Legacy/deterministic OpEx values were retained.",
                 "candidates": [{"field": "opex", "source": "legacy_fallback"}],
                 "recommended_value": None,
+                "evidence": [],
+            }
+        )
+    if suppressed_implausibly_low_primary_opex:
+        warnings.append("Retained legacy OpEx values because primary extraction returned an implausibly low OpEx value.")
+        review_tasks.append(
+            {
+                "field_path": "opex",
+                "severity": "warn",
+                "issue_code": "OPEX_OVERRIDE_IMPLAUSIBLE_LOW_PRIMARY",
+                "message": "Primary extraction returned an implausibly low OpEx value compared with stronger proposal hints. Legacy/deterministic OpEx values were retained.",
+                "candidates": [{"field": "opex", "source": "legacy_fallback"}],
+                "recommended_value": None,
+                "evidence": [],
+            }
+        )
+    if suppressed_implausibly_low_primary_ti:
+        warnings.append("Retained legacy TI allowance because primary extraction selected a small fit-plan/test-fit style allowance instead of the main TI package.")
+        review_tasks.append(
+            {
+                "field_path": "ti_allowance_psf",
+                "severity": "warn",
+                "issue_code": "TI_OVERRIDE_IMPLAUSIBLE_LOW_PRIMARY",
+                "message": "Primary extraction returned a very small TI allowance compared with stronger proposal TI language. Legacy/deterministic TI values were retained.",
+                "candidates": [{"field": "ti_allowance_psf", "source": "legacy_fallback"}],
+                "recommended_value": legacy_ti_psf,
+                "evidence": [],
+            }
+        )
+    if suppressed_entitlement_primary_parking_count:
+        warnings.append("Retained legacy parking count because primary extraction treated a parking entitlement ratio as a literal one-space count.")
+        review_tasks.append(
+            {
+                "field_path": "parking_count",
+                "severity": "warn",
+                "issue_code": "PARKING_OVERRIDE_ENTITLEMENT_COUNT_PRIMARY",
+                "message": "Primary extraction captured the numerator from a parking entitlement ratio as the total stall count. Legacy/deterministic parking count was retained.",
+                "candidates": [{"field": "parking_count", "source": "legacy_fallback"}],
+                "recommended_value": legacy_parking_count,
                 "evidence": [],
             }
         )
@@ -10184,6 +10630,11 @@ def _normalize_impl(
             opex_source_year = 0 if is_full_service_lease else _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
             commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
             commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0
+            opex_exclusion_uplift_psf, opex_exclusion_note = (
+                (0.0, "")
+                if is_full_service_lease
+                else _extract_opex_exclusion_uplift_from_text(text)
+            )
             effective_opex_growth = _coerce_float_token(
                 updates.get("opex_growth_rate"),
                 _coerce_float_token(extracted_hints.get("opex_growth_rate"), _coerce_float_token(canonical.opex_growth_rate, 0.0)),
@@ -10287,6 +10738,35 @@ def _normalize_impl(
                     f"escalated 3.00% for {years_forward} "
                     f"year{'s' if years_forward != 1 else ''} (+${delta_rate:,.2f}, +{uplift_pct:.2f}%) "
                     f"to ${modeled_rate:,.2f}/SF used for {commencement_year}."
+                )
+            effective_opex_for_uplift = _coerce_float_token(
+                updates.get("opex_psf_year_1"),
+                _coerce_float_token(canonical.opex_psf_year_1, 0.0),
+            ) or 0.0
+            if not is_full_service_lease and opex_exclusion_uplift_psf > 0 and effective_opex_for_uplift > 0:
+                uplifted_opex = float(round(effective_opex_for_uplift + float(opex_exclusion_uplift_psf), 4))
+                updates["opex_psf_year_1"] = uplifted_opex
+                updates["expense_stop_psf"] = uplifted_opex
+                current_opex_by_year = updates.get("opex_by_calendar_year", canonical.opex_by_calendar_year) or {}
+                uplifted_by_year: dict[int, float] = {}
+                if isinstance(current_opex_by_year, dict):
+                    for year_raw, value_raw in current_opex_by_year.items():
+                        year_int = _coerce_int_token(year_raw, None)
+                        value_num = _coerce_float_token(value_raw, None)
+                        if year_int is None or value_num is None:
+                            continue
+                        if 1900 <= int(year_int) <= 2200 and float(value_num) >= 0:
+                            uplifted_by_year[int(year_int)] = float(
+                                round(float(value_num) + float(opex_exclusion_uplift_psf), 4)
+                            )
+                if commencement_year >= 1900:
+                    uplifted_by_year[int(commencement_year)] = uplifted_opex
+                if uplifted_by_year:
+                    updates["opex_by_calendar_year"] = dict(sorted(uplifted_by_year.items()))
+                if opex_exclusion_note:
+                    extra_note_lines.append(opex_exclusion_note)
+                extra_note_lines.append(
+                    f"Added ${float(opex_exclusion_uplift_psf):,.2f}/SF to modeled OpEx because the quoted OpEx excludes utilities, electrical, or janitorial costs."
                 )
             hinted_ti_allowance = _coerce_float_token(extracted_hints.get("ti_allowance_psf"), 0.0) or 0.0
             if hinted_ti_allowance <= 0:
@@ -10661,6 +11141,7 @@ def _normalize_impl(
             legacy_canonical=canonical,
             legacy_field_confidence=field_confidence,
         )
+        canonical = _apply_opex_exclusion_uplift_to_canonical(canonical, extraction_text_for_summary)
         field_sources = merge_metadata.get("field_sources") if isinstance(merge_metadata.get("field_sources"), dict) else {}
         fallback_fields = list(merge_metadata.get("fallback_fields") or [])
         for warning in list(merge_metadata.get("warnings") or []):

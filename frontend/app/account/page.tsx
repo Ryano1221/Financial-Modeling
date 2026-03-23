@@ -12,11 +12,17 @@ import {
   representationModeLabel,
 } from "@/lib/workspace/representation-mode";
 import {
+  fetchSharedMarketInventory,
+  uploadCostarMarketInventory,
+  type SharedMarketInventoryResponse,
+} from "@/lib/workspace/market-inventory";
+import {
   LANDLORD_REP_DEAL_STAGES,
   TENANT_REP_DEAL_STAGES,
   getDefaultDealStagesForMode,
   type DealsViewMode,
 } from "@/lib/workspace/types";
+import { getRepresentationModeProfile } from "@/lib/workspace/representation-profile";
 
 function asText(value: unknown): string {
   return String(value || "").trim();
@@ -58,6 +64,11 @@ export default function AccountPage() {
   const [stageError, setStageError] = useState("");
   const [stageStatus, setStageStatus] = useState("");
   const [crmSettingsStatus, setCrmSettingsStatus] = useState("");
+  const [sharedInventory, setSharedInventory] = useState<SharedMarketInventoryResponse | null>(null);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryUploading, setInventoryUploading] = useState(false);
+  const [inventoryStatus, setInventoryStatus] = useState("");
+  const [inventoryError, setInventoryError] = useState("");
   const [activeSection, setActiveSection] = useState<AccountSection>("dashboard");
   const [activeSettingsPanel, setActiveSettingsPanel] = useState<SettingsPanel>("general");
   const settingsRef = useRef<HTMLElement | null>(null);
@@ -97,6 +108,29 @@ export default function AccountPage() {
     setCrmSettingsStatus("");
   }, [dealStages, activeClientId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSharedInventory() {
+      if (!isAuthenticated) {
+        if (!cancelled) setSharedInventory(null);
+        return;
+      }
+      setInventoryLoading(true);
+      try {
+        const payload = await fetchSharedMarketInventory();
+        if (!cancelled) setSharedInventory(payload);
+      } catch {
+        if (!cancelled) setSharedInventory(null);
+      } finally {
+        if (!cancelled) setInventoryLoading(false);
+      }
+    }
+    void loadSharedInventory();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
   const clientsByCreatedAt = useMemo(
     () =>
       [...clients].sort((a, b) => {
@@ -112,6 +146,10 @@ export default function AccountPage() {
   );
   const defaultModeStages = useMemo(
     () => [...getDefaultDealStagesForMode(representationMode)],
+    [representationMode],
+  );
+  const modeProfile = useMemo(
+    () => getRepresentationModeProfile(representationMode),
     [representationMode],
   );
 
@@ -189,7 +227,8 @@ export default function AccountPage() {
   function saveDefaultView(nextView: DealsViewMode) {
     if (!activeClient) return;
     setCrmSettings({ defaultDealsView: nextView }, activeClient.id);
-    setCrmSettingsStatus(`Default CRM view set to ${nextView.replace("_", " ")} for ${activeClient.name}.`);
+    const label = modeProfile.crm.viewLabels[nextView] || nextView.replace("_", " ");
+    setCrmSettingsStatus(`Default CRM view set to ${label} for ${activeClient.name}.`);
   }
 
   function openAccountSection(section: AccountSection, settingsPanel?: SettingsPanel) {
@@ -203,6 +242,22 @@ export default function AccountPage() {
       search.set("settings", settingsPanel || activeSettingsPanel);
     }
     router.replace(search.toString() ? `/account?${search.toString()}` : "/account", { scroll: false });
+  }
+
+  async function importCostarWorkbook(file: File) {
+    setInventoryStatus("");
+    setInventoryError("");
+    setInventoryUploading(true);
+    try {
+      const payload = await uploadCostarMarketInventory(file);
+      setSharedInventory(payload);
+      setInventoryStatus(`Imported ${payload.count.toLocaleString()} shared office buildings from ${file.name}. This inventory is now available to all users.`);
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err || "");
+      setInventoryError(text || "Unable to import CoStar inventory right now.");
+    } finally {
+      setInventoryUploading(false);
+    }
   }
 
   if (!ready) {
@@ -225,7 +280,7 @@ export default function AccountPage() {
   }
 
   return (
-    <main className="min-h-screen bg-black text-white px-4 pb-20 pt-24">
+    <main className="min-h-screen bg-black text-white px-4 pb-20 pt-8 sm:pt-10">
       <section className="mx-auto w-full max-w-6xl border border-white/15 bg-slate-950/70 p-6 sm:p-8">
         <p className="heading-kicker mb-2">Account</p>
         <h1 className="heading-section">Account Dashboard</h1>
@@ -485,6 +540,62 @@ export default function AccountPage() {
               className="mt-5 border border-cyan-300/40 bg-cyan-500/10 p-4"
             >
               <p className="heading-kicker mb-2">CRM Settings</p>
+              <div className="mb-5 border border-white/15 bg-black/35 p-4 sm:p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="max-w-2xl">
+                    <p className="heading-kicker">Shared CoStar Building Inventory</p>
+                    <p className="mt-2 text-sm text-slate-300">
+                      Upload a CoStar `.xlsx` export here to refresh the shared office building inventory used by CRM across all users. Imported rows upsert into the global building dataset rather than only updating one browser.
+                    </p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Shared records</p>
+                        <p className="mt-1 text-sm text-white">{sharedInventory ? sharedInventory.count.toLocaleString() : inventoryLoading ? "Loading..." : "Seed fallback"}</p>
+                      </div>
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Source</p>
+                        <p className="mt-1 text-sm text-white">{sharedInventory?.source || "seed"}</p>
+                      </div>
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Last updated</p>
+                        <p className="mt-1 text-sm text-white">{sharedInventory?.updated_at ? new Date(sharedInventory.updated_at).toLocaleString() : "Not imported yet"}</p>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-400">
+                      Current CRM building views read from this shared inventory first, with the existing seed used only as a fallback when no shared import has been published yet.
+                    </p>
+                  </div>
+                  <label className={`flex min-h-[168px] w-full max-w-md cursor-pointer flex-col justify-between border border-white/15 bg-black/25 p-4 text-left transition ${inventoryUploading ? "opacity-70" : "hover:bg-white/5"}`}>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">Upload CoStar Excel</p>
+                      <p className="mt-2 text-sm text-slate-300">
+                        Choose a `.xlsx` export. Office rows will be parsed and merged into the global building inventory for all users.
+                      </p>
+                    </div>
+                    <div className="mt-4 flex items-center justify-between gap-3">
+                      <span className="btn-premium btn-premium-secondary text-xs">
+                        {inventoryUploading ? "Importing..." : "Choose Excel file"}
+                      </span>
+                      <span className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Shared source</span>
+                    </div>
+                    <input
+                      type="file"
+                      accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      className="sr-only"
+                      disabled={!isAuthenticated || inventoryUploading}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.currentTarget.value = "";
+                        if (!file) return;
+                        void importCostarWorkbook(file);
+                      }}
+                    />
+                  </label>
+                </div>
+                {!isAuthenticated ? <p className="mt-3 text-xs text-slate-400">Sign in to publish a shared CoStar import.</p> : null}
+                {inventoryError ? <p className="mt-3 text-xs text-red-300">{inventoryError}</p> : null}
+                {inventoryStatus ? <p className="mt-3 text-xs text-cyan-200">{inventoryStatus}</p> : null}
+              </div>
               {activeClient ? (
                 <>
                   <p className="text-xs text-slate-300 mb-3">
@@ -616,10 +727,11 @@ export default function AccountPage() {
                           value={crmSettings.defaultDealsView}
                           onChange={(event) => saveDefaultView(event.target.value as DealsViewMode)}
                         >
-                          <option value="board">Board</option>
-                          <option value="table">Table</option>
-                          <option value="timeline">Timeline</option>
-                          <option value="client_grouped">Client grouped</option>
+                          {modeProfile.crm.availableViews.map((viewId) => (
+                            <option key={viewId} value={viewId}>
+                              {modeProfile.crm.viewLabels[viewId]}
+                            </option>
+                          ))}
                         </select>
                       </label>
                     </div>
@@ -627,7 +739,7 @@ export default function AccountPage() {
                   </div>
                 </>
               ) : (
-                <p className="text-xs text-slate-400">Select an active client on the dashboard to edit CRM settings.</p>
+                <p className="text-xs text-slate-400">Select an active client on the dashboard to edit client-specific CRM settings. Shared CoStar inventory publishing is available above for the whole platform.</p>
               )}
             </section>
           )}

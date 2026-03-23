@@ -57,6 +57,7 @@ export interface DocumentNormalizeSnapshot {
 export interface ClientWorkspaceDocument {
   id: string;
   clientId: string;
+  companyId?: string;
   dealId?: string;
   name: string;
   type: ClientDocumentType;
@@ -97,6 +98,7 @@ export interface UpdateClientInput {
 
 export interface RegisterClientDocumentInput {
   clientId?: string;
+  companyId?: string;
   dealId?: string;
   name: string;
   file?: File | null;
@@ -111,6 +113,7 @@ export interface RegisterClientDocumentInput {
 }
 
 export interface UpdateClientDocumentInput {
+  companyId?: string;
   dealId?: string;
   name?: string;
   type?: ClientDocumentType;
@@ -144,6 +147,7 @@ export interface DealTaskItem {
 export interface ClientWorkspaceDeal {
   id: string;
   clientId: string;
+  companyId?: string;
   dealName: string;
   requirementName: string;
   dealType: string;
@@ -183,6 +187,7 @@ export interface ClientCrmSettings {
 
 export interface CreateDealInput {
   clientId?: string;
+  companyId?: string;
   dealName: string;
   requirementName?: string;
   dealType?: string;
@@ -210,6 +215,7 @@ export interface CreateDealInput {
 }
 
 export interface UpdateDealInput {
+  companyId?: string;
   dealName?: string;
   requirementName?: string;
   dealType?: string;

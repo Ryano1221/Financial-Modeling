@@ -229,5 +229,11 @@ def normalize_suite_token(value: str | None) -> str | None:
         return None
     m = re.search(r"(?i)(?:suite|ste\.?|unit)\s*([a-z0-9\-, ]+)", raw)
     if m:
-        return m.group(1).strip().upper()
-    return raw.strip().upper()
+        raw = m.group(1).strip()
+    if re.search(r"(?i),\s*[A-Za-z .'-]{2,40},\s*(?:[A-Z]{2}|[A-Za-z]{4,})(?:\s+\d{5}(?:-\d{4})?)?\b", raw):
+        raw = raw.split(",", 1)[0].strip()
+    token_match = re.match(r"(?i)^([A-Za-z0-9][A-Za-z0-9\-]{0,14})", raw)
+    if not token_match:
+        return None
+    token = token_match.group(1)
+    return token.upper() if not token.isdigit() else (token.lstrip("0") or token)

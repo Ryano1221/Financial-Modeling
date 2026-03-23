@@ -216,6 +216,7 @@ function parseStoredDocuments(raw: string | null): ClientWorkspaceDocument[] {
       const nextDoc: ClientWorkspaceDocument = {
         id,
         clientId,
+        companyId: asText(obj.companyId) || undefined,
         dealId: asText(obj.dealId) || undefined,
         name,
         type: normalizedType,
@@ -243,7 +244,7 @@ function parseStoredDeals(raw: string | null): ClientWorkspaceDeal[] {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .map((item) => {
+      .map((item): ClientWorkspaceDeal | null => {
         const obj = item as Partial<ClientWorkspaceDeal>;
         const id = asText(obj.id);
         const clientId = asText(obj.clientId);
@@ -253,6 +254,7 @@ function parseStoredDeals(raw: string | null): ClientWorkspaceDeal[] {
         return {
           id,
           clientId,
+          companyId: asText(obj.companyId) || undefined,
           dealName,
           requirementName: asText(obj.requirementName),
           dealType: asText(obj.dealType),
@@ -975,6 +977,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     const created: ClientWorkspaceDeal = {
       id: nextId("deal"),
       clientId: resolvedClientId,
+      companyId: asText(input.companyId) || undefined,
       dealName,
       requirementName: asText(input.requirementName),
       dealType: asText(input.dealType),
@@ -1023,6 +1026,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           : deal.linkedDocumentIds;
         return {
           ...deal,
+          companyId: hasOwnKey(input, "companyId") ? asText(input.companyId) || undefined : deal.companyId,
           dealName: hasOwnKey(input, "dealName") ? asText(input.dealName) || deal.dealName : deal.dealName,
           requirementName: hasOwnKey(input, "requirementName") ? asText(input.requirementName) : deal.requirementName,
           dealType: hasOwnKey(input, "dealType") ? asText(input.dealType) : deal.dealType,
@@ -1082,6 +1086,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     const document: ClientWorkspaceDocument = {
       id: nextId("doc"),
       clientId: resolvedClientId,
+      companyId: asText(input.companyId) || undefined,
       dealId: asText(input.dealId) || undefined,
       name: asText(input.name) || "Untitled document",
       type: resolvedType,
@@ -1145,6 +1150,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
         return {
           ...doc,
+          companyId: hasOwnKey(input, "companyId") ? asText(input.companyId) || undefined : doc.companyId,
           dealId: hasOwnKey(input, "dealId") ? (nextDealId || undefined) : doc.dealId,
           name: hasOwnKey(input, "name") ? asText(input.name) || doc.name : doc.name,
           type: nextType,

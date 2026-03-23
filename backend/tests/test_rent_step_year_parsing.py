@@ -303,3 +303,11 @@ def test_extract_term_months_prefers_months_from_commencement_over_five_year_fal
     Landlord proposes sixty-five (65) months from the Lease Commencement Date.
     """
     assert _extract_term_months_from_text(text) == 65
+
+
+def test_extract_term_months_parses_years_and_months_phrase() -> None:
+    text = """
+    Term:
+    Ten (10) years and four (4) months from the Lease Commencement Date.
+    """
+    assert _extract_term_months_from_text(text) == 124

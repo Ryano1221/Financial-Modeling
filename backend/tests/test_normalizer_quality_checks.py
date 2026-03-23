@@ -201,6 +201,33 @@ def test_collect_primary_updates_from_canonical_extraction_maps_parking_abatemen
     assert parking_periods[1].end_month == 25
 
 
+def test_collect_primary_updates_from_canonical_extraction_cleans_building_and_drops_party_suite_noise() -> None:
+    updates = main._collect_primary_updates_from_canonical_extraction(
+        {
+            "term": {"commencement_date": "2028-01-01", "expiration_date": "2038-04-30", "term_months": 124},
+            "premises": {
+                "building_name": "Tarrytown Expocare at Research Park Building 3",
+                "suite": "300, NEWTON, MASSACHUSETTS 02458",
+                "address": "12515 Research Park Loop, Austin, TX 78759",
+                "rsf": 55388,
+            },
+            "rent_steps": [],
+            "abatements": [],
+            "parking_abatements": [],
+            "abatement_analysis": {},
+            "concessions": {},
+            "tenant_improvements": {},
+            "parking": {},
+            "opex": {},
+        }
+    )
+
+    assert updates["building_name"] == "Research Park Building 3"
+    assert "suite" not in updates
+    assert updates["address"] == "12515 Research Park Loop, Austin, TX 78759"
+    assert updates["term_months"] == 124
+
+
 
 
 def test_supplemental_quality_checks_flags_rent_schedule_coverage_gap() -> None:

@@ -39,6 +39,50 @@ FULL_SERVICE_CUES = (
 )
 
 
+def _is_notice_or_party_context(line: str) -> bool:
+    low = (line or "").lower()
+    return any(
+        token in low
+        for token in (
+            "address for notices",
+            "addresses for notices",
+            "notice:",
+            "notices:",
+            "attn:",
+            "attention:",
+            "c/o",
+            "lessor",
+            "lessee",
+            "landlord legal entity",
+            "legal entity",
+            "address of",
+            "with an address of",
+            "property management",
+            "registered office",
+            "registered agent",
+            "secretary of state",
+            "wire transfer",
+            "remit to",
+        )
+    )
+
+
+def _clean_suite_candidate(raw: str) -> str:
+    value = " ".join((raw or "").split()).strip(" ,.;:-")
+    if not value:
+        return ""
+    if re.search(r"(?i),\s*[A-Za-z .'-]{2,40},\s*(?:[A-Z]{2}|[A-Za-z]{4,})(?:\s+\d{5}(?:-\d{4})?)?\b", value):
+        value = value.split(",", 1)[0].strip(" ,.;:-")
+    value = re.split(r"(?i)\b(?:rsf|rentable|square|commencement|expiration|term|address|city|state|zip)\b", value)[0]
+    token_match = re.match(r"(?i)^([A-Za-z0-9][A-Za-z0-9\-]{0,14})", value.strip(" ,.;:-"))
+    if not token_match:
+        return ""
+    token = token_match.group(1)
+    if re.fullmatch(r"(?i)[A-Za-z]{4,}", token):
+        return ""
+    return token.upper() if not token.isdigit() else (token.lstrip("0") or token)
+
+
 def _normalize_keyword_spacing(line: str) -> str:
     """
     Normalize OCR-spaced keyword artifacts (e.g., "C o m m e n c e m e n t").
@@ -353,8 +397,10 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 flags=re.IGNORECASE,
             )
             if suite_match:
-                suite = re.split(r"(?i)\b(?:rsf|rentable|square|commencement|expiration|term)\b", suite_match.group(1))[0]
-                suite = suite.strip(" ,.-").upper()
+                if _is_notice_or_party_context(scan_line):
+                    suite = ""
+                else:
+                    suite = _clean_suite_candidate(suite_match.group(1))
                 if suite:
                     out["suite"].append(_mk_candidate("suite", suite, page.page_number, ln, "pdf_text_regex", 0.72))
 

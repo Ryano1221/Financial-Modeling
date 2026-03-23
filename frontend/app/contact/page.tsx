@@ -2,6 +2,12 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { fetchApiProxy } from "@/lib/api";
+import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-profile";
+
+const profiles = [
+  REPRESENTATION_MODE_PROFILES.tenant_rep,
+  REPRESENTATION_MODE_PROFILES.landlord_rep,
+];
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
@@ -81,23 +87,28 @@ export default function ContactPage() {
                 or send a message below.
               </p>
               <p className="text-sm sm:text-base text-slate-300">
-                For workspace or CRM layout issues, include your screen size, browser, representation mode
-                (Tenant Rep or Landlord Rep), and current module.
+                For the fastest help, include your representation mode, active client workspace, current module, and the workflow you were trying to complete.
               </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For deal stage configuration issues, include the active client name and confirm changes were made in
-                Account dashboard Settings {" > "} CRM Settings (stage order, automation toggle, and default view).
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For upload issues, include the active client name and confirm whether files were dropped in Document Center,
-                the Brokerage OS Command Center, or directly on a specific workspace tab.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For AI workflow issues, include the command you ran and the module where you executed it.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                For map pin issues, include the survey building/address values so we can diagnose geocoding quickly.
-              </p>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {profiles.map((profile) => (
+                  <div key={profile.mode} className="surface-card p-4">
+                    <p className="heading-kicker">{profile.label}</p>
+                    <p className="mt-2 text-sm text-slate-300">{profile.docs.contactSummary}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="surface-card space-y-2 p-4">
+                <p className="heading-kicker">Include These Details</p>
+                <p className="text-sm text-slate-300">1. Your screen size, browser, and whether the issue happened on desktop or mobile.</p>
+                <p className="text-sm text-slate-300">2. The active module, workspace, and record involved, such as company, deal, building, floor, or suite.</p>
+                <p className="text-sm text-slate-300">3. If it is a dashboard issue, note whether it happened in the command metrics strip, the insights section, or the drill-down workspace.</p>
+                <p className="text-sm text-slate-300">4. Any AI prompt, export action, reminder trigger, or workflow step that led to the issue.</p>
+                <p className="text-sm text-slate-300">5. For upload issues, note the file type, whether extraction completed, and whether the document was saved without extraction.</p>
+                <p className="text-sm text-slate-300">6. For Austin inventory or map issues, include the building name or address and whether the issue was in the map, stacking plan, inventory list, or detail panel.</p>
+                <p className="text-sm text-slate-300">7. For shared CoStar import issues, include the workbook filename, whether the upload completed, and which building rows did or did not appear afterward.</p>
+                <p className="text-sm text-slate-300">8. For CRM intake issues, mention the building text you typed, whether an autofill suggestion appeared, and whether you were trying to add a new building.</p>
+                <p className="text-sm text-slate-300">9. For stacking-plan issues, include the building, floor, suite, whether the row came from a current lease or sublease upload or a manual edit, and which economics such as rate, OpEx, abatement, TI allowance, concessions, or size were affected.</p>
+              </div>
             </div>
 
             <form onSubmit={onSubmit} className="surface-card p-4 sm:p-6 space-y-4">

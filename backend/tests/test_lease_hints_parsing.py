@@ -1213,6 +1213,50 @@ def test_extract_hints_al1_primary_lease_term_prefers_150_month_term_over_rent_c
     assert hints["term_months"] == 150
 
 
+def test_extract_hints_tarrytown_research_park_strips_party_suite_and_parses_composite_term() -> None:
+    text = (
+        "RE:\tLease Proposal - Tarrytown Expocare at Research Park Building 3\n"
+        "On behalf of The RMR Group, we are pleased to submit this proposal to Tarrytown Expocare "
+        "(\"Tenant\") to lease office space at Research Park Building 3, 12515 Research Park Loop, Austin, TX 78759 "
+        "(\"Building\") under the following terms and conditions:\n"
+        "Premises:\n"
+        "Research Park Building 3, 12515 Research Park Loop, Austin, TX 78759\n"
+        "The full building is approximately 55,388 rentable square feet (\"rsf\").\n"
+        "Landlord Legal Entity\n"
+        "SIR Properties Trust, with an address of 255 Washington Street, Suite 300, Newton, Massachusetts 02458\n"
+        "Lease Commencement Date:\n"
+        "The Lease Commencement Date shall be the earlier of January 1, 2028, or when Tenant first conducts business/operations in the Premises.\n"
+        "Term:\n"
+        "Ten (10) years and four (4) months from the Lease Commencement Date.\n"
+        "Base Rental Rate:\n"
+        "Effective on the Lease Commencement Date, the Base Rent shall be $20.00 NNN PSF/annum.\n"
+        "Rent Abatement Period:\n"
+        "The Landlord shall grant Tenant four (4) months of Base Rent Abatement for the months of one (1) through four (4).\n"
+        "Additional Rent - Operating Expenses & Real Estate Taxes (managed-net):\n"
+        "Estimated 2026 Operating Expenses, net of utilities and janitorial costs, are $10.50 per rsf.\n"
+        "Tenant Improvement Allowance:\n"
+        "The Landlord shall provide a Tenant Improvement Allowance not to exceed $40.00 per rentable square foot.\n"
+        "Parking:\n"
+        "3.0 spaces per 1,000 rentable square feet.\n"
+    )
+
+    hints = main._extract_lease_hints(text, "tarrytown-research-park-iii.docx", "test-rid")
+
+    assert hints["building_name"] == "Research Park Building 3"
+    assert hints["suite"] == ""
+    assert hints["address"] == "12515 Research Park Loop, Austin, TX 78759"
+    assert hints["rsf"] == 55388.0
+    assert str(hints["commencement_date"]) == "2028-01-01"
+    assert str(hints["expiration_date"]) == "2038-04-30"
+    assert hints["term_months"] == 124
+    assert hints["lease_type"] == "NNN"
+    assert hints["free_rent_end_month"] == 3
+    assert hints["opex_psf_year_1"] == 10.5
+    assert hints["opex_source_year"] == 2026
+    assert hints["ti_allowance_psf"] == 40.0
+    assert hints["parking_ratio"] == 3.0
+
+
 def test_extract_hints_prefers_counter_month_term_over_holdover_or_request_term() -> None:
     text = (
         "Premises: Suite 130 consisting of 3,827 RSF.\n"

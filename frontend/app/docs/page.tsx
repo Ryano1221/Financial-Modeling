@@ -1,178 +1,164 @@
+import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-profile";
+
 const FAQ_ITEMS = [
   {
-    q: "Why did extraction return warnings?",
-    a: "Warnings mean one or more terms were low confidence or missing in the source document. Review the scenario editor fields and confirm values before exporting.",
+    q: "Is this one platform or two separate products?",
+    a: "One platform. Tenant Rep and Landlord Rep run on the same shared entity graph, document intelligence layer, AI orchestration layer, export system, and CRM architecture.",
   },
   {
-    q: "Can I upload multiple files at once?",
-    a: "Yes. Drag and drop multiple PDF, DOCX, or DOC files in one action. Each file is processed into its own scenario for side-by-side comparison.",
+    q: "What changes when I switch representation mode?",
+    a: "The platform adapts onboarding, navigation emphasis, dashboard composition, default CRM views, AI suggestions, reminders, templates, next best actions, and export framing without changing the underlying records.",
   },
   {
-    q: "Why do I see fallback values?",
-    a: "When a document does not clearly contain a required term, the app keeps processing and applies safe defaults so you can continue. Update those fields before final exports.",
+    q: "What is the default CRM view in each mode?",
+    a: "Tenant Rep opens the CRM in a client-grouped company hub view. Landlord Rep opens the CRM in a building-first stacking-plan workspace built from shared building, suite, lease, sublease, deal, and obligation records.",
   },
   {
-    q: "Why is my logo not showing in exports?",
-    a: "Sign in first, then upload your brokerage logo in Branding settings. If no logo is saved, theCREmodel branding is used automatically.",
+    q: "What does the landlord stacking plan show?",
+    a: "Editable floor and suite blocks, occupied suites, vacant suites, current lease and sublease occupancy, upcoming expirations, active proposal motion, and toured suites, organized by building, floor, and suite from the same shared data model used everywhere else in the platform.",
   },
   {
-    q: "How do CRM stages fit on one screen?",
-    a: "On large monitors, the CRM board expands columns to use the available width so stage lanes can be reviewed at once. On smaller screens, the board keeps horizontal scroll so cards remain readable.",
+    q: "How does AI adapt by mode?",
+    a: "Tenant Rep AI biases toward companies, prospects, requirements, surveys, analyses, and obligations. Landlord Rep AI biases toward buildings, suites, availabilities, tours, proposals, expirations, and ownership reporting.",
   },
   {
-    q: "Where do I configure deal stages?",
-    a: "Open Account dashboard, switch to Settings, then open CRM Settings for the active client. You can add, reorder, remove, and load tenant/landlord templates.",
+    q: "Do exports use different systems in each mode?",
+    a: "No. Exports use one shared pipeline, but the framing shifts by mode: tenant outputs are advisory and client-facing, while landlord outputs are operational and ownership-facing.",
   },
-  {
-    q: "What CRM settings can I control per client?",
-    a: "In Account > Settings > CRM Settings you can manage stage order, toggle document-driven stage automation, and set the default Deals view (board, table, timeline, or client grouped).",
-  },
-  {
-    q: "Where do I choose Tenant Rep vs Landlord Rep mode?",
-    a: "Mode selection is required during first-time onboarding and can be changed later in Account settings. This mode changes dashboard defaults, navigation emphasis, pipeline templates, AI suggestions, and export orientation.",
-  },
-  {
-    q: "Where should I upload files in workspace modules?",
-    a: "Use the active workspace tab. Files dropped anywhere on that tab still save into the same client library, and they also trigger that module's workflow automatically.",
-  },
-  {
-    q: "Can survey entries show map pins?",
-    a: "Yes. The Surveys workspace includes a location map that drops a pin for each entry with a mappable address.",
-  },
+];
+
+const profiles = [
+  REPRESENTATION_MODE_PROFILES.tenant_rep,
+  REPRESENTATION_MODE_PROFILES.landlord_rep,
 ];
 
 export default function DocsPage() {
   return (
     <main className="relative z-10 section-shell">
-      <div className="app-container max-w-5xl">
-        <section className="section-panel p-6 sm:p-10 space-y-8">
-            <div className="space-y-3">
-              <p className="heading-kicker">Docs</p>
-              <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Using The CRE Model</h1>
-              <p className="body-lead max-w-3xl">
-                The CRE Model is a client-scoped brokerage operating system that supports both Tenant Rep and
-                Landlord Rep workflows on one shared architecture.
-              </p>
-            </div>
+      <div className="app-container max-w-6xl">
+        <section className="section-panel space-y-8 p-6 sm:p-10">
+          <div className="space-y-3">
+            <p className="heading-kicker">Docs</p>
+            <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Using theCREmodel</h1>
+            <p className="body-lead max-w-4xl">
+              theCREmodel is one AI-native commercial real estate operating system that adapts to tenant-side and landlord-side brokerage work through a shared representation mode profile layer.
+            </p>
+          </div>
 
-            <section className="space-y-3">
-              <h2 className="heading-section">Brokerage OS Modules</h2>
-              <ul className="space-y-2 text-sm sm:text-base text-slate-300 list-disc pl-5">
-                <li>
-                  <strong>CRM (Deals):</strong> Pipeline lifecycle with stages, timeline activity, tasks, linked documents, and workspace context.
-                </li>
-                <li>
-                  <strong>Surveys:</strong> Structured survey entries, occupancy cost calculations, and client share outputs.
-                </li>
-                <li>
-                  <strong>Financial Analyses:</strong> Lease comparison and sublease recovery workflows using client-scoped source documents.
-                </li>
-                <li>
-                  <strong>Lease Abstract:</strong> Executed lease/amendment parsing, abstract generation, and export output.
-                </li>
-                <li>
-                  <strong>Obligations:</strong> Lease obligation tracking, timeline visibility, and portfolio metrics.
-                </li>
-              </ul>
-              <p className="text-sm sm:text-base text-slate-300">
-                In <strong>Tenant Rep</strong> mode, emphasis is on client requirements, analyses, surveys, lease abstracts, and obligations.
-                In <strong>Landlord Rep</strong> mode, emphasis shifts to availabilities, listing marketing, inquiry/tour/proposal pipeline, lease tracking, and reporting.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Upload and Analysis Flow</h2>
-              <ol className="space-y-2 text-sm sm:text-base text-slate-300 list-decimal pl-5">
-                <li>Upload one or more lease or proposal files (PDF, DOCX, or DOC).</li>
-                <li>Extraction reads terms and maps them into scenario fields.</li>
-                <li>Review the scenario editor and confirm or adjust values.</li>
-                <li>Compare options in the matrix, charts, and scenario detail blocks.</li>
-                <li>Export Excel or PDF once all scenarios are validated.</li>
-              </ol>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Rent Schedule Normalization</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Rent terms from leases, LOIs, proposals, and amendments are normalized into month-based periods so every
-                option can be analyzed on the same timeline. If periods overlap, are partial, or missing details, the
-                app flags them for review and preserves the best available interpretation instead of blocking workflow.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">CRM Pipeline Layout</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                The CRM pipeline is responsive by design. Desktop layouts prioritize showing all stage columns in one
-                view, while smaller displays maintain smooth horizontal scrolling to preserve deal-card readability.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                Stage definitions are configured in Account Settings under CRM Settings and then applied to the Deals module.
-              </p>
-              <p className="text-sm sm:text-base text-slate-300">
-                Use the Account page <strong>Settings</strong> area, then open <strong>CRM Settings</strong> to edit stage order, default CRM view, and
-                document-driven stage automation for the active client.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Unified Upload Flow</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Client workspaces use one shared client-scoped document library. You can upload in Document Center, or
-                drop files anywhere on the active workspace tab. In both cases the file stays with the active client,
-                and tab-based drops also feed the workflow for that specific module.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">AI Command Center</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                The Brokerage OS Command Center runs structured actions across shared entities, workflows, and documents.
-                Use natural language prompts (for example, compare proposals or create workflow tasks), then review
-                planned tools, execution results, and audit entries.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Survey Location Map</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Survey entries are plotted on a map using building and address fields. Click any map pin to jump to the
-                corresponding survey row and edit details.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Branding Instructions</h2>
-              <p className="text-sm sm:text-base text-slate-300">
-                Open <strong>Branding settings</strong>, upload your brokerage logo (PNG, SVG, or JPG), and save your
-                brokerage name. Saved branding is scoped to your account and is reused for future PDF exports.
-              </p>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">Export Instructions</h2>
-              <ul className="space-y-2 text-sm sm:text-base text-slate-300 list-disc pl-5">
-                <li>
-                  <strong>Excel:</strong> Exports the scenario comparison workbook with financial outputs and assumptions.
-                </li>
-                <li>
-                  <strong>PDF:</strong> Exports the Lease Economics Comparison Deck with cover, matrix, visuals, abstracts,
-                  scenario details, and disclosures.
-                </li>
-              </ul>
-            </section>
-
-            <section className="space-y-3">
-              <h2 className="heading-section">FAQ</h2>
-              <div className="space-y-3">
-                {FAQ_ITEMS.map((item) => (
-                  <article key={item.q} className="surface-card p-4 sm:p-5">
-                    <h3 className="text-base sm:text-lg font-semibold text-white">{item.q}</h3>
-                    <p className="mt-2 text-sm sm:text-base text-slate-300">{item.a}</p>
-                  </article>
-                ))}
+          <section className="space-y-3">
+            <h2 className="heading-section">Shared Architecture</h2>
+            <p className="text-sm text-slate-300 sm:text-base">
+              Both modes operate on one shared codebase, one shared entity graph, one shared document system, one shared AI orchestration layer, one shared export system, and one shared CRM architecture.
+            </p>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="surface-card p-4">
+                <p className="heading-kicker">Shared Graph</p>
+                <p className="mt-2 text-sm text-slate-300">Companies, contacts, buildings, floors, suites, leases, obligations, deals, proposals, analyses, surveys, tasks, and activities stay connected.</p>
               </div>
-            </section>
+              <div className="surface-card p-4">
+                <p className="heading-kicker">Shared AI</p>
+                <p className="mt-2 text-sm text-slate-300">The same AI orchestration layer powers prompt interpretation, suggested actions, automation, and audit visibility in both modes.</p>
+              </div>
+              <div className="surface-card p-4">
+                <p className="heading-kicker">Shared Exports</p>
+                <p className="mt-2 text-sm text-slate-300">PDFs, spreadsheets, reports, and share links all use the same export pipeline with mode-aware framing.</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="heading-section">Representation Modes</h2>
+            <div className="grid gap-4 xl:grid-cols-2">
+              {profiles.map((profile) => (
+                <article key={profile.mode} className="surface-card space-y-4 p-5 sm:p-6">
+                  <div>
+                    <p className="heading-kicker">{profile.label}</p>
+                    <p className="mt-2 text-sm text-slate-300 sm:text-base">{profile.summary}</p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="border border-white/10 bg-black/20 p-3">
+                      <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Default Module</p>
+                      <p className="mt-1 text-sm text-white">{profile.navigation.modules.find((module) => module.id === profile.navigation.defaultModule)?.label || profile.navigation.defaultModule}</p>
+                    </div>
+                    <div className="border border-white/10 bg-black/20 p-3">
+                      <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Default CRM View</p>
+                      <p className="mt-1 text-sm text-white">{profile.crm.viewLabels[profile.crm.defaultDealsView]}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Workflow Emphasis</p>
+                    <ul className="mt-2 space-y-2 text-sm text-slate-300">
+                      {profile.crm.dashboardWidgets.slice(0, 4).map((widget) => (
+                        <li key={widget.id}>• {widget.label}: {widget.description}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.12em] text-slate-400">AI Suggestions</p>
+                    <ul className="mt-2 space-y-2 text-sm text-slate-300">
+                      {profile.ai.suggestedPrompts.slice(0, 3).map((prompt) => (
+                        <li key={prompt}>• {prompt}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="heading-section">Mode-Aware Surfaces</h2>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="surface-card p-4">
+                <p className="heading-kicker">Onboarding + Navigation</p>
+                <p className="mt-2 text-sm text-slate-300">Onboarding steps, module order, module labels, and workspace defaults are seeded by the active representation mode profile.</p>
+              </div>
+              <div className="surface-card p-4">
+                <p className="heading-kicker">Dashboards + CRM</p>
+                <p className="mt-2 text-sm text-slate-300">Tenant dashboards center companies and relationships. Landlord dashboards center buildings, suites, vacancies, tours, proposals, and downtime risk.</p>
+                <p className="mt-2 text-sm text-slate-300">Dashboards are organized into Command Metrics, grouped Insights, and a Drill-Down Workspace so the highest-priority information appears first without removing any detail.</p>
+                <p className="mt-2 text-sm text-slate-300">CRM intake now supports typed building search with existing-record autofill and an add-building path when no current match exists.</p>
+                <p className="mt-2 text-sm text-slate-300">Account CRM settings now include a shared CoStar Excel import path. Published `.xlsx` office inventory rows update the common building dataset used across CRM for all users, while client-scoped records and overrides remain isolated inside each workspace.</p>
+                <p className="mt-2 text-sm text-slate-300">Landlord building views now include an editable stacking-plan workspace for floors and suites, with optional economics such as rate, OpEx, abatement, TI allowance, concessions, and size saved directly to the active building record.</p>
+                <p className="mt-2 text-sm text-slate-300">Current lease, amendment, abstract, and sublease uploads can seed or refresh stack occupancy. Proposal, LOI, and counter uploads do not overwrite stack occupancy.</p>
+              </div>
+              <div className="surface-card p-4">
+                <p className="heading-kicker">AI + Next Best Actions</p>
+                <p className="mt-2 text-sm text-slate-300">Side panels, prompt interpretation, suggested commands, and next best actions shift by mode without splitting the AI tool layer.</p>
+              </div>
+              <div className="surface-card p-4">
+                <p className="heading-kicker">Reminders + Templates + Exports</p>
+                <p className="mt-2 text-sm text-slate-300">Reminder timing, outreach templates, and export descriptors all reuse shared infrastructure while changing framing to match the active brokerage workflow.</p>
+              </div>
+              <div className="surface-card p-4">
+                <p className="heading-kicker">Production Access</p>
+                <p className="mt-2 text-sm text-slate-300">Production is served from <strong>thecremodel.com</strong>. Long-running workflows can use the platform&apos;s existing direct-processing paths, while support and proof routes continue to use the same-origin application domain.</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="heading-section">Core Modules</h2>
+            <ul className="list-disc space-y-2 pl-5 text-sm text-slate-300 sm:text-base">
+              <li><strong>CRM:</strong> The mode-aware operating hub for companies or buildings, linked records, tasks, reminders, activities, AI actions, and execution workflows.</li>
+              <li><strong>Surveys:</strong> Market options, shortlist management, and location intelligence using the shared record graph.</li>
+              <li><strong>Financial Analyses:</strong> Lease comparison, economics, and sublease recovery on top of parsed proposal and lease data.</li>
+              <li><strong>Lease Abstracts:</strong> Shared lease parsing and abstracting workflows that feed both tenant and landlord operations.</li>
+              <li><strong>Obligations / Reporting:</strong> Lease deadlines, notices, expiration risk, and reporting outputs, framed by representation mode.</li>
+            </ul>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="heading-section">FAQ</h2>
+            <div className="space-y-3">
+              {FAQ_ITEMS.map((item) => (
+                <article key={item.q} className="surface-card p-4 sm:p-5">
+                  <h3 className="text-base font-semibold text-white sm:text-lg">{item.q}</h3>
+                  <p className="mt-2 text-sm text-slate-300 sm:text-base">{item.a}</p>
+                </article>
+              ))}
+            </div>
+          </section>
         </section>
       </div>
     </main>

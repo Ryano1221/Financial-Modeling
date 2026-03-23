@@ -1,4 +1,15 @@
 import type { ClientDocumentType, ClientWorkspaceClient, ClientWorkspaceDeal, ClientWorkspaceDocument } from "@/lib/workspace/types";
+import type {
+  CrmBuilding,
+  CrmClientRelationshipRecord,
+  CrmCompany,
+  CrmOccupancyRecord,
+  CrmProspectingRecord,
+  CrmReminder,
+  CrmTask,
+  CrmTemplate,
+  CrmTouchpoint,
+} from "@/lib/workspace/crm";
 
 export type BrokerageOsActorType = "user" | "ai" | "system";
 
@@ -263,6 +274,15 @@ export interface BrokerageOsEntityGraph {
   leaseAbstracts: BrokerageOsLeaseAbstract[];
   obligations: BrokerageOsObligation[];
   tasks: BrokerageOsTask[];
+  crmCompanies: CrmCompany[];
+  crmBuildings: CrmBuilding[];
+  occupancyRecords: CrmOccupancyRecord[];
+  prospectingRecords: CrmProspectingRecord[];
+  clientRelationshipRecords: CrmClientRelationshipRecord[];
+  crmTasks: CrmTask[];
+  crmTemplates: CrmTemplate[];
+  crmReminders: CrmReminder[];
+  crmTouchpoints: CrmTouchpoint[];
 }
 
 export interface BrokerageOsArtifactsState {
@@ -327,4 +347,3 @@ export const BROKERAGE_OS_DOCUMENT_TYPES: readonly ClientDocumentType[] = [
   "sublease documents",
   "other",
 ] as const;
-
