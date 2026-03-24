@@ -2665,6 +2665,73 @@ def _extract_opex_by_calendar_year_from_text(text: str) -> dict[int, float]:
     return dict(sorted(results.items()))
 
 
+def _opex_clause_references_existing_lease_structure(text: str) -> bool:
+    if not text:
+        return False
+    lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
+    if not lines:
+        return False
+    segments = _iter_text_segments(lines, max_lines=320)
+    opex_kw = re.compile(r"(?i)\b(?:operating expenses?|opex|cam|common area maintenance)\b")
+    existing_structure_patterns = (
+        re.compile(
+            r"(?i)\b(?:match(?:es|ing)?|same\s+as|consistent\s+with|remain(?:s|ing)?|continue(?:s|ing)?|per|pursuant\s+to)\b"
+            r"[^\n]{0,80}\b(?:existing|current)\s+lease(?:\s+structure|\s+economics?|\s+terms?)?\b"
+        ),
+        re.compile(
+            r"(?i)\b(?:existing|current)\s+lease(?:\s+structure|\s+economics?|\s+terms?)?\b"
+            r"[^\n]{0,80}\b(?:apply|control|govern|remain|continue|match)\b"
+        ),
+    )
+    for seg in segments:
+        if not opex_kw.search(seg):
+            continue
+        normalized = " ".join(seg.split())
+        if any(pattern.search(normalized) for pattern in existing_structure_patterns):
+            return True
+    return False
+
+
+def _infer_uniform_rent_escalation_rate_from_schedule(raw_steps: object) -> Optional[float]:
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return None
+    normalized_steps: list[tuple[int, int, float]] = []
+    for step in raw_steps:
+        if isinstance(step, dict):
+            start = _coerce_int_token(step.get("start_month", step.get("start")), None)
+            end = _coerce_int_token(step.get("end_month", step.get("end")), start)
+            rate = _coerce_float_token(step.get("rent_psf_annual", step.get("rate_psf_yr")), None)
+        else:
+            start = _coerce_int_token(getattr(step, "start_month", getattr(step, "start", None)), None)
+            end = _coerce_int_token(getattr(step, "end_month", getattr(step, "end", None)), start)
+            rate = _coerce_float_token(getattr(step, "rent_psf_annual", getattr(step, "rate_psf_yr", None)), None)
+        if start is None or end is None or rate is None or rate <= 0:
+            continue
+        normalized_steps.append((int(start), int(end), float(rate)))
+    if len(normalized_steps) < 2:
+        return None
+    normalized_steps.sort(key=lambda item: (item[0], item[1], item[2]))
+    growth_candidates: list[float] = []
+    for idx in range(1, len(normalized_steps)):
+        prev_start, prev_end, prev_rate = normalized_steps[idx - 1]
+        start, _end, rate = normalized_steps[idx]
+        if prev_rate <= 0 or rate <= 0:
+            continue
+        if start != prev_end + 1:
+            continue
+        prev_months = max(0, prev_end - prev_start + 1)
+        if prev_months < 11:
+            continue
+        growth = (rate / prev_rate) - 1.0
+        if 0.015 <= growth <= 0.08:
+            growth_candidates.append(float(growth))
+    if not growth_candidates:
+        return None
+    if len(growth_candidates) > 1 and (max(growth_candidates) - min(growth_candidates)) > 0.005:
+        return None
+    return float(round(sum(growth_candidates) / len(growth_candidates), 4))
+
+
 def _extract_opex_exclusion_uplift_from_text(text: str) -> tuple[float, str]:
     """
     Detect OpEx clauses that explicitly exclude tenant-paid utilities,
@@ -7731,6 +7798,14 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         hints["opex_psf_year_1"] = 0.0
         hints["opex_source_year"] = None
         hints["opex_by_calendar_year"] = {}
+    elif (
+        (_coerce_float_token(hints.get("opex_growth_rate"), 0.0) or 0.0) <= 0
+        and _opex_clause_references_existing_lease_structure(text)
+    ):
+        inferred_opex_growth = _infer_uniform_rent_escalation_rate_from_schedule(hints.get("rent_schedule"))
+        if inferred_opex_growth and inferred_opex_growth > 0:
+            hints["opex_growth_rate"] = inferred_opex_growth
+            hints["_opex_growth_reason"] = "existing_lease_structure"
 
     return hints
 
@@ -10639,6 +10714,9 @@ def _normalize_impl(
                     warnings.append(
                         "OpEx was not explicitly stated in this document; retained inferred OpEx value."
                     )
+            hinted_opex_growth = _coerce_float_token(extracted_hints.get("opex_growth_rate"), None)
+            if not is_full_service_lease and hinted_opex_growth is not None and hinted_opex_growth > 0:
+                updates["opex_growth_rate"] = float(hinted_opex_growth)
             opex_source_year = 0 if is_full_service_lease else _coerce_int_token(extracted_hints.get("opex_source_year"), 0)
             commencement_for_opex = updates.get("commencement_date", canonical.commencement_date)
             commencement_year = commencement_for_opex.year if isinstance(commencement_for_opex, date) else 0
