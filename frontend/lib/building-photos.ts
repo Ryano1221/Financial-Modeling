@@ -66,6 +66,19 @@ function formatInt(value: number | null | undefined): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Number(value));
 }
 
+export function resolveBuildingImageUrl(imageUrl: string, sourceUrl = ""): string {
+  const cleanedImageUrl = asText(imageUrl);
+  if (!cleanedImageUrl) return "";
+  if (cleanedImageUrl.startsWith("data:image/") || cleanedImageUrl.startsWith("/")) return cleanedImageUrl;
+  if (!/^https?:\/\//i.test(cleanedImageUrl)) return cleanedImageUrl;
+  const params = new URLSearchParams({ target: cleanedImageUrl });
+  const cleanedSourceUrl = asText(sourceUrl);
+  if (/^https?:\/\//i.test(cleanedSourceUrl)) {
+    params.set("source", cleanedSourceUrl);
+  }
+  return `/api/building-photo?${params.toString()}`;
+}
+
 export function getBuildingRegistryEntry(building: CrmBuilding | null): AustinBuildingPhotoRegistryEntry | null {
   if (!building) return null;
   const normalizedName = normalizeBuildingName(building.name);
