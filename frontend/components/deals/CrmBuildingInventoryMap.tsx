@@ -6,7 +6,10 @@ import type { CrmBuilding } from "@/lib/workspace/crm";
 type CrmBuildingInventoryMapProps = {
   buildings: CrmBuilding[];
   selectedBuildingId: string | null;
+  selectedBuildingIds?: string[];
+  selectionMode?: boolean;
   onSelectBuilding: (buildingId: string) => void;
+  onSelectionChange?: (buildingIds: string[]) => void;
 };
 
 function asText(value: unknown): string {
@@ -164,7 +167,14 @@ function spreadBuildingPins(buildings: Array<CrmBuilding & { latitude: number; l
   });
 }
 
-export function CrmBuildingInventoryMap({ buildings, selectedBuildingId, onSelectBuilding }: CrmBuildingInventoryMapProps) {
+export function CrmBuildingInventoryMap({
+  buildings,
+  selectedBuildingId,
+  selectedBuildingIds = [],
+  selectionMode = false,
+  onSelectBuilding,
+  onSelectionChange,
+}: CrmBuildingInventoryMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
   const layerRef = useRef<import("leaflet").LayerGroup | null>(null);
@@ -257,6 +267,7 @@ export function CrmBuildingInventoryMap({ buildings, selectedBuildingId, onSelec
 
     const nextViewportKey = JSON.stringify({
       ids: positionedBuildings.map((building) => building.id).sort(),
+      selectedIds: [...selectedBuildingIds].sort(),
       territory: territoryOutline
         .map((point) => ({
           latitude: Number(point.latitude.toFixed(6)),
@@ -266,7 +277,8 @@ export function CrmBuildingInventoryMap({ buildings, selectedBuildingId, onSelec
     });
 
     for (const building of positionedBuildings) {
-      const isSelected = building.id === selectedBuildingId;
+      const isMultiSelected = selectedBuildingIds.includes(building.id);
+      const isSelected = building.id === selectedBuildingId || isMultiSelected;
       const classTone = asText(building.buildingClass).toUpperCase() === "B"
         ? {
             fill: "#2f5ca8",
@@ -315,7 +327,16 @@ export function CrmBuildingInventoryMap({ buildings, selectedBuildingId, onSelec
         direction: "top",
         sticky: true,
       });
-      marker.on("click", () => onSelectBuilding(building.id));
+      marker.on("click", () => {
+        if (selectionMode && onSelectionChange) {
+          const nextIds = isMultiSelected
+            ? selectedBuildingIds.filter((id) => id !== building.id)
+            : [...selectedBuildingIds, building.id];
+          onSelectionChange(nextIds);
+          return;
+        }
+        onSelectBuilding(building.id);
+      });
       bounds.extend([building.displayLatitude, building.displayLongitude]);
     }
 
@@ -329,7 +350,7 @@ export function CrmBuildingInventoryMap({ buildings, selectedBuildingId, onSelec
     }
 
     window.setTimeout(() => map.invalidateSize(), 60);
-  }, [onSelectBuilding, positionedBuildings, selectedBuildingId, territoryOutline]);
+  }, [onSelectBuilding, onSelectionChange, positionedBuildings, selectedBuildingId, selectedBuildingIds, selectionMode, territoryOutline]);
 
   return (
     <div className="space-y-2">
