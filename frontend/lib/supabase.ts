@@ -5,14 +5,13 @@ const USER_KEY = "thecremodel_supabase_user";
 const SESSION_LAST_ACTIVE_AT_KEY = "thecremodel_supabase_session_last_active_at";
 const MAX_PERSIST_DAYS = 30;
 const MAX_PERSIST_AGE_MS = MAX_PERSIST_DAYS * 24 * 60 * 60 * 1000;
-const DEFAULT_SUPABASE_URL = "https://stvfubfpwwlsigfugnem.supabase.co";
-const DEFAULT_SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN0dmZ1YmZwd3dsc2lnZnVnbmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1OTczMjcsImV4cCI6MjA4NzE3MzMyN30.DqdAOU90YUSkqT1EsDwKPT7JAjuUxapzfUhr58g1sn0";
 
 export interface SupabaseAuthUser {
   id: string;
   email?: string | null;
   name?: string | null;
+  role?: string | null;
+  team?: string | null;
 }
 
 export interface SupabaseAuthSession {
@@ -45,8 +44,8 @@ export function subscribeAuthSession(listener: SessionListener): () => void {
 function getEnv(): { url: string; anonKey: string } {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
   const envAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
-  const url = envUrl || DEFAULT_SUPABASE_URL;
-  const anonKey = envAnonKey || DEFAULT_SUPABASE_ANON_KEY;
+  const url = envUrl;
+  const anonKey = envAnonKey;
   if (!url || !anonKey) {
     throw new Error(
       "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY."
@@ -150,6 +149,17 @@ function toSession(payload: Record<string, unknown>): SupabaseAuthSession {
     metadata.name,
     metadata.display_name,
   ].find((value) => typeof value === "string" && String(value).trim().length > 0);
+  const roleCandidate = [
+    metadata.role,
+    metadata.user_role,
+    metadata.org_role,
+  ].find((value) => typeof value === "string" && String(value).trim().length > 0);
+  const teamCandidate = [
+    metadata.team,
+    metadata.team_name,
+    metadata.broker_team,
+    metadata.org_name,
+  ].find((value) => typeof value === "string" && String(value).trim().length > 0);
 
   return {
     access_token,
@@ -159,6 +169,8 @@ function toSession(payload: Record<string, unknown>): SupabaseAuthSession {
       id: userId,
       email: typeof user.email === "string" ? user.email : null,
       name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
+      role: typeof roleCandidate === "string" ? roleCandidate.trim() : null,
+      team: typeof teamCandidate === "string" ? teamCandidate.trim() : null,
     },
   };
 }
@@ -297,10 +309,23 @@ export async function getSession(): Promise<SupabaseAuthSession | null> {
             metadata.name,
             metadata.display_name,
           ].find((value) => typeof value === "string" && String(value).trim().length > 0);
+          const roleCandidate = [
+            metadata.role,
+            metadata.user_role,
+            metadata.org_role,
+          ].find((value) => typeof value === "string" && String(value).trim().length > 0);
+          const teamCandidate = [
+            metadata.team,
+            metadata.team_name,
+            metadata.broker_team,
+            metadata.org_name,
+          ].find((value) => typeof value === "string" && String(value).trim().length > 0);
           const user: SupabaseAuthUser = {
             id: userId,
             email: typeof userPayload.email === "string" ? userPayload.email : null,
             name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
+            role: typeof roleCandidate === "string" ? roleCandidate.trim() : null,
+            team: typeof teamCandidate === "string" ? teamCandidate.trim() : null,
           };
           const refresh = getStoredRefreshToken() || undefined;
           const session: SupabaseAuthSession = { access_token: token, refresh_token: refresh, user };

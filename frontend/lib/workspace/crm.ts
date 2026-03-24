@@ -140,6 +140,82 @@ export interface CrmStackingPlanEntry {
   createdAt: string;
 }
 
+export interface CrmShortlist {
+  id: string;
+  clientId: string;
+  dealId?: string;
+  buildingId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CrmShortlistEntryStatus =
+  | "candidate"
+  | "shortlisted"
+  | "touring"
+  | "eliminated"
+  | "proposal_requested";
+
+export interface CrmShortlistEntry {
+  id: string;
+  clientId: string;
+  shortlistId: string;
+  dealId?: string;
+  buildingId: string;
+  floor: string;
+  suite: string;
+  rsf: number;
+  companyId?: string;
+  source: CrmStackingPlanSource | "shortlist_manual";
+  status: CrmShortlistEntryStatus;
+  owner: string;
+  rank: number;
+  notes: string;
+  linkedSurveyEntryId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CrmTourStatus = "draft" | "scheduled" | "completed" | "cancelled";
+export type CrmWorkflowBoardDateFilter = "all" | "next_7" | "next_14" | "next_30" | "past" | "undated";
+
+export interface CrmTour {
+  id: string;
+  clientId: string;
+  dealId?: string;
+  shortlistEntryId?: string;
+  buildingId: string;
+  floor: string;
+  suite: string;
+  scheduledAt: string;
+  status: CrmTourStatus;
+  broker: string;
+  assignee: string;
+  attendees: string[];
+  notes: string;
+  followUpActions: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CrmWorkflowBoardViewScope = "deal" | "team";
+
+export interface CrmWorkflowBoardView {
+  id: string;
+  clientId: string;
+  dealId?: string;
+  scope: CrmWorkflowBoardViewScope;
+  createdBy: string;
+  team: string;
+  name: string;
+  buildingId: string;
+  broker: string;
+  dateFilter: CrmWorkflowBoardDateFilter;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CrmProspectingRecord {
   id: string;
   clientId: string;
@@ -237,6 +313,10 @@ export interface CrmWorkspaceState {
   buildings: CrmBuilding[];
   occupancyRecords: CrmOccupancyRecord[];
   stackingPlanEntries: CrmStackingPlanEntry[];
+  shortlists: CrmShortlist[];
+  shortlistEntries: CrmShortlistEntry[];
+  tours: CrmTour[];
+  workflowBoardViews: CrmWorkflowBoardView[];
   prospectingRecords: CrmProspectingRecord[];
   clientRelationshipRecords: CrmClientRelationshipRecord[];
   tasks: CrmTask[];
@@ -525,6 +605,10 @@ export function emptyCrmWorkspaceState(mode: RepresentationMode | null | undefin
     buildings: [],
     occupancyRecords: [],
     stackingPlanEntries: [],
+    shortlists: [],
+    shortlistEntries: [],
+    tours: [],
+    workflowBoardViews: [],
     prospectingRecords: [],
     clientRelationshipRecords: [],
     tasks: [],
@@ -550,6 +634,10 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   const existingProspecting = ensureArray<CrmProspectingRecord>(existing.prospectingRecords);
   const existingRelationships = ensureArray<CrmClientRelationshipRecord>(existing.clientRelationshipRecords);
   const existingTemplates = ensureArray<CrmTemplate>(existing.templates);
+  const existingShortlists = ensureArray<CrmShortlist>(existing.shortlists);
+  const existingShortlistEntries = ensureArray<CrmShortlistEntry>(existing.shortlistEntries);
+  const existingTours = ensureArray<CrmTour>(existing.tours);
+  const existingWorkflowBoardViews = ensureArray<CrmWorkflowBoardView>(existing.workflowBoardViews);
   const today = todayIso();
 
   const companyByNormalizedName = new Map(existingCompanies.map((company) => [normalize(company.name), company]));
@@ -1245,6 +1333,39 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
     buildings,
     occupancyRecords,
     stackingPlanEntries,
+    shortlists: existingShortlists
+      .filter((item) => asText(item.buildingId))
+      .map((item) => ({
+        ...item,
+        clientId: input.clientId,
+      })),
+    shortlistEntries: existingShortlistEntries
+      .filter((item) => asText(item.shortlistId) && asText(item.buildingId) && asText(item.suite))
+      .map((item) => ({
+        ...item,
+        clientId: input.clientId,
+        owner: asText(item.owner),
+      })),
+    tours: existingTours
+      .filter((item) => asText(item.buildingId) && asText(item.suite))
+      .map((item) => ({
+        ...item,
+        clientId: input.clientId,
+        assignee: asText(item.assignee) || asText(item.broker),
+        attendees: ensureArray<string>(item.attendees),
+      })),
+    workflowBoardViews: existingWorkflowBoardViews
+      .filter((item) => asText(item.name))
+      .map((item) => ({
+        ...item,
+        clientId: input.clientId,
+        scope: (asText((item as { scope?: string }).scope) || (asText(item.dealId) ? "deal" : "team")) as CrmWorkflowBoardViewScope,
+        createdBy: asText((item as { createdBy?: string }).createdBy),
+        team: asText((item as { team?: string }).team),
+        buildingId: asText(item.buildingId) || "all",
+        broker: asText(item.broker) || "all",
+        dateFilter: (asText(item.dateFilter) || "all") as CrmWorkflowBoardDateFilter,
+      })),
     prospectingRecords,
     clientRelationshipRecords,
     tasks: existingTasks,

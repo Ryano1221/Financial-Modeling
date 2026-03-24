@@ -15,8 +15,10 @@ import { CrmBuildingInventoryMap } from "@/components/deals/CrmBuildingInventory
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import { fetchApiProxy } from "@/lib/api";
 import { getBuildingRegistryEntry, hasCuratedBuildingPhoto } from "@/lib/building-photos";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { loadBuildingFocus, persistBuildingFocus } from "@/lib/workspace/building-focus";
 import { fetchSharedMarketInventory, type SharedMarketInventoryResponse } from "@/lib/workspace/market-inventory";
 import {
   CRM_OS_STORAGE_KEY,
@@ -32,9 +34,13 @@ import {
   type CrmFilters,
   type CrmOccupancyRecord,
   type CrmReminder,
+  type CrmShortlistEntry,
   type CrmStackingPlanEntry,
   type CrmTask,
   type CrmTouchpoint,
+  type CrmTour,
+  type CrmWorkflowBoardDateFilter,
+  type CrmWorkflowBoardView,
   type CrmWorkspaceState,
 } from "@/lib/workspace/crm";
 import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
@@ -192,6 +198,70 @@ function companyTypeBadgeClass(type: string): string {
   return "border-white/25 bg-white/5 text-slate-200";
 }
 
+function shortlistStatusBadgeClass(status: CrmShortlistEntry["status"]): string {
+  if (status === "proposal_requested") return "border-cyan-300/60 bg-cyan-500/10 text-cyan-100";
+  if (status === "touring") return "border-indigo-300/60 bg-indigo-500/10 text-indigo-100";
+  if (status === "eliminated") return "border-rose-300/60 bg-rose-500/10 text-rose-100";
+  if (status === "shortlisted") return "border-emerald-300/60 bg-emerald-500/10 text-emerald-100";
+  return "border-white/25 bg-white/5 text-slate-200";
+}
+
+function tourStatusBadgeClass(status: CrmTour["status"]): string {
+  if (status === "completed") return "border-emerald-300/60 bg-emerald-500/10 text-emerald-100";
+  if (status === "cancelled") return "border-rose-300/60 bg-rose-500/10 text-rose-100";
+  if (status === "scheduled") return "border-indigo-300/60 bg-indigo-500/10 text-indigo-100";
+  return "border-white/25 bg-white/5 text-slate-200";
+}
+
+function shortlistStatusLabel(status: CrmShortlistEntry["status"]): string {
+  return status.replace(/_/g, " ");
+}
+
+function tourStatusLabel(status: CrmTour["status"]): string {
+  return status.replace(/_/g, " ");
+}
+
+function attendeesToInput(attendees: string[]): string {
+  return attendees.filter(Boolean).join(", ");
+}
+
+function attendeesFromInput(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function dateForInput(value: string): string {
+  const raw = asText(value);
+  if (!raw) return "";
+  const dt = new Date(raw);
+  if (!Number.isFinite(dt.getTime())) return "";
+  return dt.toISOString().slice(0, 10);
+}
+
+function canManageTeamBoardViews(role: string): boolean {
+  const normalized = normalizeText(role);
+  if (!normalized) return true;
+  return !["viewer", "read_only", "guest"].includes(normalized);
+}
+
+function matchesBoardDateFilter(value: string, filter: CrmWorkflowBoardDateFilter): boolean {
+  if (filter === "all") return true;
+  const raw = asText(value);
+  if (!raw) return filter === "undated";
+  const dt = new Date(raw);
+  if (!Number.isFinite(dt.getTime())) return filter === "undated";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+  if (filter === "past") return diffDays < 0;
+  if (filter === "undated") return false;
+  const upperBound = filter === "next_7" ? 7 : filter === "next_14" ? 14 : 30;
+  return diffDays >= 0 && diffDays <= upperBound;
+}
+
 function reminderToneClass(reminder: CrmReminder): string {
   if (reminder.severity === "critical") return "border-red-300/50 bg-red-500/10 text-red-100";
   if (reminder.severity === "warn") return "border-amber-300/50 bg-amber-500/10 text-amber-100";
@@ -218,6 +288,7 @@ function scrollToWorkspaceSection(ref: MutableRefObject<HTMLDivElement | null>) 
 
 export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   const {
+    session,
     activeClient,
     deals,
     dealStages,
@@ -230,7 +301,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     removeDeal,
     updateDocument,
   } = useClientWorkspace();
-  const { graph } = useBrokerOs();
+  const { graph, runAiCommand, createTaskForDeal, transitionDealStage } = useBrokerOs();
   const isLandlordMode = representationMode === LANDLORD_REP_MODE;
   const representationProfile = useMemo(
     () => getRepresentationModeProfile(representationMode),
@@ -304,6 +375,19 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   const [buildingClassFilter, setBuildingClassFilter] = useState("all");
   const [buildingPhotoFilter, setBuildingPhotoFilter] = useState("all");
   const [buildingMapFilter, setBuildingMapFilter] = useState("all");
+  const [boardBuildingFilter, setBoardBuildingFilter] = useState("all");
+  const [boardBrokerFilter, setBoardBrokerFilter] = useState("all");
+  const [boardDateFilter, setBoardDateFilter] = useState<CrmWorkflowBoardDateFilter>("all");
+  const [boardViewScope, setBoardViewScope] = useState<CrmWorkflowBoardView["scope"]>("deal");
+  const [boardViewName, setBoardViewName] = useState("");
+  const [selectedShortlistEntryIds, setSelectedShortlistEntryIds] = useState<string[]>([]);
+  const [selectedTourIds, setSelectedTourIds] = useState<string[]>([]);
+  const [bulkShortlistOwner, setBulkShortlistOwner] = useState("");
+  const [bulkTourAssignee, setBulkTourAssignee] = useState("");
+  const [boardAiRunningKey, setBoardAiRunningKey] = useState("");
+  const [boardAiMessages, setBoardAiMessages] = useState<Record<string, { label: string; message: string; subject?: string; body?: string }>>({});
+  const [draggedShortlistEntryId, setDraggedShortlistEntryId] = useState("");
+  const [draggedTourId, setDraggedTourId] = useState("");
   const [form, setForm] = useState({
     dealName: "",
     requirementName: "",
@@ -488,6 +572,110 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     () => crmState.tasks.filter((task) => task.companyId === selectedCompany?.id),
     [crmState.tasks, selectedCompany?.id],
   );
+  const selectedDealShortlists = useMemo(
+    () => crmState.shortlists.filter((shortlist) => shortlist.dealId === selectedDeal?.id),
+    [crmState.shortlists, selectedDeal?.id],
+  );
+  const selectedDealShortlistEntries = useMemo(
+    () => crmState.shortlistEntries.filter((entry) => entry.dealId === selectedDeal?.id),
+    [crmState.shortlistEntries, selectedDeal?.id],
+  );
+  const selectedDealTours = useMemo(
+    () => crmState.tours.filter((tour) => tour.dealId === selectedDeal?.id),
+    [crmState.tours, selectedDeal?.id],
+  );
+  const currentBoardUserRole = asText(session?.user?.role) || "broker";
+  const currentBoardUserTeam = asText(session?.user?.team) || asText(activeClient?.brokerage) || "Broker Team";
+  const currentBoardUserLabel = asText(session?.user?.name) || asText(session?.user?.email) || asText(activeClient?.contactName) || "Broker Team";
+  const canManageSharedBoardViews = canManageTeamBoardViews(currentBoardUserRole);
+  const tourByShortlistEntryId = useMemo(() => {
+    const map = new Map<string, CrmTour>();
+    for (const tour of selectedDealTours) {
+      const shortlistEntryId = asText(tour.shortlistEntryId);
+      if (shortlistEntryId) map.set(shortlistEntryId, tour);
+    }
+    return map;
+  }, [selectedDealTours]);
+  const workflowBoardBuildingOptions = useMemo(() => {
+    const buildingIds = new Set<string>();
+    [...selectedDealShortlistEntries, ...selectedDealTours].forEach((item) => {
+      if (asText(item.buildingId)) buildingIds.add(item.buildingId);
+    });
+    return Array.from(buildingIds)
+      .map((buildingId) => crmState.buildings.find((building) => building.id === buildingId))
+      .filter((building): building is CrmBuilding => Boolean(building))
+      .sort((left, right) => displayBuildingName(left).localeCompare(displayBuildingName(right)));
+  }, [crmState.buildings, selectedDealShortlistEntries, selectedDealTours]);
+  const workflowBoardBrokerOptions = useMemo(
+    () => Array.from(
+      new Set(
+        [
+          ...selectedDealTours.flatMap((tour) => [asText(tour.broker), asText(tour.assignee)]),
+          ...selectedDealShortlistEntries.map((entry) => asText(entry.owner)),
+          asText(selectedDeal?.tenantRepBroker),
+          asText(activeClient?.contactName),
+        ].filter(Boolean),
+      ),
+    ).sort((left, right) => left.localeCompare(right)),
+    [activeClient?.contactName, selectedDeal?.tenantRepBroker, selectedDealShortlistEntries, selectedDealTours],
+  );
+  const teamBoardViews = useMemo(
+    () => crmState.workflowBoardViews
+      .filter((view) => (view.scope === "team" || !asText(view.dealId)) && (!asText(view.team) || asText(view.team) === currentBoardUserTeam))
+      .sort((left, right) => asText(left.updatedAt).localeCompare(asText(right.updatedAt)) * -1),
+    [crmState.workflowBoardViews, currentBoardUserTeam],
+  );
+  const selectedDealBoardViews = useMemo(
+    () => crmState.workflowBoardViews
+      .filter((view) => view.scope !== "team" && asText(view.dealId) === asText(selectedDeal?.id))
+      .sort((left, right) => asText(left.updatedAt).localeCompare(asText(right.updatedAt)) * -1),
+    [crmState.workflowBoardViews, selectedDeal?.id],
+  );
+  const shortlistBoardColumns = useMemo(() => ([
+    { id: "candidate", label: "Candidates" },
+    { id: "shortlisted", label: "Shortlisted" },
+    { id: "touring", label: "Touring" },
+    { id: "proposal_requested", label: "Proposal Requested" },
+    { id: "eliminated", label: "Eliminated" },
+  ] as const), []);
+  const tourBoardColumns = useMemo(() => ([
+    { id: "draft", label: "Draft" },
+    { id: "scheduled", label: "Scheduled" },
+    { id: "completed", label: "Completed" },
+    { id: "cancelled", label: "Cancelled" },
+  ] as const), []);
+  const filteredDealShortlistEntries = useMemo(
+    () => selectedDealShortlistEntries.filter((entry) => {
+      if (boardBuildingFilter !== "all" && entry.buildingId !== boardBuildingFilter) return false;
+      if (boardBrokerFilter !== "all") {
+        const linkedTour = tourByShortlistEntryId.get(entry.id);
+        const matchesOwner = asText(entry.owner) === boardBrokerFilter;
+        const matchesTour = linkedTour
+          ? [asText(linkedTour.broker), asText(linkedTour.assignee)].includes(boardBrokerFilter)
+          : false;
+        if (!matchesOwner && !matchesTour) return false;
+      }
+      const linkedDate = tourByShortlistEntryId.get(entry.id)?.scheduledAt || entry.updatedAt;
+      return matchesBoardDateFilter(linkedDate, boardDateFilter);
+    }),
+    [boardBrokerFilter, boardBuildingFilter, boardDateFilter, selectedDealShortlistEntries, tourByShortlistEntryId],
+  );
+  const filteredDealTours = useMemo(
+    () => selectedDealTours.filter((tour) => {
+      if (boardBuildingFilter !== "all" && tour.buildingId !== boardBuildingFilter) return false;
+      if (boardBrokerFilter !== "all" && ![asText(tour.broker), asText(tour.assignee)].includes(boardBrokerFilter)) return false;
+      return matchesBoardDateFilter(tour.scheduledAt, boardDateFilter);
+    }),
+    [boardBrokerFilter, boardBuildingFilter, boardDateFilter, selectedDealTours],
+  );
+  useEffect(() => {
+    const visible = new Set(filteredDealShortlistEntries.map((entry) => entry.id));
+    setSelectedShortlistEntryIds((current) => current.filter((id) => visible.has(id)));
+  }, [filteredDealShortlistEntries]);
+  useEffect(() => {
+    const visible = new Set(filteredDealTours.map((tour) => tour.id));
+    setSelectedTourIds((current) => current.filter((id) => visible.has(id)));
+  }, [filteredDealTours]);
   const dashboard = useMemo(() => buildCrmDashboard(crmState, filters), [crmState, filters]);
   const dashboardCards = useMemo(
     () => buildModeAwareDashboardCards(representationMode, dashboard),
@@ -658,6 +846,8 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       companies: crmState.companies,
       occupancyRecords: crmState.occupancyRecords,
       stackingPlanEntries: crmState.stackingPlanEntries,
+      shortlistEntries: crmState.shortlistEntries,
+      tours: crmState.tours,
       properties: graph.properties,
       spaces: graph.spaces,
       deals: filteredDeals,
@@ -674,7 +864,9 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       filteredBuildings,
       crmState.companies,
       crmState.occupancyRecords,
+      crmState.shortlistEntries,
       crmState.stackingPlanEntries,
+      crmState.tours,
       graph.properties,
       graph.spaces,
       filteredDeals,
@@ -743,6 +935,14 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       setSelectedInventoryBuildingId(filters.buildingId);
     }
   }, [filters.buildingId]);
+
+  useEffect(() => {
+    if (!storageHydrated || selectedInventoryBuildingId) return;
+    const focus = loadBuildingFocus(clientId);
+    if (focus?.buildingId && crmState.buildings.some((building) => building.id === focus.buildingId)) {
+      setSelectedInventoryBuildingId(focus.buildingId);
+    }
+  }, [clientId, crmState.buildings, selectedInventoryBuildingId, storageHydrated]);
 
   useEffect(() => {
     setSuiteAttachmentForm({
@@ -914,9 +1114,10 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
 
   const focusBuilding = useCallback((building: CrmBuilding) => {
     setSelectedInventoryBuildingId(building.id);
+    persistBuildingFocus(clientId, building);
     setBuildingPhotoStatus((prev) => (prev.buildingId === building.id ? prev : { buildingId: "", message: "" }));
     setStatus(`Selected ${building.name} while keeping the current inventory results in view.`);
-  }, []);
+  }, [clientId]);
 
   const patchSelectedCompany = useCallback((patch: Partial<CrmCompany>) => {
     if (!selectedCompany) return;
@@ -1253,6 +1454,377 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       ),
     }));
   }, [patchCrmDraft]);
+
+  const updateShortlistEntryStatus = useCallback((entryId: string, status: CrmShortlistEntry["status"]) => {
+    patchCrmDraft((current) => ({
+      ...current,
+      shortlistEntries: current.shortlistEntries.map((entry) =>
+        entry.id === entryId ? { ...entry, status, updatedAt: new Date().toISOString() } : entry,
+      ),
+    }));
+    setStatus(`Updated shortlist entry to ${status.replace(/_/g, " ")}.`);
+  }, [patchCrmDraft]);
+
+  const updateShortlistEntryNotes = useCallback((entryId: string, notes: string) => {
+    patchCrmDraft((current) => ({
+      ...current,
+      shortlistEntries: current.shortlistEntries.map((entry) =>
+        entry.id === entryId ? { ...entry, notes, updatedAt: new Date().toISOString() } : entry,
+      ),
+    }));
+  }, [patchCrmDraft]);
+
+  const updateShortlistEntryOwner = useCallback((entryId: string, owner: string) => {
+    patchCrmDraft((current) => ({
+      ...current,
+      shortlistEntries: current.shortlistEntries.map((entry) =>
+        entry.id === entryId ? { ...entry, owner, updatedAt: new Date().toISOString() } : entry,
+      ),
+    }));
+  }, [patchCrmDraft]);
+
+  const toggleShortlistEntrySelection = useCallback((entryId: string) => {
+    setSelectedShortlistEntryIds((current) => current.includes(entryId) ? current.filter((id) => id !== entryId) : [...current, entryId]);
+  }, []);
+
+  const toggleTourSelection = useCallback((tourId: string) => {
+    setSelectedTourIds((current) => current.includes(tourId) ? current.filter((id) => id !== tourId) : [...current, tourId]);
+  }, []);
+
+  const applyBulkShortlistOwner = useCallback(() => {
+    const owner = asText(bulkShortlistOwner);
+    if (!owner || selectedShortlistEntryIds.length === 0) {
+      setError("Select shortlist cards and enter an owner before applying bulk reassignment.");
+      return;
+    }
+    patchCrmDraft((current) => ({
+      ...current,
+      shortlistEntries: current.shortlistEntries.map((entry) =>
+        selectedShortlistEntryIds.includes(entry.id)
+          ? { ...entry, owner, updatedAt: new Date().toISOString() }
+          : entry,
+      ),
+    }));
+    setStatus(`Reassigned ${selectedShortlistEntryIds.length} shortlist cards to ${owner}.`);
+    setSelectedShortlistEntryIds([]);
+    setBulkShortlistOwner("");
+    setError("");
+  }, [bulkShortlistOwner, patchCrmDraft, selectedShortlistEntryIds]);
+
+  const updateTourStatus = useCallback((tourId: string, status: CrmTour["status"]) => {
+    patchCrmDraft((current) => ({
+      ...current,
+      tours: current.tours.map((tour) =>
+        tour.id === tourId ? { ...tour, status, updatedAt: new Date().toISOString() } : tour,
+      ),
+      shortlistEntries: current.shortlistEntries.map((entry) => {
+        const tour = current.tours.find((item) => item.id === tourId);
+        if (!tour || entry.id !== tour.shortlistEntryId) return entry;
+        return {
+          ...entry,
+          status: status === "completed" ? "touring" : status === "cancelled" ? "shortlisted" : entry.status,
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    }));
+    if (selectedDeal && status === "completed" && selectedDeal.stage !== (isLandlordMode ? "Toured" : "Touring")) {
+      const timelineEntry = {
+        id: makeId("deal_activity"),
+        clientId,
+        dealId: selectedDeal.id,
+        label: status,
+        description: "Tour status updated from CRM shortlist workspace.",
+        createdAt: new Date().toISOString(),
+      };
+      updateDeal(selectedDeal.id, {
+        stage: isLandlordMode ? "Toured" : "Touring",
+        timeline: [timelineEntry, ...selectedDeal.timeline].slice(0, 100),
+      });
+    }
+    setStatus(`Updated tour to ${status}.`);
+  }, [clientId, isLandlordMode, patchCrmDraft, selectedDeal, updateDeal]);
+
+  const updateTourDetails = useCallback((tourId: string, updates: Partial<CrmTour>) => {
+    patchCrmDraft((current) => ({
+      ...current,
+      tours: current.tours.map((tour) =>
+        tour.id === tourId ? { ...tour, ...updates, updatedAt: new Date().toISOString() } : tour,
+      ),
+    }));
+  }, [patchCrmDraft]);
+
+  const applyBulkTourAssignee = useCallback(() => {
+    const assignee = asText(bulkTourAssignee);
+    if (!assignee || selectedTourIds.length === 0) {
+      setError("Select tours and enter an assignee before applying bulk reassignment.");
+      return;
+    }
+    patchCrmDraft((current) => ({
+      ...current,
+      tours: current.tours.map((tour) =>
+        selectedTourIds.includes(tour.id)
+          ? { ...tour, assignee, updatedAt: new Date().toISOString() }
+          : tour,
+      ),
+    }));
+    setStatus(`Reassigned ${selectedTourIds.length} tours to ${assignee}.`);
+    setSelectedTourIds([]);
+    setBulkTourAssignee("");
+    setError("");
+  }, [bulkTourAssignee, patchCrmDraft, selectedTourIds]);
+
+  const createFollowUpTaskFromTour = useCallback((tour: CrmTour) => {
+    if (!selectedDeal) {
+      setError("Select a deal before creating a follow-up task.");
+      return;
+    }
+    const taskTitle = asText(tour.followUpActions) || `Follow up after tour for suite ${tour.suite}`;
+    const taskResult = createTaskForDeal(selectedDeal.id, taskTitle, dateForInput(tour.scheduledAt));
+    setStatus(taskResult.message);
+  }, [createTaskForDeal, selectedDeal]);
+
+  const generateTourBrief = useCallback(async (tour: CrmTour) => {
+    const linkedBuilding = crmState.buildings.find((building) => building.id === tour.buildingId);
+    const cardKey = `tour:${tour.id}`;
+    setBoardAiRunningKey(cardKey);
+    setError("");
+    try {
+      const command = [
+        "Generate a tour brief",
+        selectedDeal ? `for ${selectedDeal.dealName}` : "for this deal",
+        linkedBuilding ? `at ${displayBuildingName(linkedBuilding)}` : "",
+        `suite ${tour.suite || "-"}`,
+        tour.floor ? `floor ${tour.floor}` : "",
+        tour.attendees.length > 0 ? `with attendees ${tour.attendees.join(", ")}` : "",
+        tour.notes ? `and notes ${tour.notes}` : "",
+      ].filter(Boolean).join(" ");
+      const result = await runAiCommand(command);
+      const message = result.results.map((item) => item.message).filter(Boolean).join(" | ") || "Tour brief generated.";
+      setBoardAiMessages((current) => ({
+        ...current,
+        [cardKey]: { label: "AI Tour Brief", message },
+      }));
+      setStatus("Generated AI tour brief.");
+    } catch (aiError) {
+      setError(String(aiError instanceof Error ? aiError.message : aiError || "Unable to generate tour brief."));
+    } finally {
+      setBoardAiRunningKey("");
+    }
+  }, [crmState.buildings, runAiCommand, selectedDeal]);
+
+  const requestProposalFromShortlist = useCallback(async (entry: CrmShortlistEntry) => {
+    const linkedBuilding = crmState.buildings.find((building) => building.id === entry.buildingId);
+    updateShortlistEntryStatus(entry.id, "proposal_requested");
+    if (selectedDeal) {
+      const nextStage = isLandlordMode ? "Proposal Out" : "Proposal Requested";
+      if (dealStages.includes(nextStage) && selectedDeal.stage !== nextStage) {
+        transitionDealStage(selectedDeal.id, nextStage, "ai", "AI proposal request");
+      }
+      createTaskForDeal(selectedDeal.id, `Request proposal for ${linkedBuilding ? displayBuildingName(linkedBuilding) : "selected building"} suite ${entry.suite}`);
+    }
+    const cardKey = `entry:${entry.id}`;
+    setBoardAiRunningKey(cardKey);
+    setError("");
+    try {
+      const command = [
+        "Request proposal",
+        selectedDeal ? `for ${selectedDeal.dealName}` : "for this deal",
+        linkedBuilding ? `at ${displayBuildingName(linkedBuilding)}` : "",
+        `suite ${entry.suite || "-"}`,
+        entry.floor ? `floor ${entry.floor}` : "",
+        entry.notes ? `with notes ${entry.notes}` : "",
+      ].filter(Boolean).join(" ");
+      const result = await runAiCommand(command);
+      const message = result.results.map((item) => item.message).filter(Boolean).join(" | ") || "AI proposal request prepared.";
+      setBoardAiMessages((current) => ({
+        ...current,
+        [cardKey]: { label: "AI Proposal Request", message },
+      }));
+      setStatus(`Moved suite ${entry.suite} into proposal requested and prepared AI guidance.`);
+    } catch (aiError) {
+      setError(String(aiError instanceof Error ? aiError.message : aiError || "Unable to prepare proposal request."));
+    } finally {
+      setBoardAiRunningKey("");
+    }
+  }, [crmState.buildings, createTaskForDeal, dealStages, isLandlordMode, runAiCommand, selectedDeal, transitionDealStage, updateShortlistEntryStatus]);
+
+  const generatePostTourRecap = useCallback(async (tour: CrmTour) => {
+    const linkedBuilding = crmState.buildings.find((building) => building.id === tour.buildingId);
+    const cardKey = `tour-recap:${tour.id}`;
+    setBoardAiRunningKey(cardKey);
+    setError("");
+    try {
+      const command = [
+        "Draft a post-tour recap email",
+        selectedDeal ? `for ${selectedDeal.dealName}` : "for this deal",
+        linkedBuilding ? `at ${displayBuildingName(linkedBuilding)}` : "",
+        `suite ${tour.suite || "-"}`,
+        tour.floor ? `floor ${tour.floor}` : "",
+        tour.attendees.length > 0 ? `with attendees ${tour.attendees.join(", ")}` : "",
+        tour.notes ? `using notes ${tour.notes}` : "",
+        tour.followUpActions ? `and follow-up ${tour.followUpActions}` : "",
+      ].filter(Boolean).join(" ");
+      const result = await runAiCommand(command);
+      const firstData = result.results.find((item) => item.data)?.data || {};
+      const message = result.results.map((item) => item.message).filter(Boolean).join(" | ") || "Post-tour recap generated.";
+      const draft = {
+        label: "AI Tour Recap Draft",
+        message,
+        subject: asText(firstData.subject),
+        body: asText(firstData.body),
+      };
+      setBoardAiMessages((current) => ({
+        ...current,
+        [cardKey]: draft,
+      }));
+      setStatus("Generated AI post-tour recap draft.");
+      return draft;
+    } catch (aiError) {
+      setError(String(aiError instanceof Error ? aiError.message : aiError || "Unable to generate post-tour recap draft."));
+      return null;
+    } finally {
+      setBoardAiRunningKey("");
+    }
+  }, [crmState.buildings, runAiCommand, selectedDeal]);
+
+  const sendRecapToClient = useCallback(async (tour: CrmTour) => {
+    const email = asText(activeClient?.contactEmail);
+    if (!email) {
+      setError("Add a client contact email before sending the recap draft.");
+      return;
+    }
+    const cardKey = `tour-recap:${tour.id}`;
+    const existingDraft = boardAiMessages[cardKey];
+    const draft = existingDraft || await generatePostTourRecap(tour);
+    if (!draft) return;
+    try {
+      const linkedBuilding = crmState.buildings.find((building) => building.id === tour.buildingId);
+      const response = await fetchApiProxy("/crm/send-tour-recap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to_email: email,
+          client_name: asText(activeClient?.name),
+          deal_name: asText(selectedDeal?.dealName),
+          building_name: linkedBuilding ? displayBuildingName(linkedBuilding) : "",
+          suite: asText(tour.suite),
+          floor: asText(tour.floor),
+          subject: asText(draft.subject) || `Post-tour recap for suite ${tour.suite}`,
+          body: asText(draft.body) || asText(draft.message),
+          sent_by_name: asText(session?.user?.name) || currentBoardUserLabel,
+          sent_by_email: asText(session?.user?.email),
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail =
+          payload && typeof payload === "object" && "detail" in payload
+            ? asText((payload as { detail?: unknown }).detail)
+            : "";
+        throw new Error(detail || "Unable to send the recap right now.");
+      }
+      setStatus(`Sent recap to ${email}.`);
+    } catch (sendError) {
+      setError(String(sendError instanceof Error ? sendError.message : sendError || "Unable to send recap."));
+    }
+  }, [activeClient?.contactEmail, activeClient?.name, boardAiMessages, crmState.buildings, currentBoardUserLabel, generatePostTourRecap, selectedDeal?.dealName, session?.user?.email, session?.user?.name]);
+
+  const logRecapToDeal = useCallback(async (tour: CrmTour) => {
+    if (!selectedDeal) {
+      setError("Select a deal before logging a recap.");
+      return;
+    }
+    const linkedBuilding = crmState.buildings.find((building) => building.id === tour.buildingId);
+    const cardKey = `tour-recap:${tour.id}`;
+    const existingDraft = boardAiMessages[cardKey];
+    const draft = existingDraft || await generatePostTourRecap(tour);
+    if (!draft) return;
+    const timelineEntry = {
+      id: makeId("deal_activity"),
+      clientId,
+      dealId: selectedDeal.id,
+      label: "Tour recap draft",
+      description: [
+        linkedBuilding ? `${displayBuildingName(linkedBuilding)} suite ${tour.suite}` : `Suite ${tour.suite}`,
+        asText(draft.subject),
+        asText(draft.body).slice(0, 220),
+      ].filter(Boolean).join(" · "),
+      createdAt: new Date().toISOString(),
+    };
+    updateDeal(selectedDeal.id, {
+      timeline: [timelineEntry, ...selectedDeal.timeline].slice(0, 100),
+    });
+    setStatus("Logged the post-tour recap to the deal activity timeline.");
+  }, [boardAiMessages, clientId, crmState.buildings, generatePostTourRecap, selectedDeal, updateDeal]);
+
+  const saveWorkflowBoardView = useCallback(() => {
+    if (!selectedDeal) {
+      setError("Select a deal before saving a board view.");
+      return;
+    }
+    if (boardViewScope === "team" && !canManageSharedBoardViews) {
+      setError("Your current workspace role can load team views but cannot save or update them.");
+      return;
+    }
+    const trimmedName = asText(boardViewName);
+    if (!trimmedName) {
+      setError("Name the board view before saving it.");
+      return;
+    }
+    const now = new Date().toISOString();
+    patchCrmDraft((current) => {
+      const existingIndex = current.workflowBoardViews.findIndex((view) =>
+        (view.scope || "deal") === boardViewScope
+        && asText(view.dealId) === (boardViewScope === "deal" ? selectedDeal.id : "")
+        && normalizeText(view.name) === normalizeText(trimmedName),
+      );
+      const nextView: CrmWorkflowBoardView = {
+        id: existingIndex >= 0 ? current.workflowBoardViews[existingIndex].id : makeId("crm_board_view"),
+        clientId,
+        dealId: boardViewScope === "deal" ? selectedDeal.id : undefined,
+        scope: boardViewScope,
+        createdBy: existingIndex >= 0 ? current.workflowBoardViews[existingIndex].createdBy : (asText(session?.user?.email) || currentBoardUserLabel),
+        team: boardViewScope === "team" ? currentBoardUserTeam : "",
+        name: trimmedName,
+        buildingId: boardBuildingFilter,
+        broker: boardBrokerFilter,
+        dateFilter: boardDateFilter,
+        createdAt: existingIndex >= 0 ? current.workflowBoardViews[existingIndex].createdAt : now,
+        updatedAt: now,
+      };
+      const nextViews = [...current.workflowBoardViews];
+      if (existingIndex >= 0) nextViews[existingIndex] = nextView;
+      else nextViews.unshift(nextView);
+      return {
+        ...current,
+        workflowBoardViews: nextViews,
+      };
+    });
+    setBoardViewName("");
+    setStatus(`Saved board view ${trimmedName}.`);
+  }, [boardBrokerFilter, boardBuildingFilter, boardDateFilter, boardViewName, boardViewScope, canManageSharedBoardViews, clientId, currentBoardUserLabel, currentBoardUserTeam, patchCrmDraft, selectedDeal, session?.user?.email]);
+
+  const applyWorkflowBoardView = useCallback((view: CrmWorkflowBoardView) => {
+    setBoardBuildingFilter(view.buildingId || "all");
+    setBoardBrokerFilter(view.broker || "all");
+    setBoardDateFilter(view.dateFilter || "all");
+    setBoardViewScope(view.scope || "deal");
+    setBoardViewName(view.name);
+    setStatus(`Loaded board view ${view.name}.`);
+  }, []);
+
+  const deleteWorkflowBoardView = useCallback((viewId: string) => {
+    const target = crmState.workflowBoardViews.find((view) => view.id === viewId);
+    if (target?.scope === "team" && !canManageSharedBoardViews) {
+      setError("Your current workspace role can load team views but cannot delete them.");
+      return;
+    }
+    patchCrmDraft((current) => ({
+      ...current,
+      workflowBoardViews: current.workflowBoardViews.filter((view) => view.id !== viewId),
+    }));
+    setStatus("Removed board view.");
+  }, [canManageSharedBoardViews, crmState.workflowBoardViews, patchCrmDraft]);
 
   const createDealFromCompany = useCallback(() => {
     if (!selectedCompany) return;
@@ -2719,6 +3291,524 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </PlatformPanel>
             </div>
 
+        <PlatformPanel kicker="Workflow Boards" title={selectedDeal ? `${selectedDeal.dealName} Shortlist + Tours` : "Shortlist + Tours"} className="xl:col-span-12">
+          {!selectedDeal ? (
+            <p className="text-sm text-slate-400">Select a deal to manage shortlisted suites and tours in a dedicated CRM board.</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-300">
+                <p>
+                  Team view access is role-aware. Current role: <span className="text-white">{currentBoardUserRole}</span> · Team: <span className="text-white">{currentBoardUserTeam}</span>
+                </p>
+                <p className={canManageSharedBoardViews ? "text-emerald-200" : "text-amber-200"}>
+                  {canManageSharedBoardViews ? "Can create and manage team views" : "Can load team views only"}
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-5">
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Building Filter</span>
+                  <select className="input-premium" value={boardBuildingFilter} onChange={(event) => setBoardBuildingFilter(event.target.value)}>
+                    <option value="all">All buildings</option>
+                    {workflowBoardBuildingOptions.map((building) => (
+                      <option key={building.id} value={building.id}>{displayBuildingName(building)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Broker / Owner Filter</span>
+                  <select className="input-premium" value={boardBrokerFilter} onChange={(event) => setBoardBrokerFilter(event.target.value)}>
+                    <option value="all">All people</option>
+                    {workflowBoardBrokerOptions.map((broker) => (
+                      <option key={broker} value={broker}>{broker}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Date Filter</span>
+                  <select className="input-premium" value={boardDateFilter} onChange={(event) => setBoardDateFilter(event.target.value as CrmWorkflowBoardDateFilter)}>
+                    <option value="all">All dates</option>
+                    <option value="next_7">Next 7 days</option>
+                    <option value="next_14">Next 14 days</option>
+                    <option value="next_30">Next 30 days</option>
+                    <option value="past">Past due</option>
+                    <option value="undated">Undated</option>
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase tracking-[0.12em] text-slate-400">View Scope</span>
+                  <select className="input-premium" value={boardViewScope} onChange={(event) => setBoardViewScope(event.target.value as CrmWorkflowBoardView["scope"])}>
+                    <option value="deal">Deal only</option>
+                    <option value="team">Team-wide</option>
+                  </select>
+                </label>
+                <label className="space-y-1 xl:col-span-2">
+                  <span className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Save View</span>
+                  <div className="flex gap-2">
+                    <input
+                      className="input-premium"
+                      value={boardViewName}
+                      onChange={(event) => setBoardViewName(event.target.value)}
+                      placeholder="Broker team, CBD week ahead"
+                    />
+                    <button type="button" className="btn-premium btn-premium-secondary shrink-0" onClick={saveWorkflowBoardView}>
+                      Save
+                    </button>
+                  </div>
+                </label>
+              </div>
+              {selectedDealBoardViews.length > 0 || teamBoardViews.length > 0 ? (
+                <div className="grid gap-3 xl:grid-cols-2">
+                  <div className="border border-white/15 bg-black/20 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="heading-kicker">Deal Views</p>
+                      <p className="text-[11px] text-slate-400">{selectedDealBoardViews.length} saved</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedDealBoardViews.length === 0 ? <p className="text-xs text-slate-500">No deal-specific views saved yet.</p> : selectedDealBoardViews.map((view) => (
+                        <div key={view.id} className="border border-white/15 bg-black/25 px-3 py-2">
+                          <button type="button" className="text-left" onClick={() => applyWorkflowBoardView(view)}>
+                            <p className="text-sm text-white">{view.name}</p>
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {(view.buildingId === "all" ? "All buildings" : workflowBoardBuildingOptions.find((building) => building.id === view.buildingId)?.name || "Building")}
+                              {" · "}
+                              {(view.broker === "all" ? "All people" : view.broker)}
+                              {" · "}
+                              {view.dateFilter.replace(/_/g, " ")}
+                            </p>
+                            {view.createdBy ? <p className="mt-1 text-[10px] text-slate-500">Saved by {view.createdBy}</p> : null}
+                          </button>
+                          <div className="mt-2 flex gap-2">
+                            <button type="button" className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5" onClick={() => applyWorkflowBoardView(view)}>
+                              Load
+                            </button>
+                            <button type="button" className="border border-rose-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-rose-100 hover:bg-rose-500/10" onClick={() => deleteWorkflowBoardView(view.id)}>
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="border border-white/15 bg-black/20 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="heading-kicker">Team Views</p>
+                      <p className="text-[11px] text-slate-400">{teamBoardViews.length} saved</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {teamBoardViews.length === 0 ? <p className="text-xs text-slate-500">No team-wide views saved yet.</p> : teamBoardViews.map((view) => (
+                        <div key={view.id} className="border border-white/15 bg-black/25 px-3 py-2">
+                          <button type="button" className="text-left" onClick={() => applyWorkflowBoardView(view)}>
+                            <p className="text-sm text-white">{view.name}</p>
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {(view.buildingId === "all" ? "All buildings" : workflowBoardBuildingOptions.find((building) => building.id === view.buildingId)?.name || "Building")}
+                              {" · "}
+                              {(view.broker === "all" ? "All people" : view.broker)}
+                              {" · "}
+                              {view.dateFilter.replace(/_/g, " ")}
+                            </p>
+                            <p className="mt-1 text-[10px] text-slate-500">
+                              {view.team ? `${view.team}` : "Shared team"}{view.createdBy ? ` · ${view.createdBy}` : ""}
+                            </p>
+                          </button>
+                          <div className="mt-2 flex gap-2">
+                            <button type="button" className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5" onClick={() => applyWorkflowBoardView(view)}>
+                              Load
+                            </button>
+                            <button type="button" className="border border-rose-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-rose-100 hover:bg-rose-500/10" onClick={() => deleteWorkflowBoardView(view.id)}>
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <div className="border border-white/15 bg-black/20 p-3">
+                  <div className="mb-3 flex items-center justify-between border-b border-white/15 pb-2">
+                    <div>
+                      <p className="heading-kicker">Shortlist Board</p>
+                      <p className="mt-1 text-xs text-slate-400">Manage candidate suites, shortlist progression, and proposal-requested options without leaving CRM.</p>
+                    </div>
+                    <span className="text-xs text-slate-300">{filteredDealShortlistEntries.length} entries</span>
+                  </div>
+                  <div className="mb-3 flex flex-wrap items-center gap-2 border border-white/10 bg-black/25 p-2">
+                    <button
+                      type="button"
+                      className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                      onClick={() => setSelectedShortlistEntryIds(filteredDealShortlistEntries.map((entry) => entry.id))}
+                    >
+                      Select Visible
+                    </button>
+                    <button
+                      type="button"
+                      className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                      onClick={() => setSelectedShortlistEntryIds([])}
+                    >
+                      Clear
+                    </button>
+                    <span className="text-[11px] text-slate-400">{selectedShortlistEntryIds.length} selected</span>
+                    <input
+                      className="input-premium !w-[220px] !text-[11px]"
+                      value={bulkShortlistOwner}
+                      list={`crm-board-people-${selectedDeal.id}`}
+                      placeholder="Bulk assign owner"
+                      onChange={(event) => setBulkShortlistOwner(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="border border-cyan-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-cyan-100 hover:bg-cyan-500/10"
+                      onClick={applyBulkShortlistOwner}
+                    >
+                      Apply Owner
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <div className="grid min-w-[980px] gap-3 [grid-template-columns:repeat(5,minmax(180px,1fr))]">
+                      {shortlistBoardColumns.map((column) => {
+                        const columnEntries = filteredDealShortlistEntries.filter((entry) => entry.status === column.id);
+                        return (
+                          <div
+                            key={column.id}
+                            className={`min-h-[260px] border bg-black/25 p-2 transition-colors ${draggedShortlistEntryId ? "border-white/10" : "border-white/10"} ${draggedShortlistEntryId ? "hover:border-cyan-300/40" : ""}`}
+                            onDragOver={(event) => {
+                              if (!draggedShortlistEntryId) return;
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                            }}
+                            onDrop={(event) => {
+                              if (!draggedShortlistEntryId) return;
+                              event.preventDefault();
+                              updateShortlistEntryStatus(draggedShortlistEntryId, column.id);
+                              setDraggedShortlistEntryId("");
+                            }}
+                          >
+                            <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+                              <p className="text-sm text-white">{column.label}</p>
+                              <span className="text-xs text-slate-400">{columnEntries.length}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {columnEntries.length === 0 ? (
+                                <p className="text-xs text-slate-500">No entries in this column.</p>
+                              ) : columnEntries.map((entry) => {
+                                const linkedBuilding = crmState.buildings.find((building) => building.id === entry.buildingId);
+                                const linkedTour = tourByShortlistEntryId.get(entry.id);
+                                const aiMessage = boardAiMessages[`entry:${entry.id}`];
+                                return (
+                                  <div
+                                    key={entry.id}
+                                    draggable
+                                    onDragStart={(event) => {
+                                      setDraggedShortlistEntryId(entry.id);
+                                      event.dataTransfer.effectAllowed = "move";
+                                      event.dataTransfer.setData("text/plain", entry.id);
+                                    }}
+                                    onDragEnd={() => setDraggedShortlistEntryId("")}
+                                    className={`border bg-black/25 p-2 ${draggedShortlistEntryId === entry.id ? "border-cyan-300/50 opacity-70" : "border-white/10"}`}
+                                  >
+                                    <label className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                                      <input
+                                        type="checkbox"
+                                        className="h-3.5 w-3.5 accent-cyan-300"
+                                        checked={selectedShortlistEntryIds.includes(entry.id)}
+                                        onChange={() => toggleShortlistEntrySelection(entry.id)}
+                                      />
+                                      Select
+                                    </label>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <p className="text-sm text-white">Floor {entry.floor || "-"} · Suite {entry.suite}</p>
+                                        <p className="mt-1 text-[11px] text-slate-400">{linkedBuilding ? displayBuildingName(linkedBuilding) : "Building pending"} · {formatInt(entry.rsf)} RSF</p>
+                                        {linkedTour?.scheduledAt ? <p className="mt-1 text-[11px] text-slate-500">Tour {formatDateTime(linkedTour.scheduledAt)}</p> : null}
+                                      </div>
+                                      <span className={`border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${shortlistStatusBadgeClass(entry.status)}`}>{shortlistStatusLabel(entry.status)}</span>
+                                    </div>
+                                    <label className="mt-3 block space-y-1">
+                                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Owner</span>
+                                      <input
+                                        className="input-premium !text-[11px]"
+                                        value={entry.owner}
+                                        list={`crm-board-people-${selectedDeal.id}`}
+                                        placeholder="Assign owner"
+                                        onChange={(event) => updateShortlistEntryOwner(entry.id, event.target.value)}
+                                      />
+                                    </label>
+                                    <label className="mt-3 block space-y-1">
+                                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Workflow Notes</span>
+                                      <textarea
+                                        className="input-premium min-h-[70px] !text-[11px]"
+                                        value={entry.notes}
+                                        placeholder="Negotiation angle, tour context, landlord notes"
+                                        onChange={(event) => updateShortlistEntryNotes(entry.id, event.target.value)}
+                                      />
+                                    </label>
+                                    <div className="mt-3 flex flex-wrap gap-1">
+                                      {shortlistBoardColumns.filter((candidate) => candidate.id !== entry.status).map((candidate) => (
+                                        <button
+                                          key={candidate.id}
+                                          type="button"
+                                          className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                                          onClick={() => updateShortlistEntryStatus(entry.id, candidate.id)}
+                                        >
+                                          Move to {candidate.label}
+                                        </button>
+                                      ))}
+                                      <button
+                                        type="button"
+                                        className="border border-cyan-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-cyan-100 hover:bg-cyan-500/10"
+                                        onClick={() => void requestProposalFromShortlist(entry)}
+                                        disabled={boardAiRunningKey === `entry:${entry.id}`}
+                                      >
+                                        {boardAiRunningKey === `entry:${entry.id}` ? "AI Working..." : "AI Request Proposal"}
+                                      </button>
+                                    </div>
+                                    {aiMessage ? (
+                                      <div className="mt-3 border border-cyan-300/20 bg-cyan-500/8 p-2">
+                                        <p className="text-[10px] uppercase tracking-[0.12em] text-cyan-100">{aiMessage.label}</p>
+                                        <p className="mt-1 text-[11px] text-slate-200">{aiMessage.message}</p>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border border-white/15 bg-black/20 p-3">
+                  <div className="mb-3 flex items-center justify-between border-b border-white/15 pb-2">
+                    <div>
+                      <p className="heading-kicker">Tour Board</p>
+                      <p className="mt-1 text-xs text-slate-400">Track scheduled, completed, and cancelled tours tied to the active deal.</p>
+                    </div>
+                    <span className="text-xs text-slate-300">{filteredDealTours.length} tours</span>
+                  </div>
+                  <div className="mb-3 flex flex-wrap items-center gap-2 border border-white/10 bg-black/25 p-2">
+                    <button
+                      type="button"
+                      className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                      onClick={() => setSelectedTourIds(filteredDealTours.map((tour) => tour.id))}
+                    >
+                      Select Visible
+                    </button>
+                    <button
+                      type="button"
+                      className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                      onClick={() => setSelectedTourIds([])}
+                    >
+                      Clear
+                    </button>
+                    <span className="text-[11px] text-slate-400">{selectedTourIds.length} selected</span>
+                    <input
+                      className="input-premium !w-[220px] !text-[11px]"
+                      value={bulkTourAssignee}
+                      list={`crm-board-people-${selectedDeal.id}`}
+                      placeholder="Bulk assign assignee"
+                      onChange={(event) => setBulkTourAssignee(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="border border-cyan-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-cyan-100 hover:bg-cyan-500/10"
+                      onClick={applyBulkTourAssignee}
+                    >
+                      Apply Assignee
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <div className="grid min-w-[760px] gap-3 [grid-template-columns:repeat(4,minmax(170px,1fr))]">
+                      {tourBoardColumns.map((column) => {
+                        const columnTours = filteredDealTours.filter((tour) => tour.status === column.id);
+                        return (
+                          <div
+                            key={column.id}
+                            className={`min-h-[260px] border bg-black/25 p-2 transition-colors ${draggedTourId ? "border-white/10 hover:border-cyan-300/40" : "border-white/10"}`}
+                            onDragOver={(event) => {
+                              if (!draggedTourId) return;
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                            }}
+                            onDrop={(event) => {
+                              if (!draggedTourId) return;
+                              event.preventDefault();
+                              updateTourStatus(draggedTourId, column.id);
+                              setDraggedTourId("");
+                            }}
+                          >
+                            <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+                              <p className="text-sm text-white">{column.label}</p>
+                              <span className="text-xs text-slate-400">{columnTours.length}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {columnTours.length === 0 ? (
+                                <p className="text-xs text-slate-500">No tours in this column.</p>
+                              ) : columnTours.map((tour) => {
+                                const linkedBuilding = crmState.buildings.find((building) => building.id === tour.buildingId);
+                                const aiMessage = boardAiMessages[`tour-recap:${tour.id}`] || boardAiMessages[`tour:${tour.id}`];
+                                return (
+                                  <div
+                                    key={tour.id}
+                                    draggable
+                                    onDragStart={(event) => {
+                                      setDraggedTourId(tour.id);
+                                      event.dataTransfer.effectAllowed = "move";
+                                      event.dataTransfer.setData("text/plain", tour.id);
+                                    }}
+                                    onDragEnd={() => setDraggedTourId("")}
+                                    className={`border bg-black/25 p-2 ${draggedTourId === tour.id ? "border-cyan-300/50 opacity-70" : "border-white/10"}`}
+                                  >
+                                    <label className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                                      <input
+                                        type="checkbox"
+                                        className="h-3.5 w-3.5 accent-cyan-300"
+                                        checked={selectedTourIds.includes(tour.id)}
+                                        onChange={() => toggleTourSelection(tour.id)}
+                                      />
+                                      Select
+                                    </label>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <p className="text-sm text-white">Floor {tour.floor || "-"} · Suite {tour.suite}</p>
+                                        <p className="mt-1 text-[11px] text-slate-400">{linkedBuilding ? displayBuildingName(linkedBuilding) : "Building pending"}</p>
+                                        <p className="mt-1 text-[11px] text-slate-400">{formatDateTime(tour.scheduledAt)}</p>
+                                      </div>
+                                      <span className={`border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${tourStatusBadgeClass(tour.status)}`}>{tourStatusLabel(tour.status)}</span>
+                                    </div>
+                                    <div className="mt-3 grid gap-2">
+                                      <label className="space-y-1">
+                                        <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Broker</span>
+                                        <input
+                                          className="input-premium !text-[11px]"
+                                          value={tour.broker}
+                                          onChange={(event) => updateTourDetails(tour.id, { broker: event.target.value })}
+                                          placeholder="Lead broker"
+                                        />
+                                      </label>
+                                      <label className="space-y-1">
+                                        <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Assignee</span>
+                                        <input
+                                          className="input-premium !text-[11px]"
+                                          value={tour.assignee}
+                                          list={`crm-board-people-${selectedDeal.id}`}
+                                          onChange={(event) => updateTourDetails(tour.id, { assignee: event.target.value })}
+                                          placeholder="Owner / coordinator"
+                                        />
+                                      </label>
+                                      <label className="space-y-1">
+                                        <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Attendees</span>
+                                        <input
+                                          className="input-premium !text-[11px]"
+                                          value={attendeesToInput(tour.attendees)}
+                                          onChange={(event) => updateTourDetails(tour.id, { attendees: attendeesFromInput(event.target.value) })}
+                                          placeholder="Name, Name, Name"
+                                        />
+                                      </label>
+                                      <label className="space-y-1">
+                                        <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Tour Notes</span>
+                                        <textarea
+                                          className="input-premium min-h-[72px] !text-[11px]"
+                                          value={tour.notes}
+                                          onChange={(event) => updateTourDetails(tour.id, { notes: event.target.value })}
+                                          placeholder="What matters before or after the tour"
+                                        />
+                                      </label>
+                                      <label className="space-y-1">
+                                        <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Follow-Up Task</span>
+                                        <textarea
+                                          className="input-premium min-h-[64px] !text-[11px]"
+                                          value={tour.followUpActions}
+                                          onChange={(event) => updateTourDetails(tour.id, { followUpActions: event.target.value })}
+                                          placeholder="Send recap, gather parking terms, request revised economics"
+                                        />
+                                      </label>
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-1">
+                                      {tourBoardColumns.filter((candidate) => candidate.id !== tour.status).map((candidate) => (
+                                        <button
+                                          key={candidate.id}
+                                          type="button"
+                                          className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                                          onClick={() => updateTourStatus(tour.id, candidate.id)}
+                                        >
+                                          Move to {candidate.label}
+                                        </button>
+                                      ))}
+                                      <button
+                                        type="button"
+                                        className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                                        onClick={() => createFollowUpTaskFromTour(tour)}
+                                      >
+                                        Create Deal Task
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="border border-cyan-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-cyan-100 hover:bg-cyan-500/10"
+                                        onClick={() => void generateTourBrief(tour)}
+                                        disabled={boardAiRunningKey === `tour:${tour.id}`}
+                                      >
+                                        {boardAiRunningKey === `tour:${tour.id}` ? "AI Working..." : "AI Tour Brief"}
+                                      </button>
+                                      {tour.status === "completed" ? (
+                                        <button
+                                          type="button"
+                                          className="border border-emerald-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-emerald-100 hover:bg-emerald-500/10"
+                                          onClick={() => void generatePostTourRecap(tour)}
+                                          disabled={boardAiRunningKey === `tour-recap:${tour.id}`}
+                                        >
+                                          {boardAiRunningKey === `tour-recap:${tour.id}` ? "AI Working..." : "AI Recap Draft"}
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                    {aiMessage ? (
+                                      <div className="mt-3 border border-cyan-300/20 bg-cyan-500/8 p-2">
+                                        <p className="text-[10px] uppercase tracking-[0.12em] text-cyan-100">{aiMessage.label}</p>
+                                        <p className="mt-1 text-[11px] text-slate-200">{aiMessage.message}</p>
+                                        {aiMessage.subject ? <p className="mt-2 text-[11px] text-white">Subject: {aiMessage.subject}</p> : null}
+                                        {aiMessage.body ? <pre className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-slate-200">{aiMessage.body}</pre> : null}
+                                        {tour.status === "completed" ? (
+                                          <div className="mt-3 flex flex-wrap gap-1">
+                                            <button
+                                              type="button"
+                                              className="border border-emerald-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-emerald-100 hover:bg-emerald-500/10"
+                                              onClick={() => void sendRecapToClient(tour)}
+                                            >
+                                              Send to Client
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="border border-white/20 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 hover:bg-white/5"
+                                              onClick={() => void logRecapToDeal(tour)}
+                                            >
+                                              Log to Deal Activity
+                                            </button>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <datalist id={`crm-board-people-${selectedDeal.id}`}>
+                {workflowBoardBrokerOptions.map((person) => (
+                  <option key={person} value={person} />
+                ))}
+              </datalist>
+            </div>
+          )}
+        </PlatformPanel>
+
         <PlatformPanel kicker="Deal Detail" title={selectedDeal ? selectedDeal.dealName : "Select a deal"} className="xl:col-span-12">
           {!selectedDeal ? <p className="text-sm text-slate-400">Create a deal or select one from the CRM views.</p> : (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -2738,31 +3828,106 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                 <input className="input-premium" value={String(selectedDeal.budget || "")} placeholder="Budget" onChange={(event) => updateDeal(selectedDeal.id, { budget: asNumber(event.target.value) })} />
                 <textarea className="input-premium md:col-span-2 min-h-[72px]" value={selectedDeal.notes} placeholder="Notes" onChange={(event) => updateDeal(selectedDeal.id, { notes: event.target.value })} />
               </div>
-              <div className="lg:col-span-5 border border-white/15 bg-black/20 p-3">
-                <p className="heading-kicker mb-2">Linked Documents</p>
-                <ClientDocumentPicker
-                  buttonLabel="Attach Existing Document"
-                  onSelectDocument={(document) => {
-                    updateDeal(selectedDeal.id, { linkedDocumentIds: Array.from(new Set([...(linkedDocumentMap.get(selectedDeal.id) || []), document.id])) });
-                    updateDocument(document.id, { dealId: selectedDeal.id, companyId: selectedDeal.companyId });
-                    setStatus(`Attached ${document.name} to ${selectedDeal.dealName}.`);
-                  }}
-                />
-                <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                  {(linkedDocumentMap.get(selectedDeal.id) || []).length === 0 ? <p className="text-xs text-slate-400">No linked documents yet.</p> : (linkedDocumentMap.get(selectedDeal.id) || []).map((documentId) => {
-                    const doc = documents.find((item) => item.id === documentId);
-                    if (!doc) return null;
-                    return (
-                      <div key={documentId} className="border border-white/15 bg-black/25 p-2">
-                        <p className="text-xs text-white break-all">{doc.name}</p>
-                        <p className="text-[11px] text-slate-400">{doc.type}</p>
-                        <button type="button" className="mt-1 btn-premium btn-premium-danger text-[10px]" onClick={() => {
-                          updateDeal(selectedDeal.id, { linkedDocumentIds: (linkedDocumentMap.get(selectedDeal.id) || []).filter((id) => id !== documentId) });
-                          updateDocument(documentId, { dealId: "" });
-                        }}>Remove</button>
-                      </div>
-                    );
-                  })}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="border border-white/15 bg-black/20 p-3">
+                  <p className="heading-kicker mb-2">Linked Documents</p>
+                  <ClientDocumentPicker
+                    buttonLabel="Attach Existing Document"
+                    onSelectDocument={(document) => {
+                      updateDeal(selectedDeal.id, { linkedDocumentIds: Array.from(new Set([...(linkedDocumentMap.get(selectedDeal.id) || []), document.id])) });
+                      updateDocument(document.id, { dealId: selectedDeal.id, companyId: selectedDeal.companyId });
+                      setStatus(`Attached ${document.name} to ${selectedDeal.dealName}.`);
+                    }}
+                  />
+                  <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                    {(linkedDocumentMap.get(selectedDeal.id) || []).length === 0 ? <p className="text-xs text-slate-400">No linked documents yet.</p> : (linkedDocumentMap.get(selectedDeal.id) || []).map((documentId) => {
+                      const doc = documents.find((item) => item.id === documentId);
+                      if (!doc) return null;
+                      return (
+                        <div key={documentId} className="border border-white/15 bg-black/25 p-2">
+                          <p className="text-xs text-white break-all">{doc.name}</p>
+                          <p className="text-[11px] text-slate-400">{doc.type}</p>
+                          <button type="button" className="mt-1 btn-premium btn-premium-danger text-[10px]" onClick={() => {
+                            updateDeal(selectedDeal.id, { linkedDocumentIds: (linkedDocumentMap.get(selectedDeal.id) || []).filter((id) => id !== documentId) });
+                            updateDocument(documentId, { dealId: "" });
+                          }}>Remove</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="border border-white/15 bg-black/20 p-3">
+                  <p className="heading-kicker mb-2">Shortlist + Tours</p>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="border border-white/10 bg-black/25 p-2">
+                      <p className="text-slate-500">Shortlists</p>
+                      <p className="mt-1 text-white">{selectedDealShortlists.length}</p>
+                    </div>
+                    <div className="border border-white/10 bg-black/25 p-2">
+                      <p className="text-slate-500">Entries</p>
+                      <p className="mt-1 text-white">{selectedDealShortlistEntries.length}</p>
+                    </div>
+                    <div className="border border-white/10 bg-black/25 p-2">
+                      <p className="text-slate-500">Tours</p>
+                      <p className="mt-1 text-white">{selectedDealTours.length}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                    {selectedDealShortlistEntries.length === 0 && selectedDealTours.length === 0 ? (
+                      <p className="text-xs text-slate-400">No shortlist or tour records yet. Add suites from the Buildings workspace to start this workflow.</p>
+                    ) : (
+                      <>
+                        {selectedDealShortlistEntries.map((entry) => (
+                          <div key={entry.id} className="border border-white/10 bg-black/25 p-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${shortlistStatusBadgeClass(entry.status)}`}>{entry.status.replace(/_/g, " ")}</span>
+                                <span className="text-sm text-white">Floor {entry.floor || "-"} · Suite {entry.suite}</span>
+                              </div>
+                              <select
+                                className="input-premium !h-8 !py-1 !text-[11px]"
+                                value={entry.status}
+                                onChange={(event) => updateShortlistEntryStatus(entry.id, event.target.value as CrmShortlistEntry["status"])}
+                              >
+                                <option value="candidate">Candidate</option>
+                                <option value="shortlisted">Shortlisted</option>
+                                <option value="touring">Touring</option>
+                                <option value="proposal_requested">Proposal Requested</option>
+                                <option value="eliminated">Eliminated</option>
+                              </select>
+                            </div>
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {(crmState.shortlists.find((item) => item.id === entry.shortlistId)?.name || "Shortlist")} · {formatInt(entry.rsf)} RSF
+                            </p>
+                          </div>
+                        ))}
+                        {selectedDealTours.map((tour) => (
+                          <div key={tour.id} className="border border-white/10 bg-black/25 p-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${tourStatusBadgeClass(tour.status)}`}>{tour.status}</span>
+                                  <span className="text-sm text-white">Floor {tour.floor || "-"} · Suite {tour.suite}</span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-slate-400">{formatDateTime(tour.scheduledAt)}</p>
+                              </div>
+                              <select
+                                className="input-premium !h-8 !py-1 !text-[11px]"
+                                value={tour.status}
+                                onChange={(event) => updateTourStatus(tour.id, event.target.value as CrmTour["status"])}
+                              >
+                                <option value="draft">Draft</option>
+                                <option value="scheduled">Scheduled</option>
+                                <option value="completed">Completed</option>
+                                <option value="cancelled">Cancelled</option>
+                              </select>
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

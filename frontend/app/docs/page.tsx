@@ -15,7 +15,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What does the landlord stacking plan show?",
-    a: "Editable floor and suite blocks, occupied suites, vacant suites, current lease and sublease occupancy, upcoming expirations, active proposal motion, and toured suites, organized by building, floor, and suite from the same shared data model used everywhere else in the platform.",
+    a: "Editable floor and suite blocks, occupied suites, vacant suites, current lease and sublease occupancy, upcoming expirations, shortlist motion, active proposal motion, and toured suites, organized by building, floor, and suite from the same shared data model used everywhere else in the platform.",
   },
   {
     q: "How does AI adapt by mode?",
@@ -43,6 +43,11 @@ export default function DocsPage() {
             <p className="body-lead max-w-4xl">
               theCREmodel is one AI-native commercial real estate operating system that adapts to tenant-side and landlord-side brokerage work through a shared representation mode profile layer.
             </p>
+            <div className="flex flex-wrap gap-3 pt-2">
+              <div className="brand-badge">Shared platform architecture</div>
+              <div className="brand-badge">Mode-aware workflows</div>
+              <div className="brand-badge">Live on thecremodel.com</div>
+            </div>
           </div>
 
           <section className="space-y-3">
@@ -51,15 +56,15 @@ export default function DocsPage() {
               Both modes operate on one shared codebase, one shared entity graph, one shared document system, one shared AI orchestration layer, one shared export system, and one shared CRM architecture.
             </p>
             <div className="grid gap-3 md:grid-cols-3">
-              <div className="surface-card p-4">
+              <div className="surface-card brand-panel p-4">
                 <p className="heading-kicker">Shared Graph</p>
                 <p className="mt-2 text-sm text-slate-300">Companies, contacts, buildings, floors, suites, leases, obligations, deals, proposals, analyses, surveys, tasks, and activities stay connected.</p>
               </div>
-              <div className="surface-card p-4">
+              <div className="surface-card brand-panel p-4">
                 <p className="heading-kicker">Shared AI</p>
                 <p className="mt-2 text-sm text-slate-300">The same AI orchestration layer powers prompt interpretation, suggested actions, automation, and audit visibility in both modes.</p>
               </div>
-              <div className="surface-card p-4">
+              <div className="surface-card brand-panel p-4">
                 <p className="heading-kicker">Shared Exports</p>
                 <p className="mt-2 text-sm text-slate-300">PDFs, spreadsheets, reports, and share links all use the same export pipeline with mode-aware framing.</p>
               </div>
@@ -76,11 +81,11 @@ export default function DocsPage() {
                     <p className="mt-2 text-sm text-slate-300 sm:text-base">{profile.summary}</p>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="border border-white/10 bg-black/20 p-3">
+                    <div className="brand-panel p-3">
                       <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Default Module</p>
                       <p className="mt-1 text-sm text-white">{profile.navigation.modules.find((module) => module.id === profile.navigation.defaultModule)?.label || profile.navigation.defaultModule}</p>
                     </div>
-                    <div className="border border-white/10 bg-black/20 p-3">
+                    <div className="brand-panel p-3">
                       <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Default CRM View</p>
                       <p className="mt-1 text-sm text-white">{profile.crm.viewLabels[profile.crm.defaultDealsView]}</p>
                     </div>
@@ -117,10 +122,22 @@ export default function DocsPage() {
                 <p className="heading-kicker">Dashboards + CRM</p>
                 <p className="mt-2 text-sm text-slate-300">Tenant dashboards center companies and relationships. Landlord dashboards center buildings, suites, vacancies, tours, proposals, and downtime risk.</p>
                 <p className="mt-2 text-sm text-slate-300">Dashboards are organized into Command Metrics, grouped Insights, and a Drill-Down Workspace so the highest-priority information appears first without removing any detail.</p>
+                <p className="mt-2 text-sm text-slate-300">A dedicated Buildings module now exposes the full building and suite inventory on one shared map with filters, result lists, detail panels, and building-first workflow actions into Surveys, CRM, and Analyses.</p>
+                <p className="mt-2 text-sm text-slate-300">The Buildings workspace now supports suite-level filtering, photo-forward result cards, and selected-suite handoff into Surveys so users can move from map browsing to actual option building without rekeying data.</p>
+                <p className="mt-2 text-sm text-slate-300">Map selection mode can now drag-select nearby buildings, keep that building set highlighted in the results panel, and feed selected suites directly into Financial Analyses through the same scenario workflow used elsewhere in the platform.</p>
                 <p className="mt-2 text-sm text-slate-300">CRM intake now supports typed building search with existing-record autofill and an add-building path when no current match exists.</p>
                 <p className="mt-2 text-sm text-slate-300">Account CRM settings now include a shared CoStar Excel import path. Published `.xlsx` office inventory rows update the common building dataset used across CRM for all users, while client-scoped records and overrides remain isolated inside each workspace.</p>
                 <p className="mt-2 text-sm text-slate-300">Landlord building views now include an editable stacking-plan workspace for floors and suites, with optional economics such as rate, OpEx, abatement, TI allowance, concessions, and size saved directly to the active building record.</p>
                 <p className="mt-2 text-sm text-slate-300">Current lease, amendment, abstract, and sublease uploads can seed or refresh stack occupancy. Proposal, LOI, and counter uploads do not overwrite stack occupancy.</p>
+                <p className="mt-2 text-sm text-slate-300">Buildings now also support deal-linked shortlist and tour workflow actions, so selected suites can move directly into shortlist, scheduled tour, and proposal-requested states without leaving the building workspace.</p>
+                <p className="mt-2 text-sm text-slate-300">CRM now exposes dedicated shortlist and tour boards inside the deal workspace so teams can manage option progression and tour outcomes visually after the building-side handoff.</p>
+                <p className="mt-2 text-sm text-slate-300">Those CRM boards now support inline editing for tour attendees, notes, and follow-up tasks, plus AI actions for generating a tour brief or preparing proposal-request guidance directly from the active card.</p>
+                <p className="mt-2 text-sm text-slate-300">Board-level building, broker, and date filters make the shortlist and tour workspace usable for larger teams without forcing users to leave the deal record.</p>
+                <p className="mt-2 text-sm text-slate-300">Shortlist and tour cards can now be dragged directly between board columns, which updates the same underlying CRM workflow records that drive the rest of the deal workspace.</p>
+                <p className="mt-2 text-sm text-slate-300">Shortlist cards now support inline owner assignment and tour cards support inline assignee fields, so board responsibility can be set directly where the work is happening.</p>
+                <p className="mt-2 text-sm text-slate-300">Board cards can now be selected in bulk for reassignment, which lets a lead broker rebalance shortlist ownership or tour coordination across multiple cards at once without opening every record individually.</p>
+                <p className="mt-2 text-sm text-slate-300">Teams can save both deal-specific and team-wide board views for recurring broker or building slices, and team-wide views are now role-aware so shared filters can be reused without giving every user edit rights to the shared view layer.</p>
+                <p className="mt-2 text-sm text-slate-300">Completed tour cards now support AI-generated post-tour recap email drafts with subject and body output, plus one-click send-to-client through the backend mail flow and one-click log-to-deal actions so the recap becomes part of real workflow follow-through.</p>
               </div>
               <div className="surface-card p-4">
                 <p className="heading-kicker">AI + Next Best Actions</p>
@@ -130,7 +147,7 @@ export default function DocsPage() {
                 <p className="heading-kicker">Reminders + Templates + Exports</p>
                 <p className="mt-2 text-sm text-slate-300">Reminder timing, outreach templates, and export descriptors all reuse shared infrastructure while changing framing to match the active brokerage workflow.</p>
               </div>
-              <div className="surface-card p-4">
+              <div className="surface-card brand-panel p-4">
                 <p className="heading-kicker">Production Access</p>
                 <p className="mt-2 text-sm text-slate-300">Production is served from <strong>thecremodel.com</strong>. Long-running workflows can use the platform&apos;s existing direct-processing paths, while support and proof routes continue to use the same-origin application domain.</p>
               </div>
@@ -141,8 +158,9 @@ export default function DocsPage() {
             <h2 className="heading-section">Core Modules</h2>
             <ul className="list-disc space-y-2 pl-5 text-sm text-slate-300 sm:text-base">
               <li><strong>CRM:</strong> The mode-aware operating hub for companies or buildings, linked records, tasks, reminders, activities, AI actions, and execution workflows.</li>
+              <li><strong>Buildings:</strong> A shared building browser with comprehensive map filters, suite visibility, stacking plans, and handoff actions into surveys and other workflows.</li>
               <li><strong>Surveys:</strong> Market options, shortlist management, and location intelligence using the shared record graph.</li>
-              <li><strong>Financial Analyses:</strong> Lease comparison, economics, and sublease recovery on top of parsed proposal and lease data.</li>
+              <li><strong>Financial Analyses:</strong> Lease comparison, economics, and sublease recovery on top of parsed proposal and lease data. Renewal and counterproposal parsing now preserves explicit carry-forward OpEx cues such as clauses that say the economics should match the existing lease structure, so retained escalations are not flattened to zero.</li>
               <li><strong>Lease Abstracts:</strong> Shared lease parsing and abstracting workflows that feed both tenant and landlord operations.</li>
               <li><strong>Obligations / Reporting:</strong> Lease deadlines, notices, expiration risk, and reporting outputs, framed by representation mode.</li>
             </ul>

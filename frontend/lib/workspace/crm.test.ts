@@ -168,4 +168,101 @@ describe("workspace/crm stacking-plan ingest", () => {
     expect(state.buildings.some((building) => building.id === "shared_1")).toBe(true);
     expect(state.buildings.find((building) => building.id === "shared_1")?.name).toBe("Shared Tower");
   });
+
+  it("preserves shortlist and tour workflow records from existing state", () => {
+    const state = buildCrmWorkspaceState({
+      clientId: "client_1",
+      clientName: "Owner Client",
+      representationMode: LANDLORD_REP_MODE,
+      documents: [],
+      deals: [],
+      properties: [],
+      spaces: [],
+      obligations: [],
+      surveys: [],
+      surveyEntries: [],
+      financialAnalyses: [],
+      leaseAbstracts: [],
+      existingState: {
+        shortlists: [
+          {
+            id: "shortlist_1",
+            clientId: "other_client",
+            buildingId: "building_1",
+            dealId: "deal_1",
+            name: "CBD Tour Run",
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z",
+          },
+        ],
+        shortlistEntries: [
+          {
+            id: "entry_1",
+            clientId: "other_client",
+            shortlistId: "shortlist_1",
+            dealId: "deal_1",
+            buildingId: "building_1",
+            floor: "10",
+            suite: "100",
+            rsf: 5000,
+            source: "manual",
+            status: "touring",
+            owner: "Broker Team",
+            rank: 1,
+            notes: "Prime option",
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z",
+          },
+        ],
+        tours: [
+          {
+            id: "tour_1",
+            clientId: "other_client",
+            dealId: "deal_1",
+            shortlistEntryId: "entry_1",
+            buildingId: "building_1",
+            floor: "10",
+            suite: "100",
+            scheduledAt: "2026-04-05T15:00:00.000Z",
+            status: "scheduled",
+            broker: "Broker Team",
+            assignee: "Tour Lead",
+            attendees: ["Client A"],
+            notes: "Confirm lobby meet",
+            followUpActions: "",
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z",
+          },
+        ],
+        workflowBoardViews: [
+          {
+            id: "view_1",
+            clientId: "other_client",
+            dealId: "deal_1",
+            scope: "team",
+            createdBy: "broker@example.com",
+            team: "Austin Brokerage",
+            name: "Broker Team Next 14",
+            buildingId: "building_1",
+            broker: "Broker Team",
+            dateFilter: "next_14",
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(state.shortlists).toHaveLength(1);
+    expect(state.shortlists[0].clientId).toBe("client_1");
+    expect(state.shortlistEntries[0].status).toBe("touring");
+    expect(state.shortlistEntries[0].owner).toBe("Broker Team");
+    expect(state.tours[0].attendees).toEqual(["Client A"]);
+    expect(state.tours[0].clientId).toBe("client_1");
+    expect(state.tours[0].assignee).toBe("Tour Lead");
+    expect(state.workflowBoardViews[0].clientId).toBe("client_1");
+    expect(state.workflowBoardViews[0].scope).toBe("team");
+    expect(state.workflowBoardViews[0].team).toBe("Austin Brokerage");
+    expect(state.workflowBoardViews[0].dateFilter).toBe("next_14");
+  });
 });

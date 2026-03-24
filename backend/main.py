@@ -7,11 +7,14 @@ import json
 import logging
 import os
 import re
+import smtplib
+import ssl
 import time
 import traceback
 import uuid
 from calendar import monthrange
 from datetime import UTC, date, datetime, timedelta
+from email.message import EmailMessage
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -229,6 +232,19 @@ class SharedMarketInventoryResponse(BaseModel):
     records: list[dict[str, Any]]
 
 
+class SendTourRecapRequest(BaseModel):
+    to_email: str
+    client_name: str = ""
+    deal_name: str = ""
+    building_name: str = ""
+    suite: str = ""
+    floor: str = ""
+    subject: str
+    body: str
+    sent_by_name: str = ""
+    sent_by_email: str = ""
+
+
 def _validate_contact_submission(body: ContactSubmissionRequest) -> tuple[str, str, str]:
     name = str(body.name or "").strip()
     email = str(body.email or "").strip().lower()
@@ -258,6 +274,104 @@ def _mask_email(value: str) -> str:
     else:
         masked_local = f"{local[0]}***{local[-1]}"
     return f"{masked_local}@{domain}"
+
+
+def _validate_tour_recap_email(body: SendTourRecapRequest) -> SendTourRecapRequest:
+    to_email = str(body.to_email or "").strip().lower()
+    subject = str(body.subject or "").strip()
+    content = str(body.body or "").strip()
+    if len(to_email) < 5 or len(to_email) > 320:
+        raise HTTPException(status_code=400, detail="Recipient email must be between 5 and 320 characters.")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]{2,}", to_email):
+        raise HTTPException(status_code=400, detail="Recipient email format is invalid.")
+    if len(subject) < 3 or len(subject) > 240:
+        raise HTTPException(status_code=400, detail="Email subject must be between 3 and 240 characters.")
+    if len(content) < 10 or len(content) > 12000:
+        raise HTTPException(status_code=400, detail="Email body must be between 10 and 12000 characters.")
+    return SendTourRecapRequest(
+        to_email=to_email,
+        client_name=str(body.client_name or "").strip(),
+        deal_name=str(body.deal_name or "").strip(),
+        building_name=str(body.building_name or "").strip(),
+        suite=str(body.suite or "").strip(),
+        floor=str(body.floor or "").strip(),
+        subject=subject,
+        body=content,
+        sent_by_name=str(body.sent_by_name or "").strip(),
+        sent_by_email=str(body.sent_by_email or "").strip().lower(),
+    )
+
+
+def _smtp_settings() -> dict[str, str | int | bool]:
+    host = str(os.getenv("SMTP_HOST") or "").strip()
+    from_email = str(os.getenv("SMTP_FROM_EMAIL") or "").strip()
+    from_name = str(os.getenv("SMTP_FROM_NAME") or "theCREmodel").strip() or "theCREmodel"
+    username = str(os.getenv("SMTP_USERNAME") or "").strip()
+    password = str(os.getenv("SMTP_PASSWORD") or "").strip()
+    reply_to = str(os.getenv("SMTP_REPLY_TO") or "").strip()
+    use_ssl = str(os.getenv("SMTP_USE_SSL") or "").strip().lower() in {"1", "true", "yes"}
+    use_tls_raw = str(os.getenv("SMTP_USE_TLS") or "").strip().lower()
+    use_tls = (use_tls_raw in {"", "1", "true", "yes"}) and not use_ssl
+    port_default = 465 if use_ssl else 587
+    try:
+        port = int(str(os.getenv("SMTP_PORT") or port_default).strip())
+    except Exception:
+        port = port_default
+    return {
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": password,
+        "from_email": from_email,
+        "from_name": from_name,
+        "reply_to": reply_to,
+        "use_ssl": use_ssl,
+        "use_tls": use_tls,
+    }
+
+
+def _send_smtp_email(*, to_email: str, subject: str, body: str, reply_to: str = "") -> None:
+    settings = _smtp_settings()
+    host = str(settings["host"])
+    from_email = str(settings["from_email"])
+    if not host or not from_email:
+        raise HTTPException(status_code=503, detail="Transactional email is not configured on backend.")
+
+    msg = EmailMessage()
+    msg["To"] = to_email
+    msg["From"] = f"{settings['from_name']} <{from_email}>"
+    msg["Subject"] = subject
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    elif str(settings["reply_to"]).strip():
+        msg["Reply-To"] = str(settings["reply_to"]).strip()
+    msg.set_content(body)
+
+    username = str(settings["username"]).strip()
+    password = str(settings["password"]).strip()
+    port = int(settings["port"])
+    use_ssl = bool(settings["use_ssl"])
+    use_tls = bool(settings["use_tls"])
+
+    try:
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, timeout=20, context=ssl.create_default_context()) as server:
+                if username:
+                    server.login(username, password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as server:
+                server.ehlo()
+                if use_tls:
+                    server.starttls(context=ssl.create_default_context())
+                    server.ehlo()
+                if username:
+                    server.login(username, password)
+                server.send_message(msg)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Failed to send recap email.") from exc
 
 
 def _supabase_configured(require_service: bool = False) -> None:
@@ -998,6 +1112,36 @@ def submit_contact(body: ContactSubmissionRequest, request: Request):
         user_agent,
     )
     return {"ok": True, "message": "Thanks for contacting us. We will follow up shortly."}
+
+
+@app.post("/crm/send-tour-recap")
+def send_tour_recap_email(body: SendTourRecapRequest, request: Request):
+    user = _require_supabase_user(request)
+    payload = _validate_tour_recap_email(body)
+    reply_to = payload.sent_by_email or user.get("email") or ""
+    _send_smtp_email(
+        to_email=payload.to_email,
+        subject=payload.subject,
+        body=payload.body,
+        reply_to=reply_to,
+    )
+    logging.getLogger("uvicorn.error").info(
+        "TOUR_RECAP_SENT user_id=%s to=%s client=%s deal=%s building=%s suite=%s sent_by=%s",
+        user.get("id") or "",
+        _mask_email(payload.to_email),
+        payload.client_name[:120],
+        payload.deal_name[:120],
+        payload.building_name[:120],
+        payload.suite[:32],
+        _mask_email(reply_to),
+    )
+    return {
+        "ok": True,
+        "message": "Tour recap sent.",
+        "to_email": payload.to_email,
+        "client_name": payload.client_name or None,
+        "deal_name": payload.deal_name or None,
+    }
 
 
 @app.get("/user-settings/branding")

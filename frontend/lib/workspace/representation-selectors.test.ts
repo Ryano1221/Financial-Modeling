@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ClientWorkspaceDeal } from "@/lib/workspace/types";
 import type { BrokerageOsProposal, BrokerageOsProperty, BrokerageOsSpace } from "@/lib/workspace/os-types";
-import type { CrmBuilding, CrmCompany, CrmOccupancyRecord } from "@/lib/workspace/crm";
+import type { CrmBuilding, CrmCompany, CrmOccupancyRecord, CrmShortlistEntry, CrmTour } from "@/lib/workspace/crm";
 import { buildLandlordBuildingHubSummary, buildLandlordStackingPlan } from "@/lib/workspace/representation-selectors";
 
 const building: CrmBuilding = {
@@ -226,16 +226,60 @@ const proposals: BrokerageOsProposal[] = [
   },
 ];
 
+const shortlistEntries: CrmShortlistEntry[] = [
+  {
+    id: "entry_200",
+    clientId: "client_1",
+    shortlistId: "shortlist_1",
+    dealId: "deal_tour",
+    buildingId: "building_1",
+    floor: "10",
+    suite: "200",
+    rsf: 8000,
+    source: "manual",
+    status: "proposal_requested",
+    owner: "Broker Team",
+    rank: 1,
+    notes: "",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  },
+];
+
+const tours: CrmTour[] = [
+  {
+    id: "tour_500",
+    clientId: "client_1",
+    dealId: "deal_tour",
+    shortlistEntryId: "entry_200",
+    buildingId: "building_1",
+    floor: "12",
+    suite: "500",
+    scheduledAt: "2026-03-10T15:00:00.000Z",
+    status: "scheduled",
+    broker: "Broker Team",
+    assignee: "Broker Team",
+    attendees: [],
+    notes: "",
+    followUpActions: "",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  },
+];
+
 describe("workspace/representation-selectors", () => {
   it("derives landlord stacking-plan suite states from the shared graph", () => {
     const rows = buildLandlordStackingPlan({
       buildings: [building],
       companies,
       occupancyRecords,
+      stackingPlanEntries: [],
+      shortlistEntries,
+      tours,
       properties,
       spaces,
       deals,
-      proposals,
+      proposals: [],
       obligations: [],
     });
 
@@ -244,10 +288,10 @@ describe("workspace/representation-selectors", () => {
     const statusBySuite = new Map(suites.map((suite) => [suite.suite, suite.status]));
 
     expect(statusBySuite.get("100")).toBe("occupied");
-    expect(statusBySuite.get("200")).toBe("vacant");
+    expect(statusBySuite.get("200")).toBe("proposal_active");
     expect(statusBySuite.get("300")).toBe("expiring");
     expect(statusBySuite.get("400")).toBe("toured");
-    expect(statusBySuite.get("500")).toBe("proposal_active");
+    expect(statusBySuite.get("500")).toBe("toured");
   });
 
   it("builds a landlord building hub summary from stacking-plan rows", () => {
@@ -255,10 +299,13 @@ describe("workspace/representation-selectors", () => {
       buildings: [building],
       companies,
       occupancyRecords,
+      stackingPlanEntries: [],
+      shortlistEntries,
+      tours,
       properties,
       spaces,
       deals,
-      proposals,
+      proposals: [],
       obligations: [],
     })[0];
 
@@ -270,6 +317,25 @@ describe("workspace/representation-selectors", () => {
     expect(summary?.vacantSuites).toBe(3);
     expect(summary?.expiringSuites).toBe(1);
     expect(summary?.proposalSuites).toBe(1);
-    expect(summary?.touredSuites).toBe(1);
+    expect(summary?.touredSuites).toBe(2);
+  });
+
+  it("does not create new stack rows from proposals when the suite is not already in the building stack", () => {
+    const rows = buildLandlordStackingPlan({
+      buildings: [building],
+      companies,
+      occupancyRecords,
+      stackingPlanEntries: [],
+      shortlistEntries,
+      tours,
+      properties,
+      spaces: spaces.filter((space) => space.suite !== "500"),
+      deals,
+      proposals,
+      obligations: [],
+    });
+
+    const suites = rows[0].floors.flatMap((floor) => floor.suites);
+    expect(suites.some((suite) => suite.suite === "500")).toBe(false);
   });
 });
