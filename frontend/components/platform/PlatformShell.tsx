@@ -258,3 +258,74 @@ export function PlatformActionButton({
     </button>
   );
 }
+
+export function PlatformDashboardTier({
+  label,
+  title,
+  description,
+  children,
+}: {
+  label: string;
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="border border-white/15 bg-black/20 p-4 space-y-3">
+      <div>
+        <p className="heading-kicker mb-1">{label}</p>
+        <h3 className="text-base sm:text-lg text-white mb-1">{title}</h3>
+        {description ? (
+          <p className="text-sm text-slate-400 max-w-3xl">{description}</p>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function PlatformMetricStrip({ children }: { children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+      {children}
+    </div>
+  );
+}
+
+export function PlatformMetricCard({
+  label,
+  value,
+  detail,
+  tone = "neutral",
+  onClick,
+}: {
+  label: string;
+  value: string | number;
+  detail?: string;
+  tone?: "neutral" | "success" | "warning" | "danger" | "accent";
+  onClick?: () => void;
+}) {
+  const toneClass =
+    tone === "success"
+      ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+      : tone === "warning"
+        ? "border-amber-400/40 bg-amber-500/10 text-amber-200"
+        : tone === "danger"
+          ? "border-red-400/40 bg-red-500/10 text-red-200"
+          : tone === "accent"
+            ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
+            : "border-white/15 bg-white/5 text-slate-200";
+
+  const Tag = onClick ? "button" : "div";
+  return (
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={`min-w-0 border p-3 text-left transition-colors ${toneClass} ${onClick ? "cursor-pointer hover:brightness-110" : ""}`.trim()}
+    >
+      <p className="text-xs text-slate-400 mb-1 truncate">{label}</p>
+      <p className="text-2xl font-semibold tabular-nums leading-none mb-1">{value}</p>
+      {detail ? <p className="text-[11px] text-slate-500 leading-snug line-clamp-2">{detail}</p> : null}
+    </Tag>
+  );
+}
