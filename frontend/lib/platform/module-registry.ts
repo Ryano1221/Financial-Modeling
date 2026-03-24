@@ -6,7 +6,7 @@ import {
 } from "@/lib/workspace/representation-mode";
 
 type PlatformModuleDefinition = {
-  id: "deals" | "financial-analyses" | "surveys" | "completed-leases" | "obligations";
+  id: "deals" | "buildings" | "financial-analyses" | "surveys" | "completed-leases" | "obligations";
   label: string;
   description: string;
   requiresAuth: boolean;
@@ -16,6 +16,11 @@ const MODULE_DEFINITION_BY_ID: Record<PlatformModuleDefinition["id"], Omit<Platf
   deals: {
     label: "CRM",
     description: "Pipeline lifecycle, linked workflows, and execution tracking.",
+    requiresAuth: true,
+  },
+  buildings: {
+    label: "Buildings",
+    description: "Browse buildings, suites, stack plans, and map-driven workflow handoffs.",
     requiresAuth: true,
   },
   "financial-analyses": {
@@ -42,6 +47,7 @@ const MODULE_DEFINITION_BY_ID: Record<PlatformModuleDefinition["id"], Omit<Platf
 
 const TENANT_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
   "deals",
+  "buildings",
   "financial-analyses",
   "surveys",
   "completed-leases",
@@ -50,6 +56,7 @@ const TENANT_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
 
 const LANDLORD_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
   "deals",
+  "buildings",
   "financial-analyses",
   "surveys",
   "completed-leases",
@@ -57,6 +64,7 @@ const LANDLORD_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
 ];
 
 const LANDLORD_MODULE_LABEL_OVERRIDES: Partial<Record<PlatformModuleDefinition["id"], string>> = {
+  buildings: "Buildings",
   "financial-analyses": "Availabilities",
   surveys: "Marketing",
   "completed-leases": "Lease Tracking",
@@ -65,6 +73,7 @@ const LANDLORD_MODULE_LABEL_OVERRIDES: Partial<Record<PlatformModuleDefinition["
 
 const LANDLORD_MODULE_DESCRIPTION_OVERRIDES: Partial<Record<PlatformModuleDefinition["id"], string>> = {
   deals: "Inquiry-to-execution pipeline for suites and listing opportunities.",
+  buildings: "Portfolio map, suite stack plans, and building-first leasing workflows.",
   "financial-analyses": "Availability inventory, suite economics, and listing positioning.",
   surveys: "Marketing package workflows, flyers, and listing collateral.",
   "completed-leases": "Lease execution tracking and closed package records.",

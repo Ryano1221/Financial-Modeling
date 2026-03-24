@@ -45,6 +45,7 @@ describe("platform/module-registry", () => {
     const landlordModules = getPlatformModulesForMode(LANDLORD_REP_MODE);
     expect(landlordModules.map((module) => module.id)).toEqual([
       "deals",
+      "buildings",
       "financial-analyses",
       "surveys",
       "completed-leases",

@@ -75,7 +75,7 @@ export function PlatformModuleTabs({
           : "sm:grid-cols-4";
 
   return (
-    <div className="border border-white/20 bg-black/40 p-2">
+    <div className="border border-cyan-200/20 bg-[linear-gradient(180deg,rgba(10,23,42,0.92),rgba(7,16,29,0.98))] p-2 shadow-[0_18px_50px_rgba(2,12,27,0.22)]">
       <div className={`grid w-full grid-cols-1 ${smColsClass} gap-2 items-stretch`}>
         {tabs.map((tab) => {
           const isActive = tab.id === activeId;
@@ -90,8 +90,8 @@ export function PlatformModuleTabs({
                   : "px-4 py-3 min-h-[96px] flex h-full flex-col justify-start gap-1.5 text-left"
               } ${
                 isActive
-                  ? "border-cyan-300 bg-cyan-500/20 text-cyan-100"
-                  : "border-white/20 text-slate-200 hover:bg-white/5"
+                  ? "border-cyan-300 bg-cyan-500/18 text-cyan-50 shadow-[0_0_0_1px_rgba(103,232,249,0.15)]"
+                  : "border-cyan-100/15 text-slate-200 hover:bg-cyan-500/[0.06]"
               }`}
             >
               <div className={dense ? "w-full text-center text-sm leading-snug break-words" : "text-sm sm:text-base leading-snug break-words"}>{tab.label}</div>
@@ -118,8 +118,8 @@ export function PlatformSection({
   const centered = headerAlign === "center";
   return (
     <section className="scroll-mt-24 bg-grid">
-      <div className={`mx-auto w-full ${maxWidthClassName} space-y-4 border border-white/15 p-3 sm:p-4 bg-grid`}>
-        <div className="border border-white/15 bg-black/25 p-4 sm:p-5">
+      <div className={`mx-auto w-full ${maxWidthClassName} space-y-4 border border-cyan-200/15 bg-[linear-gradient(180deg,rgba(8,17,31,0.76),rgba(8,17,31,0.58))] p-3 sm:p-4 bg-grid`}>
+        <div className="border border-cyan-100/15 bg-[linear-gradient(180deg,rgba(13,27,48,0.72),rgba(9,19,35,0.88))] p-4 sm:p-5">
           <div className={centered ? "flex flex-col items-center gap-4 text-center" : "flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"}>
             <div className={centered ? "mx-auto max-w-4xl" : undefined}>
               <p className="heading-kicker mb-2">{kicker}</p>
@@ -142,7 +142,7 @@ export function PlatformPanel({
   className = "",
 }: PlatformPanelProps) {
   return (
-    <div className={`min-w-0 border border-white/15 bg-black/30 p-4 ${className}`.trim()}>
+    <div className={`min-w-0 border border-cyan-100/15 bg-[linear-gradient(180deg,rgba(13,27,48,0.72),rgba(9,19,35,0.88))] p-4 ${className}`.trim()}>
       {kicker ? <p className="heading-kicker mb-2">{kicker}</p> : null}
       <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
       <div>{children}</div>
@@ -157,7 +157,7 @@ export function PlatformCard({
   className = "",
 }: PlatformPanelProps) {
   return (
-    <div className={`min-w-0 border border-white/15 bg-black/30 p-4 ${className}`.trim()}>
+    <div className={`min-w-0 border border-cyan-100/15 bg-[linear-gradient(180deg,rgba(13,27,48,0.72),rgba(9,19,35,0.88))] p-4 ${className}`.trim()}>
       {kicker ? <p className="heading-kicker mb-2">{kicker}</p> : null}
       <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
       <div>{children}</div>
@@ -174,7 +174,7 @@ export function PlatformInsightCard({
   className = "",
 }: PlatformInsightCardProps) {
   const content = (
-    <div className={`min-w-0 border border-white/15 bg-black/25 p-4 transition ${onClick ? "cursor-pointer hover:bg-white/[0.06]" : ""} ${className}`.trim()}>
+    <div className={`min-w-0 border border-cyan-100/15 bg-[linear-gradient(180deg,rgba(15,31,56,0.68),rgba(9,20,37,0.88))] p-4 transition ${onClick ? "cursor-pointer hover:bg-cyan-500/[0.06]" : ""} ${className}`.trim()}>
       {kicker ? <p className="heading-kicker mb-2">{kicker}</p> : null}
       <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
       {description ? <p className="mb-3 text-sm text-slate-400">{description}</p> : null}

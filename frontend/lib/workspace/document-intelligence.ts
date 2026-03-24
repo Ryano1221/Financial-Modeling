@@ -52,6 +52,7 @@ export function classifyDocument(input: {
     "document-center": "other",
     "sublease-recovery": "sublease documents",
     upload: "other",
+    buildings: "floorplans",
     "financial-analyses": "financial analyses",
     "completed-leases": "leases",
     surveys: "surveys",
@@ -111,4 +112,3 @@ export function buildDocumentFingerprint(input: {
   ];
   return bits.join("::");
 }
-

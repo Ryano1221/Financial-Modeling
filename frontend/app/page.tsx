@@ -81,6 +81,7 @@ import { CompletedLeasesWorkspace } from "@/components/completed-leases/Complete
 import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
 import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
 import { DealsWorkspace } from "@/components/deals/DealsWorkspace";
+import { BuildingsWorkspace } from "@/components/buildings/BuildingsWorkspace";
 import { buildPlatformExportFileName } from "@/lib/export-design";
 import { downloadBlob as downloadBlobFile } from "@/lib/export-runtime";
 import { buildFinancialAnalysesShareLink } from "@/lib/financial-analyses/share";
@@ -667,6 +668,9 @@ function HomeContent() {
     }
     if (activePlatformModule === "surveys") {
       return "Drop files anywhere to save into this client and create Survey entries";
+    }
+    if (activePlatformModule === "buildings") {
+      return "Drop files anywhere to save into this client and attach building flyers, floorplans, and stack plans";
     }
     if (activePlatformModule === "obligations") {
       return "Drop files anywhere to save into this client and update Obligations";
@@ -2743,6 +2747,15 @@ function HomeContent() {
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
             <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
             <DealsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
+            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
+          </main>
+          );
+        }
+        if (activePlatformModule === "buildings") {
+          return (
+          <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
+            <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+            <BuildingsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
             <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
           </main>
           );

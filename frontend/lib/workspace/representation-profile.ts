@@ -7,6 +7,7 @@ import {
 
 export type RepresentationProfileModuleId =
   | "deals"
+  | "buildings"
   | "financial-analyses"
   | "surveys"
   | "completed-leases"
@@ -148,6 +149,11 @@ const SHARED_MODULES: Record<RepresentationProfileModuleId, Omit<RepresentationM
     description: "Pipeline lifecycle, linked workflows, and execution tracking.",
     requiresAuth: true,
   },
+  buildings: {
+    label: "Buildings",
+    description: "Browse buildings, suite stacks, maps, and inventory handoffs.",
+    requiresAuth: true,
+  },
   "financial-analyses": {
     label: "Financial Analyses",
     description: "Financial modeling and side-by-side lease comparisons.",
@@ -188,7 +194,7 @@ const TENANT_PROFILE: RepresentationModeProfile = {
   navigation: {
     defaultModule: "deals",
     modules: modulesForConfig({
-      order: ["deals", "financial-analyses", "surveys", "completed-leases", "obligations"],
+      order: ["deals", "buildings", "financial-analyses", "surveys", "completed-leases", "obligations"],
     }),
   },
   onboarding: {
@@ -405,11 +411,15 @@ const LANDLORD_PROFILE: RepresentationModeProfile = {
   navigation: {
     defaultModule: "deals",
     modules: modulesForConfig({
-      order: ["deals", "financial-analyses", "surveys", "completed-leases", "obligations"],
+      order: ["deals", "buildings", "financial-analyses", "surveys", "completed-leases", "obligations"],
       overrides: {
         deals: {
           label: "Leasing Console",
           description: "Portfolio, building, suite, inquiry, proposal, and execution workflows.",
+        },
+        buildings: {
+          label: "Buildings",
+          description: "Portfolio map, stack plans, suite availability, and building-led workflow control.",
         },
         "financial-analyses": {
           label: "Availabilities",
