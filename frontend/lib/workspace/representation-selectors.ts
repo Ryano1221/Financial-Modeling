@@ -237,6 +237,7 @@ export interface LandlordStackingPlanSuiteCell {
   concessions: string;
   landlordName: string;
   source: CrmStackingPlanSource;
+  sourceDocumentIds: string[];
   proposalCount: number;
   toured: boolean;
   occupied: boolean;
@@ -350,6 +351,7 @@ export function buildLandlordStackingPlan(input: {
       concessions: "",
       landlordName: "",
       source: "space_seed",
+      sourceDocumentIds: [],
       proposalCount: 0,
       toured: false,
       occupied: false,
@@ -383,6 +385,7 @@ export function buildLandlordStackingPlan(input: {
     suite.concessions = asText(occupancy.concessions) || suite.concessions;
     suite.landlordName = asText(occupancy.landlordName) || suite.landlordName;
     suite.source = "current_lease";
+    suite.sourceDocumentIds = occupancy.sourceDocumentIds?.length ? [...occupancy.sourceDocumentIds] : suite.sourceDocumentIds;
     suite.status = inferSuiteStatus(suite);
   }
 
@@ -403,6 +406,7 @@ export function buildLandlordStackingPlan(input: {
     suite.concessions = asText(entry.concessions) || suite.concessions;
     suite.landlordName = asText(entry.landlordName) || suite.landlordName;
     suite.source = entry.source || suite.source;
+    suite.sourceDocumentIds = entry.sourceDocumentIds?.length ? [...entry.sourceDocumentIds] : suite.sourceDocumentIds;
     if (suite.companyId || suite.companyName) {
       suite.occupied = true;
       suite.vacant = false;
