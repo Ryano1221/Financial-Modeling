@@ -53,7 +53,7 @@ import {
   buildTenantCompanyHubSummary,
 } from "@/lib/workspace/representation-selectors";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
-import type { ClientWorkspaceDeal, DealsViewMode } from "@/lib/workspace/types";
+import { normalizeDealRoom, type ClientWorkspaceDeal, type ClientWorkspaceDealMember, type ClientWorkspaceDealRoom, type ClientWorkspaceNegotiationItem, type DealsViewMode } from "@/lib/workspace/types";
 
 function asText(value: unknown): string {
   return String(value || "").trim();
@@ -240,6 +240,50 @@ function dateForInput(value: string): string {
   return dt.toISOString().slice(0, 10);
 }
 
+function dateTimeForInput(value: string): string {
+  const raw = asText(value);
+  if (!raw) return "";
+  const dt = new Date(raw);
+  if (!Number.isFinite(dt.getTime())) return "";
+  const offset = dt.getTimezoneOffset();
+  const adjusted = new Date(dt.getTime() - offset * 60000);
+  return adjusted.toISOString().slice(0, 16);
+}
+
+function formatCompactDate(value: string): string {
+  const raw = asText(value);
+  if (!raw) return "-";
+  const dt = new Date(raw);
+  if (!Number.isFinite(dt.getTime())) return raw;
+  return dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+type DealRoomTab = "overview" | "company" | "updates" | "listings" | "tours" | "negotiation" | "access" | "client_view";
+
+const DEAL_ROOM_TABS: readonly { id: DealRoomTab; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "company", label: "Company" },
+  { id: "updates", label: "Updates" },
+  { id: "listings", label: "Listings" },
+  { id: "tours", label: "Tours" },
+  { id: "negotiation", label: "Negotiation" },
+  { id: "access", label: "User Management" },
+  { id: "client_view", label: "Client View" },
+];
+
+function negotiationStatusLabel(status: ClientWorkspaceNegotiationItem["status"]): string {
+  return status.replace(/_/g, " ");
+}
+
+function negotiationStatusBadgeClass(status: ClientWorkspaceNegotiationItem["status"]): string {
+  if (status === "closed") return "border-emerald-300/60 bg-emerald-500/10 text-emerald-100";
+  if (status === "aligned") return "border-cyan-300/60 bg-cyan-500/10 text-cyan-100";
+  if (status === "countered") return "border-amber-300/60 bg-amber-500/10 text-amber-100";
+  if (status === "in_review") return "border-indigo-300/60 bg-indigo-500/10 text-indigo-100";
+  if (status === "requested") return "border-fuchsia-300/60 bg-fuchsia-500/10 text-fuchsia-100";
+  return "border-white/25 bg-white/5 text-slate-200";
+}
+
 function canManageTeamBoardViews(role: string): boolean {
   const normalized = normalizeText(role);
   if (!normalized) return true;
@@ -409,6 +453,35 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     tenantRepBroker: "",
     notes: "",
   });
+  const [activeDealRoomTab, setActiveDealRoomTab] = useState<DealRoomTab>("overview");
+  const [dealUpdateDraft, setDealUpdateDraft] = useState("");
+  const [listingDraft, setListingDraft] = useState({
+    buildingId: "",
+    floor: "",
+    suite: "",
+    rsf: "",
+    notes: "",
+  });
+  const [tourDraft, setTourDraft] = useState({
+    shortlistEntryId: "",
+    scheduledAt: "",
+    attendees: "",
+    notes: "",
+  });
+  const [memberDraft, setMemberDraft] = useState({
+    name: "",
+    email: "",
+    role: "",
+    audience: "internal" as ClientWorkspaceDealMember["audience"],
+  });
+  const [negotiationDraft, setNegotiationDraft] = useState({
+    label: "",
+    counterparty: "",
+    status: "watching" as ClientWorkspaceNegotiationItem["status"],
+    targetValue: "",
+    latestValue: "",
+    notes: "",
+  });
 
   useEffect(() => {
     const nextView = representationProfile.crm.availableViews.includes(crmSettings.defaultDealsView)
@@ -536,9 +609,17 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     () => sortedDeals.find((deal) => deal.id === selectedDealId) || sortedDeals[0] || null,
     [selectedDealId, sortedDeals],
   );
+  const selectedDealRoom = useMemo(
+    () => normalizeDealRoom(selectedDeal?.dealRoom),
+    [selectedDeal?.dealRoom],
+  );
   const selectedCompany = useMemo(
     () => crmState.companies.find((company) => company.id === selectedCompanyId) || [...crmState.companies].sort(compareByCriticalDate)[0] || null,
     [crmState.companies, selectedCompanyId],
+  );
+  const selectedDealCompany = useMemo(
+    () => crmState.companies.find((company) => company.id === selectedDeal?.companyId) || selectedCompany,
+    [crmState.companies, selectedCompany, selectedDeal?.companyId],
   );
   const selectedCompanyBuilding = useMemo(
     () => crmState.buildings.find((building) => building.id === selectedCompany?.buildingId) || null,
@@ -823,6 +904,12 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     }
     return map;
   }, [documents, sortedDeals]);
+  const selectedDealDocuments = useMemo(
+    () => (linkedDocumentMap.get(selectedDeal?.id || "") || [])
+      .map((documentId) => documents.find((document) => document.id === documentId))
+      .filter((document): document is (typeof documents)[number] => Boolean(document)),
+    [documents, linkedDocumentMap, selectedDeal?.id],
+  );
   const boardGridStyle = useMemo(
     () => ({ "--stage-count": String(Math.max(dealStages.length, 1)) } as CSSProperties),
     [dealStages.length],
@@ -929,6 +1016,17 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       setSelectedDealId(sortedDeals[0].id);
     }
   }, [selectedDeal, sortedDeals]);
+
+  useEffect(() => {
+    setActiveDealRoomTab("overview");
+    setDealUpdateDraft("");
+    setTourDraft({
+      shortlistEntryId: "",
+      scheduledAt: "",
+      attendees: "",
+      notes: "",
+    });
+  }, [selectedDealId]);
 
   useEffect(() => {
     if (filters.buildingId !== "all") {
@@ -1952,6 +2050,268 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     setGeneratedDraftStatus(`Generated ${template.name} for ${selectedCompany.name}.`);
   }, [activeClient?.contactName, crmState.templates, representationMode, selectedCompany, selectedCompanyBuilding, selectedCompanyOccupancies, selectedTemplateId]);
 
+  const patchSelectedDealRoom = useCallback((patch: Partial<ClientWorkspaceDealRoom>) => {
+    if (!selectedDeal) return;
+    updateDeal(selectedDeal.id, {
+      dealRoom: {
+        ...selectedDealRoom,
+        ...patch,
+      },
+    });
+  }, [selectedDeal, selectedDealRoom, updateDeal]);
+
+  const appendDealActivity = useCallback((label: string, description: string) => {
+    if (!selectedDeal) return;
+    const now = new Date().toISOString();
+    updateDeal(selectedDeal.id, {
+      timeline: [
+        {
+          id: makeId("deal_activity"),
+          clientId,
+          dealId: selectedDeal.id,
+          label,
+          description,
+          createdAt: now,
+        },
+        ...selectedDeal.timeline,
+      ].slice(0, 100),
+    });
+  }, [clientId, selectedDeal, updateDeal]);
+
+  const addDealUpdate = useCallback(() => {
+    if (!selectedDeal || !asText(dealUpdateDraft)) return;
+    appendDealActivity("Deal update", asText(dealUpdateDraft));
+    setDealUpdateDraft("");
+    setStatus(`Logged update for ${selectedDeal.dealName}.`);
+  }, [appendDealActivity, dealUpdateDraft, selectedDeal]);
+
+  const addDealRoomMember = useCallback(() => {
+    if (!selectedDeal) return;
+    const name = asText(memberDraft.name);
+    if (!name) {
+      setError("Add a name before saving deal access.");
+      return;
+    }
+    const nextMember: ClientWorkspaceDealMember = {
+      id: makeId("deal_member"),
+      name,
+      email: asText(memberDraft.email),
+      role: asText(memberDraft.role) || (memberDraft.audience === "client" ? "Client" : "Broker Team"),
+      audience: memberDraft.audience,
+    };
+    patchSelectedDealRoom({
+      members: [nextMember, ...selectedDealRoom.members],
+    });
+    appendDealActivity("Access updated", `Added ${nextMember.audience} user ${nextMember.name} to the deal room.`);
+    setMemberDraft({
+      name: "",
+      email: "",
+      role: "",
+      audience: "internal",
+    });
+    setError("");
+    setStatus(`Added ${nextMember.name} to ${selectedDeal.dealName}.`);
+  }, [appendDealActivity, memberDraft, patchSelectedDealRoom, selectedDeal, selectedDealRoom.members]);
+
+  const removeDealRoomMember = useCallback((memberId: string) => {
+    const member = selectedDealRoom.members.find((item) => item.id === memberId);
+    patchSelectedDealRoom({
+      members: selectedDealRoom.members.filter((item) => item.id !== memberId),
+    });
+    if (member) appendDealActivity("Access updated", `Removed ${member.name} from the deal room.`);
+  }, [appendDealActivity, patchSelectedDealRoom, selectedDealRoom.members]);
+
+  const addNegotiationItem = useCallback(() => {
+    if (!selectedDeal) return;
+    const label = asText(negotiationDraft.label);
+    if (!label) {
+      setError("Add a negotiation item label before saving.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextItem: ClientWorkspaceNegotiationItem = {
+      id: makeId("deal_negotiation"),
+      label,
+      counterparty: asText(negotiationDraft.counterparty) || selectedDeal.selectedLandlord || "Counterparty",
+      status: negotiationDraft.status,
+      targetValue: asText(negotiationDraft.targetValue),
+      latestValue: asText(negotiationDraft.latestValue),
+      notes: asText(negotiationDraft.notes),
+      updatedAt: now,
+    };
+    patchSelectedDealRoom({
+      negotiations: [nextItem, ...selectedDealRoom.negotiations],
+    });
+    appendDealActivity("Negotiation updated", `Added ${nextItem.label} to the negotiation tracker.`);
+    setNegotiationDraft({
+      label: "",
+      counterparty: "",
+      status: "watching",
+      targetValue: "",
+      latestValue: "",
+      notes: "",
+    });
+    setError("");
+    setStatus(`Added ${nextItem.label} to ${selectedDeal.dealName}.`);
+  }, [appendDealActivity, negotiationDraft, patchSelectedDealRoom, selectedDeal, selectedDealRoom.negotiations]);
+
+  const patchNegotiationItem = useCallback((itemId: string, patch: Partial<ClientWorkspaceNegotiationItem>) => {
+    patchSelectedDealRoom({
+      negotiations: selectedDealRoom.negotiations.map((item) =>
+        item.id === itemId
+          ? { ...item, ...patch, updatedAt: new Date().toISOString() }
+          : item,
+      ),
+    });
+  }, [patchSelectedDealRoom, selectedDealRoom.negotiations]);
+
+  const removeNegotiationItem = useCallback((itemId: string) => {
+    const item = selectedDealRoom.negotiations.find((entry) => entry.id === itemId);
+    patchSelectedDealRoom({
+      negotiations: selectedDealRoom.negotiations.filter((entry) => entry.id !== itemId),
+    });
+    if (item) appendDealActivity("Negotiation updated", `Removed ${item.label} from the negotiation tracker.`);
+  }, [appendDealActivity, patchSelectedDealRoom, selectedDealRoom.negotiations]);
+
+  const addListingToDealRoom = useCallback(() => {
+    if (!selectedDeal) {
+      setError("Select a deal before adding a listing.");
+      return;
+    }
+    const building = crmState.buildings.find((item) => item.id === listingDraft.buildingId)
+      || activeInventoryBuilding
+      || selectedCompanyBuilding;
+    if (!building) {
+      setError("Select or focus a building before adding a listing.");
+      return;
+    }
+    const suite = asText(listingDraft.suite) || asText(selectedDeal.selectedSuite);
+    if (!suite) {
+      setError("Suite is required before adding a listing.");
+      return;
+    }
+    const now = new Date().toISOString();
+    patchCrmDraft((current) => {
+      const existingShortlist = current.shortlists.find((item) => item.dealId === selectedDeal.id);
+      const shortlist = existingShortlist || {
+        id: makeId("crm_shortlist"),
+        clientId,
+        dealId: selectedDeal.id,
+        buildingId: building.id,
+        name: `${selectedDeal.dealName} shortlist`,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const existingEntry = current.shortlistEntries.find((entry) =>
+        asText(entry.dealId) === selectedDeal.id
+        && entry.buildingId === building.id
+        && normalizeText(entry.floor) === normalizeText(listingDraft.floor)
+        && normalizeText(entry.suite) === normalizeText(suite),
+      );
+      const nextEntry: CrmShortlistEntry = {
+        id: existingEntry?.id || makeId("crm_shortlist_entry"),
+        clientId,
+        shortlistId: shortlist.id,
+        dealId: selectedDeal.id,
+        buildingId: building.id,
+        floor: asText(listingDraft.floor),
+        suite,
+        rsf: asNumber(listingDraft.rsf),
+        companyId: selectedDeal.companyId,
+        source: existingEntry?.source || "shortlist_manual",
+        status: existingEntry?.status || "candidate",
+        owner: existingEntry?.owner || selectedDeal.tenantRepBroker || currentBoardUserLabel,
+        rank: existingEntry?.rank || current.shortlistEntries.filter((entry) => entry.shortlistId === shortlist.id).length + 1,
+        notes: asText(listingDraft.notes) || existingEntry?.notes || "",
+        linkedSurveyEntryId: existingEntry?.linkedSurveyEntryId,
+        createdAt: existingEntry?.createdAt || now,
+        updatedAt: now,
+      };
+      return {
+        ...current,
+        shortlists: existingShortlist
+          ? current.shortlists.map((item) => item.id === shortlist.id ? { ...item, buildingId: building.id, updatedAt: now } : item)
+          : [shortlist, ...current.shortlists],
+        shortlistEntries: existingEntry
+          ? current.shortlistEntries.map((entry) => entry.id === existingEntry.id ? nextEntry : entry)
+          : [nextEntry, ...current.shortlistEntries],
+      };
+    });
+    updateDeal(selectedDeal.id, {
+      selectedProperty: selectedDeal.selectedProperty || displayBuildingName(building),
+      selectedSuite: suite,
+      selectedLandlord: selectedDeal.selectedLandlord || building.ownerName,
+    });
+    appendDealActivity("Listing added", `${displayBuildingName(building)} floor ${asText(listingDraft.floor) || "-"} suite ${suite} added to the deal room.`);
+    setListingDraft({
+      buildingId: building.id,
+      floor: "",
+      suite: "",
+      rsf: "",
+      notes: "",
+    });
+    setError("");
+    setStatus(`Added ${displayBuildingName(building)} suite ${suite} to ${selectedDeal.dealName}.`);
+  }, [activeInventoryBuilding, appendDealActivity, clientId, crmState.buildings, currentBoardUserLabel, listingDraft.buildingId, listingDraft.floor, listingDraft.notes, listingDraft.rsf, listingDraft.suite, patchCrmDraft, selectedCompanyBuilding, selectedDeal, updateDeal]);
+
+  const createTourFromDealRoom = useCallback(() => {
+    if (!selectedDeal) {
+      setError("Select a deal before creating a tour.");
+      return;
+    }
+    const shortlistEntry = selectedDealShortlistEntries.find((entry) => entry.id === tourDraft.shortlistEntryId)
+      || selectedDealShortlistEntries[0];
+    if (!shortlistEntry) {
+      setError("Add a listing before creating a tour.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const scheduledAt = asText(tourDraft.scheduledAt)
+      ? new Date(tourDraft.scheduledAt).toISOString()
+      : now;
+    patchCrmDraft((current) => {
+      const existingTour = current.tours.find((tour) => tour.shortlistEntryId === shortlistEntry.id);
+      const nextTour: CrmTour = {
+        id: existingTour?.id || makeId("crm_tour"),
+        clientId,
+        dealId: selectedDeal.id,
+        shortlistEntryId: shortlistEntry.id,
+        buildingId: shortlistEntry.buildingId,
+        floor: shortlistEntry.floor,
+        suite: shortlistEntry.suite,
+        scheduledAt,
+        status: "scheduled",
+        broker: existingTour?.broker || selectedDeal.tenantRepBroker || currentBoardUserLabel,
+        assignee: existingTour?.assignee || selectedDeal.tenantRepBroker || currentBoardUserLabel,
+        attendees: attendeesFromInput(tourDraft.attendees),
+        notes: asText(tourDraft.notes) || existingTour?.notes || "",
+        followUpActions: existingTour?.followUpActions || "",
+        createdAt: existingTour?.createdAt || now,
+        updatedAt: now,
+      };
+      return {
+        ...current,
+        shortlistEntries: current.shortlistEntries.map((entry) =>
+          entry.id === shortlistEntry.id
+            ? { ...entry, status: "touring", updatedAt: now }
+            : entry,
+        ),
+        tours: existingTour
+          ? current.tours.map((tour) => tour.id === existingTour.id ? nextTour : tour)
+          : [nextTour, ...current.tours],
+      };
+    });
+    appendDealActivity("Tour scheduled", `Tour scheduled for floor ${shortlistEntry.floor || "-"} suite ${shortlistEntry.suite || "-"} on ${formatDateTime(scheduledAt)}.`);
+    setTourDraft({
+      shortlistEntryId: shortlistEntry.id,
+      scheduledAt: "",
+      attendees: "",
+      notes: "",
+    });
+    setError("");
+    setStatus(`Created a tour for suite ${shortlistEntry.suite}.`);
+  }, [appendDealActivity, clientId, currentBoardUserLabel, patchCrmDraft, selectedDeal, selectedDealShortlistEntries, tourDraft.attendees, tourDraft.notes, tourDraft.scheduledAt, tourDraft.shortlistEntryId]);
+
   const aiRecommendations = useMemo(() => {
     return buildModeAwareAiRecommendations({
       mode: representationMode,
@@ -1986,6 +2346,52 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     () => crmState.reminders.filter((reminder) => reminder.status === "open").length,
     [crmState.reminders],
   );
+  const selectedDealListings = useMemo(
+    () => selectedDealShortlistEntries
+      .map((entry) => ({
+        entry,
+        building: crmState.buildings.find((building) => building.id === entry.buildingId) || null,
+        linkedTour: selectedDealTours.find((tour) => tour.shortlistEntryId === entry.id) || null,
+      }))
+      .sort((left, right) => left.entry.rank - right.entry.rank || asText(left.entry.updatedAt).localeCompare(asText(right.entry.updatedAt)) * -1),
+    [crmState.buildings, selectedDealShortlistEntries, selectedDealTours],
+  );
+  const selectedDealActivity = useMemo(() => {
+    if (!selectedDeal) return [];
+    const documentEvents = selectedDealDocuments.map((document) => ({
+      id: `doc:${document.id}`,
+      createdAt: document.uploadedAt,
+      label: "Document linked",
+      detail: `${document.name} · ${document.type}`,
+      tone: "document",
+    }));
+    const taskEvents = selectedDeal.tasks.map((task) => ({
+      id: `task:${task.id}`,
+      createdAt: task.createdAt,
+      label: task.completed ? "Task completed" : "Task opened",
+      detail: `${task.title}${task.dueDate ? ` · due ${formatCompactDate(task.dueDate)}` : ""}`,
+      tone: task.completed ? "positive" : "neutral",
+    }));
+    const timelineEvents = selectedDeal.timeline.map((item) => ({
+      id: `timeline:${item.id}`,
+      createdAt: item.createdAt,
+      label: item.label,
+      detail: item.description,
+      tone: "neutral",
+    }));
+    const tourEvents = selectedDealTours.map((tour) => {
+      const building = crmState.buildings.find((item) => item.id === tour.buildingId);
+      return {
+        id: `tour:${tour.id}`,
+        createdAt: tour.updatedAt || tour.createdAt,
+        label: `Tour ${tour.status}`,
+        detail: `${building ? displayBuildingName(building) : "Building"} · floor ${tour.floor || "-"} suite ${tour.suite || "-"}${tour.scheduledAt ? ` · ${formatDateTime(tour.scheduledAt)}` : ""}`,
+        tone: tour.status === "completed" ? "positive" : "accent",
+      };
+    });
+    return [...timelineEvents, ...documentEvents, ...taskEvents, ...tourEvents]
+      .sort((left, right) => asText(right.createdAt).localeCompare(asText(left.createdAt)));
+  }, [crmState.buildings, selectedDeal, selectedDealDocuments, selectedDealTours]);
 
   const openDrillDownView = useCallback((input: {
     ref: MutableRefObject<HTMLDivElement | null>;
@@ -3809,127 +4215,513 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           )}
         </PlatformPanel>
 
-        <PlatformPanel kicker="Deal Detail" title={selectedDeal ? selectedDeal.dealName : "Select a deal"} className="xl:col-span-12">
+        <PlatformPanel kicker="Deal Room" title={selectedDeal ? selectedDeal.dealName : "Select a deal"} className="xl:col-span-12">
           {!selectedDeal ? <p className="text-sm text-slate-400">Create a deal or select one from the CRM views.</p> : (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <div className="lg:col-span-7 grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input className="input-premium md:col-span-2" value={selectedDeal.dealName} onChange={(event) => updateDeal(selectedDeal.id, { dealName: event.target.value })} />
-                <select className="input-premium" value={selectedDeal.stage} onChange={(event) => moveDealToStage(selectedDeal, event.target.value, "manual update")}>{dealStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select>
-                <select className="input-premium" value={selectedDeal.status} onChange={(event) => updateDeal(selectedDeal.id, { status: event.target.value as ClientWorkspaceDeal["status"] })}>
-                  <option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option><option value="on_hold">On Hold</option>
-                </select>
-                <select className="input-premium" value={selectedDeal.companyId || selectedCompany?.id || ""} onChange={(event) => updateDeal(selectedDeal.id, { companyId: event.target.value || undefined })}>
-                  <option value="">Link to CRM profile</option>
-                  {crmState.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
-                </select>
-                <input className="input-premium" value={selectedDeal.targetMarket} placeholder="Target market" onChange={(event) => updateDeal(selectedDeal.id, { targetMarket: event.target.value })} />
-                <input className="input-premium" value={selectedDeal.submarket} placeholder="Submarket" onChange={(event) => updateDeal(selectedDeal.id, { submarket: event.target.value })} />
-                <input className="input-premium" value={selectedDeal.city} placeholder="City" onChange={(event) => updateDeal(selectedDeal.id, { city: event.target.value })} />
-                <input className="input-premium" value={String(selectedDeal.budget || "")} placeholder="Budget" onChange={(event) => updateDeal(selectedDeal.id, { budget: asNumber(event.target.value) })} />
-                <textarea className="input-premium md:col-span-2 min-h-[72px]" value={selectedDeal.notes} placeholder="Notes" onChange={(event) => updateDeal(selectedDeal.id, { notes: event.target.value })} />
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Stage</p>
+                  <p className="mt-2 text-lg text-white">{selectedDeal.stage}</p>
+                  <span className={`mt-2 inline-flex border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${statusBadgeClass(selectedDeal.status)}`}>{selectedDeal.status.replace(/_/g, " ")}</span>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Projected Close</p>
+                  <p className="mt-2 text-lg text-white">{formatCompactDate(selectedDealRoom.projectedCloseDate || selectedDeal.expirationDate)}</p>
+                  <p className="mt-1 text-xs text-slate-400">{selectedDealRoom.source || "Source pending"}</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Listings</p>
+                  <p className="mt-2 text-lg text-white">{selectedDealListings.length}</p>
+                  <p className="mt-1 text-xs text-slate-400">Active options in room</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Tours</p>
+                  <p className="mt-2 text-lg text-white">{selectedDealTours.length}</p>
+                  <p className="mt-1 text-xs text-slate-400">Scheduled and completed</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Negotiation Lines</p>
+                  <p className="mt-2 text-lg text-white">{selectedDealRoom.negotiations.length}</p>
+                  <p className="mt-1 text-xs text-slate-400">Live tracked workstreams</p>
+                </div>
+                <div className="border border-white/10 bg-black/20 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Client Access</p>
+                  <p className="mt-2 text-lg text-white">{selectedDealRoom.clientAccessEnabled ? "On" : "Off"}</p>
+                  <p className="mt-1 text-xs text-slate-400">{selectedDealRoom.members.filter((member) => member.audience === "client").length} client contacts</p>
+                </div>
               </div>
-              <div className="lg:col-span-5 space-y-4">
-                <div className="border border-white/15 bg-black/20 p-3">
-                  <p className="heading-kicker mb-2">Linked Documents</p>
-                  <ClientDocumentPicker
-                    buttonLabel="Attach Existing Document"
-                    onSelectDocument={(document) => {
-                      updateDeal(selectedDeal.id, { linkedDocumentIds: Array.from(new Set([...(linkedDocumentMap.get(selectedDeal.id) || []), document.id])) });
-                      updateDocument(document.id, { dealId: selectedDeal.id, companyId: selectedDeal.companyId });
-                      setStatus(`Attached ${document.name} to ${selectedDeal.dealName}.`);
-                    }}
-                  />
-                  <div className="mt-3 space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                    {(linkedDocumentMap.get(selectedDeal.id) || []).length === 0 ? <p className="text-xs text-slate-400">No linked documents yet.</p> : (linkedDocumentMap.get(selectedDeal.id) || []).map((documentId) => {
-                      const doc = documents.find((item) => item.id === documentId);
-                      if (!doc) return null;
+
+              <div className="flex flex-wrap gap-2">
+                {DEAL_ROOM_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`btn-premium ${activeDealRoomTab === tab.id ? "btn-premium-primary" : "btn-premium-secondary"}`}
+                    onClick={() => setActiveDealRoomTab(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {activeDealRoomTab === "overview" ? (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Transaction Name</span>
+                      <input className="input-premium mt-1" value={selectedDeal.dealName} onChange={(event) => updateDeal(selectedDeal.id, { dealName: event.target.value })} />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Representation Type</span>
+                      <input className="input-premium mt-1" value={selectedDeal.dealType} onChange={(event) => updateDeal(selectedDeal.id, { dealType: event.target.value })} />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Stage</span>
+                      <select className="input-premium mt-1" value={selectedDeal.stage} onChange={(event) => moveDealToStage(selectedDeal, event.target.value, "deal room")}>
+                        {dealStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Status</span>
+                      <select className="input-premium mt-1" value={selectedDeal.status} onChange={(event) => updateDeal(selectedDeal.id, { status: event.target.value as ClientWorkspaceDeal["status"] })}>
+                        <option value="open">Open</option>
+                        <option value="won">Won</option>
+                        <option value="lost">Lost</option>
+                        <option value="on_hold">On Hold</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Projected Close Date</span>
+                      <input type="date" className="input-premium mt-1" value={selectedDealRoom.projectedCloseDate} onChange={(event) => patchSelectedDealRoom({ projectedCloseDate: event.target.value })} />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Deal Source</span>
+                      <input className="input-premium mt-1" value={selectedDealRoom.source} placeholder="Referral, repeat client, inbound..." onChange={(event) => patchSelectedDealRoom({ source: event.target.value })} />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Move Reason</span>
+                      <input className="input-premium mt-1" value={selectedDealRoom.moveReason} placeholder="Expansion, contraction, renewal leverage..." onChange={(event) => patchSelectedDealRoom({ moveReason: event.target.value })} />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Estimated Commission</span>
+                      <input className="input-premium mt-1" value={String(selectedDealRoom.estimatedCommission || "")} placeholder="0" onChange={(event) => patchSelectedDealRoom({ estimatedCommission: asNumber(event.target.value) })} />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Team / Lead Broker</span>
+                      <input className="input-premium mt-1" value={selectedDeal.tenantRepBroker} onChange={(event) => updateDeal(selectedDeal.id, { tenantRepBroker: event.target.value })} />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-400">Dealio ID</span>
+                      <input className="input-premium mt-1" value={selectedDealRoom.dealioId} placeholder="Optional external ID" onChange={(event) => patchSelectedDealRoom({ dealioId: event.target.value })} />
+                    </label>
+                    <label className="block md:col-span-2">
+                      <span className="text-xs text-slate-400">Internal Summary</span>
+                      <textarea className="input-premium mt-1 min-h-[112px]" value={selectedDealRoom.internalSummary} placeholder={selectedDeal.notes || "Internal transaction summary, strategy, and team notes."} onChange={(event) => patchSelectedDealRoom({ internalSummary: event.target.value })} />
+                    </label>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="border border-white/10 bg-black/20 p-4">
+                      <p className="heading-kicker">Current Location</p>
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span className="text-xs text-slate-400">Address / Building</span>
+                          <input className="input-premium mt-1" value={selectedDealRoom.currentLocationAddress} placeholder={selectedDeal.selectedProperty || "Current location"} onChange={(event) => patchSelectedDealRoom({ currentLocationAddress: event.target.value })} />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs text-slate-400">Current Size (RSF)</span>
+                          <input className="input-premium mt-1" value={String(selectedDealRoom.currentLocationSize || "")} placeholder={String(selectedDeal.squareFootageMax || selectedDeal.squareFootageMin || "")} onChange={(event) => patchSelectedDealRoom({ currentLocationSize: asNumber(event.target.value) })} />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs text-slate-400">Lease Expiration</span>
+                          <input type="date" className="input-premium mt-1" value={selectedDealRoom.currentLeaseExpiration} onChange={(event) => patchSelectedDealRoom({ currentLeaseExpiration: event.target.value })} />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs text-slate-400">Renewal Notice</span>
+                          <input type="date" className="input-premium mt-1" value={selectedDealRoom.renewalNoticeDate} onChange={(event) => patchSelectedDealRoom({ renewalNoticeDate: event.target.value })} />
+                        </label>
+                        <label className="block sm:col-span-2">
+                          <span className="text-xs text-slate-400">Expansion Notice</span>
+                          <input type="date" className="input-premium mt-1" value={selectedDealRoom.expansionNoticeDate} onChange={(event) => patchSelectedDealRoom({ expansionNoticeDate: event.target.value })} />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="border border-white/10 bg-black/20 p-4">
+                      <p className="heading-kicker">Actions</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" className="btn-premium btn-premium-secondary" onClick={() => setActiveDealRoomTab("listings")}>Open Listings</button>
+                        <button type="button" className="btn-premium btn-premium-secondary" onClick={() => setActiveDealRoomTab("tours")}>Create a Tour</button>
+                        <button type="button" className="btn-premium btn-premium-secondary" onClick={() => setActiveDealRoomTab("negotiation")}>Track Negotiation</button>
+                        <button type="button" className="btn-premium btn-premium-secondary" onClick={() => patchSelectedDealRoom({ clientAccessEnabled: !selectedDealRoom.clientAccessEnabled, clientViewEnabled: !selectedDealRoom.clientAccessEnabled || selectedDealRoom.clientViewEnabled })}>
+                          {selectedDealRoom.clientAccessEnabled ? "Disable Client Access" : "Enable Client Access"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeDealRoomTab === "company" ? (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+                  <div className="border border-white/10 bg-black/20 p-4">
+                    <p className="heading-kicker">Linked Company</p>
+                    {!selectedDealCompany ? (
+                      <div className="mt-3 space-y-3">
+                        <p className="text-sm text-slate-400">This transaction is not linked to a company profile yet.</p>
+                        <select className="input-premium" value={selectedDeal.companyId || ""} onChange={(event) => {
+                          updateDeal(selectedDeal.id, { companyId: event.target.value || undefined });
+                          if (event.target.value) setSelectedCompanyId(event.target.value);
+                        }}>
+                          <option value="">Link to CRM profile</option>
+                          {crmState.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="mt-3 space-y-3 text-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-lg text-white">{selectedDealCompany.name}</p>
+                            <p className="mt-1 text-slate-400">{[selectedDealCompany.market, selectedDealCompany.submarket].filter(Boolean).join(" / ") || "Location pending"}</p>
+                          </div>
+                          <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${companyTypeBadgeClass(selectedDealCompany.type)}`}>{selectedDealCompany.type.replace(/_/g, " ")}</span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <div className="border border-white/10 bg-black/25 p-3">
+                            <p className="text-xs text-slate-400">Critical Date</p>
+                            <p className="mt-1 text-white">{formatCompactDate(selectedDealCompany.noticeDeadline || selectedDealCompany.currentLeaseExpiration || selectedDealCompany.nextFollowUpDate)}</p>
+                          </div>
+                          <div className="border border-white/10 bg-black/25 p-3">
+                            <p className="text-xs text-slate-400">Suite / Size</p>
+                            <p className="mt-1 text-white">{[selectedDealCompany.floor && `Floor ${selectedDealCompany.floor}`, selectedDealCompany.suite && `Suite ${selectedDealCompany.suite}`, selectedDealCompany.squareFootage ? `${formatInt(selectedDealCompany.squareFootage)} RSF` : ""].filter(Boolean).join(" · ") || "-"}</p>
+                          </div>
+                          <div className="border border-white/10 bg-black/25 p-3">
+                            <p className="text-xs text-slate-400">Relationship Owner</p>
+                            <p className="mt-1 text-white">{selectedDealCompany.relationshipOwner || "Broker Team"}</p>
+                          </div>
+                          <div className="border border-white/10 bg-black/25 p-3">
+                            <p className="text-xs text-slate-400">Landlord / Counterparty</p>
+                            <p className="mt-1 text-white">{selectedDealCompany.landlordName || selectedDeal.selectedLandlord || "-"}</p>
+                          </div>
+                        </div>
+                        <textarea className="input-premium min-h-[120px]" value={selectedDealCompany.notes} onChange={(event) => patchSelectedCompany({ notes: event.target.value })} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-4">
+                    <p className="heading-kicker">Linked Documents</p>
+                    <ClientDocumentPicker
+                      buttonLabel="Attach Existing Document"
+                      onSelectDocument={(document) => {
+                        updateDeal(selectedDeal.id, { linkedDocumentIds: Array.from(new Set([...(linkedDocumentMap.get(selectedDeal.id) || []), document.id])) });
+                        updateDocument(document.id, { dealId: selectedDeal.id, companyId: selectedDeal.companyId });
+                        appendDealActivity("Document linked", `${document.name} linked into the deal room.`);
+                        setStatus(`Attached ${document.name} to ${selectedDeal.dealName}.`);
+                      }}
+                    />
+                    <div className="mt-3 space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                      {selectedDealDocuments.length === 0 ? <p className="text-xs text-slate-400">No linked documents yet.</p> : selectedDealDocuments.map((document) => (
+                        <div key={document.id} className="border border-white/10 bg-black/25 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm text-white">{document.name}</p>
+                              <p className="mt-1 text-[11px] text-slate-400">{document.type} · uploaded {formatCompactDate(document.uploadedAt)}</p>
+                            </div>
+                            <button type="button" className="btn-premium btn-premium-danger text-[10px]" onClick={() => {
+                              updateDeal(selectedDeal.id, { linkedDocumentIds: (linkedDocumentMap.get(selectedDeal.id) || []).filter((id) => id !== document.id) });
+                              updateDocument(document.id, { dealId: "" });
+                            }}>Remove</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeDealRoomTab === "updates" ? (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+                  <div className="border border-white/10 bg-black/20 p-4">
+                    <p className="heading-kicker">Log Update</p>
+                    <textarea className="input-premium mt-3 min-h-[160px]" value={dealUpdateDraft} placeholder="Add a transaction update, broker note, listing change, or client-facing summary." onChange={(event) => setDealUpdateDraft(event.target.value)} />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" className="btn-premium btn-premium-primary" onClick={addDealUpdate}>Add Update</button>
+                      <button type="button" className="btn-premium btn-premium-secondary" onClick={() => setDealUpdateDraft(`Need broker follow-up on ${selectedDeal.dealName}.`)}>Seed Draft</button>
+                    </div>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-4">
+                    <p className="heading-kicker">Activity Feed</p>
+                    <div className="mt-3 space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                      {selectedDealActivity.length === 0 ? <p className="text-sm text-slate-400">No activity yet.</p> : selectedDealActivity.map((item) => (
+                        <article key={item.id} className="border border-white/10 bg-black/25 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm text-white">{item.label}</p>
+                            <span className="text-[11px] text-slate-400">{formatDateTime(item.createdAt)}</span>
+                          </div>
+                          <p className="mt-2 text-sm text-slate-300">{item.detail}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeDealRoomTab === "listings" ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                    <select className="input-premium md:col-span-2" value={listingDraft.buildingId} onChange={(event) => setListingDraft((prev) => ({ ...prev, buildingId: event.target.value }))}>
+                      <option value="">Focused building or select a building</option>
+                      {crmState.buildings.map((building) => <option key={building.id} value={building.id}>{displayBuildingName(building)}</option>)}
+                    </select>
+                    <input className="input-premium" placeholder="Floor" value={listingDraft.floor} onChange={(event) => setListingDraft((prev) => ({ ...prev, floor: event.target.value }))} />
+                    <input className="input-premium" placeholder="Suite" value={listingDraft.suite} onChange={(event) => setListingDraft((prev) => ({ ...prev, suite: event.target.value }))} />
+                    <input className="input-premium" placeholder="RSF" value={listingDraft.rsf} onChange={(event) => setListingDraft((prev) => ({ ...prev, rsf: event.target.value }))} />
+                  </div>
+                  <textarea className="input-premium min-h-[84px]" placeholder="Listing notes, building context, or why it made the shortlist." value={listingDraft.notes} onChange={(event) => setListingDraft((prev) => ({ ...prev, notes: event.target.value }))} />
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn-premium btn-premium-primary" onClick={addListingToDealRoom}>Add Listing</button>
+                    <button type="button" className="btn-premium btn-premium-secondary" onClick={() => setListingDraft((prev) => ({ ...prev, buildingId: activeInventoryBuilding?.id || prev.buildingId, suite: selectedDeal.selectedSuite || prev.suite }))}>Use Focused Building</button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {selectedDealListings.length === 0 ? <p className="text-sm text-slate-400">No listings in this room yet. Add a building and suite above or push one in from the Buildings workspace.</p> : selectedDealListings.map(({ entry, building, linkedTour }) => (
+                      <div key={entry.id} className="border border-white/10 bg-black/20 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-base text-white">{building ? displayBuildingName(building) : "Building pending"}</p>
+                            <p className="mt-1 text-xs text-slate-400">Floor {entry.floor || "-"} · Suite {entry.suite || "-"} · {formatInt(entry.rsf)} RSF</p>
+                          </div>
+                          <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${shortlistStatusBadgeClass(entry.status)}`}>{shortlistStatusLabel(entry.status)}</span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <select className="input-premium" value={entry.status} onChange={(event) => updateShortlistEntryStatus(entry.id, event.target.value as CrmShortlistEntry["status"])}>
+                            <option value="candidate">Candidate</option>
+                            <option value="shortlisted">Shortlisted</option>
+                            <option value="touring">Touring</option>
+                            <option value="proposal_requested">Proposal Requested</option>
+                            <option value="eliminated">Eliminated</option>
+                          </select>
+                          <input className="input-premium" value={entry.owner} placeholder="Owner" onChange={(event) => updateShortlistEntryOwner(entry.id, event.target.value)} />
+                        </div>
+                        <textarea className="input-premium mt-2 min-h-[88px]" value={entry.notes} placeholder="Listing notes" onChange={(event) => updateShortlistEntryNotes(entry.id, event.target.value)} />
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <button type="button" className="btn-premium btn-premium-secondary" onClick={() => {
+                            setTourDraft((prev) => ({ ...prev, shortlistEntryId: entry.id }));
+                            setActiveDealRoomTab("tours");
+                          }}>{linkedTour ? "Edit Tour" : "Create a Tour"}</button>
+                          {linkedTour ? <p className="text-xs text-slate-400">Tour {tourStatusLabel(linkedTour.status)} · {formatDateTime(linkedTour.scheduledAt)}</p> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {activeDealRoomTab === "tours" ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <select className="input-premium md:col-span-2" value={tourDraft.shortlistEntryId} onChange={(event) => setTourDraft((prev) => ({ ...prev, shortlistEntryId: event.target.value }))}>
+                      <option value="">Select a listing</option>
+                      {selectedDealShortlistEntries.map((entry) => {
+                        const building = crmState.buildings.find((item) => item.id === entry.buildingId);
+                        return <option key={entry.id} value={entry.id}>{[building ? displayBuildingName(building) : "Building", `Floor ${entry.floor || "-"}`, `Suite ${entry.suite || "-"}`].join(" · ")}</option>;
+                      })}
+                    </select>
+                    <input type="datetime-local" className="input-premium" value={tourDraft.scheduledAt} onChange={(event) => setTourDraft((prev) => ({ ...prev, scheduledAt: event.target.value }))} />
+                    <input className="input-premium" placeholder="Attendees comma-separated" value={tourDraft.attendees} onChange={(event) => setTourDraft((prev) => ({ ...prev, attendees: event.target.value }))} />
+                  </div>
+                  <textarea className="input-premium min-h-[84px]" placeholder="Tour context, instructions, and prep notes." value={tourDraft.notes} onChange={(event) => setTourDraft((prev) => ({ ...prev, notes: event.target.value }))} />
+                  <button type="button" className="btn-premium btn-premium-primary" onClick={createTourFromDealRoom}>Create a Tour</button>
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {selectedDealTours.length === 0 ? <p className="text-sm text-slate-400">No tours yet. Create the first one from a listing.</p> : selectedDealTours.map((tour) => {
+                      const building = crmState.buildings.find((item) => item.id === tour.buildingId);
                       return (
-                        <div key={documentId} className="border border-white/15 bg-black/25 p-2">
-                          <p className="text-xs text-white break-all">{doc.name}</p>
-                          <p className="text-[11px] text-slate-400">{doc.type}</p>
-                          <button type="button" className="mt-1 btn-premium btn-premium-danger text-[10px]" onClick={() => {
-                            updateDeal(selectedDeal.id, { linkedDocumentIds: (linkedDocumentMap.get(selectedDeal.id) || []).filter((id) => id !== documentId) });
-                            updateDocument(documentId, { dealId: "" });
-                          }}>Remove</button>
+                        <div key={tour.id} className="border border-white/10 bg-black/20 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-base text-white">{building ? displayBuildingName(building) : "Building pending"}</p>
+                              <p className="mt-1 text-xs text-slate-400">Floor {tour.floor || "-"} · Suite {tour.suite || "-"} · {formatDateTime(tour.scheduledAt)}</p>
+                            </div>
+                            <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${tourStatusBadgeClass(tour.status)}`}>{tourStatusLabel(tour.status)}</span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <select className="input-premium" value={tour.status} onChange={(event) => updateTourStatus(tour.id, event.target.value as CrmTour["status"])}>
+                              <option value="draft">Draft</option>
+                              <option value="scheduled">Scheduled</option>
+                              <option value="completed">Completed</option>
+                              <option value="cancelled">Cancelled</option>
+                            </select>
+                            <input className="input-premium" value={tour.assignee} placeholder="Assignee" onChange={(event) => updateTourDetails(tour.id, { assignee: event.target.value })} />
+                          </div>
+                          <input className="input-premium mt-2" value={attendeesToInput(tour.attendees)} placeholder="Attendees" onChange={(event) => updateTourDetails(tour.id, { attendees: attendeesFromInput(event.target.value) })} />
+                          <textarea className="input-premium mt-2 min-h-[84px]" value={tour.notes} placeholder="Tour notes" onChange={(event) => updateTourDetails(tour.id, { notes: event.target.value })} />
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button type="button" className="btn-premium btn-premium-secondary" onClick={() => createFollowUpTaskFromTour(tour)}>Create Follow-Up</button>
+                            <button type="button" className="btn-premium btn-premium-secondary" onClick={() => void generateTourBrief(tour)}>AI Brief</button>
+                            {tour.status === "completed" ? <button type="button" className="btn-premium btn-premium-secondary" onClick={() => void generatePostTourRecap(tour)}>AI Recap Draft</button> : null}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
+              ) : null}
 
-                <div className="border border-white/15 bg-black/20 p-3">
-                  <p className="heading-kicker mb-2">Shortlist + Tours</p>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div className="border border-white/10 bg-black/25 p-2">
-                      <p className="text-slate-500">Shortlists</p>
-                      <p className="mt-1 text-white">{selectedDealShortlists.length}</p>
-                    </div>
-                    <div className="border border-white/10 bg-black/25 p-2">
-                      <p className="text-slate-500">Entries</p>
-                      <p className="mt-1 text-white">{selectedDealShortlistEntries.length}</p>
-                    </div>
-                    <div className="border border-white/10 bg-black/25 p-2">
-                      <p className="text-slate-500">Tours</p>
-                      <p className="mt-1 text-white">{selectedDealTours.length}</p>
-                    </div>
+              {activeDealRoomTab === "negotiation" ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                    <input className="input-premium" placeholder="Negotiation item" value={negotiationDraft.label} onChange={(event) => setNegotiationDraft((prev) => ({ ...prev, label: event.target.value }))} />
+                    <input className="input-premium" placeholder="Counterparty" value={negotiationDraft.counterparty} onChange={(event) => setNegotiationDraft((prev) => ({ ...prev, counterparty: event.target.value }))} />
+                    <select className="input-premium" value={negotiationDraft.status} onChange={(event) => setNegotiationDraft((prev) => ({ ...prev, status: event.target.value as ClientWorkspaceNegotiationItem["status"] }))}>
+                      <option value="watching">Watching</option>
+                      <option value="requested">Requested</option>
+                      <option value="in_review">In Review</option>
+                      <option value="countered">Countered</option>
+                      <option value="aligned">Aligned</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                    <input className="input-premium" placeholder="Target value" value={negotiationDraft.targetValue} onChange={(event) => setNegotiationDraft((prev) => ({ ...prev, targetValue: event.target.value }))} />
+                    <input className="input-premium" placeholder="Latest value" value={negotiationDraft.latestValue} onChange={(event) => setNegotiationDraft((prev) => ({ ...prev, latestValue: event.target.value }))} />
                   </div>
-                  <div className="mt-3 space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                    {selectedDealShortlistEntries.length === 0 && selectedDealTours.length === 0 ? (
-                      <p className="text-xs text-slate-400">No shortlist or tour records yet. Add suites from the Buildings workspace to start this workflow.</p>
-                    ) : (
-                      <>
-                        {selectedDealShortlistEntries.map((entry) => (
-                          <div key={entry.id} className="border border-white/10 bg-black/25 p-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${shortlistStatusBadgeClass(entry.status)}`}>{entry.status.replace(/_/g, " ")}</span>
-                                <span className="text-sm text-white">Floor {entry.floor || "-"} · Suite {entry.suite}</span>
-                              </div>
-                              <select
-                                className="input-premium !h-8 !py-1 !text-[11px]"
-                                value={entry.status}
-                                onChange={(event) => updateShortlistEntryStatus(entry.id, event.target.value as CrmShortlistEntry["status"])}
-                              >
-                                <option value="candidate">Candidate</option>
-                                <option value="shortlisted">Shortlisted</option>
-                                <option value="touring">Touring</option>
-                                <option value="proposal_requested">Proposal Requested</option>
-                                <option value="eliminated">Eliminated</option>
-                              </select>
-                            </div>
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              {(crmState.shortlists.find((item) => item.id === entry.shortlistId)?.name || "Shortlist")} · {formatInt(entry.rsf)} RSF
-                            </p>
+                  <textarea className="input-premium min-h-[84px]" placeholder="Open issues, leverage, or latest landlord feedback." value={negotiationDraft.notes} onChange={(event) => setNegotiationDraft((prev) => ({ ...prev, notes: event.target.value }))} />
+                  <button type="button" className="btn-premium btn-premium-primary" onClick={addNegotiationItem}>Add Negotiation Line</button>
+                  <div className="space-y-3">
+                    {selectedDealRoom.negotiations.length === 0 ? <p className="text-sm text-slate-400">No negotiation lines yet.</p> : selectedDealRoom.negotiations.map((item) => (
+                      <div key={item.id} className="border border-white/10 bg-black/20 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${negotiationStatusBadgeClass(item.status)}`}>{negotiationStatusLabel(item.status)}</span>
+                            <p className="text-base text-white">{item.label}</p>
                           </div>
-                        ))}
-                        {selectedDealTours.map((tour) => (
-                          <div key={tour.id} className="border border-white/10 bg-black/25 p-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${tourStatusBadgeClass(tour.status)}`}>{tour.status}</span>
-                                  <span className="text-sm text-white">Floor {tour.floor || "-"} · Suite {tour.suite}</span>
-                                </div>
-                                <p className="mt-1 text-[11px] text-slate-400">{formatDateTime(tour.scheduledAt)}</p>
-                              </div>
-                              <select
-                                className="input-premium !h-8 !py-1 !text-[11px]"
-                                value={tour.status}
-                                onChange={(event) => updateTourStatus(tour.id, event.target.value as CrmTour["status"])}
-                              >
-                                <option value="draft">Draft</option>
-                                <option value="scheduled">Scheduled</option>
-                                <option value="completed">Completed</option>
-                                <option value="cancelled">Cancelled</option>
-                              </select>
-                            </div>
-                          </div>
-                        ))}
-                      </>
-                    )}
+                          <button type="button" className="btn-premium btn-premium-danger text-[10px]" onClick={() => removeNegotiationItem(item.id)}>Remove</button>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
+                          <input className="input-premium" value={item.counterparty} onChange={(event) => patchNegotiationItem(item.id, { counterparty: event.target.value })} />
+                          <select className="input-premium" value={item.status} onChange={(event) => patchNegotiationItem(item.id, { status: event.target.value as ClientWorkspaceNegotiationItem["status"] })}>
+                            <option value="watching">Watching</option>
+                            <option value="requested">Requested</option>
+                            <option value="in_review">In Review</option>
+                            <option value="countered">Countered</option>
+                            <option value="aligned">Aligned</option>
+                            <option value="closed">Closed</option>
+                          </select>
+                          <input className="input-premium" value={item.targetValue} placeholder="Target value" onChange={(event) => patchNegotiationItem(item.id, { targetValue: event.target.value })} />
+                          <input className="input-premium" value={item.latestValue} placeholder="Latest value" onChange={(event) => patchNegotiationItem(item.id, { latestValue: event.target.value })} />
+                        </div>
+                        <textarea className="input-premium mt-2 min-h-[84px]" value={item.notes} placeholder="Negotiation notes" onChange={(event) => patchNegotiationItem(item.id, { notes: event.target.value })} />
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
+              ) : null}
+
+              {activeDealRoomTab === "access" ? (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+                  <div className="space-y-4">
+                    <div className="border border-white/10 bg-black/20 p-4">
+                      <p className="heading-kicker">Client Access</p>
+                      <div className="mt-3 space-y-2 text-sm text-slate-300">
+                        <button type="button" className="btn-premium btn-premium-secondary w-full" onClick={() => patchSelectedDealRoom({ clientAccessEnabled: !selectedDealRoom.clientAccessEnabled })}>
+                          {selectedDealRoom.clientAccessEnabled ? "Disable Client Access" : "Enable Client Access"}
+                        </button>
+                        <button type="button" className="btn-premium btn-premium-secondary w-full" onClick={() => patchSelectedDealRoom({ clientViewEnabled: !selectedDealRoom.clientViewEnabled })}>
+                          {selectedDealRoom.clientViewEnabled ? "Hide Client View" : "Show Client View"}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="border border-white/10 bg-black/20 p-4">
+                      <p className="heading-kicker">Add User</p>
+                      <div className="mt-3 grid grid-cols-1 gap-2">
+                        <input className="input-premium" placeholder="Name" value={memberDraft.name} onChange={(event) => setMemberDraft((prev) => ({ ...prev, name: event.target.value }))} />
+                        <input className="input-premium" placeholder="Email" value={memberDraft.email} onChange={(event) => setMemberDraft((prev) => ({ ...prev, email: event.target.value }))} />
+                        <input className="input-premium" placeholder="Role" value={memberDraft.role} onChange={(event) => setMemberDraft((prev) => ({ ...prev, role: event.target.value }))} />
+                        <select className="input-premium" value={memberDraft.audience} onChange={(event) => setMemberDraft((prev) => ({ ...prev, audience: event.target.value as ClientWorkspaceDealMember["audience"] }))}>
+                          <option value="internal">Internal Team</option>
+                          <option value="client">Client Contact</option>
+                        </select>
+                        <button type="button" className="btn-premium btn-premium-primary" onClick={addDealRoomMember}>Add Access</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="border border-white/10 bg-black/20 p-4">
+                    <p className="heading-kicker">Members</p>
+                    <div className="mt-3 space-y-2">
+                      {selectedDealRoom.members.length === 0 ? <p className="text-sm text-slate-400">No deal-room members added yet.</p> : selectedDealRoom.members.map((member) => (
+                        <div key={member.id} className="flex flex-wrap items-center justify-between gap-3 border border-white/10 bg-black/25 p-3">
+                          <div>
+                            <p className="text-sm text-white">{member.name}</p>
+                            <p className="mt-1 text-xs text-slate-400">{member.email || "No email"} · {member.role || "No role"}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${member.audience === "client" ? "border-cyan-300/60 bg-cyan-500/10 text-cyan-100" : "border-white/20 bg-white/5 text-slate-200"}`}>{member.audience}</span>
+                            <button type="button" className="btn-premium btn-premium-danger text-[10px]" onClick={() => removeDealRoomMember(member.id)}>Remove</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {activeDealRoomTab === "client_view" ? (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+                  <div className="border border-white/10 bg-black/20 p-4">
+                    <p className="heading-kicker">Client Portal Controls</p>
+                    <p className="mt-2 text-sm text-slate-300">Use this summary as the curated, client-facing version of the transaction. Internal-only notes, commission tracking, and broker-only negotiation detail stay out of the preview.</p>
+                    <textarea className="input-premium mt-3 min-h-[160px]" value={selectedDealRoom.clientSummary} placeholder={selectedDealRoom.internalSummary || selectedDeal.notes || "Client-friendly summary of where the transaction stands and what happens next."} onChange={(event) => patchSelectedDealRoom({ clientSummary: event.target.value })} />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" className="btn-premium btn-premium-secondary" onClick={() => patchSelectedDealRoom({ clientAccessEnabled: true, clientViewEnabled: true })}>Publish Client View</button>
+                      <button type="button" className="btn-premium btn-premium-secondary" onClick={() => patchSelectedDealRoom({ clientViewEnabled: !selectedDealRoom.clientViewEnabled })}>
+                        {selectedDealRoom.clientViewEnabled ? "Hide Preview" : "Show Preview"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="border border-cyan-300/20 bg-cyan-500/5 p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="heading-kicker">Client View Preview</p>
+                        <h3 className="mt-2 text-2xl text-white">{selectedDeal.dealName}</h3>
+                        <p className="mt-2 text-sm text-cyan-50">{selectedDealRoom.clientSummary || "Add a client summary to publish a cleaner external view."}</p>
+                      </div>
+                      <div className="flex flex-col items-start gap-2">
+                        <span className={`border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${statusBadgeClass(selectedDeal.status)}`}>{selectedDeal.stage}</span>
+                        <span className="text-xs text-cyan-100">{selectedDealRoom.clientAccessEnabled && selectedDealRoom.clientViewEnabled ? "Client view live" : "Preview only"}</span>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Shortlisted Listings</p>
+                        <div className="mt-2 space-y-2 text-sm text-slate-200">
+                          {selectedDealListings.slice(0, 4).map(({ entry, building }) => (
+                            <div key={entry.id} className="border border-white/10 bg-black/20 p-2">
+                              <p className="text-white">{building ? displayBuildingName(building) : "Building pending"}</p>
+                              <p className="mt-1 text-xs text-slate-400">Floor {entry.floor || "-"} · Suite {entry.suite || "-"} · {shortlistStatusLabel(entry.status)}</p>
+                            </div>
+                          ))}
+                          {selectedDealListings.length === 0 ? <p className="text-xs text-slate-400">No options shared yet.</p> : null}
+                        </div>
+                      </div>
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Tours + Negotiations</p>
+                        <div className="mt-2 space-y-2 text-sm text-slate-200">
+                          {selectedDealTours.slice(0, 3).map((tour) => (
+                            <div key={tour.id} className="border border-white/10 bg-black/20 p-2">
+                              <p className="text-white">Tour {tourStatusLabel(tour.status)}</p>
+                              <p className="mt-1 text-xs text-slate-400">{formatDateTime(tour.scheduledAt)} · suite {tour.suite || "-"}</p>
+                            </div>
+                          ))}
+                          {selectedDealRoom.negotiations.slice(0, 2).map((item) => (
+                            <div key={item.id} className="border border-white/10 bg-black/20 p-2">
+                              <p className="text-white">{item.label}</p>
+                              <p className="mt-1 text-xs text-slate-400">{negotiationStatusLabel(item.status)}{item.latestValue ? ` · ${item.latestValue}` : ""}</p>
+                            </div>
+                          ))}
+                          {selectedDealTours.length === 0 && selectedDealRoom.negotiations.length === 0 ? <p className="text-xs text-slate-400">No client-facing activity yet.</p> : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </PlatformPanel>

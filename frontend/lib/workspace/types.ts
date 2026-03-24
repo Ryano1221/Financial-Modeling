@@ -174,8 +174,57 @@ export interface ClientWorkspaceDeal {
   linkedLeaseAbstractIds: string[];
   timeline: DealActivityItem[];
   tasks: DealTaskItem[];
+  dealRoom?: ClientWorkspaceDealRoom;
   createdAt: string;
   updatedAt: string;
+}
+
+export type ClientWorkspaceDealMemberAudience = "internal" | "client";
+
+export interface ClientWorkspaceDealMember {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  audience: ClientWorkspaceDealMemberAudience;
+}
+
+export type ClientWorkspaceNegotiationStatus =
+  | "watching"
+  | "requested"
+  | "in_review"
+  | "countered"
+  | "aligned"
+  | "closed";
+
+export interface ClientWorkspaceNegotiationItem {
+  id: string;
+  label: string;
+  counterparty: string;
+  status: ClientWorkspaceNegotiationStatus;
+  targetValue: string;
+  latestValue: string;
+  notes: string;
+  updatedAt: string;
+}
+
+export interface ClientWorkspaceDealRoom {
+  projectedCloseDate: string;
+  source: string;
+  moveReason: string;
+  estimatedCommission: number;
+  dealioId: string;
+  clientAccessEnabled: boolean;
+  clientViewEnabled: boolean;
+  currentLocationAddress: string;
+  currentLocationSize: number;
+  currentLeaseExpiration: string;
+  renewalNoticeDate: string;
+  expansionNoticeDate: string;
+  internalSummary: string;
+  clientSummary: string;
+  members: ClientWorkspaceDealMember[];
+  negotiations: ClientWorkspaceNegotiationItem[];
 }
 
 export type DealsViewMode = "board" | "table" | "timeline" | "client_grouped" | "stacking_plan";
@@ -212,6 +261,7 @@ export interface CreateDealInput {
   linkedDocumentIds?: string[];
   linkedObligationIds?: string[];
   linkedLeaseAbstractIds?: string[];
+  dealRoom?: Partial<ClientWorkspaceDealRoom>;
 }
 
 export interface UpdateDealInput {
@@ -242,6 +292,7 @@ export interface UpdateDealInput {
   linkedLeaseAbstractIds?: string[];
   timeline?: DealActivityItem[];
   tasks?: DealTaskItem[];
+  dealRoom?: ClientWorkspaceDealRoom;
 }
 
 export const TENANT_REP_DEAL_STAGES: readonly string[] = [
@@ -295,8 +346,113 @@ export function getDefaultDealStagesForMode(
 
 export function normalizeDealsViewMode(value: unknown): DealsViewMode {
   const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "table" || normalized === "timeline" || normalized === "client_grouped") return normalized;
+  if (
+    normalized === "table"
+    || normalized === "timeline"
+    || normalized === "client_grouped"
+    || normalized === "stacking_plan"
+  ) return normalized;
   return "board";
+}
+
+function asText(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function asNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeDealRoomMembers(value: unknown): ClientWorkspaceDealMember[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const obj = item as Partial<ClientWorkspaceDealMember>;
+      const name = asText(obj.name);
+      if (!name) return null;
+      return {
+        id: asText(obj.id) || `deal_member_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+        name,
+        email: asText(obj.email),
+        role: asText(obj.role),
+        audience: asText(obj.audience) === "client" ? "client" : "internal",
+      } satisfies ClientWorkspaceDealMember;
+    })
+    .filter((item): item is ClientWorkspaceDealMember => Boolean(item));
+}
+
+function normalizeNegotiations(value: unknown): ClientWorkspaceNegotiationItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const obj = item as Partial<ClientWorkspaceNegotiationItem>;
+      const label = asText(obj.label);
+      if (!label) return null;
+      const normalizedStatus = asText(obj.status);
+      return {
+        id: asText(obj.id) || `deal_negotiation_${label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+        label,
+        counterparty: asText(obj.counterparty),
+        status:
+          normalizedStatus === "requested"
+          || normalizedStatus === "in_review"
+          || normalizedStatus === "countered"
+          || normalizedStatus === "aligned"
+          || normalizedStatus === "closed"
+            ? normalizedStatus
+            : "watching",
+        targetValue: asText(obj.targetValue),
+        latestValue: asText(obj.latestValue),
+        notes: asText(obj.notes),
+        updatedAt: asText(obj.updatedAt),
+      } satisfies ClientWorkspaceNegotiationItem;
+    })
+    .filter((item): item is ClientWorkspaceNegotiationItem => Boolean(item));
+}
+
+export function normalizeDealRoom(value: unknown): ClientWorkspaceDealRoom {
+  if (!value || typeof value !== "object") {
+    return {
+      projectedCloseDate: "",
+      source: "",
+      moveReason: "",
+      estimatedCommission: 0,
+      dealioId: "",
+      clientAccessEnabled: false,
+      clientViewEnabled: false,
+      currentLocationAddress: "",
+      currentLocationSize: 0,
+      currentLeaseExpiration: "",
+      renewalNoticeDate: "",
+      expansionNoticeDate: "",
+      internalSummary: "",
+      clientSummary: "",
+      members: [],
+      negotiations: [],
+    };
+  }
+  const obj = value as Partial<ClientWorkspaceDealRoom>;
+  return {
+    projectedCloseDate: asText(obj.projectedCloseDate),
+    source: asText(obj.source),
+    moveReason: asText(obj.moveReason),
+    estimatedCommission: asNumber(obj.estimatedCommission),
+    dealioId: asText(obj.dealioId),
+    clientAccessEnabled: Boolean(obj.clientAccessEnabled),
+    clientViewEnabled: Boolean(obj.clientViewEnabled),
+    currentLocationAddress: asText(obj.currentLocationAddress),
+    currentLocationSize: asNumber(obj.currentLocationSize),
+    currentLeaseExpiration: asText(obj.currentLeaseExpiration),
+    renewalNoticeDate: asText(obj.renewalNoticeDate),
+    expansionNoticeDate: asText(obj.expansionNoticeDate),
+    internalSummary: asText(obj.internalSummary),
+    clientSummary: asText(obj.clientSummary),
+    members: normalizeDealRoomMembers(obj.members),
+    negotiations: normalizeNegotiations(obj.negotiations),
+  };
 }
 
 export function getDefaultCrmSettingsForMode(

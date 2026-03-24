@@ -22,7 +22,12 @@ function makeNormalize(overrides: Partial<NormalizerResponse> = {}): NormalizerR
       parking_rate_monthly: 165,
     },
     confidence_score: 0.92,
-    extraction_summary: { document_type_detected: "proposal" },
+    extraction_summary: {
+      document_type_detected: "proposal",
+      key_terms_found: [],
+      key_terms_missing: [],
+      sections_searched: [],
+    },
     field_confidence: { rsf: 0.95, lease_type: 0.91, rent_schedule: 0.9 },
     missing_fields: [],
     clarification_questions: [],
@@ -81,7 +86,12 @@ describe("surveys/engine", () => {
 
   it("infers sublessor fields for sublease survey records", () => {
     const normalize = makeNormalize({
-      extraction_summary: { document_type_detected: "sublease flyer" },
+      extraction_summary: {
+        document_type_detected: "sublease flyer",
+        key_terms_found: [],
+        key_terms_missing: [],
+        sections_searched: [],
+      },
       canonical_lease: {
         ...makeNormalize().canonical_lease,
         tenant_name: "Sublessor Co",

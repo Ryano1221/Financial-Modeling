@@ -36,6 +36,7 @@ import {
   DEFAULT_DEAL_STAGES,
   getDefaultDealStagesForMode,
   normalizeCrmSettings,
+  normalizeDealRoom,
   type ClientCrmSettings,
 } from "@/lib/workspace/types";
 import type {
@@ -281,6 +282,7 @@ function parseStoredDeals(raw: string | null): ClientWorkspaceDeal[] {
           linkedLeaseAbstractIds: Array.isArray(obj.linkedLeaseAbstractIds) ? obj.linkedLeaseAbstractIds.map((id) => asText(id)).filter(Boolean) : [],
           timeline: Array.isArray(obj.timeline) ? obj.timeline : [],
           tasks: Array.isArray(obj.tasks) ? obj.tasks : [],
+          dealRoom: normalizeDealRoom(obj.dealRoom),
           createdAt: asText(obj.createdAt) || nowIso,
           updatedAt: asText(obj.updatedAt) || nowIso,
         } satisfies ClientWorkspaceDeal;
@@ -1004,6 +1006,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       linkedLeaseAbstractIds: input.linkedLeaseAbstractIds || [],
       timeline: [],
       tasks: [],
+      dealRoom: normalizeDealRoom(input.dealRoom),
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -1061,6 +1064,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             : deal.linkedLeaseAbstractIds,
           timeline: hasOwnKey(input, "timeline") && Array.isArray(input.timeline) ? input.timeline : deal.timeline,
           tasks: hasOwnKey(input, "tasks") && Array.isArray(input.tasks) ? input.tasks : deal.tasks,
+          dealRoom: hasOwnKey(input, "dealRoom") ? normalizeDealRoom(input.dealRoom) : normalizeDealRoom(deal.dealRoom),
           updatedAt: new Date().toISOString(),
         };
       }),

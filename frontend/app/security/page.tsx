@@ -67,6 +67,9 @@ export default function SecurityPage() {
               Shortlist and tour workflow records created from Buildings persist in the same client-scoped CRM workspace state as deal notes, stack edits, and reminders, so those actions stay isolated to the active client and remain covered by the existing audit path.
             </p>
             <p className="text-sm text-slate-300 sm:text-base">
+              The new deal-room layer stores overview metadata, current-location constraints, negotiation trackers, and client-portal settings inside the same client-scoped deal record. It does not create a second transaction store or broaden cross-client visibility.
+            </p>
+            <p className="text-sm text-slate-300 sm:text-base">
               The dedicated CRM shortlist and tour boards are presentation and workflow-management layers over those same client-scoped records. They do not introduce a new storage boundary or a separate cross-client dataset.
             </p>
             <p className="text-sm text-slate-300 sm:text-base">
@@ -83,6 +86,9 @@ export default function SecurityPage() {
             </p>
             <p className="text-sm text-slate-300 sm:text-base">
               Team-wide board views are now role-aware. Users without a sharing-capable role can still load applicable shared views for their client team, but they cannot overwrite or delete the shared view definitions.
+            </p>
+            <p className="text-sm text-slate-300 sm:text-base">
+              Client Access and Client View toggles in the deal room are presentation controls only. They determine which curated transaction summary is exposed to approved client contacts; they do not bypass authentication, change workspace ownership, or reveal internal-only notes by default.
             </p>
             <p className="text-sm text-slate-300 sm:text-base">
               Bulk reassignment on shortlist and tour cards updates the same underlying client-scoped workflow records one time per selected card. It does not create hidden secondary queues or bypass the normal audit history.
