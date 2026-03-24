@@ -10,9 +10,11 @@ import type {
   CrmCompany,
   CrmOccupancyRecord,
   CrmReminder,
+  CrmShortlistEntry,
   CrmStackingPlanEntry,
   CrmStackingPlanSource,
   CrmTouchpoint,
+  CrmTour,
   CrmWorkspaceState,
 } from "@/lib/workspace/crm";
 import type { RepresentationMode } from "@/lib/workspace/representation-mode";
@@ -287,6 +289,8 @@ export function buildLandlordStackingPlan(input: {
   companies: CrmCompany[];
   occupancyRecords: CrmOccupancyRecord[];
   stackingPlanEntries: CrmStackingPlanEntry[];
+  shortlistEntries: CrmShortlistEntry[];
+  tours: CrmTour[];
   properties: BrokerageOsProperty[];
   spaces: BrokerageOsSpace[];
   deals: ClientWorkspaceDeal[];
