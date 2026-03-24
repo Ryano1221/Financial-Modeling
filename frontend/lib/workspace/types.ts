@@ -178,7 +178,7 @@ export interface ClientWorkspaceDeal {
   updatedAt: string;
 }
 
-export type DealsViewMode = "board" | "table" | "timeline" | "client_grouped";
+export type DealsViewMode = "board" | "table" | "timeline" | "client_grouped" | "stacking_plan";
 
 export interface ClientCrmSettings {
   autoStageFromDocuments: boolean;
