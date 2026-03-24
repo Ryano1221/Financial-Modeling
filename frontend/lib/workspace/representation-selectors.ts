@@ -10,6 +10,8 @@ import type {
   CrmCompany,
   CrmOccupancyRecord,
   CrmReminder,
+  CrmStackingPlanEntry,
+  CrmStackingPlanSource,
   CrmTouchpoint,
   CrmWorkspaceState,
 } from "@/lib/workspace/crm";
@@ -214,13 +216,25 @@ export type LandlordStackingPlanSuiteStatus =
   | "toured";
 
 export interface LandlordStackingPlanSuiteCell {
+  id: string;
   buildingId: string;
   floor: string;
   suite: string;
   rsf: number;
   status: LandlordStackingPlanSuiteStatus;
+  companyId: string;
   companyName: string;
+  leaseStart: string;
   expirationDate: string;
+  noticeDeadline: string;
+  rentType: string;
+  baseRent: number;
+  opex: number;
+  abatementMonths: number;
+  tiAllowance: number;
+  concessions: string;
+  landlordName: string;
+  source: CrmStackingPlanSource;
   proposalCount: number;
   toured: boolean;
   occupied: boolean;
@@ -272,6 +286,7 @@ export function buildLandlordStackingPlan(input: {
   buildings: CrmBuilding[];
   companies: CrmCompany[];
   occupancyRecords: CrmOccupancyRecord[];
+  stackingPlanEntries: CrmStackingPlanEntry[];
   properties: BrokerageOsProperty[];
   spaces: BrokerageOsSpace[];
   deals: ClientWorkspaceDeal[];
@@ -312,13 +327,25 @@ export function buildLandlordStackingPlan(input: {
       return existing;
     }
     const created: LandlordStackingPlanSuiteCell = {
+      id: key,
       buildingId,
       floor: asText(floor) || "Unassigned",
       suite: asText(suite),
       rsf: Math.max(0, rsf),
       status: "vacant",
+      companyId: "",
       companyName: "",
+      leaseStart: "",
       expirationDate: "",
+      noticeDeadline: "",
+      rentType: "",
+      baseRent: 0,
+      opex: 0,
+      abatementMonths: 0,
+      tiAllowance: 0,
+      concessions: "",
+      landlordName: "",
+      source: "space_seed",
       proposalCount: 0,
       toured: false,
       occupied: false,
@@ -336,10 +363,46 @@ export function buildLandlordStackingPlan(input: {
   for (const occupancy of input.occupancyRecords) {
     const suite = ensureSuite(occupancy.buildingId, occupancy.floor, occupancy.suite, occupancy.rsf);
     if (!suite) continue;
+    suite.id = occupancy.id || suite.id;
     suite.occupied = true;
     suite.vacant = false;
+    suite.companyId = occupancy.companyId || suite.companyId;
     suite.companyName = companyById.get(occupancy.companyId)?.name || suite.companyName;
+    suite.leaseStart = asText(occupancy.leaseStart) || suite.leaseStart;
     suite.expirationDate = asText(occupancy.leaseExpiration) || suite.expirationDate;
+    suite.noticeDeadline = asText(occupancy.noticeDeadline) || suite.noticeDeadline;
+    suite.rentType = asText(occupancy.rentType) || suite.rentType;
+    suite.baseRent = Math.max(suite.baseRent, asNumber(occupancy.baseRent));
+    suite.opex = Math.max(suite.opex, asNumber(occupancy.opex));
+    suite.abatementMonths = Math.max(suite.abatementMonths, asNumber(occupancy.abatementMonths));
+    suite.tiAllowance = Math.max(suite.tiAllowance, asNumber(occupancy.tiAllowance));
+    suite.concessions = asText(occupancy.concessions) || suite.concessions;
+    suite.landlordName = asText(occupancy.landlordName) || suite.landlordName;
+    suite.source = "current_lease";
+    suite.status = inferSuiteStatus(suite);
+  }
+
+  for (const entry of input.stackingPlanEntries) {
+    const suite = ensureSuite(entry.buildingId, entry.floor, entry.suite, entry.rsf);
+    if (!suite) continue;
+    suite.id = entry.id || suite.id;
+    suite.companyId = asText(entry.companyId) || suite.companyId;
+    suite.companyName = asText(entry.tenantName) || companyById.get(entry.companyId)?.name || suite.companyName;
+    suite.leaseStart = asText(entry.leaseStart) || suite.leaseStart;
+    suite.expirationDate = asText(entry.leaseExpiration) || suite.expirationDate;
+    suite.noticeDeadline = asText(entry.noticeDeadline) || suite.noticeDeadline;
+    suite.rentType = asText(entry.rentType) || suite.rentType;
+    suite.baseRent = Math.max(suite.baseRent, asNumber(entry.baseRent));
+    suite.opex = Math.max(suite.opex, asNumber(entry.opex));
+    suite.abatementMonths = Math.max(suite.abatementMonths, asNumber(entry.abatementMonths));
+    suite.tiAllowance = Math.max(suite.tiAllowance, asNumber(entry.tiAllowance));
+    suite.concessions = asText(entry.concessions) || suite.concessions;
+    suite.landlordName = asText(entry.landlordName) || suite.landlordName;
+    suite.source = entry.source || suite.source;
+    if (suite.companyId || suite.companyName) {
+      suite.occupied = true;
+      suite.vacant = false;
+    }
     suite.status = inferSuiteStatus(suite);
   }
 
