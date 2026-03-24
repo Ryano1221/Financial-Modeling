@@ -6,9 +6,11 @@ from typing import Any
 
 from .normalize import NormalizedDocument
 
+# Supports: M/D/Y, M.D.Y, M-D-Y, "Jan 1, 2024", "January 1st, 2024", "1st day of January, 2024"
 DATE_PATTERNS = [
     r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b",
-    r"\b([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})\b",
+    r"\b([A-Za-z]{3,9}\s+\d{1,2}(?:st|nd|rd|th)?,\s+\d{4})\b",
+    r"\b(\d{1,2}(?:st|nd|rd|th)?\s+(?:day\s+of\s+)?[A-Za-z]{3,9},?\s+\d{4})\b",
 ]
 
 NNN_CUES = (
@@ -78,7 +80,17 @@ def _clean_suite_candidate(raw: str) -> str:
     if not token_match:
         return ""
     token = token_match.group(1)
-    if re.fullmatch(r"(?i)[A-Za-z]{4,}", token):
+    # Reject tokens that are common English words, not suite identifiers.
+    _COMMON_WORDS = {
+        "the", "and", "for", "that", "this", "with", "from", "have", "will",
+        "been", "were", "they", "their", "there", "said", "each", "some",
+        "into", "upon", "such", "within", "shall", "both", "also", "only",
+        "date", "time", "term", "days", "lease", "rent", "base", "area",
+    }
+    if token.lower() in _COMMON_WORDS:
+        return ""
+    # Reject purely alpha tokens of 5+ chars (likely prose words, not suite IDs)
+    if re.fullmatch(r"(?i)[A-Za-z]{5,}", token):
         return ""
     return token.upper() if not token.isdigit() else (token.lstrip("0") or token)
 
@@ -86,7 +98,7 @@ def _clean_suite_candidate(raw: str) -> str:
 def _normalize_keyword_spacing(line: str) -> str:
     """
     Normalize OCR-spaced keyword artifacts (e.g., "C o m m e n c e m e n t").
-    Keeps original line for snippets but improves matching robustness.
+    Handles single-space and multi-space gaps between characters.
     """
     out = str(line or "")
     for word in (
@@ -214,9 +226,16 @@ def _parse_date_token(token: str) -> str | None:
     raw = str(token or "").strip()
     if not raw:
         return None
+    # Strip ordinal suffixes: "January 1st, 2024" → "January 1, 2024"
+    raw_clean = re.sub(r"\b(\d+)(?:st|nd|rd|th)\b", r"\1", raw)
+    # Normalize "1st day of January, 2024" → "January 1, 2024"
+    day_of_match = re.match(r"(?i)(\d{1,2})\s+day\s+of\s+([A-Za-z]+),?\s+(\d{4})", raw_clean)
+    if day_of_match:
+        raw_clean = f"{day_of_match.group(2)} {day_of_match.group(1)}, {day_of_match.group(3)}"
+    # Numeric M/D/Y
     for sep in ["/", ".", "-"]:
-        if sep in raw and re.match(r"^\d{1,2}\%s\d{1,2}\%s\d{2,4}$" % (sep, sep), raw):
-            p = raw.split(sep)
+        if sep in raw_clean and re.match(r"^\d{1,2}\%s\d{1,2}\%s\d{2,4}$" % (sep, sep), raw_clean.strip()):
+            p = raw_clean.strip().split(sep)
             m, d, y = int(p[0]), int(p[1]), int(p[2])
             if y < 100:
                 y += 2000
@@ -224,11 +243,10 @@ def _parse_date_token(token: str) -> str | None:
                 return date(y, m, d).isoformat()
             except Exception:
                 return None
-    for fmt in ["%B %d, %Y", "%b %d, %Y"]:
+    for fmt in ["%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"]:
         try:
             from datetime import datetime
-
-            return datetime.strptime(raw, fmt).date().isoformat()
+            return datetime.strptime(raw_clean.strip(), fmt).date().isoformat()
         except Exception:
             continue
     return None
@@ -368,6 +386,7 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                                 _mk_candidate("expiration_date", dt, page.page_number, ln, "pdf_text_regex", 0.70)
                             )
 
+            # Term months — numeric ("60 months", "initial term of 36 months")
             tm = re.search(
                 r"(?:initial\s+term|lease\s+term|term\s+length|term)\D{0,20}(\d{1,3})\s*(?:months?|mos?)",
                 scan_line,
@@ -375,6 +394,33 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
             )
             if tm:
                 out["term_months"].append(_mk_candidate("term_months", int(tm.group(1)), page.page_number, ln, "pdf_text_regex", 0.78))
+
+            # Term months — year-based ("5-year term", "a 5 year lease term")
+            yr_term = re.search(
+                r"(?:initial\s+term|lease\s+term|term\s+of\s+(?:the\s+)?lease|lease\s+period|term)\D{0,20}(\d{1,2})\s*[-–]?\s*year\b",
+                scan_line,
+                flags=re.IGNORECASE,
+            )
+            if yr_term and not tm:
+                years = int(yr_term.group(1))
+                out["term_months"].append(
+                    _mk_candidate("term_months", years * 12, page.page_number, ln, "pdf_text_regex", 0.76)
+                )
+
+            # Term months — word form with year context ("five-year lease term")
+            if not tm and not yr_term:
+                yr_word = re.search(
+                    r"(?:initial\s+term|lease\s+term|term)\D{0,30}\b([a-z]+(?:-[a-z]+)?)\s*[-–]?\s*year\b",
+                    scan_line,
+                    flags=re.IGNORECASE,
+                )
+                if yr_word:
+                    from .concessions import _word_token_to_int  # type: ignore[attr-defined]
+                    word_years = _word_token_to_int(yr_word.group(1))
+                    if word_years and 1 <= word_years <= 30:
+                        out["term_months"].append(
+                            _mk_candidate("term_months", word_years * 12, page.page_number, ln, "pdf_text_regex", 0.72)
+                        )
 
             rsf_match = re.search(
                 r"([0-9]{1,3}(?:,[0-9]{3})+|\d{3,6})\s*(?:rsf|rentable\s+square\s+feet|rentable\s+area|square\s+feet)",
@@ -520,12 +566,26 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                     _mk_candidate("parking_spaces", int(parking_spaces_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.68)
                 )
 
-            renewal_match = re.search(r"(?i)(\d+)\s*x\s*(\d{1,2})\s*year\s+(?:renewal|extension)\s+option", scan_line)
+            # Renewal option — multiple pattern forms.
+            # Form 1: "2 x 5 year renewal option"
+            renewal_match = re.search(r"(?i)(\d+)\s*x\s*(\d{1,2})\s*[-–]?\s*year\s+(?:renewal|extension)\s+option", scan_line)
+            # Form 2: "option to renew for X years" or "X-year renewal/extension option"
+            if not renewal_match:
+                renewal_match = re.search(
+                    r"(?i)(?:option\s+to\s+renew|renewal\s+option|extension\s+option)\b[^.\n]{0,80}?\b(\d{1,2})\s*[-–]?\s*year",
+                    scan_line,
+                )
+            # Form 3: "renewal term of X years"
+            if not renewal_match:
+                renewal_match = re.search(
+                    r"(?i)\brenewal\s+term\s+of\s+(\d{1,2})\s+years?\b",
+                    scan_line,
+                )
             if renewal_match:
                 out["renewal_option"].append(
-                    _mk_candidate("renewal_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.74)
+                    _mk_candidate("renewal_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.76)
                 )
-            elif ("renewal option" in low or "extension option" in low) and len(scan_line) <= 220:
+            elif ("renewal option" in low or "extension option" in low or "option to renew" in low) and len(scan_line) <= 220:
                 out["renewal_option"].append(
                     _mk_candidate("renewal_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.66)
                 )

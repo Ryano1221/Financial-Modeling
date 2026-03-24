@@ -50,7 +50,8 @@ def _word_token_to_int(value: Any) -> int | None:
     raw = str(value or "").strip().lower()
     if not raw:
         return None
-    raw = raw.replace("-", " ")
+    # Normalize hyphens and whitespace: "twenty-five" and "twenty five" both work.
+    raw = re.sub(r"[-\s]+", " ", raw).strip()
     if raw.isdigit():
         return int(raw)
     total = 0
@@ -275,10 +276,13 @@ def parse_concession_text(
 
     front_cursor = 0
     front_block = re.split(r"(?i)\ban?\s+additional\b", cleaned, maxsplit=1)[0]
+
+    # Pattern A: digit present, optional word prefix — "five (5) months free rent", "(5) months free rent"
     front_pattern = re.compile(
         r"(?i)(?:the\s+first\s+|initial\s+)?([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s*(?:of\s+)?"
         r"(?:(gross|base)\s+(?:rent\s+)?)?(?:free\s+rent|rent\s+abatement|abatement)\b"
     )
+    _front_digit_matched = False
     for match in front_pattern.finditer(front_block):
         local = _extract_context(front_block, match.start(), match.end())
         if _looks_like_distribution_window(local):
@@ -291,6 +295,26 @@ def parse_concession_text(
         local_scope = _normalize_scope_token(match.group(3), default=default_scope)
         add_period(front_cursor, count, local_scope, local)
         front_cursor += count
+        _front_digit_matched = True
+
+    # Pattern B: word-only month counts — "five months free rent", "six months of free rent"
+    # Only run if Pattern A found nothing, to avoid double-counting.
+    if not _front_digit_matched:
+        word_only_pattern = re.compile(
+            r"(?i)(?:the\s+first\s+|initial\s+)?([a-z]+(?:-[a-z]+)?)\s+months?\s*(?:of\s+)?"
+            r"(?:(gross|base)\s+(?:rent\s+)?)?(?:free\s+rent|rent\s+abatement|abatement)\b"
+        )
+        for match in word_only_pattern.finditer(front_block):
+            local = _extract_context(front_block, match.start(), match.end())
+            if _looks_like_distribution_window(local):
+                continue
+            word_val = _word_token_to_int(match.group(1)) or 0
+            if word_val <= 0:
+                continue
+            scope_token = match.group(2) if match.lastindex and match.lastindex >= 2 else None
+            local_scope = _normalize_scope_token(scope_token, default=default_scope)
+            add_period(front_cursor, word_val, local_scope, local)
+            front_cursor += word_val
 
     additional_pattern = re.compile(
         r"(?is)\ban?\s+additional\s+([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\s*(?:of\s+)?"
@@ -336,6 +360,8 @@ def parse_concession_text(
                 (r"(?i)\bwith\s+(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\s+(?:(gross|base)\s+)?(?:free\s+rent|rent\s+abatement|abatement)\b", 18),
                 (r"(?i)\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b[^\n]{0,70}\b(?:(gross|base)\s+)?(?:free\s+rent|rent\s+abatement|abatement)\b", 15),
                 (r"(?i)\b(?:(gross|base)\s+)?(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,70}\b(?:\(?(\d{1,3})\)?|[a-z\-]+\s*\((\d{1,3})\))\s+months?\b", 14),
+                # Word-only fallback: "six months of free rent"
+                (r"(?i)\b([a-z]+(?:-[a-z]+)?)\s+months?\s+(?:of\s+)?(?:(gross|base)\s+)?(?:free\s+rent|rent\s+abatement|abatement)\b", 12),
             ):
                 for match in re.finditer(pattern, line):
                     local = _extract_context(line, match.start(), match.end())
