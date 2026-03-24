@@ -30,6 +30,15 @@ type PlatformPanelProps = {
   className?: string;
 };
 
+type PlatformInsightCardProps = {
+  kicker?: string;
+  title: string;
+  description?: string;
+  children: ReactNode;
+  onClick?: () => void;
+  className?: string;
+};
+
 type PlatformDataTableProps = {
   headers: string[];
   children: ReactNode;
@@ -153,6 +162,31 @@ export function PlatformCard({
       <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
       <div>{children}</div>
     </div>
+  );
+}
+
+export function PlatformInsightCard({
+  kicker,
+  title,
+  description,
+  children,
+  onClick,
+  className = "",
+}: PlatformInsightCardProps) {
+  const content = (
+    <div className={`min-w-0 border border-white/15 bg-black/25 p-4 transition ${onClick ? "cursor-pointer hover:bg-white/[0.06]" : ""} ${className}`.trim()}>
+      {kicker ? <p className="heading-kicker mb-2">{kicker}</p> : null}
+      <h3 className="text-base sm:text-lg text-white mb-2">{title}</h3>
+      {description ? <p className="mb-3 text-sm text-slate-400">{description}</p> : null}
+      <div>{children}</div>
+    </div>
+  );
+
+  if (!onClick) return content;
+  return (
+    <button type="button" onClick={onClick} className="w-full text-left">
+      {content}
+    </button>
   );
 }
 
