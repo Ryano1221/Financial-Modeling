@@ -8,7 +8,7 @@ export interface SurveyEntry {
   clientId: string;
   sourceDocumentId?: string;
   sourceDocumentName: string;
-  sourceType: "parsed_document" | "manual_image";
+  sourceType: "parsed_document" | "manual_image" | "manual_building";
   uploadedAtIso: string;
   buildingName: string;
   address: string;

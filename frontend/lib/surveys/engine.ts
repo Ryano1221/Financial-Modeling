@@ -145,6 +145,82 @@ export function createManualSurveyEntryFromImage(fileName: string, clientId = ""
   };
 }
 
+export function createManualSurveyEntryFromBuilding(
+  input: {
+    clientId?: string;
+    buildingName?: string;
+    address?: string;
+    floor?: string;
+    suite?: string;
+    availableSqft?: number;
+    baseRentPsfAnnual?: number;
+    opexPsfAnnual?: number;
+    leaseType?: SurveyLeaseType;
+    occupancyType?: SurveyOccupancyType;
+    sublessor?: string;
+    subleaseExpirationDate?: string;
+    parkingSpaces?: number;
+    parkingRateMonthlyPerSpace?: number;
+    notes?: string;
+    submarket?: string;
+  } = {},
+): SurveyEntry {
+  const buildingName = valueOrEmpty(input.buildingName);
+  const address = valueOrEmpty(input.address);
+  const floor = valueOrEmpty(input.floor);
+  const suite = valueOrEmpty(input.suite);
+  const availableSqft = Math.max(0, toNumber(input.availableSqft, 0));
+  const baseRentPsfAnnual = Math.max(0, toNumber(input.baseRentPsfAnnual, 0));
+  const opexPsfAnnual = Math.max(0, toNumber(input.opexPsfAnnual, 0));
+  const leaseType = input.leaseType || "Unknown";
+  const occupancyType = input.occupancyType || "Unknown";
+  const sublessor = valueOrEmpty(input.sublessor);
+  const subleaseExpirationDate = valueOrEmpty(input.subleaseExpirationDate);
+  const parkingSpaces = Math.max(0, Math.floor(toNumber(input.parkingSpaces, 0)));
+  const parkingRateMonthlyPerSpace = Math.max(0, toNumber(input.parkingRateMonthlyPerSpace, 0));
+  const notes = valueOrEmpty(input.notes);
+  const submarket = valueOrEmpty(input.submarket);
+
+  const reviewReasons = [
+    "Manual building entry requires review before client-facing use.",
+  ];
+  if (!buildingName) reviewReasons.push("Building name missing.");
+  if (!address) reviewReasons.push("Address missing.");
+  if (availableSqft <= 0) reviewReasons.push("Available square footage missing.");
+  if (baseRentPsfAnnual <= 0) reviewReasons.push("Base rent missing.");
+  if (leaseType === "Unknown") reviewReasons.push("Lease type still needs confirmation.");
+  if (occupancyType === "Unknown") reviewReasons.push("Direct vs sublease type still needs confirmation.");
+  if (occupancyType === "Sublease" && !sublessor) reviewReasons.push("Sublessor name missing.");
+
+  const sourceDocumentName = [buildingName || "Manual building row", submarket].filter(Boolean).join(" - ");
+
+  return {
+    id: nextId(),
+    clientId: valueOrEmpty(input.clientId),
+    sourceDocumentName,
+    sourceType: "manual_building",
+    uploadedAtIso: new Date().toISOString(),
+    buildingName,
+    address,
+    floor,
+    suite,
+    availableSqft,
+    baseRentPsfAnnual,
+    opexPsfAnnual,
+    leaseType,
+    occupancyType,
+    sublessor,
+    subleaseExpirationDate,
+    parkingSpaces,
+    parkingRateMonthlyPerSpace,
+    notes,
+    needsReview: true,
+    reviewReasons,
+    reviewTasks: [],
+    fieldConfidence: {},
+  };
+}
+
 function leaseTypeRule(leaseType: SurveyLeaseType): string {
   if (leaseType === "Gross") return "Gross rent includes operating expenses.";
   if (leaseType === "Modified Gross") return "Modified gross assumes 50% of stated OpEx burden.";
