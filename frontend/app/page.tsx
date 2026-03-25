@@ -1164,6 +1164,9 @@ function HomeContent() {
         setExtractError(`Re-parsing ${document.name} for comparison summary...`);
         const sourceFile = await dataUrlToFile(document.previewDataUrl, document.name, document.fileMimeType);
         const repaired = await normalizeWorkspaceDocument(sourceFile);
+        if (!repaired?.canonical_lease) {
+          throw new Error("No canonical payload returned while re-parsing the selected document.");
+        }
         snapshot = toDocumentNormalizeSnapshot(repaired);
         if (snapshot?.canonical_lease) {
           updateDocument(document.id, {
