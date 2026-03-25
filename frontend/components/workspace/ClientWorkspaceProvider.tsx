@@ -1204,6 +1204,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           building: hasOwnKey(input, "building") ? asText(input.building) : doc.building,
           address: hasOwnKey(input, "address") ? asText(input.address) : doc.address,
           suite: hasOwnKey(input, "suite") ? asText(input.suite) : doc.suite,
+          parsed: hasOwnKey(input, "parsed") ? Boolean(input.parsed) : doc.parsed,
+          fileMimeType: hasOwnKey(input, "fileMimeType") ? asText(input.fileMimeType) || undefined : doc.fileMimeType,
+          previewDataUrl: hasOwnKey(input, "previewDataUrl") ? asText(input.previewDataUrl) || undefined : doc.previewDataUrl,
+          normalizeSnapshot: hasOwnKey(input, "normalizeSnapshot") ? toNormalizeSnapshot(input.normalizeSnapshot) : doc.normalizeSnapshot,
         };
       }),
     );

@@ -54,3 +54,14 @@ export function isWordPreviewDataUrl(value?: string | null): boolean {
 export function canInlinePreviewDataUrl(value?: string | null): boolean {
   return isImagePreviewDataUrl(value) || isPdfPreviewDataUrl(value);
 }
+
+export async function dataUrlToFile(
+  dataUrl: string,
+  fileName: string,
+  providedType?: string,
+): Promise<File> {
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  const fileType = inferDocumentMimeType(fileName, providedType) || blob.type;
+  return new File([blob], fileName, fileType ? { type: fileType } : undefined);
+}

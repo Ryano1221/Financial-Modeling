@@ -121,6 +121,10 @@ export interface UpdateClientDocumentInput {
   building?: string;
   address?: string;
   suite?: string;
+  parsed?: boolean;
+  fileMimeType?: string;
+  previewDataUrl?: string;
+  normalizeSnapshot?: DocumentNormalizeSnapshot;
 }
 
 export type DealPriority = "low" | "medium" | "high" | "critical";

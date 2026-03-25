@@ -92,8 +92,14 @@ import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCente
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCenter";
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
-import type { ClientDocumentSourceModule, ClientWorkspaceDocument } from "@/lib/workspace/types";
+import type {
+  ClientDocumentSourceModule,
+  ClientWorkspaceDocument,
+  DocumentNormalizeSnapshot,
+} from "@/lib/workspace/types";
 import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
+import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
+import { dataUrlToFile, inferDocumentMimeType } from "@/lib/workspace/document-preview";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
 const BRAND_ID_STORAGE_KEY = "lease_deck_brand_id";
 const SCENARIOS_STATE_KEY = "lease_deck_scenarios_state";
@@ -573,6 +579,7 @@ function HomeContent() {
     allDeals,
     allDocuments,
     registerDocument,
+    updateDocument,
   } = useClientWorkspace();
   const { runAiCommand, suggestPlan } = useBrokerOs();
   const workspaceScopeId = workspaceReady
@@ -602,6 +609,7 @@ function HomeContent() {
   const [activeTopTab, setActiveTopTab] = useState<FinancialAnalysesToolId>("lease-comparison");
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const comparisonSummaryRef = useRef<HTMLDivElement | null>(null);
   const [results, setResults] = useState<Record<string, CashflowResult | { error: string }>>({});
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
@@ -1052,6 +1060,27 @@ function HomeContent() {
     [workspaceScopeId]
   );
 
+  const revealComparisonSummary = useCallback(() => {
+    setActiveTopTab("lease-comparison");
+    if (typeof window === "undefined") return;
+    window.setTimeout(() => {
+      comparisonSummaryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 120);
+  }, []);
+
+  const toDocumentNormalizeSnapshot = useCallback((data: NormalizerResponse): DocumentNormalizeSnapshot | undefined => {
+    if (!data?.canonical_lease) return undefined;
+    return {
+      canonical_lease: data.canonical_lease,
+      extraction_summary: data.extraction_summary,
+      review_tasks: data.review_tasks || [],
+      field_confidence: data.field_confidence || {},
+      warnings: data.warnings || [],
+      confidence_score: Number(data.confidence_score || 0),
+      option_variants: data.option_variants || [],
+    };
+  }, []);
+
   const handleNormalizeSuccess = useCallback(
     async (
       data: NormalizerResponse,
@@ -1066,6 +1095,7 @@ function HomeContent() {
       const hasCanonical = !!data?.canonical_lease;
       console.log("[compute] about to call", { hasCanonical });
       setExtractError(null);
+      setActiveTopTab("lease-comparison");
 
       if (!data.canonical_lease) {
         console.log("[compute] skip: no canonical_lease");
@@ -1074,8 +1104,10 @@ function HomeContent() {
       }
 
       const canonical = data.canonical_lease;
+      let resolvedSourceDocumentId = source?.sourceDocumentId;
+      let resolvedSourceDocumentName = source?.name;
       if (!source?.skipDocumentRegister && activeClientId) {
-        await registerDocument({
+        const savedDocument = await registerDocument({
           clientId: activeClientId,
           name: source?.name || `Lease ${formatDateISO(new Date())}`,
           file: source?.file,
@@ -1083,6 +1115,8 @@ function HomeContent() {
           normalize: data,
           parsed: true,
         });
+        resolvedSourceDocumentId = savedDocument?.id || resolvedSourceDocumentId;
+        resolvedSourceDocumentName = savedDocument?.name || resolvedSourceDocumentName;
       }
       const documentTypeDetected = (data.extraction_summary?.document_type_detected || "unknown").trim();
       const canonicalWithDocType: BackendCanonicalLease = {
@@ -1109,26 +1143,45 @@ function HomeContent() {
           },
           preferredName || undefined,
           {
-            id: source?.sourceDocumentId,
-            name: source?.name,
+            id: resolvedSourceDocumentId,
+            name: resolvedSourceDocumentName,
           }
         );
       });
+      revealComparisonSummary();
     },
-    [addScenarioFromCanonical, runComputeForScenario, activeClientId, registerDocument]
+    [addScenarioFromCanonical, runComputeForScenario, activeClientId, registerDocument, revealComparisonSummary]
   );
 
   const handleExtractError = useCallback((message: string) => {
     setExtractError(message || null);
   }, []);
 
-  const handleExistingDocumentSelection = useCallback((document: ClientWorkspaceDocument) => {
-    const snapshot = document.normalizeSnapshot;
+  const handleExistingDocumentSelection = useCallback(async (document: ClientWorkspaceDocument) => {
+    let snapshot = document.normalizeSnapshot;
+    if (!snapshot?.canonical_lease && document.previewDataUrl) {
+      try {
+        setExtractError(`Re-parsing ${document.name} for comparison summary...`);
+        const sourceFile = await dataUrlToFile(document.previewDataUrl, document.name, document.fileMimeType);
+        const repaired = await normalizeWorkspaceDocument(sourceFile);
+        snapshot = toDocumentNormalizeSnapshot(repaired);
+        if (snapshot?.canonical_lease) {
+          updateDocument(document.id, {
+            parsed: true,
+            fileMimeType: inferDocumentMimeType(document.name, document.fileMimeType),
+            previewDataUrl: document.previewDataUrl,
+            normalizeSnapshot: snapshot,
+          });
+        }
+      } catch (error) {
+        console.warn("[financial-analyses] reparsing_selected_document_failed", error);
+      }
+    }
     if (!snapshot?.canonical_lease) {
-      setExtractError("Selected document has no parsed payload. Upload or parse the file first.");
+      setExtractError("Selected document has no parsed payload. Re-upload it on this tab and it will open the comparison summary automatically.");
       return;
     }
-      const payload: NormalizerResponse = {
+    const payload: NormalizerResponse = {
       canonical_lease: snapshot.canonical_lease,
       option_variants: snapshot.option_variants || [],
       confidence_score: Number(snapshot.confidence_score || 0),
@@ -1145,7 +1198,7 @@ function HomeContent() {
       sourceModule: "financial-analyses",
       skipDocumentRegister: true,
     });
-  }, [handleNormalizeSuccess]);
+  }, [handleNormalizeSuccess, toDocumentNormalizeSnapshot, updateDocument]);
 
   useEffect(() => {
     if (!workspaceReady || !hasRestored || !activeClientId || activePlatformModule !== "financial-analyses" || activeTopTab !== "lease-comparison") {
@@ -2404,7 +2457,7 @@ function HomeContent() {
                 showInlineDropZone={false}
                 onPersistDocument={async ({ file, normalize, parsed }) => {
                   if (!activeClientId) return;
-                  await registerDocument({
+                  const savedDocument = await registerDocument({
                     clientId: activeClientId,
                     name: file.name,
                     file,
@@ -2412,11 +2465,18 @@ function HomeContent() {
                     normalize,
                     parsed,
                   });
+                  return savedDocument
+                    ? {
+                        sourceDocumentId: savedDocument.id,
+                        fileName: savedDocument.name,
+                      }
+                    : undefined;
                 }}
                 onSuccess={(data, context) =>
                   handleNormalizeSuccess(data, {
                     name: context?.fileName,
                     file: context?.file,
+                    sourceDocumentId: context?.sourceDocumentId,
                     sourceModule: "financial-analyses",
                     skipDocumentRegister: true,
                   })
@@ -2446,6 +2506,7 @@ function HomeContent() {
             </div>
           </div>
 
+          <div ref={comparisonSummaryRef}>
           <ResultsActionsCard>
         <ScenarioList
           scenarios={scenarios}
@@ -2619,6 +2680,7 @@ function HomeContent() {
               </>
             )}
               </ResultsActionsCard>
+              </div>
         </div>
         </section>
         <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />

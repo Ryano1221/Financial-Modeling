@@ -115,6 +115,7 @@ export default function SecurityPage() {
               <li>The shared entity graph keeps companies, contacts, buildings, suites, leases, obligations, deals, proposals, analyses, surveys, activities, and tasks inside one governed architecture.</li>
               <li>The shared document system uses one client-scoped library for uploads, parsing, linking, and cross-module workflows.</li>
               <li>Openable file payloads for supported uploads can be cached locally in the originating browser to preserve reopen behavior after refresh, while cloud sync continues to store compact document metadata rather than broadening cross-client file exposure.</li>
+              <li>When a Financial Analyses document retains a local file payload but is missing a parsed snapshot, the app can re-normalize that file inside the authenticated workspace flow to restore comparison inputs without expanding the storage boundary beyond that browser and client workspace.</li>
               <li>The shared AI orchestration layer interprets prompts differently by mode, but tool execution, audit logging, and workspace boundaries remain the same.</li>
               <li>The shared export pipeline applies one authorization path for PDF, spreadsheet, and share-link generation regardless of mode.</li>
             </ul>

@@ -16,8 +16,10 @@ function sleep(ms: number): Promise<void> {
 interface ExtractUploadProps {
   showAdvancedOptions?: boolean;
   showInlineDropZone?: boolean;
-  onPersistDocument?: (payload: { file: File; normalize: NormalizerResponse | null; parsed: boolean }) => void | Promise<void>;
-  onSuccess: (data: NormalizerResponse, context?: { fileName: string; file: File }) => void | Promise<void>;
+  onPersistDocument?: (
+    payload: { file: File; normalize: NormalizerResponse | null; parsed: boolean },
+  ) => void | { sourceDocumentId?: string; fileName?: string } | Promise<void | { sourceDocumentId?: string; fileName?: string }>;
+  onSuccess: (data: NormalizerResponse, context?: { fileName: string; file: File; sourceDocumentId?: string }) => void | Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -92,12 +94,16 @@ export function ExtractUpload({
 
   const sendFile = useCallback(
     async (file: File) => {
-      const persistDocument = async (normalize: NormalizerResponse | null, parsed: boolean) => {
-        if (!onPersistDocument) return;
+      const persistDocument = async (
+        normalize: NormalizerResponse | null,
+        parsed: boolean,
+      ): Promise<{ sourceDocumentId?: string; fileName?: string } | null> => {
+        if (!onPersistDocument) return null;
         try {
-          await onPersistDocument({ file, normalize, parsed });
+          return (await onPersistDocument({ file, normalize, parsed })) || null;
         } catch (persistError) {
           console.warn("[normalize] persist_document_failed", persistError);
+          return null;
         }
       };
       const fn = file.name.toLowerCase();
@@ -156,8 +162,12 @@ export function ExtractUpload({
                   lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type,
                 });
                 console.log("[normalize] calling onSuccess");
-                await persistDocument(data, true);
-                await onSuccess(data, { fileName: file.name, file });
+                const persisted = await persistDocument(data, true);
+                await onSuccess(data, {
+                  fileName: persisted?.fileName || file.name,
+                  file,
+                  sourceDocumentId: persisted?.sourceDocumentId,
+                });
                 return;
               }
               throw new Error("Unexpected normalize response keys: " + Object.keys(data).join(","));
