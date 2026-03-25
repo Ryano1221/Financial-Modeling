@@ -2,6 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import {
+  canInlinePreviewDataUrl,
+  inferDocumentMimeType,
+  isImagePreviewDataUrl,
+  isWordDocumentMimeType,
+  isWordPreviewDataUrl,
+} from "@/lib/workspace/document-preview";
 import type { ClientDocumentType, ClientWorkspaceDocument } from "@/lib/workspace/types";
 
 function asText(value: unknown): string {
@@ -49,6 +56,10 @@ export function ClientDocumentPicker({
   const preview = useMemo(
     () => filtered.find((doc) => doc.id === previewId) ?? null,
     [filtered, previewId],
+  );
+  const previewMimeType = preview ? inferDocumentMimeType(preview.name, preview.fileMimeType) : "";
+  const previewIsWord = Boolean(
+    preview && (isWordDocumentMimeType(previewMimeType) || isWordPreviewDataUrl(preview.previewDataUrl)),
   );
 
   if (!activeClient) return null;
@@ -179,13 +190,21 @@ export function ClientDocumentPicker({
                 <p className="text-xs text-slate-300">{preview.address || preview.building || "-"}</p>
                 <p className="text-xs text-slate-300">Suite: {preview.suite || "-"}</p>
                 {preview.previewDataUrl ? (
-                  preview.previewDataUrl.startsWith("data:image/") ? (
-                    <img src={preview.previewDataUrl} alt={preview.name} className="w-full border border-white/15 max-h-[360px] object-contain" />
+                  canInlinePreviewDataUrl(preview.previewDataUrl) ? (
+                    isImagePreviewDataUrl(preview.previewDataUrl) ? (
+                      <img src={preview.previewDataUrl} alt={preview.name} className="w-full border border-white/15 max-h-[360px] object-contain" />
+                    ) : (
+                      <iframe src={preview.previewDataUrl} className="w-full h-64 border border-white/15" title={preview.name} />
+                    )
+                  ) : previewIsWord ? (
+                    <div className="border border-white/15 bg-slate-950/70 p-4 text-sm text-slate-300">
+                      Word file ready. Use the document center to open or download <span className="text-white">{preview.name}</span>.
+                    </div>
                   ) : (
-                    <iframe src={preview.previewDataUrl} className="w-full h-64 border border-white/15" title={preview.name} />
+                    <p className="text-xs text-slate-500">This file type is saved for workflow use, but it does not have an inline preview.</p>
                   )
                 ) : (
-                  <p className="text-xs text-slate-500">No binary preview available. Parsed metadata can still be used.</p>
+                  <p className="text-xs text-slate-500">No local file payload is available in this browser yet. Parsed metadata can still be used.</p>
                 )}
               </div>
             </div>

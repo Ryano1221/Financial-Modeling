@@ -28,6 +28,7 @@ import {
 } from "@/lib/workspace/storage";
 import { buildWorkspaceEntityGraph, type WorkspaceEntityGraph } from "@/lib/workspace/entities";
 import { inferWorkspaceDocumentType } from "@/lib/workspace/document-type";
+import { inferDocumentMimeType, isWordDocumentFile } from "@/lib/workspace/document-preview";
 import { getDealDocumentStageTransition } from "@/lib/workspace/deal-stage-automation";
 import { fetchWorkspaceCloudState, saveWorkspaceCloudState } from "@/lib/workspace/cloud";
 import { normalizeRepresentationMode, type RepresentationMode } from "@/lib/workspace/representation-mode";
@@ -151,15 +152,56 @@ function readDataUrl(file: File): Promise<string> {
 async function maybeBuildPreview(file?: File | null): Promise<string | undefined> {
   if (!file) return undefined;
   const fileName = asText(file.name).toLowerCase();
-  const canPreview = file.type.startsWith("image/") || file.type === "application/pdf" || fileName.endsWith(".pdf");
+  const canPreview =
+    file.type.startsWith("image/")
+    || file.type === "application/pdf"
+    || fileName.endsWith(".pdf")
+    || isWordDocumentFile(file);
   if (!canPreview) return undefined;
-  const previewSizeLimit = file.type === "application/pdf" || fileName.endsWith(".pdf") ? 12_000_000 : 2_500_000;
+  const previewSizeLimit = isWordDocumentFile(file)
+    ? 6_000_000
+    : (file.type === "application/pdf" || fileName.endsWith(".pdf") ? 12_000_000 : 2_500_000);
   if (file.size > previewSizeLimit) return undefined;
   try {
     return await readDataUrl(file);
   } catch {
     return undefined;
   }
+}
+
+function getDocumentStorageKey(session: SupabaseAuthSession | null): string {
+  const userId = asText(session?.user?.id);
+  return userId ? `${DOCUMENT_LIBRARY_STORAGE_KEY}:${userId}` : DOCUMENT_LIBRARY_STORAGE_KEY;
+}
+
+function mergeDocumentPayloads(
+  documents: ClientWorkspaceDocument[],
+  cachedDocuments: ClientWorkspaceDocument[],
+): ClientWorkspaceDocument[] {
+  if (documents.length === 0 || cachedDocuments.length === 0) return documents;
+  const cachedById = new Map(cachedDocuments.map((doc) => [doc.id, doc]));
+  return documents.map((doc) => {
+    const cached = cachedById.get(doc.id);
+    if (!cached) return doc;
+    return {
+      ...doc,
+      fileMimeType: doc.fileMimeType || cached.fileMimeType,
+      previewDataUrl: doc.previewDataUrl || cached.previewDataUrl,
+      normalizeSnapshot: doc.normalizeSnapshot || cached.normalizeSnapshot,
+    };
+  });
+}
+
+function readCachedDocuments(
+  storage: Storage,
+  session: SupabaseAuthSession | null,
+  options?: { allowLegacyFallback?: boolean },
+): ClientWorkspaceDocument[] {
+  const scopedDocuments = parseStoredDocuments(storage.getItem(getDocumentStorageKey(session)));
+  if (!session) return scopedDocuments;
+  const legacyDocuments = parseStoredDocuments(storage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
+  if (scopedDocuments.length === 0) return options?.allowLegacyFallback ? legacyDocuments : [];
+  return mergeDocumentPayloads(scopedDocuments, legacyDocuments);
 }
 
 function parseStoredClients(raw: string | null): ClientWorkspaceClient[] {
@@ -208,6 +250,7 @@ function parseStoredDocuments(raw: string | null): ClientWorkspaceDocument[] {
       const previewDataUrl = asText(obj.previewDataUrl);
       const normalizeSnapshot = toNormalizeSnapshot(obj.normalizeSnapshot);
       const sourceModule = (asText(obj.sourceModule) as ClientDocumentSourceModule) || "document-center";
+      const fileMimeType = inferDocumentMimeType(name, asText(obj.fileMimeType));
       const inferredType = inferWorkspaceDocumentType(name, sourceModule, normalizeSnapshot);
       const storedType = asText(obj.type) as ClientDocumentType;
       const normalizedType: ClientDocumentType =
@@ -228,6 +271,7 @@ function parseStoredDocuments(raw: string | null): ClientWorkspaceDocument[] {
         uploadedBy: asText(obj.uploadedBy) || "User",
         uploadedAt: asText(obj.uploadedAt) || new Date().toISOString(),
         sourceModule,
+        ...(fileMimeType ? { fileMimeType } : {}),
         ...(previewDataUrl ? { previewDataUrl } : {}),
         ...(normalizeSnapshot ? { normalizeSnapshot } : {}),
       };
@@ -410,6 +454,7 @@ function serializeWorkspaceStateForCloud(
       uploadedBy: doc.uploadedBy,
       uploadedAt: doc.uploadedAt,
       sourceModule: doc.sourceModule,
+      fileMimeType: doc.fileMimeType || undefined,
     } satisfies Omit<ClientWorkspaceDocument, "previewDataUrl" | "normalizeSnapshot">;
     if (includeSnapshots && doc.normalizeSnapshot) {
       return {
@@ -560,7 +605,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         parseStoredCrmSettingsMap(JSON.stringify(crmSettingsRaw || {}), loadedRepresentationMode),
         loadedRepresentationMode,
       );
-      const loadedDocuments = parseStoredDocuments(JSON.stringify(documentsRaw));
+      const cachedDocuments = readCachedDocuments(window.localStorage, session, { allowLegacyFallback: true });
+      const loadedDocuments = mergeDocumentPayloads(parseStoredDocuments(JSON.stringify(documentsRaw)), cachedDocuments);
       const resolvedActive =
         activeRaw && loadedClients.some((client) => client.id === activeRaw)
           ? activeRaw
@@ -590,7 +636,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         parseStoredCrmSettingsMap(window.localStorage.getItem(CRM_SETTINGS_STORAGE_KEY), loadedRepresentationMode),
         loadedRepresentationMode,
       );
-      const loadedDocuments = parseStoredDocuments(window.localStorage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
+      const loadedDocuments = readCachedDocuments(window.localStorage, session);
       const storedActiveId = asText(window.localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY));
       setRepresentationModeState(loadedRepresentationMode);
       setClients(loadedClients);
@@ -624,12 +670,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           setCloudSyncMessage("Cloud workspace loaded.");
           setCloudLastSyncedAt(asText(remote.updated_at) || null);
           try {
-            // Signed-in mode should not rely on device-local storage.
             window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
             window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
             window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
             window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
-            window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
             window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
             window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
           } catch {
@@ -706,11 +750,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
-    if (session && !cloudLocalFallback) {
-      window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
-      return;
-    }
-    window.localStorage.setItem(DOCUMENT_LIBRARY_STORAGE_KEY, JSON.stringify(allDocuments));
+    const storageKey = getDocumentStorageKey(session);
+    window.localStorage.setItem(storageKey, JSON.stringify(allDocuments));
   }, [ready, allDocuments, session, cloudLocalFallback]);
 
   useEffect(() => {
@@ -1085,6 +1126,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     const snapshot = toNormalizeSnapshot(input.normalize);
     const canonical = asCanonical(snapshot);
     const previewDataUrl = await maybeBuildPreview(input.file);
+    const fileMimeType = inferDocumentMimeType(asText(input.name), asText(input.file?.type));
 
     const resolvedType = input.type || inferWorkspaceDocumentType(input.name, input.sourceModule, snapshot);
     const document: ClientWorkspaceDocument = {
@@ -1101,6 +1143,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       uploadedBy: asText(input.uploadedBy) || asText(session?.user?.name) || asText(session?.user?.email) || "User",
       uploadedAt: new Date().toISOString(),
       sourceModule: input.sourceModule,
+      fileMimeType: fileMimeType || undefined,
       previewDataUrl,
       normalizeSnapshot: snapshot,
     };

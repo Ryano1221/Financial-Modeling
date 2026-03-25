@@ -10,6 +10,11 @@ import {
   type ClientWorkspaceDocument,
 } from "@/lib/workspace/types";
 import { getDisplayErrorMessage } from "@/lib/api";
+import {
+  inferDocumentMimeType,
+  isWordDocumentMimeType,
+  isWordPreviewDataUrl,
+} from "@/lib/workspace/document-preview";
 
 function asText(value: unknown): string {
   return String(value || "").trim();
@@ -84,8 +89,19 @@ export function ClientDocumentCenter({
     const target = documents.find((doc) => doc.id === docId);
     if (!target) return;
     if (!target.previewDataUrl) {
-      setError("This document is indexed, but opening is only available for files with a generated preview.");
+      setError("This document was indexed, but its original file payload is not available in this browser yet. Re-upload it once and future refreshes will keep it openable here.");
       return;
+    }
+    const fileMimeType = inferDocumentMimeType(target.name, target.fileMimeType);
+    if (isWordDocumentMimeType(fileMimeType) || isWordPreviewDataUrl(target.previewDataUrl)) {
+      try {
+        await triggerDownloadFromDataUrl(target.name, target.previewDataUrl);
+        setError("");
+        return;
+      } catch {
+        setError("The Word file could not be opened automatically. Try uploading it again.");
+        return;
+      }
     }
     const opened = window.open(target.previewDataUrl, "_blank", "noopener,noreferrer");
     if (!opened) {

@@ -68,6 +68,7 @@ export interface ClientWorkspaceDocument {
   uploadedBy: string;
   uploadedAt: string;
   sourceModule: ClientDocumentSourceModule;
+  fileMimeType?: string;
   previewDataUrl?: string;
   normalizeSnapshot?: DocumentNormalizeSnapshot;
 }
