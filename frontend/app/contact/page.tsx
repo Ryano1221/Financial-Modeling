@@ -109,6 +109,7 @@ export default function ContactPage() {
                 <p className="text-sm text-slate-300">3. If it is a dashboard issue, note whether it happened in the command metrics strip, the insights section, or the drill-down workspace.</p>
                 <p className="text-sm text-slate-300">4. Any AI prompt, export action, reminder trigger, or workflow step that led to the issue.</p>
                 <p className="text-sm text-slate-300">5. For upload issues, note the file type, whether extraction completed, and whether the document was saved without extraction.</p>
+                <p className="text-sm text-slate-300">5a. For Word proposal or counter uploads, include the exact heading labels used for economics sections, especially if the document uses layouts like Primary Lease Term, Rent Abatement Period, or Base Annual Net Rental Rate.</p>
                 <p className="text-sm text-slate-300">6. For Austin inventory or map issues, include the building name or address and whether the issue was in the map, stacking plan, inventory list, or detail panel.</p>
                 <p className="text-sm text-slate-300">7. For Buildings tab issues, include the filters in use, the selected building, whether you were trying to add it to Surveys or another module, and whether the right-side result list stayed in sync with the map.</p>
                 <p className="text-sm text-slate-300">8. If the issue involved suite selection, include the building, floor filter, suite status filter, selected suites, and whether the suites were added to Surveys correctly.</p>

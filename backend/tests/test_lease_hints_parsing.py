@@ -976,6 +976,87 @@ def test_extract_option_counter_terms_parses_label_value_escalation_rows() -> No
     assert options["a"]["rent_schedule"][1]["rent_psf_annual"] == 43.26
 
 
+def test_extract_option_counter_terms_parses_linebarger_counter_layout() -> None:
+    text = (
+        "PRIMARY LEASE TERM: Please provide a proposal for five (5) and seven (7) year terms. "
+        "Option A: Sixty-five (65) months from the Commencement Date. "
+        "Option B: Ninety-two (92) months from the Commencement Date.\n"
+        "RENT ABATEMENT PERIOD: Please provide proposed Rent Abatement Periods for five (5) and seven (7) year terms. "
+        "For clarity, Tenant shall not pay gross rent or parking during this period of time. "
+        "Option A: The initial five (5) months of the Term. "
+        "Option B: The initial eight (8) months of the Term.\n"
+        "BASE ANNUAL NET RENTAL RATE: Please identify the base annual net rental rate for both five (5) and seven (7) year terms. "
+        "Option A: $24.50/RSF followed by $0.50 annual increases, beginning month 18. "
+        "Option B: $23.50/RSF followed by $0.50 annual increases, beginning month 21.\n"
+        "OPERATING EXPENSES: The 2026 estimate is $15.78/RSF.\n"
+    )
+
+    option_hints = main._extract_option_counter_terms(text)
+
+    assert option_hints["selected_option"] == "b"
+    assert option_hints["term_months"] == 92
+    assert option_hints["base_rate_psf_yr"] == 23.5
+    assert option_hints["free_rent_months"] == 8
+    assert option_hints["escalation_amount_psf_yr"] == 0.5
+    assert option_hints["escalation_start_month_1"] == 21
+
+    options = {str(o["option_key"]): o for o in option_hints["options"]}
+    assert options["a"]["term_months"] == 65
+    assert options["a"]["free_rent_months"] == 5
+    assert options["a"]["base_rate_psf_yr"] == 24.5
+    assert options["a"]["rent_schedule"][0] == {"start_month": 0, "end_month": 16, "rent_psf_annual": 24.5}
+    assert options["a"]["rent_schedule"][1] == {"start_month": 17, "end_month": 28, "rent_psf_annual": 25.0}
+    assert options["b"]["term_months"] == 92
+    assert options["b"]["free_rent_months"] == 8
+    assert options["b"]["base_rate_psf_yr"] == 23.5
+    assert options["b"]["rent_schedule"][0] == {"start_month": 0, "end_month": 19, "rent_psf_annual": 23.5}
+    assert options["b"]["rent_schedule"][1] == {"start_month": 20, "end_month": 31, "rent_psf_annual": 24.0}
+
+
+def test_extract_hints_parses_linebarger_landlord_response_options() -> None:
+    text = (
+        "BUILDING: The Plaza Building located at 2277 Plaza Drive, Sugar Land, TX 77479\n"
+        "PREMISES: Ste. 600, approximately 3,118 rentable square feet located on floor 6.\n"
+        "COMMENCEMENT DATE: Upon the earlier of i) 10 days following substantial completion of Landlord's turn-key improvements "
+        "or ii) Tenant's occupancy of the Premises. At present, Landlord is targeting Q4 2026.\n"
+        "RENT ABATEMENT PERIOD: Please provide proposed Rent Abatement Periods for five (5) and seven (7) year terms. "
+        "For clarity, Tenant shall not pay gross rent or parking during this period of time. "
+        "Option A: The initial two (2) months of the Term. "
+        "Option B: The initial five (5) months of the Term.\n"
+        "PRIMARY LEASE TERM: Please provide a proposal for five (5) and seven (7) year terms. "
+        "Option A: Sixty-two (62) months from the Commencement Date. "
+        "Option B: Eighty-nine (89) months from the Commencement Date.\n"
+        "PARKING: Tenant shall lease 3.5 unreserved parking passes per 1,000 RSF leased. "
+        "Unreserved parking charges are currently $35.00 per month per pass plus tax.\n"
+        "BASE ANNUAL NET RENTAL RATE: Please identify the base annual net rental rate for both five (5) and seven (7) year terms. "
+        "Option A: $26.50/RSF followed by $0.50 annual increases, beginning month 13. "
+        "Option B: $25.50/RSF followed by $0.50 annual increases, beginning month 13.\n"
+        "OPERATING EXPENSES: The 2026 estimate is $15.78/RSF.\n"
+    )
+
+    hints = main._extract_lease_hints(text, "Linebarger - LL Response 3.22.26.docx", "test-rid")
+
+    assert hints["building_name"] == "The Plaza Building"
+    assert hints["suite"] == "600"
+    assert hints["floor"] == "6"
+    assert hints["rsf"] == 3118.0
+    assert hints["term_months"] == 89
+    assert hints["free_rent_scope"] == "gross"
+    assert hints["free_rent_end_month"] == 4
+    assert hints["parking_ratio"] == 3.5
+    assert hints["parking_rate_monthly"] == 35.0
+    assert hints["opex_psf_year_1"] == 15.78
+    assert hints["rent_schedule"][0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 25.5}
+    assert hints["rent_schedule"][1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 26.0}
+    assert len(hints["option_variants"]) == 2
+    assert hints["option_variants"][0]["term_months"] == 62
+    assert hints["option_variants"][0]["free_rent_months"] == 2
+    assert hints["option_variants"][0]["rent_schedule"][0] == {"start_month": 0, "end_month": 11, "rent_psf_annual": 26.5}
+    assert hints["option_variants"][1]["term_months"] == 89
+    assert hints["option_variants"][1]["free_rent_months"] == 5
+    assert hints["option_variants"][1]["rent_schedule"][1] == {"start_month": 12, "end_month": 23, "rent_psf_annual": 26.0}
+
+
 def test_extract_hints_prefers_parseable_expiration_when_earlier_match_is_malformed() -> None:
     text = (
         "Sublease Term | Expiring on 31, 2036.\n"

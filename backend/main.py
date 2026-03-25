@@ -4925,6 +4925,30 @@ def _extract_option_blocks(section_text: str) -> list[tuple[str, str]]:
     return blocks
 
 
+def _extract_labeled_section(
+    text: str,
+    *,
+    heading_patterns: tuple[str, ...],
+    stop_heading_patterns: tuple[str, ...],
+) -> str:
+    if not text:
+        return ""
+    heading_group = "|".join(pattern for pattern in heading_patterns if pattern)
+    if not heading_group:
+        return ""
+    stop_group = "|".join(pattern for pattern in stop_heading_patterns if pattern)
+    if stop_group:
+        pattern = re.compile(
+            rf"(?is)\b(?:{heading_group})\s*:\s*(.+?)(?=\b(?:{stop_group})\s*:|$)"
+        )
+    else:
+        pattern = re.compile(rf"(?is)\b(?:{heading_group})\s*:\s*(.+)$")
+    matches = list(pattern.finditer(text))
+    if not matches:
+        return ""
+    return str(matches[-1].group(1) or "").strip()
+
+
 def _normalize_option_key(raw_label: str | None) -> str:
     value = (raw_label or "").strip().lower()
     if value in {"one", "1", "a"}:
@@ -4956,6 +4980,7 @@ def _build_option_rent_schedule(
     base_rate_psf_yr: float,
     escalation_pct: float,
     escalation_start_month_1: int | None = None,
+    escalation_amount_psf_yr: float | None = None,
 ) -> list[dict]:
     option_schedule: list[dict] = []
     term = max(0, int(term_months))
@@ -4963,6 +4988,7 @@ def _build_option_rent_schedule(
     if term <= 0 or base_rate < 2.0:
         return option_schedule
     escalation = max(0.0, float(escalation_pct)) / 100.0
+    escalation_amount = max(0.0, float(escalation_amount_psf_yr or 0.0))
     start_month_1 = _coerce_int_token(escalation_start_month_1, 13) or 13
     start_month_1 = max(1, start_month_1)
 
@@ -4985,7 +5011,10 @@ def _build_option_rent_schedule(
     escalation_idx = 1 if start_month_1 > 1 else 0
     while cursor < term:
         end_month = min(term - 1, cursor + 11)
-        annual_rate = float(round(base_rate * ((1.0 + escalation) ** escalation_idx), 2))
+        if escalation_amount > 0:
+            annual_rate = float(round(base_rate + (escalation_amount * escalation_idx), 2))
+        else:
+            annual_rate = float(round(base_rate * ((1.0 + escalation) ** escalation_idx), 2))
         option_schedule.append(
             {
                 "start_month": int(cursor),
@@ -5040,6 +5069,16 @@ def _extract_free_rent_months_from_option_block(block: str) -> int | None:
     low = block.lower()
     if re.search(r"\bno\s+(?:free\s+rent|base\s+rental?\s+abatement|rent\s+abatement)\b", low):
         return 0
+    implicit_initial_match = re.search(
+        r"(?i)\b(?:the\s+)?(?:initial|first)\s+([a-z]+(?:-[a-z]+)?)?\s*\(?(\d{1,2})\)?\s*months?\b",
+        block,
+    )
+    if implicit_initial_match:
+        digit_val = _coerce_int_token(implicit_initial_match.group(2), 0) or 0
+        word_val = _word_token_to_int(implicit_initial_match.group(1))
+        value = max(digit_val, word_val or 0)
+        if 0 <= value <= 24:
+            return value
 
     def _looks_like_distribution_window(snippet: str) -> bool:
         local_low = str(snippet or "").lower()
@@ -5327,6 +5366,39 @@ def _extract_annual_rent_escalation_pct(block: str) -> float | None:
     return best_pct
 
 
+def _extract_annual_rent_escalation_amount_psf(block: str) -> float | None:
+    if not block:
+        return None
+    candidates: list[tuple[int, float, int]] = []
+    patterns: list[tuple[str, int]] = [
+        (
+            r"(?i)\bfollowed\s+by\s+\$\s*([\d,]+(?:\.\d{1,4})?)\s*"
+            r"(?:annual|per\s+annum|yearly)\s+(?:base\s+rent\s+)?(?:increase|increases|escalation|escalations)\b",
+            8,
+        ),
+        (
+            r"(?i)\$\s*([\d,]+(?:\.\d{1,4})?)\s*"
+            r"(?:annual|per\s+annum|yearly)\s+(?:base\s+rent\s+)?(?:increase|increases|escalation|escalations)\b",
+            6,
+        ),
+        (
+            r"(?i)\b(?:annual|per\s+annum|yearly)\s+(?:base\s+rent\s+)?(?:increase|increases|escalation|escalations)\b"
+            r"[^\n$]{0,40}\$\s*([\d,]+(?:\.\d{1,4})?)",
+            5,
+        ),
+    ]
+    for pattern, score in patterns:
+        for match in re.finditer(pattern, block):
+            amount = _coerce_float_token(match.group(1), 0.0) or 0.0
+            if amount <= 0 or amount > 25:
+                continue
+            candidates.append((score, float(amount), match.start()))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda row: (-row[0], row[2]))
+    return candidates[0][1]
+
+
 def _extract_annual_rent_escalation_start_month(block: str) -> int | None:
     if not block:
         return None
@@ -5349,27 +5421,64 @@ def _extract_option_counter_terms(text: str) -> dict:
     if "option" not in flat.lower():
         return {}
 
-    term_matches = list(
-        re.finditer(
-            r"(?is)\bterm\s*:\s*(.+?)\b(?:base\s+rent(?:al)?(?:\s+rate)?|improvements?|operating\s+expenses|parking)\s*:",
-            flat,
-        )
+    stop_headings = (
+        r"primary\s+lease\s+term",
+        r"lease\s+term",
+        r"term",
+        r"rent\s+abatement\s+period",
+        r"base\s+rent(?:al)?\s+abatement",
+        r"base\s+annual\s+net\s+rental\s+rate",
+        r"base\s+annual\s+rental\s+rate",
+        r"base\s+rental?\s+rate",
+        r"base\s+rent(?:al)?(?:\s+rate)?",
+        r"use",
+        r"default\s+provision",
+        r"operating\s+expenses",
+        r"parking",
+        r"relocation",
+        r"repairs?\s+and\s+maintenance",
+        r"condition\s+of\s+premises(?:\s+and\s+common\s+areas)?",
+        r"tenant\s+improvement\s+allowance",
+        r"architectural\s+services",
+        r"improvements?",
+        r"landlord\s+work",
+        r"termination\s+option",
+        r"renewal\s+option",
+        r"right\s+of\s+first\s+refusal",
+        r"assignment\s*&\s*sublease\s+right",
+        r"signage",
+        r"holding\s+over",
+        r"amenities",
+        r"management",
     )
-    term_section = term_matches[-1].group(1) if term_matches else flat
-    base_matches = list(
-        re.finditer(
-            r"(?is)\bbase\s+rent(?:al)?(?:\s+rate)?\s*:\s*(.+?)\b(?:base\s+rent(?:al)?\s+abatement|improvements?|operating\s+expenses|parking|landlord\s+work)\s*:",
-            flat,
-        )
+    term_section = _extract_labeled_section(
+        flat,
+        heading_patterns=(r"primary\s+lease\s+term", r"lease\s+term", r"term"),
+        stop_heading_patterns=stop_headings,
     )
-    base_section = base_matches[-1].group(1) if base_matches else flat
-    abatement_matches = list(
-        re.finditer(
-            r"(?is)\bbase\s+rent(?:al)?\s+abatement\s*:\s*(.+?)\b(?:improvements?|operating\s+expenses|parking|landlord\s+work|renewal\s+option)\s*:",
-            flat,
-        )
+    base_section = _extract_labeled_section(
+        flat,
+        heading_patterns=(
+            r"base\s+annual\s+net\s+rental\s+rate",
+            r"base\s+annual\s+rental\s+rate",
+            r"base\s+rental?\s+rate",
+            r"base\s+rent(?:al)?(?:\s+rate)?",
+        ),
+        stop_heading_patterns=stop_headings,
     )
-    abatement_section = abatement_matches[-1].group(1) if abatement_matches else ""
+    abatement_section = _extract_labeled_section(
+        flat,
+        heading_patterns=(
+            r"rent\s+abatement\s+period",
+            r"base\s+rent(?:al)?\s+abatement",
+            r"rent\s+abatement",
+        ),
+        stop_heading_patterns=stop_headings,
+    )
+    if not term_section:
+        term_section = flat
+    if not base_section:
+        base_section = flat
     esc_default_from_base = _extract_annual_rent_escalation_pct(base_section)
     esc_default_from_flat = _extract_annual_rent_escalation_pct(flat)
     escalation_pct_default = float(
@@ -5441,6 +5550,12 @@ def _extract_option_counter_terms(text: str) -> dict:
         block_escalation = _extract_annual_rent_escalation_pct(block)
         if block_escalation is not None:
             data["escalation_pct"] = block_escalation
+        block_escalation_amount = _extract_annual_rent_escalation_amount_psf(block)
+        if block_escalation_amount is not None:
+            data["escalation_amount_psf_yr"] = float(block_escalation_amount)
+        block_escalation_start = _extract_annual_rent_escalation_start_month(block)
+        if block_escalation_start is not None:
+            data["escalation_start_month_1"] = int(block_escalation_start)
 
     if not option_data:
         return {}
@@ -5451,12 +5566,16 @@ def _extract_option_counter_terms(text: str) -> dict:
         free_rent_months = _coerce_int_token(raw.get("free_rent_months"), 0) or 0
         base_rate_psf_yr = _coerce_float_token(raw.get("base_rate_psf_yr"), 0.0) or 0.0
         escalation_pct = _coerce_float_token(raw.get("escalation_pct"), escalation_pct_default) or escalation_pct_default
+        escalation_amount_psf_yr = _coerce_float_token(raw.get("escalation_amount_psf_yr"), 0.0) or 0.0
+        escalation_start_month_1 = _coerce_int_token(raw.get("escalation_start_month_1"), None)
         option_entry = {
             "option_key": key,
             "option_label": str(raw.get("option_label") or _option_display_label(key)),
             "term_months": term_months,
             "base_rate_psf_yr": base_rate_psf_yr,
             "escalation_pct": escalation_pct,
+            "escalation_amount_psf_yr": float(escalation_amount_psf_yr),
+            "escalation_start_month_1": int(escalation_start_month_1) if escalation_start_month_1 is not None else None,
         }
         option_free_periods = _normalize_option_free_rent_periods(raw.get("free_rent_periods"), term_months=term_months)
         if not option_free_periods and free_rent_months > 0:
@@ -5482,6 +5601,8 @@ def _extract_option_counter_terms(text: str) -> dict:
             term_months=term_months,
             base_rate_psf_yr=base_rate_psf_yr,
             escalation_pct=escalation_pct,
+            escalation_start_month_1=escalation_start_month_1,
+            escalation_amount_psf_yr=escalation_amount_psf_yr,
         )
         if rent_schedule:
             option_entry["rent_schedule"] = rent_schedule
@@ -5505,6 +5626,8 @@ def _extract_option_counter_terms(text: str) -> dict:
         ),
         "base_rate_psf_yr": _coerce_float_token(preferred.get("base_rate_psf_yr"), 0.0) or 0.0,
         "escalation_pct": _coerce_float_token(preferred.get("escalation_pct"), escalation_pct_default) or escalation_pct_default,
+        "escalation_amount_psf_yr": _coerce_float_token(preferred.get("escalation_amount_psf_yr"), 0.0) or 0.0,
+        "escalation_start_month_1": _coerce_int_token(preferred.get("escalation_start_month_1"), None),
         "options": options,
     }
 
@@ -7442,21 +7565,32 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
 
     option_base_rate = _coerce_float_token(option_hints.get("base_rate_psf_yr"), 0.0) or 0.0
     option_escalation_pct = _coerce_float_token(option_hints.get("escalation_pct"), 0.0) or 0.0
+    option_escalation_amount_psf_yr = _coerce_float_token(option_hints.get("escalation_amount_psf_yr"), 0.0) or 0.0
+    option_escalation_start_month_1 = _coerce_int_token(
+        option_hints.get("escalation_start_month_1"),
+        explicit_escalation_start_month_1 or 13,
+    )
     option_term = _coerce_int_token(hints.get("term_months"), 0) or 0
     option_escalation_effective: float | None = None
     if option_escalation_pct > 0:
         option_escalation_effective = float(option_escalation_pct)
     elif explicit_escalation_pct is not None and explicit_escalation_pct > 0:
         option_escalation_effective = float(explicit_escalation_pct)
-    elif not (hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []):
+    elif (
+        option_escalation_amount_psf_yr <= 0
+        and not (hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else [])
+    ):
         option_escalation_effective = 3.0
 
-    if option_base_rate >= 2.0 and option_term > 0 and option_escalation_effective is not None:
+    if option_base_rate >= 2.0 and option_term > 0 and (
+        option_escalation_effective is not None or option_escalation_amount_psf_yr > 0
+    ):
         option_schedule = _build_option_rent_schedule(
             term_months=int(option_term),
             base_rate_psf_yr=float(option_base_rate),
-            escalation_pct=float(option_escalation_effective),
-            escalation_start_month_1=explicit_escalation_start_month_1 or 13,
+            escalation_pct=float(option_escalation_effective or 0.0),
+            escalation_start_month_1=option_escalation_start_month_1,
+            escalation_amount_psf_yr=float(option_escalation_amount_psf_yr),
         )
         if option_schedule:
             current = hints.get("rent_schedule") if isinstance(hints.get("rent_schedule"), list) else []
@@ -7523,12 +7657,16 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 variant_free_scope = "gross" if variant_scope_set == {"gross"} else "base"
         variant_base_rate = _coerce_float_token(raw_variant.get("base_rate_psf_yr"), 0.0) or 0.0
         variant_escalation_pct = _coerce_float_token(raw_variant.get("escalation_pct"), 0.0) or 0.0
+        variant_escalation_amount_psf_yr = _coerce_float_token(raw_variant.get("escalation_amount_psf_yr"), 0.0) or 0.0
+        variant_escalation_start_month_1 = _coerce_int_token(raw_variant.get("escalation_start_month_1"), 13)
         variant_rent_schedule = raw_variant.get("rent_schedule") if isinstance(raw_variant.get("rent_schedule"), list) else []
         if not variant_rent_schedule:
             variant_rent_schedule = _build_option_rent_schedule(
                 term_months=int(variant_term),
                 base_rate_psf_yr=float(variant_base_rate),
                 escalation_pct=float(variant_escalation_pct),
+                escalation_start_month_1=variant_escalation_start_month_1,
+                escalation_amount_psf_yr=float(variant_escalation_amount_psf_yr),
             )
         variant_entry: dict = {
             "option_key": option_key,
@@ -7539,6 +7677,8 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             "free_rent_periods": variant_free_periods,
             "base_rate_psf_yr": float(variant_base_rate),
             "escalation_pct": float(variant_escalation_pct),
+            "escalation_amount_psf_yr": float(variant_escalation_amount_psf_yr),
+            "escalation_start_month_1": int(variant_escalation_start_month_1) if variant_escalation_start_month_1 is not None else None,
             "rent_schedule": variant_rent_schedule,
         }
         if hints.get("commencement_date"):

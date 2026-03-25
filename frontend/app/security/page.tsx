@@ -124,6 +124,7 @@ export default function SecurityPage() {
             <ul className="list-disc space-y-2 pl-5 text-sm text-slate-300 sm:text-base">
               <li>Production traffic is pinned to <strong>thecremodel.com</strong> through canonical-host controls.</li>
               <li>Lease uploads keep file-type checks, timeout handling, OCR guardrails, and user-safe error messaging in place before processing continues.</li>
+              <li>DOCX proposal normalization now also handles option-driven Word layouts with heading-based parsing and bounded rent-step reconstruction, which improves extraction coverage without widening document access beyond the existing authenticated upload path.</li>
               <li>Normalization guardrails preserve explicit carry-forward economics cues, so clauses that point back to the existing lease structure can be modeled without letting speculative proposal language overwrite unrelated protected records.</li>
               <li>Contact and proof endpoints continue to use same-origin application routes so browser-facing support flows stay aligned with the live production domain.</li>
             </ul>
