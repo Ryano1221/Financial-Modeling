@@ -39,12 +39,18 @@ interface ClientDocumentCenterProps {
   showDropZone?: boolean;
   sourceModule?: ClientDocumentSourceModule;
   globalDropLabel?: string;
+  onDocumentIngested?: (payload: {
+    document: ClientWorkspaceDocument;
+    file: File;
+    normalize: Awaited<ReturnType<typeof normalizeWorkspaceDocument>>;
+  }) => void | Promise<void>;
 }
 
 export function ClientDocumentCenter({
   showDropZone = true,
   sourceModule = "document-center",
   globalDropLabel = "Drop files anywhere to save into this client and update the active workflow",
+  onDocumentIngested,
 }: ClientDocumentCenterProps) {
   const { activeClient, documents, registerDocument, updateDocument, removeDocument } = useClientWorkspace();
   const [loading, setLoading] = useState(false);
@@ -254,7 +260,7 @@ export function ClientDocumentCenter({
           normalize = null;
         }
 
-        await registerDocument({
+        const savedDocument = await registerDocument({
           clientId: activeClient.id,
           name: file.name,
           file,
@@ -262,6 +268,17 @@ export function ClientDocumentCenter({
           normalize,
           parsed: Boolean(normalize),
         });
+        if (savedDocument) {
+          try {
+            await onDocumentIngested?.({
+              document: savedDocument,
+              file,
+              normalize,
+            });
+          } catch (ingestError) {
+            console.warn("[document-center] workflow_ingest_failed", ingestError);
+          }
+        }
         processed += 1;
       }
       setStatus(`Ingested ${processed} document${processed === 1 ? "" : "s"} for ${activeClient.name}.`);
@@ -270,7 +287,7 @@ export function ClientDocumentCenter({
     } finally {
       setLoading(false);
     }
-  }, [activeClient, loading, registerDocument, sourceModule]);
+  }, [activeClient, loading, onDocumentIngested, registerDocument, sourceModule]);
 
   const isFileDragEvent = useCallback((event: DragEvent): boolean => {
     const dt = event.dataTransfer;

@@ -1118,6 +1118,9 @@ function HomeContent() {
         resolvedSourceDocumentId = savedDocument?.id || resolvedSourceDocumentId;
         resolvedSourceDocumentName = savedDocument?.name || resolvedSourceDocumentName;
       }
+      if (source?.sourceModule === "financial-analyses" && resolvedSourceDocumentId) {
+        autoImportedAnalysisDocumentIdsRef.current[resolvedSourceDocumentId] = true;
+      }
       const documentTypeDetected = (data.extraction_summary?.document_type_detected || "unknown").trim();
       const canonicalWithDocType: BackendCanonicalLease = {
         ...canonical,
@@ -1202,6 +1205,24 @@ function HomeContent() {
       skipDocumentRegister: true,
     });
   }, [handleNormalizeSuccess, toDocumentNormalizeSnapshot, updateDocument]);
+
+  const handleFinancialAnalysisDocumentIngested = useCallback(async (payload: {
+    document: ClientWorkspaceDocument;
+    file: File;
+    normalize: NormalizerResponse | null;
+  }) => {
+    if (activePlatformModule !== "financial-analyses" || activeDocumentDropSourceModule !== "financial-analyses") {
+      return;
+    }
+    if (!payload.normalize?.canonical_lease) return;
+    await handleNormalizeSuccess(payload.normalize, {
+      name: payload.document.name,
+      file: payload.file,
+      sourceDocumentId: payload.document.id,
+      sourceModule: "financial-analyses",
+      skipDocumentRegister: true,
+    });
+  }, [activeDocumentDropSourceModule, activePlatformModule, handleNormalizeSuccess]);
 
   useEffect(() => {
     if (!workspaceReady || !hasRestored || !activeClientId || activePlatformModule !== "financial-analyses" || activeTopTab !== "lease-comparison") {
@@ -2446,7 +2467,11 @@ function HomeContent() {
         if (activePlatformModule === "financial-analyses") {
           return activeTopTab === "lease-comparison" ? (
       <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-        <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+        <ClientDocumentCenter
+          sourceModule={activeDocumentDropSourceModule}
+          globalDropLabel={activeDocumentDropLabel}
+          onDocumentIngested={handleFinancialAnalysisDocumentIngested}
+        />
         <section id="extract" className="scroll-mt-24 bg-grid">
         <div className="mx-auto w-full max-w-[96vw] space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
           <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
