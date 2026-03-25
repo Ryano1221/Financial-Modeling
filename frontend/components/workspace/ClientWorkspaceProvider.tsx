@@ -1139,7 +1139,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       building: asText(input.building) || asText(canonical?.building_name || canonical?.premises_name),
       address: asText(input.address) || asText(canonical?.address),
       suite: asText(input.suite) || asText(canonical?.suite),
-      parsed: input.parsed ?? Boolean(snapshot?.canonical_lease),
+      parsed: Boolean(snapshot?.canonical_lease) && (input.parsed ?? true),
       uploadedBy: asText(input.uploadedBy) || asText(session?.user?.name) || asText(session?.user?.email) || "User",
       uploadedAt: new Date().toISOString(),
       sourceModule: input.sourceModule,

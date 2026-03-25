@@ -116,6 +116,7 @@ export default function SecurityPage() {
               <li>The shared document system uses one client-scoped library for uploads, parsing, linking, and cross-module workflows.</li>
               <li>Openable file payloads for supported uploads can be cached locally in the originating browser to preserve reopen behavior after refresh, while cloud sync continues to store compact document metadata rather than broadening cross-client file exposure.</li>
               <li>When a Financial Analyses document retains a local file payload but is missing a parsed snapshot, the app can re-normalize that file inside the authenticated workspace flow to restore comparison inputs without expanding the storage boundary beyond that browser and client workspace. The same scoped rule now applies whether the document entered through the extract widget or the tab-wide drag-and-drop ingestion path.</li>
+              <li>Financial Analyses intake now requires a canonical lease before a document is treated as parsed, which prevents false-positive upload states from silently skipping the comparison summary.</li>
               <li>The shared AI orchestration layer interprets prompts differently by mode, but tool execution, audit logging, and workspace boundaries remain the same.</li>
               <li>The shared export pipeline applies one authorization path for PDF, spreadsheet, and share-link generation regardless of mode.</li>
             </ul>

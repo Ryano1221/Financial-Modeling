@@ -1211,7 +1211,7 @@ function HomeContent() {
     file: File;
     normalize: NormalizerResponse | null;
   }) => {
-    if (activePlatformModule !== "financial-analyses" || activeDocumentDropSourceModule !== "financial-analyses") {
+    if (activePlatformModule !== "financial-analyses") {
       return;
     }
     if (!payload.normalize?.canonical_lease) return;
@@ -2715,7 +2715,11 @@ function HomeContent() {
       </main>
       ) : (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+          <ClientDocumentCenter
+            sourceModule={activeDocumentDropSourceModule}
+            globalDropLabel={activeDocumentDropLabel}
+            onDocumentIngested={handleFinancialAnalysisDocumentIngested}
+          />
           <section className="scroll-mt-24 bg-grid mt-6 space-y-4">
             <div className="mx-auto w-full max-w-[96vw] space-y-4">
               {!authSession && (

@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
-import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
+import { isParseableWorkspaceDocument, normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import {
   CLIENT_DOCUMENT_TYPES,
   type ClientDocumentSourceModule,
@@ -251,13 +251,21 @@ export function ClientDocumentCenter({
 
     try {
       let processed = 0;
+      const extractionIssues: string[] = [];
       for (const file of files) {
         setStatus(`Ingesting ${file.name}...`);
         let normalize = null;
+        let normalizeError = "";
+        const parseable = isParseableWorkspaceDocument(file.name);
         try {
           normalize = await normalizeWorkspaceDocument(file);
-        } catch {
+          if (parseable && !normalize?.canonical_lease) {
+            normalize = null;
+            normalizeError = "Extraction completed, but no lease payload was returned.";
+          }
+        } catch (normalizeProblem) {
           normalize = null;
+          normalizeError = getDisplayErrorMessage(normalizeProblem);
         }
 
         const savedDocument = await registerDocument({
@@ -266,9 +274,9 @@ export function ClientDocumentCenter({
           file,
           sourceModule,
           normalize,
-          parsed: Boolean(normalize),
+          parsed: Boolean(normalize?.canonical_lease),
         });
-        if (savedDocument) {
+        if (savedDocument && normalize?.canonical_lease) {
           try {
             await onDocumentIngested?.({
               document: savedDocument,
@@ -279,9 +287,13 @@ export function ClientDocumentCenter({
             console.warn("[document-center] workflow_ingest_failed", ingestError);
           }
         }
+        if (parseable && normalizeError) {
+          extractionIssues.push(`${file.name}: ${normalizeError}`);
+        }
         processed += 1;
       }
       setStatus(`Ingested ${processed} document${processed === 1 ? "" : "s"} for ${activeClient.name}.`);
+      setError(extractionIssues.join(" "));
     } catch (err) {
       setError(getDisplayErrorMessage(err));
     } finally {
