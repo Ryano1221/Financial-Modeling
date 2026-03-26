@@ -1055,6 +1055,72 @@ def test_normalize_impl_applies_mixed_and_distributed_option_abatements(monkeypa
     ]
 
 
+def test_normalize_impl_prefers_hint_driven_landlord_response_terms(monkeypatch) -> None:
+    text = (
+        "Landlord Response 03.23.2026\n"
+        "BUILDING: The Plaza Building located at 2277 Plaza Drive, Sugar Land, TX 77479\n"
+        "PREMISES: Ste. 600, approximately 3,118 rentable square feet located on floor 6.\n"
+        "COMMENCEMENT DATE: Upon the earlier of i) 10 days following substantial completion of Landlord's turn-key improvements "
+        "or ii) Tenant's occupancy of the Premises. At present, Landlord is targeting Q4 2026.\n"
+        "RENT ABATEMENT PERIOD: Please provide proposed Rent Abatement Periods for five (5) and seven (7) year terms. "
+        "For clarity, Tenant shall not pay gross rent or parking during this period of time. "
+        "Option A: The initial two (2) months of the Term. "
+        "Option B: The initial five (5) months of the Term.\n"
+        "PRIMARY LEASE TERM: Please provide a proposal for five (5) and seven (7) year terms. "
+        "Option A: Sixty-two (62) months from the Commencement Date. "
+        "Option B: Eighty-nine (89) months from the Commencement Date.\n"
+        "PARKING: Tenant shall lease 3.5 unreserved parking passes per 1,000 RSF leased. "
+        "Unreserved parking charges are currently $35.00 per month per pass plus tax.\n"
+        "BASE ANNUAL NET RENTAL RATE: Please identify the base annual net rental rate for both five (5) and seven (7) year terms. "
+        "Option A: $26.50/RSF followed by $0.50 annual increases, beginning month 13. "
+        "Option B: $25.50/RSF followed by $0.50 annual increases, beginning month 13.\n"
+        "OPERATING EXPENSES: The 2026 estimate is $15.78/RSF.\n"
+    )
+
+    monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: (text, "docx"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: (_ for _ in ()).throw(AssertionError("generic scenario extraction should not run")),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="Linebarger - LL Response 3.22.26.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+
+    canonical = result.canonical_lease
+    assert canonical.building_name == "The Plaza Building"
+    assert canonical.address == "2277 Plaza Drive, Sugar Land, TX 77479"
+    assert canonical.suite == "600"
+    assert canonical.floor == "6"
+    assert canonical.rsf == 3118.0
+    assert canonical.commencement_date == date(2026, 11, 1)
+    assert canonical.expiration_date == date(2034, 3, 31)
+    assert canonical.term_months == 89
+    assert canonical.free_rent_months == 5
+    assert canonical.free_rent_scope == "gross"
+    assert [(p.start_month, p.end_month, p.scope) for p in canonical.free_rent_periods] == [(0, 4, "gross")]
+    assert canonical.parking_ratio == 3.5
+    assert canonical.parking_count == 11
+    assert canonical.parking_rate_monthly == 35.0
+    assert canonical.opex_psf_year_1 == 15.78
+    assert result.missing_fields == []
+    assert len(result.option_variants) == 2
+    assert result.confidence_score >= 0.85
+    assert not any(task.severity == "blocker" for task in result.review_tasks)
+
+
 def test_normalize_impl_full_service_forces_zero_opex_when_hints_conflict(monkeypatch) -> None:
     text = (
         "LEASE TYPE: FSG\n"

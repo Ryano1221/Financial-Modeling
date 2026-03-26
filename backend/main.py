@@ -3015,6 +3015,11 @@ def _clean_address_candidate(raw: str) -> str:
     v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:|-")
     v = re.sub(r"(?i)\s+\b(?:contraction|contract)\s+premises\b.*$", "", v).strip(" ,.;:|-")
     v = re.sub(r"(?i)\s+\b(?:premises|term|lease term)\b\s*[:#-].*$", "", v).strip(" ,.;:|-")
+    v = re.sub(
+        r"(?i)\b(?:tenant|landlord|premises|commencement\s+date|rent\s+abatement\s+period|primary\s+lease\s+term|use|default\s+provision|parking)\b.*$",
+        "",
+        v,
+    ).strip(" ,.;:|-")
     v = re.split(
         r"(?i)\b(?:lease\s+proposal(?:\s+for)?|proposal\s+for|tenant\s+broker|lease\b|premises|square\s+footage|commencement|term|base\s+rent|operating\s+expenses|escalation|abatement|tenant\s+improvements|parking\s+ratio|hours\s+of\s+operation|after\s+hours\s+hvac|signage|fiber\s+infrastructure|security\s+deposit|commission\s+agreement|contingency)\b",
         v,
@@ -3104,6 +3109,7 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:|-")
     if not v:
         return ""
+    raw_candidate = v
     # Remove common leading labels.
     v = re.sub(r"(?i)^(?:premises|premises name|building|building name|property|property name|address)\s*[:#-]\s*", "", v).strip(" ,.;:|-")
     # Remove suite tokens from candidate building names.
@@ -3121,7 +3127,13 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     v = re.sub(r"(?i)^.*?\bfor\s+office(?:\s+space)?\s+at\s+", "", v).strip(" ,.;:|-")
     v = re.sub(r"(?i)^.*?\bas\s+a\s+tenant\s+at\s+", "", v).strip(" ,.;:|-")
     v = re.sub(r"(?i)\bhttps?://\S+", "", v).strip(" ,.;:|-")
-    if re.search(r"(?i)\s+at\s+", v):
+    preserve_leading_named_building = bool(
+        re.search(
+            r"(?i)\b(?:building|tower|plaza|center|centre|campus|park|place)\b",
+            re.split(r"(?i)\s+located\s+at\s+", raw_candidate, maxsplit=1)[0],
+        )
+    )
+    if re.search(r"(?i)\s+at\s+", v) and not preserve_leading_named_building:
         at_parts = [part.strip(" ,.;:|-") for part in re.split(r"(?i)\s+at\s+", v) if part.strip(" ,.;:|-")]
         if len(at_parts) >= 2:
             trailing = at_parts[-1]
@@ -4258,6 +4270,25 @@ def _parse_month_year_token_as_last_day(value: str) -> Optional[date]:
     return date(parsed.year, parsed.month, last_day)
 
 
+def _parse_quarter_year_token_as_first_day(value: str) -> Optional[date]:
+    token = " ".join((value or "").split()).strip(" ,.;:-")
+    if not token:
+        return None
+    match = re.search(r"(?i)\bQ([1-4])\s*(\d{4})\b", token)
+    if not match:
+        match = re.search(r"(?i)\b([1-4])(?:st|nd|rd|th)?\s+quarter\s+(\d{4})\b", token)
+    if not match:
+        return None
+    quarter = _coerce_int_token(match.group(1), 0) or 0
+    year = _coerce_int_token(match.group(2), 0) or 0
+    if quarter <= 0 or year <= 0:
+        return None
+    month = {1: 1, 2: 4, 3: 7, 4: 10}.get(int(quarter))
+    if month is None:
+        return None
+    return date(int(year), int(month), 1)
+
+
 def _extract_best_commencement_date_from_clause(text: str) -> Optional[date]:
     if not text:
         return None
@@ -4328,6 +4359,25 @@ def _derive_relative_commencement_date(text: str) -> Optional[date]:
     anchor_date: Optional[date] = _find_anchor_date(local_span)
     if anchor_date is None:
         anchor_date = _find_anchor_date(text)
+    if anchor_date is None:
+        quarter_patterns = [
+            r"(?is)\b(?:target(?:ing|ed)?|anticipated|expected|estimated)\b[^\n]{0,80}\b(Q[1-4]\s*\d{4}|[1-4](?:st|nd|rd|th)?\s+quarter\s+\d{4})\b",
+            r"(?is)\b(?:delivery\s+date|substantial\s+completion)\b[^\n]{0,120}\b(Q[1-4]\s*\d{4}|[1-4](?:st|nd|rd|th)?\s+quarter\s+\d{4})\b",
+        ]
+
+        def _find_quarter_anchor(scope_text: str) -> Optional[date]:
+            for pat in quarter_patterns:
+                match = re.search(pat, scope_text)
+                if not match:
+                    continue
+                parsed = _parse_quarter_year_token_as_first_day(match.group(1))
+                if parsed:
+                    return parsed
+            return None
+
+        anchor_date = _find_quarter_anchor(local_span)
+        if anchor_date is None:
+            anchor_date = _find_quarter_anchor(text)
     if anchor_date is None:
         return None
 
@@ -5488,6 +5538,32 @@ def _extract_option_counter_terms(text: str) -> dict:
         esc_default_from_base if esc_default_from_base is not None else (esc_default_from_flat or 0.0)
     )
 
+    def infer_abatement_scope(section_text: str, block_text: str = "") -> str:
+        combined = " ".join(part for part in (section_text, block_text) if part).lower()
+        if not combined:
+            return ""
+        if (
+            re.search(
+                r"\b(?:gross\s+rent\s+abatement|gross\s+abatement|gross\s+free\s+rent)\b",
+                combined,
+            )
+            or re.search(r"\b(?:shall\s+not\s+pay|pay\s+no)\s+gross\s+rent\b", combined)
+            or ("gross rent" in combined and "parking" in combined)
+            or re.search(
+                r"\b(?:base\s+rent\s+and\s+operating\s+expenses|rent\s+and\s+operating\s+expenses)\b[^\n]{0,80}\b(?:abated|waived|free)\b",
+                combined,
+            )
+        ):
+            return "gross"
+        if re.search(
+            r"\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement|base\s+free\s+rent)\b",
+            combined,
+        ):
+            return "base"
+        return ""
+
+    abatement_scope_default = infer_abatement_scope(abatement_section) or "base"
+
     option_data: dict[str, dict] = {}
     for raw_label, block in _extract_option_blocks(term_section):
         key = _normalize_option_key(raw_label)
@@ -5523,6 +5599,16 @@ def _extract_option_counter_terms(text: str) -> dict:
         term_hint = _coerce_int_token(data.get("term_months"), 0) or 0
         parsed_periods = _extract_option_abatement_periods_from_block(block, term_months_hint=term_hint)
         if parsed_periods:
+            explicit_scope = infer_abatement_scope(block)
+            if abatement_scope_default == "gross" and explicit_scope != "base":
+                parsed_periods = [
+                    {
+                        **period,
+                        "scope": "gross",
+                    }
+                    for period in parsed_periods
+                    if isinstance(period, dict)
+                ]
             merged_periods = _normalize_option_free_rent_periods(
                 list(data.get("free_rent_periods") or []) + parsed_periods,
                 term_months=term_hint,
@@ -5536,6 +5622,8 @@ def _extract_option_counter_terms(text: str) -> dict:
             fallback_months = max(0, int(free_months))
             existing_months = _coerce_int_token(data.get("free_rent_months"), 0) or 0
             data["free_rent_months"] = max(existing_months, fallback_months)
+            if not data.get("free_rent_scope") or abatement_scope_default == "gross":
+                data["free_rent_scope"] = abatement_scope_default
 
     for raw_label, block in _extract_option_blocks(base_section):
         key = _normalize_option_key(raw_label)
@@ -7705,10 +7793,40 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if not key:
                 continue
             deduped_option_variants[key] = variant
-        hints["option_variants"] = [
+        normalized_variants = [
             deduped_option_variants[key]
             for key in sorted(deduped_option_variants.keys(), key=_option_sort_key)
         ]
+        hints["option_variants"] = normalized_variants
+        selected_option_key = _normalize_option_key(str(option_hints.get("selected_option") or ""))
+        selected_variant = deduped_option_variants.get(selected_option_key) or (normalized_variants[-1] if normalized_variants else None)
+        if isinstance(selected_variant, dict):
+            selected_term = _coerce_int_token(selected_variant.get("term_months"), 0) or 0
+            selected_scope = _normalize_free_rent_scope_token(selected_variant.get("free_rent_scope"), default="base")
+            selected_periods = _normalize_option_free_rent_periods(
+                selected_variant.get("free_rent_periods"),
+                term_months=int(selected_term),
+            )
+            if selected_periods:
+                if not isinstance(hints.get("free_rent_periods"), list) or not hints.get("free_rent_periods"):
+                    hints["free_rent_periods"] = selected_periods
+                if hints.get("free_rent_start_month") is None:
+                    hints["free_rent_start_month"] = int(selected_periods[0]["start_month"])
+                if hints.get("free_rent_end_month") is None:
+                    hints["free_rent_end_month"] = int(selected_periods[-1]["end_month"])
+                if not hints.get("free_rent_months"):
+                    hints["free_rent_months"] = _count_unique_months_from_periods(
+                        selected_periods,
+                        term_months=int(selected_term),
+                    )
+            elif not hints.get("free_rent_months"):
+                selected_months = _coerce_int_token(selected_variant.get("free_rent_months"), 0) or 0
+                if selected_months > 0:
+                    hints["free_rent_months"] = int(selected_months)
+                    hints["free_rent_start_month"] = 0
+                    hints["free_rent_end_month"] = max(0, int(selected_months) - 1)
+            if not hints.get("free_rent_scope") or selected_scope == "gross":
+                hints["free_rent_scope"] = selected_scope
 
     _LOG.info(
         "NORMALIZE_TERM_CANDIDATES rid=%s commencement=%s expiration=%s term_months=%s",
@@ -8100,6 +8218,121 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             hints["_opex_growth_reason"] = "existing_lease_structure"
 
     return hints
+
+
+def _should_use_hint_driven_proposal_canonical(doc_type_hint: str, extracted_hints: dict) -> bool:
+    if doc_type_hint not in {"proposal", "counter_proposal", "renewal_proposal"}:
+        return False
+    if not isinstance(extracted_hints, dict):
+        return False
+    has_rsf = (_coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0) > 0
+    has_term = (_coerce_int_token(extracted_hints.get("term_months"), 0) or 0) > 0
+    has_schedule = isinstance(extracted_hints.get("rent_schedule"), list) and len(extracted_hints.get("rent_schedule") or []) > 0
+    has_location = any(
+        str(extracted_hints.get(field) or "").strip()
+        for field in ("building_name", "address", "suite", "floor")
+    )
+    has_option_variants = isinstance(extracted_hints.get("option_variants"), list) and len(extracted_hints.get("option_variants") or []) >= 2
+    return has_rsf and has_term and has_schedule and has_location and has_option_variants
+
+
+def _build_hint_driven_proposal_canonical_payload(extracted_hints: dict, filename: str) -> dict[str, Any]:
+    building_name = str(extracted_hints.get("building_name") or "").strip() or _fallback_building_from_filename(filename)
+    address = str(extracted_hints.get("address") or "").strip()
+    suite = _normalize_suite_value(str(extracted_hints.get("suite") or "").strip())
+    floor = _normalize_floor_candidate(str(extracted_hints.get("floor") or "").strip())
+    rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
+    commencement = extracted_hints.get("commencement_date") or date(2026, 1, 1)
+    expiration = extracted_hints.get("expiration_date")
+    term_months = _coerce_int_token(extracted_hints.get("term_months"), 0) or 0
+    if expiration is None and isinstance(commencement, date) and term_months > 0:
+        try:
+            expiration = _expiration_from_term_months(commencement, int(term_months))
+        except Exception:
+            expiration = None
+    if expiration is None:
+        expiration = date(2031, 1, 31)
+
+    rent_schedule: list[dict[str, Any]] = []
+    for step in list(extracted_hints.get("rent_schedule") or []):
+        if not isinstance(step, dict):
+            continue
+        start_m = _coerce_int_token(step.get("start_month"), None)
+        end_m = _coerce_int_token(step.get("end_month"), start_m)
+        rate = _coerce_float_token(step.get("rent_psf_annual"), 0.0)
+        if start_m is None or end_m is None:
+            continue
+        rent_schedule.append(
+            {
+                "start_month": max(0, int(start_m)),
+                "end_month": max(max(0, int(start_m)), int(end_m)),
+                "rent_psf_annual": max(0.0, float(rate)),
+            }
+        )
+
+    free_periods = _normalize_option_free_rent_periods(
+        extracted_hints.get("free_rent_periods"),
+        term_months=int(term_months),
+    )
+    if not free_periods:
+        free_start = _coerce_int_token(extracted_hints.get("free_rent_start_month"), None)
+        free_end = _coerce_int_token(extracted_hints.get("free_rent_end_month"), free_start)
+        free_scope = _normalize_free_rent_scope_token(extracted_hints.get("free_rent_scope"), default="base")
+        if free_start is not None and free_end is not None:
+            free_periods = _normalize_option_free_rent_periods(
+                [{"start_month": int(free_start), "end_month": int(free_end), "scope": free_scope}],
+                term_months=int(term_months),
+            )
+    free_rent_months = _count_unique_months_from_periods(free_periods, term_months=int(term_months))
+    if free_rent_months <= 0:
+        free_rent_months = _coerce_int_token(extracted_hints.get("free_rent_months"), 0) or 0
+    free_rent_scope = _normalize_free_rent_scope_token(
+        extracted_hints.get("free_rent_scope"),
+        default=("gross" if any(str(period.get("scope") or "") == "gross" for period in free_periods) else "base"),
+    )
+
+    scenario_name = " ".join(
+        part for part in [building_name, f"Suite {suite}" if suite else (f"Floor {floor}" if floor else "")]
+        if part
+    ).strip() or "Extracted proposal"
+    hinted_opex = _coerce_float_token(extracted_hints.get("opex_psf_year_1"), 0.0) or 0.0
+    lease_type = _canonicalize_lease_type_label(extracted_hints.get("lease_type"))
+    if not lease_type:
+        lease_type = "NNN" if hinted_opex > 0 else "Full Service"
+
+    payload: dict[str, Any] = {
+        "scenario_name": scenario_name,
+        "building_name": building_name,
+        "suite": suite,
+        "floor": floor,
+        "address": address,
+        "premises_name": scenario_name,
+        "rsf": rsf,
+        "commencement_date": commencement,
+        "expiration_date": expiration,
+        "term_months": int(term_months),
+        "rent_schedule": rent_schedule,
+        "lease_type": lease_type,
+        "expense_structure_type": "nnn",
+        "opex_psf_year_1": float(0.0 if _is_full_service_lease_type(lease_type) else hinted_opex),
+        "expense_stop_psf": 0.0,
+        "opex_growth_rate": _coerce_float_token(extracted_hints.get("opex_growth_rate"), 0.0) or 0.0,
+        "discount_rate_annual": 0.08,
+        "free_rent_months": int(free_rent_months),
+        "free_rent_scope": free_rent_scope,
+        "free_rent_periods": free_periods,
+        "ti_allowance_psf": _coerce_float_token(extracted_hints.get("ti_allowance_psf"), 0.0) or 0.0,
+        "parking_count": _coerce_int_token(extracted_hints.get("parking_count"), 0) or 0,
+        "parking_ratio": _coerce_float_token(extracted_hints.get("parking_ratio"), 0.0) or 0.0,
+        "parking_rate_monthly": _coerce_float_token(extracted_hints.get("parking_rate_monthly"), 0.0) or 0.0,
+    }
+    parking_periods = _normalize_option_free_rent_periods(
+        extracted_hints.get("parking_abatement_periods"),
+        term_months=int(term_months),
+    )
+    if parking_periods:
+        payload["parking_abatement_periods"] = parking_periods
+    return payload
 
 
 def _split_note_fragments(raw: str) -> list[str]:
@@ -8791,6 +9024,19 @@ def _detect_document_type(text: str, filename: str = "") -> str:
             corpus,
         )
     )
+    response_marker_hits = len(
+        re.findall(
+            r"(?i)\b(?:landlord|ll|tenant)\s+(?:response|proposal|counter)\b",
+            corpus,
+        )
+    )
+    option_response_hits = len(
+        re.findall(
+            r"(?i)\boption\s*(?:a|b|one|two|1|2)\s*:\s*(?:the\s+initial|[a-z]+(?:-[a-z]+)?\s*\(?\d{1,3}\)?\s*months?|"
+            r"\$\s*[\d,]+(?:\.\d+)?|not\s+available|to\s+be\s+further\s+defined)",
+            corpus,
+        )
+    )
     assignment_sublease_noise_hits = len(
         re.findall(
             r"(?i)\b(?:assignment\s*/\s*sublease|assignment\s+and\s+sublease|assign(?:ment)?\s+or\s+sublease)\b",
@@ -8804,6 +9050,12 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         # clauses and no controlling sublease construct (agreement/premises/term/parties) exists.
         score["sublease"] = max(0, score["sublease"] - max(4, proposal_anchor_hits * 2))
         score["proposal"] += proposal_anchor_hits
+    if response_marker_hits > 0:
+        score["proposal"] += max(2, response_marker_hits * 2)
+        score["rfp"] = max(0, score["rfp"] - response_marker_hits)
+    if option_response_hits >= 2:
+        score["proposal"] += option_response_hits
+        score["rfp"] = max(0, score["rfp"] - min(score["rfp"], option_response_hits))
 
     # Prefer more specific document types over generic lease if both appear.
     if score["counter"] > 0:
@@ -8824,6 +9076,12 @@ def _detect_document_type(text: str, filename: str = "") -> str:
         return "subsublease"
     if score["sublease"] > 0 and (sublease_strong_hits > 0 or score["sublease"] >= 3):
         return "sublease"
+    if score["proposal"] > 0 and (
+        response_marker_hits > 0
+        or option_response_hits >= 2
+        or bool(re.search(r"(?i)\b(?:landlord|tenant|ll)\s+response\b", filename_low))
+    ):
+        return "proposal"
     if score["rfp"] > 0:
         return "rfp"
     if score["loi"] > 0:
@@ -10655,6 +10913,7 @@ def _normalize_impl(
     extraction_filename_for_summary = ""
     doc_type_hint = "unknown"
     option_variants: list[CanonicalLease] = []
+    prefer_hint_driven_proposal_canonical = False
 
     if source_upper in ("PDF", "WORD"):
         if not file or not file.filename:
@@ -10720,6 +10979,10 @@ def _normalize_impl(
             note_highlights = _extract_lease_note_highlights(text)
         except Exception:
             note_highlights = []
+        prefer_hint_driven_proposal_canonical = _should_use_hint_driven_proposal_canonical(
+            doc_type_hint,
+            extracted_hints,
+        )
         is_generated_report_doc = bool(text.strip() and _looks_like_generated_report_document(text))
 
         if is_generated_report_doc:
@@ -10730,6 +10993,24 @@ def _normalize_impl(
                 "This file appears to be a generated analysis/report PDF, not an original lease/proposal. "
                 "Upload the source lease/proposal/amendment document."
             )
+        elif prefer_hint_driven_proposal_canonical:
+            canonical = _dict_to_canonical(
+                _build_hint_driven_proposal_canonical_payload(extracted_hints, file.filename or ""),
+                "",
+                "",
+            )
+            field_confidence = {
+                "building_name": 0.95 if extracted_hints.get("building_name") else 0.4,
+                "address": 0.92 if extracted_hints.get("address") else 0.4,
+                "suite": 0.95 if extracted_hints.get("suite") else 0.4,
+                "floor": 0.9 if extracted_hints.get("floor") else 0.4,
+                "rsf": 0.95 if extracted_hints.get("rsf") else 0.4,
+                "commencement_date": 0.88 if extracted_hints.get("commencement_date") else 0.55,
+                "expiration_date": 0.9 if extracted_hints.get("expiration_date") else 0.7,
+                "term_months": 0.95 if extracted_hints.get("term_months") else 0.4,
+                "rent_schedule": 0.94 if extracted_hints.get("rent_schedule") else 0.4,
+            }
+            confidence_score = 0.9
 
         if canonical is not None:
             pass
@@ -11594,16 +11875,25 @@ def _normalize_impl(
             if isinstance(extraction_artifacts.get("canonical_extraction"), dict)
             else {}
         )
-        primary_merge_payload = (
-            {}
-            if _looks_like_canonical_only_fallback_extraction(canonical_extraction_payload)
-            else canonical_extraction_payload
-        )
-        canonical, merge_metadata = _merge_canonical_primary_then_legacy(
-            primary_extraction=primary_merge_payload,
-            legacy_canonical=canonical,
-            legacy_field_confidence=field_confidence,
-        )
+        if prefer_hint_driven_proposal_canonical:
+            merge_metadata = {
+                "field_sources": {},
+                "fallback_fields": [],
+                "warnings": [],
+                "review_tasks": [],
+                "provenance": {},
+            }
+        else:
+            primary_merge_payload = (
+                {}
+                if _looks_like_canonical_only_fallback_extraction(canonical_extraction_payload)
+                else canonical_extraction_payload
+            )
+            canonical, merge_metadata = _merge_canonical_primary_then_legacy(
+                primary_extraction=primary_merge_payload,
+                legacy_canonical=canonical,
+                legacy_field_confidence=field_confidence,
+            )
         canonical = _apply_opex_exclusion_uplift_to_canonical(canonical, extraction_text_for_summary)
         field_sources = merge_metadata.get("field_sources") if isinstance(merge_metadata.get("field_sources"), dict) else {}
         fallback_fields = list(merge_metadata.get("fallback_fields") or [])

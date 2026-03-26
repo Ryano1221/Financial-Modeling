@@ -1037,10 +1037,14 @@ def test_extract_hints_parses_linebarger_landlord_response_options() -> None:
     hints = main._extract_lease_hints(text, "Linebarger - LL Response 3.22.26.docx", "test-rid")
 
     assert hints["building_name"] == "The Plaza Building"
+    assert hints["address"] == "2277 Plaza Drive, Sugar Land, TX 77479"
     assert hints["suite"] == "600"
     assert hints["floor"] == "6"
     assert hints["rsf"] == 3118.0
+    assert str(hints["commencement_date"]) == "2026-11-01"
+    assert str(hints["expiration_date"]) == "2034-03-31"
     assert hints["term_months"] == 89
+    assert hints["free_rent_months"] == 5
     assert hints["free_rent_scope"] == "gross"
     assert hints["free_rent_end_month"] == 4
     assert hints["parking_ratio"] == 3.5

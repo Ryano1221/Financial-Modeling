@@ -82,6 +82,15 @@ def test_detect_document_type_across_five_plus_formats() -> None:
             "proposal",
         ),
         (
+            "RE: Request for Proposal (RFP)\n"
+            "Landlord Response 03.23.2026\n"
+            "Request for Proposal response package attached below.\n"
+            "Option A: The initial two (2) months of the Term.\n"
+            "Option B: $25.50/RSF followed by $0.50 annual increases, beginning month 13.\n",
+            "Linebarger - LL Response 3.22.26.docx",
+            "proposal",
+        ),
+        (
             "Landlord Proposal\nThe existing lease shall be amended to include the following business terms.",
             "ibc-landlord-proposal.docx",
             "proposal",
