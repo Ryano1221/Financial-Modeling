@@ -406,10 +406,10 @@ export function ExtractUpload({
             <div className="space-y-2">
               <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-200/80">Financial Analysis Extractor</p>
               <h3 className="text-2xl font-semibold tracking-tight text-white sm:text-[2rem]">
-                Upload one source lease or proposal
+                Upload the source lease document
               </h3>
               <p className="max-w-2xl text-sm leading-6 text-slate-300 sm:text-[15px]">
-                Use the original PDF or Word file. We validate the core lease math before anything is added to the comparison so broken parses stop for review instead of creating bad scenarios.
+                Use the original PDF or Word file. We normalize the lease terms, validate the core math, and send clean scenarios straight into comparison.
               </p>
             </div>
 
@@ -418,7 +418,7 @@ export function ExtractUpload({
               <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOCX</span>
               <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOC</span>
               <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">
-                Core-field validation enabled
+                Auto-validates core terms
               </span>
             </div>
 
@@ -441,21 +441,21 @@ export function ExtractUpload({
             ) : null}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-            <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Step 1</p>
-              <p className="mt-2 text-sm font-semibold text-white">Upload the source document</p>
-              <p className="mt-2 text-sm leading-6 text-slate-300">Start with the actual lease, proposal, amendment, or counter instead of a generated analysis PDF.</p>
-            </div>
-            <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Step 2</p>
-              <p className="mt-2 text-sm font-semibold text-white">We validate the essentials</p>
-              <p className="mt-2 text-sm leading-6 text-slate-300">RSF, term dates, and rent schedule have to land cleanly before the scenario can flow straight into comparison.</p>
-            </div>
-            <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
-              <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Step 3</p>
-              <p className="mt-2 text-sm font-semibold text-white">Review only when needed</p>
-              <p className="mt-2 text-sm leading-6 text-slate-300">Low-confidence extractions pause in a simple confirmation screen so the analysis stays clean and easy to trust.</p>
+          <div className="rounded-2xl border border-white/12 bg-white/5 p-4 sm:p-5">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">What happens next</p>
+            <div className="mt-3 space-y-3 text-sm text-slate-200">
+              <div className="flex items-start gap-3">
+                <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
+                <p>Start with the actual lease, proposal, amendment, or counter rather than a generated report PDF.</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
+                <p>RSF, term dates, and rent schedule are checked before the scenario enters comparison.</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
+                <p>Clean extracts auto-open in the comparison workspace so you can keep moving without extra clicks.</p>
+              </div>
             </div>
           </div>
         </div>

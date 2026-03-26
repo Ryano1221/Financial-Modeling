@@ -2495,243 +2495,330 @@ function HomeContent() {
           onDocumentIngested={handleFinancialAnalysisDocumentIngested}
         />
         <section id="extract" className="scroll-mt-24 bg-grid">
-        <div className="mx-auto w-full max-w-[96vw] space-y-6 border border-white/15 p-3 sm:p-4 bg-grid">
-          <div id="upload-section" className="border border-white/15 bg-black/25 p-4 sm:p-5">
-            <div className="mx-auto w-full max-w-[1800px] text-center">
-              <h2 className="heading-section mb-3">Extract From Client Documents</h2>
-              <p className="text-sm text-slate-300 mb-3">
-                Drop files anywhere on this tab to save them to this client and build analysis scenarios automatically.
-              </p>
-              <ExtractUpload
-                showAdvancedOptions={showDiagnostics}
-                showInlineDropZone={false}
-                onPersistDocument={async ({ file, normalize, parsed }) => {
-                  if (!activeClientId) return;
-                  const savedDocument = await registerDocument({
-                    clientId: activeClientId,
-                    name: file.name,
-                    file,
-                    sourceModule: "financial-analyses",
-                    normalize,
-                    parsed,
-                  });
-                  return savedDocument
-                    ? {
-                        sourceDocumentId: savedDocument.id,
-                        fileName: savedDocument.name,
-                      }
-                    : undefined;
-                }}
-                onSuccess={(data, context) =>
-                  routeNormalizedLease(data, {
-                    name: context?.fileName,
-                    file: context?.file,
-                    sourceDocumentId: context?.sourceDocumentId,
-                    sourceModule: "financial-analyses",
-                    skipDocumentRegister: true,
-                  })
-                }
-                onError={handleExtractError}
-              />
-              {activeClient ? (
-                <div className="mt-3">
-                  <ClientDocumentPicker
-                    buttonLabel="Select Existing Client Document"
-                    buttonAlign="center"
-                    allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
-                    onSelectDocument={handleExistingDocumentSelection}
+          <div className="mx-auto w-full max-w-[96vw] space-y-5">
+            <div className="surface-card brand-panel p-4 sm:p-5 md:p-6">
+              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,430px)] xl:items-center">
+                <div>
+                  <p className="heading-kicker mb-2">Financial Analyses</p>
+                  <h2 className="heading-section mb-3">A cleaner lease comparison workspace</h2>
+                  <p className="max-w-3xl text-sm leading-6 text-slate-300">
+                    Bring in a source lease or proposal, refine the scenarios that matter, and export from one calmer workspace.
+                    The intake rail stays separate from the comparison editor so the page is easier to scan and operate.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-200">
+                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                      {parsedDocumentsCount} parsed document{parsedDocumentsCount === 1 ? "" : "s"}
+                    </span>
+                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                      {scenarios.length} scenario{scenarios.length === 1 ? "" : "s"}
+                    </span>
+                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                      {includedScenarios.length} in report
+                    </span>
+                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                      {engineResults.length} result set{engineResults.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Client</p>
+                    <p className="mt-2 text-sm font-semibold text-white">{heroClientName}</p>
+                    <p className="mt-1 text-xs text-slate-400">{workspaceStatus}</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Selection</p>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {selectedScenario
+                        ? getPremisesDisplayName({
+                            building_name: selectedScenario.building_name,
+                            suite: selectedScenario.suite,
+                            floor: selectedScenario.floor,
+                            scenario_name: selectedScenario.name,
+                          })
+                        : "No scenario selected"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {selectedScenario ? "Editing the active option" : "Choose a scenario to edit details"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Share-ready</p>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {includedScenarios.length > 0 ? "Yes" : "Not yet"}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">Share links follow the scenarios included in summary.</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Branding</p>
+                    <p className="mt-2 text-sm font-semibold text-white">{brokerageName || "The CRE Model"}</p>
+                    <p className="mt-1 text-xs text-slate-400">Prepared for {reportMeta.prepared_for.trim() || "Client"}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)] items-start">
+              <aside className="space-y-4 xl:sticky xl:top-28">
+                <div className="surface-card p-4 sm:p-5">
+                  <p className="heading-kicker mb-1">Document intake</p>
+                  <h3 className="text-lg font-semibold tracking-tight text-white">Start with the source file</h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">
+                    Upload the original proposal, counter, amendment, or lease. Saved client documents can also be pulled back into comparison from the same workspace.
+                  </p>
+                </div>
+
+                <div id="upload-section">
+                  <ExtractUpload
+                    showAdvancedOptions={showDiagnostics}
+                    showInlineDropZone={false}
+                    onPersistDocument={async ({ file, normalize, parsed }) => {
+                      if (!activeClientId) return;
+                      const savedDocument = await registerDocument({
+                        clientId: activeClientId,
+                        name: file.name,
+                        file,
+                        sourceModule: "financial-analyses",
+                        normalize,
+                        parsed,
+                      });
+                      return savedDocument
+                        ? {
+                            sourceDocumentId: savedDocument.id,
+                            fileName: savedDocument.name,
+                          }
+                        : undefined;
+                    }}
+                    onSuccess={(data, context) =>
+                      routeNormalizedLease(data, {
+                        name: context?.fileName,
+                        file: context?.file,
+                        sourceDocumentId: context?.sourceDocumentId,
+                        sourceModule: "financial-analyses",
+                        skipDocumentRegister: true,
+                      })
+                    }
+                    onError={handleExtractError}
                   />
                 </div>
-              ) : null}
-              {extractError && (
-                <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-200">
-                  {extractError}
-                </div>
-              )}
-              {showDiagnostics && (
-                <div className="mt-4 text-left">
-                  <Diagnostics />
-                </div>
-              )}
-            </div>
-          </div>
 
-          <div ref={comparisonSummaryRef}>
-          <ResultsActionsCard>
-        <ScenarioList
-          scenarios={scenarios}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onDuplicate={duplicateFromList}
-          onDelete={deleteScenario}
-          onRename={renameScenario}
-          onReorder={reorderScenario}
-          onToggleIncludeInSummary={toggleIncludeInSummary}
-          onChangeLeaseObligationMode={changeScenarioObligationMode}
-          includedInSummary={includedInSummary}
-        />
-
-        <ScenarioForm
-          scenario={selectedScenario}
-          onUpdate={updateScenario}
-          onAddScenario={addScenario}
-          onDuplicateScenario={duplicateScenario}
-          onDeleteScenario={deleteScenario}
-          onAcceptChanges={acceptScenarioChanges}
-        />
-
-        <section className="pt-7 border-t border-slate-300/20">
-          <p className="heading-kicker mb-2">Exports</p>
-          <h2 className="heading-section mb-2">COMPUTE AND REPORT</h2>
-          <p className="text-sm text-slate-300 mb-4">
-            Export Excel or PDF directly from your current scenarios. Analysis refresh is optional.
-          </p>
-          <p className="text-sm text-slate-300 mb-4">
-            Uses per-scenario discount rate overrides when set; otherwise defaults to 8%.
-          </p>
-          {!authSession && (
-            <div className="mb-5 border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
-              <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
-              <div className="flex flex-wrap gap-2">
-                <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
-                  Sign in
-                </a>
-                <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
-                  Create account
-                </a>
-              </div>
-            </div>
-          )}
-          <div className="mb-5 border border-slate-300/20 bg-slate-950/30 p-4">
-            <p className="heading-kicker mb-2">Report + Branding Settings</p>
-            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
-              <div>
-                <p className="text-sm text-slate-200">
-                  Use account dashboard/settings to manage brokerage branding, and client cover assets.
-                </p>
-                <p className="mt-2 text-xs text-slate-400">
-                  Brokerage: {brokerageName || "The CRE Model"} · Prepared for: {reportMeta.prepared_for.trim() || "Client"}
-                </p>
-              </div>
-              <a href={settingsHref} className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
-                {settingsCtaLabel}
-              </a>
-            </div>
-            {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading settings…</p>}
-          </div>
-          <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={exportExcelDeck}
-                disabled={exportExcelLoading || scenarios.length === 0 || !authSession}
-                className="btn-premium btn-premium-success w-full sm:w-auto disabled:opacity-50"
-              >
-                {exportExcelLoading ? "Exporting…" : "Export Excel"}
-              </button>
-              <button
-                type="button"
-                onClick={exportPdfDeck}
-                disabled={exportPdfLoading || scenarios.length === 0 || !authSession}
-                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
-              >
-                {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { void copyFinancialAnalysisShareLink(); }}
-                disabled={includedScenarios.length === 0}
-                className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
-              >
-                Copy Share Link
-              </button>
-          </div>
-          {shareLinkStatus ? <p className="mt-2 text-sm text-cyan-200">{shareLinkStatus}</p> : null}
-          {(exportPdfError || exportExcelError || shareLinkError) && (
-            <p className="mt-2 text-sm text-red-300">{exportPdfError || exportExcelError || shareLinkError}</p>
-          )}
-        </section>
-
-            {resultErrors.length > 0 && (
-              <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4">
-                <h3 className="text-sm font-medium text-red-200 mb-2">
-                  Errors by scenario
-                </h3>
-                <ul className="text-sm text-red-100/90 space-y-1">
-                  {resultErrors.map(({ name, error }) => (
-                    <li key={name}>
-                      <strong>{name}:</strong> {error}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {engineResults.length > 0 && (
-              <>
-                {equalizedUi.needsCustomWindow && (
-                  <div className="mb-4 border border-amber-500/40 bg-amber-500/10 p-4">
-                    <p className="text-sm font-medium text-amber-200">
-                      {equalizedUi.message || "No overlapping lease term for equalized comparison."}
+                {activeClient ? (
+                  <div className="surface-card p-4 sm:p-5">
+                    <p className="heading-kicker mb-1">Saved client documents</p>
+                    <h3 className="text-lg font-semibold tracking-tight text-white">Reuse an existing upload</h3>
+                    <p className="mt-2 text-sm text-slate-300">
+                      Pull an already saved client document straight back into the comparison workspace without re-uploading it.
                     </p>
-                    <p className="text-xs text-amber-100/80 mt-1">
-                      Enter a custom equalized comparison period (MM.DD.YYYY) to compute equalized metrics.
-                    </p>
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <label className="block">
-                        <span className="text-xs text-amber-100/80">Custom start</span>
-                        <input
-                          type="text"
-                          value={equalizedCustomWindow.start}
-                          onChange={(e) =>
-                            setEqualizedCustomWindow((prev) => ({ ...prev, start: e.target.value }))
-                          }
-                          onBlur={(e) =>
-                            setEqualizedCustomWindow((prev) => ({
-                              ...prev,
-                              start: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
-                            }))
-                          }
-                          className="input-premium mt-1"
-                          placeholder="MM.DD.YYYY"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="text-xs text-amber-100/80">Custom end</span>
-                        <input
-                          type="text"
-                          value={equalizedCustomWindow.end}
-                          onChange={(e) =>
-                            setEqualizedCustomWindow((prev) => ({ ...prev, end: e.target.value }))
-                          }
-                          onBlur={(e) =>
-                            setEqualizedCustomWindow((prev) => ({
-                              ...prev,
-                              end: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
-                            }))
-                          }
-                          className="input-premium mt-1"
-                          placeholder="MM.DD.YYYY"
-                        />
-                      </label>
+                    <div className="mt-4">
+                      <ClientDocumentPicker
+                        buttonLabel="Select Existing Client Document"
+                        buttonAlign="left"
+                        allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
+                        onSelectDocument={handleExistingDocumentSelection}
+                      />
                     </div>
                   </div>
-                )}
-                <SummaryMatrix
-                  results={engineResults}
-                  equalized={equalizedUi}
-                  scenariosById={scenariosById}
-                  onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
-                />
-                <AnalyticsWorkbench
-                  results={engineResults}
-                  canonicalByScenarioId={canonicalComputeCache}
-                  onCustomChartsChange={setCustomChartsForExport}
-                />
-              </>
-            )}
-              </ResultsActionsCard>
+                ) : null}
+
+                {extractError ? (
+                  <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                    {extractError}
+                  </div>
+                ) : null}
+
+                {showDiagnostics ? (
+                  <div className="surface-card p-4 text-left">
+                    <Diagnostics />
+                  </div>
+                ) : null}
+              </aside>
+
+              <div ref={comparisonSummaryRef} className="space-y-5">
+                <div className="grid gap-5 2xl:grid-cols-[minmax(330px,0.92fr)_minmax(0,1.48fr)] items-start">
+                  <ScenarioList
+                    scenarios={scenarios}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                    onDuplicate={duplicateFromList}
+                    onDelete={deleteScenario}
+                    onRename={renameScenario}
+                    onReorder={reorderScenario}
+                    onToggleIncludeInSummary={toggleIncludeInSummary}
+                    onChangeLeaseObligationMode={changeScenarioObligationMode}
+                    includedInSummary={includedInSummary}
+                  />
+
+                  <ScenarioForm
+                    scenario={selectedScenario}
+                    onUpdate={updateScenario}
+                    onAddScenario={addScenario}
+                    onDuplicateScenario={duplicateScenario}
+                    onDeleteScenario={deleteScenario}
+                    onAcceptChanges={acceptScenarioChanges}
+                  />
+                </div>
+
+                <ResultsActionsCard>
+                  <section className="space-y-5">
+                    <div>
+                      <p className="heading-kicker mb-2">Outputs</p>
+                      <h2 className="heading-section mb-2">Exports and analytics</h2>
+                      <p className="max-w-3xl text-sm text-slate-300">
+                        Export the current comparison, review equalized results, and build presentation-ready analytics from the scenarios you keep in summary.
+                      </p>
+                      <p className="mt-2 text-xs text-slate-400">
+                        Per-scenario discount overrides are respected automatically. Otherwise the workspace defaults to 8%.
+                      </p>
+                    </div>
+
+                    {!authSession && (
+                      <div className="border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
+                        <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
+                        <div className="flex flex-wrap gap-2">
+                          <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+                            Sign in
+                          </a>
+                          <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
+                            Create account
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="border border-slate-300/20 bg-slate-950/30 p-4">
+                      <p className="heading-kicker mb-2">Report + Branding Settings</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center">
+                        <div>
+                          <p className="text-sm text-slate-200">
+                            Use account dashboard/settings to manage brokerage branding and client cover assets.
+                          </p>
+                          <p className="mt-2 text-xs text-slate-400">
+                            Brokerage: {brokerageName || "The CRE Model"} · Prepared for: {reportMeta.prepared_for.trim() || "Client"}
+                          </p>
+                        </div>
+                        <a href={settingsHref} className="btn-premium btn-premium-secondary w-full sm:w-auto text-center">
+                          {settingsCtaLabel}
+                        </a>
+                      </div>
+                      {brandingLoading && <p className="mt-2 text-xs text-slate-500">Loading settings…</p>}
+                    </div>
+
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={exportExcelDeck}
+                        disabled={exportExcelLoading || scenarios.length === 0 || !authSession}
+                        className="btn-premium btn-premium-success w-full sm:w-auto disabled:opacity-50"
+                      >
+                        {exportExcelLoading ? "Exporting…" : "Export Excel"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={exportPdfDeck}
+                        disabled={exportPdfLoading || scenarios.length === 0 || !authSession}
+                        className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
+                      >
+                        {exportPdfLoading ? "Exporting…" : "Export PDF deck"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { void copyFinancialAnalysisShareLink(); }}
+                        disabled={includedScenarios.length === 0}
+                        className="btn-premium btn-premium-secondary w-full sm:w-auto disabled:opacity-50"
+                      >
+                        Copy Share Link
+                      </button>
+                    </div>
+
+                    {shareLinkStatus ? <p className="text-sm text-cyan-200">{shareLinkStatus}</p> : null}
+                    {(exportPdfError || exportExcelError || shareLinkError) && (
+                      <p className="text-sm text-red-300">{exportPdfError || exportExcelError || shareLinkError}</p>
+                    )}
+
+                    {resultErrors.length > 0 && (
+                      <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4">
+                        <h3 className="text-sm font-medium text-red-200 mb-2">
+                          Errors by scenario
+                        </h3>
+                        <ul className="text-sm text-red-100/90 space-y-1">
+                          {resultErrors.map(({ name, error }) => (
+                            <li key={name}>
+                              <strong>{name}:</strong> {error}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {engineResults.length > 0 && (
+                      <div className="space-y-5">
+                        {equalizedUi.needsCustomWindow && (
+                          <div className="border border-amber-500/40 bg-amber-500/10 p-4">
+                            <p className="text-sm font-medium text-amber-200">
+                              {equalizedUi.message || "No overlapping lease term for equalized comparison."}
+                            </p>
+                            <p className="text-xs text-amber-100/80 mt-1">
+                              Enter a custom equalized comparison period (MM.DD.YYYY) to compute equalized metrics.
+                            </p>
+                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <label className="block">
+                                <span className="text-xs text-amber-100/80">Custom start</span>
+                                <input
+                                  type="text"
+                                  value={equalizedCustomWindow.start}
+                                  onChange={(e) =>
+                                    setEqualizedCustomWindow((prev) => ({ ...prev, start: e.target.value }))
+                                  }
+                                  onBlur={(e) =>
+                                    setEqualizedCustomWindow((prev) => ({
+                                      ...prev,
+                                      start: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
+                                    }))
+                                  }
+                                  className="input-premium mt-1"
+                                  placeholder="MM.DD.YYYY"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="text-xs text-amber-100/80">Custom end</span>
+                                <input
+                                  type="text"
+                                  value={equalizedCustomWindow.end}
+                                  onChange={(e) =>
+                                    setEqualizedCustomWindow((prev) => ({ ...prev, end: e.target.value }))
+                                  }
+                                  onBlur={(e) =>
+                                    setEqualizedCustomWindow((prev) => ({
+                                      ...prev,
+                                      end: normalizeDateMmDdYyyy(e.target.value) || e.target.value.trim(),
+                                    }))
+                                  }
+                                  className="input-premium mt-1"
+                                  placeholder="MM.DD.YYYY"
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        )}
+
+                        <SummaryMatrix
+                          results={engineResults}
+                          equalized={equalizedUi}
+                          scenariosById={scenariosById}
+                          onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
+                        />
+                        <AnalyticsWorkbench
+                          results={engineResults}
+                          canonicalByScenarioId={canonicalComputeCache}
+                          onCustomChartsChange={setCustomChartsForExport}
+                        />
+                      </div>
+                    )}
+                  </section>
+                </ResultsActionsCard>
               </div>
-        </div>
+            </div>
+          </div>
         </section>
         <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
       </main>

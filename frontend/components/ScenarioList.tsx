@@ -76,9 +76,9 @@ export function ScenarioList({
   if (scenarios.length === 0) {
     return (
       <div className="surface-card p-5">
-        <p className="heading-kicker mb-2">Scenarios</p>
+        <p className="heading-kicker mb-2">Comparison Workspace</p>
         <h2 className="heading-section mb-2">Scenarios</h2>
-        <p className="text-sm text-slate-300">No scenarios yet. Add one to get started.</p>
+        <p className="text-sm text-slate-300">No scenarios yet. Upload a lease or add one manually to begin comparing options.</p>
       </div>
     );
   }
@@ -86,9 +86,9 @@ export function ScenarioList({
   return (
     <div className="table-shell">
       <div className="px-5 py-4 border-b border-slate-300/20 bg-slate-900/45">
-        <p className="heading-kicker mb-1">Scenarios</p>
-        <h2 className="heading-section mb-2">SCENARIO MANAGER</h2>
-        <p className="text-xs text-slate-400">Rename, drag to reorder, include in summary. Information is stored securely.</p>
+        <p className="heading-kicker mb-1">Comparison Workspace</p>
+        <h2 className="heading-section mb-2">Scenario list</h2>
+        <p className="text-xs text-slate-400">Rename, reorder, and control which options stay in the final summary.</p>
       </div>
       <div className="p-3 grid grid-cols-1 lg:grid-cols-2 gap-3 min-[1600px]:hidden">
         {scenarios.map((s) => {
