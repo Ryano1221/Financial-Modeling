@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildCrmWorkspaceState } from "@/lib/workspace/crm";
+import { buildCrmWorkspaceState, type CrmBuilding } from "@/lib/workspace/crm";
+import { getWorkspaceBuildingDeletionKey } from "@/lib/workspace/deletions";
 import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 
@@ -82,6 +83,21 @@ const documents: ClientWorkspaceDocument[] = [
     },
   },
 ];
+
+function makeBuilding(id: string, name = "The Plaza Building", address = "2277 Plaza Drive"): CrmBuilding {
+  return {
+    id,
+    clientId: "client-1",
+    name,
+    address,
+    market: "Austin",
+    submarket: "CBD",
+    ownerName: "Owner",
+    propertyType: "Office",
+    totalRSF: 100000,
+    notes: "",
+  };
+}
 
 describe("workspace/crm stacking-plan ingest", () => {
   it("updates stacking plans from current lease and sublease uploads but not proposals", () => {
@@ -264,5 +280,188 @@ describe("workspace/crm stacking-plan ingest", () => {
     expect(state.workflowBoardViews[0].scope).toBe("team");
     expect(state.workflowBoardViews[0].team).toBe("Austin Brokerage");
     expect(state.workflowBoardViews[0].dateFilter).toBe("next_14");
+  });
+});
+
+describe("buildCrmWorkspaceState deletions", () => {
+  it("keeps deleted buildings out of the rebuilt workspace even when sources use a different id", () => {
+    const deletedBuilding = makeBuilding("shared-1");
+    const deletedBuildingKey = getWorkspaceBuildingDeletionKey(deletedBuilding);
+
+    const state = buildCrmWorkspaceState({
+      clientId: "client-1",
+      clientName: "Workspace Client",
+      representationMode: null,
+      sharedBuildings: [deletedBuilding],
+      documents: [],
+      deals: [],
+      properties: [
+        {
+          id: "property-99",
+          name: "The Plaza Building",
+          address: "2277 Plaza Drive",
+          market: "Austin",
+          submarket: "CBD",
+        },
+      ],
+      spaces: [],
+      obligations: [],
+      surveys: [],
+      surveyEntries: [],
+      financialAnalyses: [],
+      leaseAbstracts: [],
+      existingState: {
+        deletedBuildingKeys: [deletedBuildingKey],
+      },
+    });
+
+    expect(state.deletedBuildingKeys).toEqual([deletedBuildingKey]);
+    expect(state.buildings).toEqual([]);
+  });
+
+  it("filters building-bound workflow records when a building has been deleted", () => {
+    const deletedBuilding = makeBuilding("shared-1");
+    const deletedBuildingKey = getWorkspaceBuildingDeletionKey(deletedBuilding);
+
+    const state = buildCrmWorkspaceState({
+      clientId: "client-1",
+      clientName: "Workspace Client",
+      representationMode: null,
+      sharedBuildings: [deletedBuilding],
+      documents: [],
+      deals: [],
+      properties: [],
+      spaces: [],
+      obligations: [],
+      surveys: [],
+      surveyEntries: [],
+      financialAnalyses: [],
+      leaseAbstracts: [],
+      existingState: {
+        deletedBuildingKeys: [deletedBuildingKey],
+        buildings: [deletedBuilding],
+        occupancyRecords: [{
+          id: "occ-1",
+          clientId: "client-1",
+          companyId: "company-1",
+          buildingId: "shared-1",
+          floor: "6",
+          suite: "600",
+          rsf: 3118,
+          leaseStart: "2026-11-01",
+          leaseExpiration: "2034-06-30",
+          noticeDeadline: "",
+          rentType: "gross",
+          baseRent: 40,
+          opex: 0,
+          abatementMonths: 0,
+          tiAllowance: 0,
+          concessions: "",
+          landlordName: "Owner",
+          isCurrent: true,
+          sourceDocumentIds: [],
+        }],
+        stackingPlanEntries: [{
+          id: "stack-1",
+          clientId: "client-1",
+          buildingId: "shared-1",
+          floor: "6",
+          suite: "600",
+          rsf: 3118,
+          companyId: "company-1",
+          tenantName: "Tenant",
+          leaseStart: "2026-11-01",
+          leaseExpiration: "2034-06-30",
+          noticeDeadline: "",
+          rentType: "gross",
+          baseRent: 40,
+          opex: 0,
+          abatementMonths: 0,
+          tiAllowance: 0,
+          concessions: "",
+          landlordName: "Owner",
+          source: "manual",
+          sourceDocumentIds: [],
+          createdAt: "2026-03-26T00:00:00.000Z",
+          updatedAt: "2026-03-26T00:00:00.000Z",
+        }],
+        shortlists: [{
+          id: "shortlist-1",
+          clientId: "client-1",
+          buildingId: "shared-1",
+          name: "Deleted Tower Shortlist",
+          createdAt: "2026-03-26T00:00:00.000Z",
+          updatedAt: "2026-03-26T00:00:00.000Z",
+        }],
+        shortlistEntries: [{
+          id: "entry-1",
+          clientId: "client-1",
+          shortlistId: "shortlist-1",
+          buildingId: "shared-1",
+          floor: "6",
+          suite: "600",
+          rsf: 3118,
+          source: "manual",
+          status: "shortlisted",
+          owner: "Broker",
+          rank: 1,
+          notes: "",
+          createdAt: "2026-03-26T00:00:00.000Z",
+          updatedAt: "2026-03-26T00:00:00.000Z",
+        }],
+        tours: [{
+          id: "tour-1",
+          clientId: "client-1",
+          buildingId: "shared-1",
+          floor: "6",
+          suite: "600",
+          scheduledAt: "2026-03-27T15:00:00.000Z",
+          status: "scheduled",
+          broker: "Broker",
+          assignee: "Broker",
+          attendees: ["Broker"],
+          notes: "",
+          followUpActions: "",
+          createdAt: "2026-03-26T00:00:00.000Z",
+          updatedAt: "2026-03-26T00:00:00.000Z",
+        }],
+        workflowBoardViews: [
+          {
+            id: "view-building",
+            clientId: "client-1",
+            scope: "team",
+            createdBy: "broker",
+            team: "team",
+            name: "Deleted Building View",
+            buildingId: "shared-1",
+            broker: "all",
+            dateFilter: "all",
+            createdAt: "2026-03-26T00:00:00.000Z",
+            updatedAt: "2026-03-26T00:00:00.000Z",
+          },
+          {
+            id: "view-all",
+            clientId: "client-1",
+            scope: "team",
+            createdBy: "broker",
+            team: "team",
+            name: "All Buildings",
+            buildingId: "all",
+            broker: "all",
+            dateFilter: "all",
+            createdAt: "2026-03-26T00:00:00.000Z",
+            updatedAt: "2026-03-26T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    expect(state.buildings).toEqual([]);
+    expect(state.occupancyRecords).toEqual([]);
+    expect(state.stackingPlanEntries).toEqual([]);
+    expect(state.shortlists).toEqual([]);
+    expect(state.shortlistEntries).toEqual([]);
+    expect(state.tours).toEqual([]);
+    expect(state.workflowBoardViews.map((view) => view.id)).toEqual(["view-all"]);
   });
 });

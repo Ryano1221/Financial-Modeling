@@ -34,7 +34,8 @@ import {
   type CrmTour,
   type CrmWorkspaceState,
 } from "@/lib/workspace/crm";
-import { loadBuildingFocus, persistBuildingFocus } from "@/lib/workspace/building-focus";
+import { clearBuildingFocus, loadBuildingFocus, persistBuildingFocus } from "@/lib/workspace/building-focus";
+import { getWorkspaceBuildingDeletionKey, normalizeDeletionIds } from "@/lib/workspace/deletions";
 import { fetchSharedMarketInventory, type SharedMarketInventoryResponse } from "@/lib/workspace/market-inventory";
 import {
   buildLandlordBuildingHubSummary,
@@ -877,6 +878,66 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
     router.push("/?module=financial-analyses");
   }, [activeInventoryBuilding, buildScenarioFromSuite, clientId, pendingScenarioKey, router, selectedSuites]);
 
+  const removeActiveBuilding = useCallback(() => {
+    if (!activeInventoryBuilding || typeof window === "undefined") return;
+    const buildingLabel = displayBuildingName(activeInventoryBuilding);
+    const confirmed = window.confirm(
+      `Remove ${buildingLabel} from this client workspace? This keeps it deleted across refresh and cloud sync for this client.`,
+    );
+    if (!confirmed) return;
+
+    const deletedBuildingKey = getWorkspaceBuildingDeletionKey(activeInventoryBuilding);
+    const nextBuilding = crmState.buildings.find((building) => building.id !== activeInventoryBuilding.id) || null;
+
+    patchCrmDraft((current) => {
+      const currentDeletedBuildingKeys = Array.isArray(current.deletedBuildingKeys) ? current.deletedBuildingKeys : [];
+      const currentShortlists = Array.isArray(current.shortlists) ? current.shortlists : [];
+      const currentShortlistEntries = Array.isArray(current.shortlistEntries) ? current.shortlistEntries : [];
+      const currentTours = Array.isArray(current.tours) ? current.tours : [];
+      const currentWorkflowBoardViews = Array.isArray(current.workflowBoardViews) ? current.workflowBoardViews : [];
+      const currentBuildings = Array.isArray(current.buildings) ? current.buildings : [];
+      const currentOccupancyRecords = Array.isArray(current.occupancyRecords) ? current.occupancyRecords : [];
+      const currentStackingPlanEntries = Array.isArray(current.stackingPlanEntries) ? current.stackingPlanEntries : [];
+      const remainingShortlists = currentShortlists.filter((item) => item.buildingId !== activeInventoryBuilding.id);
+      const remainingShortlistIds = new Set(remainingShortlists.map((item) => item.id));
+      const remainingShortlistEntries = currentShortlistEntries.filter((item) =>
+        item.buildingId !== activeInventoryBuilding.id
+        && remainingShortlistIds.has(item.shortlistId),
+      );
+      const remainingShortlistEntryIds = new Set(remainingShortlistEntries.map((item) => item.id));
+      return {
+        ...current,
+        deletedBuildingKeys: normalizeDeletionIds([...currentDeletedBuildingKeys, deletedBuildingKey]),
+        buildings: currentBuildings.filter((building) => building.id !== activeInventoryBuilding.id),
+        occupancyRecords: currentOccupancyRecords.filter((record) => record.buildingId !== activeInventoryBuilding.id),
+        stackingPlanEntries: currentStackingPlanEntries.filter((entry) => entry.buildingId !== activeInventoryBuilding.id),
+        shortlists: remainingShortlists,
+        shortlistEntries: remainingShortlistEntries,
+        tours: currentTours.filter((tour) =>
+          tour.buildingId !== activeInventoryBuilding.id
+          && (!asText(tour.shortlistEntryId) || remainingShortlistEntryIds.has(asText(tour.shortlistEntryId))),
+        ),
+        workflowBoardViews: currentWorkflowBoardViews.filter((view) => asText(view.buildingId) !== activeInventoryBuilding.id),
+      };
+    });
+
+    setSelectedSuiteIds([]);
+    setSelectedMapBuildingIds((current) => {
+      const nextIds = current.filter((id) => id !== activeInventoryBuilding.id);
+      if (nextIds.length === 0) setMapSelectionOnly(false);
+      return nextIds;
+    });
+    setSelectedInventoryBuildingId(nextBuilding?.id || "");
+    setError("");
+    if (nextBuilding) {
+      persistBuildingFocus(clientId, nextBuilding);
+      setStatus(`Removed ${buildingLabel} from this client workspace. ${displayBuildingName(nextBuilding)} is now active.`);
+      return;
+    }
+    clearBuildingFocus(clientId);
+    setStatus(`Removed ${buildingLabel} from this client workspace. It will stay deleted across refresh and sync.`);
+  }, [activeInventoryBuilding, clientId, crmState.buildings, patchCrmDraft]);
+
   return (
     <PlatformSection
       kicker="Buildings"
@@ -901,6 +962,13 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
           <Link className="btn-premium btn-premium-secondary" href="/?module=financial-analyses" onClick={() => persistBuildingFocus(clientId, activeInventoryBuilding)}>
             Open Analyses
           </Link>
+          <button
+            type="button"
+            className="rounded-md border border-red-300/35 bg-red-500/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-100 transition hover:bg-red-500/20"
+            onClick={removeActiveBuilding}
+          >
+            Remove Building
+          </button>
         </div>
       ) : null}
       maxWidthClassName="max-w-[96vw]"
@@ -1043,6 +1111,7 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
             <PlatformPanel kicker="Building Actions" title="Use This Building Across The Platform">
               <div className="space-y-3 text-sm text-slate-300">
                 <p>{activeInventoryBuilding ? `Use ${displayBuildingName(activeInventoryBuilding)} as the active building context across the client workspace.` : "Select a building to start from one shared building context."}</p>
+                <p className="text-xs text-slate-400">Removing a building now creates a client-scoped delete record, so it stays gone after refresh and cloud sync instead of being rebuilt from saved workspace state.</p>
                 {activeBuildingSummary ? (
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="border border-white/10 bg-black/20 p-2"><p className="text-slate-400">Vacant Suites</p><p className="mt-1 text-white">{formatInt(activeBuildingSummary.vacantSuites)}</p></div>

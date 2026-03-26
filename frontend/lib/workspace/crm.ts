@@ -1,6 +1,7 @@
 import type { ClientWorkspaceDeal, ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { LANDLORD_REP_MODE, type RepresentationMode } from "@/lib/workspace/representation-mode";
 import { austinOfficeBuildings } from "@/lib/data/austinOfficeBuildings";
+import { getWorkspaceBuildingDeletionKey, normalizeDeletionIds } from "@/lib/workspace/deletions";
 import { getRepresentationModeProfile } from "@/lib/workspace/representation-profile";
 
 export const CRM_OS_STORAGE_KEY = "crm_operating_layer_v1";
@@ -311,6 +312,7 @@ export interface CrmReminderConfig {
 export interface CrmWorkspaceState {
   companies: CrmCompany[];
   buildings: CrmBuilding[];
+  deletedBuildingKeys: string[];
   occupancyRecords: CrmOccupancyRecord[];
   stackingPlanEntries: CrmStackingPlanEntry[];
   shortlists: CrmShortlist[];
@@ -603,6 +605,7 @@ export function emptyCrmWorkspaceState(mode: RepresentationMode | null | undefin
   return {
     companies: [],
     buildings: [],
+    deletedBuildingKeys: [],
     occupancyRecords: [],
     stackingPlanEntries: [],
     shortlists: [],
@@ -638,6 +641,13 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   const existingShortlistEntries = ensureArray<CrmShortlistEntry>(existing.shortlistEntries);
   const existingTours = ensureArray<CrmTour>(existing.tours);
   const existingWorkflowBoardViews = ensureArray<CrmWorkflowBoardView>(existing.workflowBoardViews);
+  const deletedBuildingKeys = normalizeDeletionIds(existing.deletedBuildingKeys);
+  const deletedBuildingKeySet = new Set(deletedBuildingKeys);
+  const deletedExistingBuildingIds = new Set(
+    existingBuildings
+      .filter((building) => deletedBuildingKeySet.has(getWorkspaceBuildingDeletionKey(building)))
+      .map((building) => building.id),
+  );
   const today = todayIso();
 
   const companyByNormalizedName = new Map(existingCompanies.map((company) => [normalize(company.name), company]));
@@ -724,6 +734,12 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   };
   const upsertBuilding = (seed: Partial<CrmBuilding> & { id: string }) => {
     const existingBuilding = buildingById.get(seed.id) || existingBuildings.find((building) => building.id === seed.id);
+    const deletionKey = getWorkspaceBuildingDeletionKey({
+      id: asText(seed.id) || asText(existingBuilding?.id),
+      name: seed.name || existingBuilding?.name,
+      address: seed.address || existingBuilding?.address,
+    });
+    if (deletionKey && deletedBuildingKeySet.has(deletionKey)) return;
     const nextBuilding: CrmBuilding = {
       id: seed.id,
       clientId: input.clientId,
@@ -795,6 +811,7 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   const buildings = Array.from(buildingById.values()).sort((left, right) =>
     `${left.submarket} ${left.name}`.localeCompare(`${right.submarket} ${right.name}`),
   );
+  const buildingIds = new Set(buildings.map((building) => building.id));
 
   const workspaceCompanyName = asText(input.clientName) || "Workspace Client";
   const workspaceExisting = companyByNormalizedName.get(normalize(workspaceCompanyName));
@@ -1083,7 +1100,8 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
       sourceDocumentIds: record.sourceDocumentIds,
     });
   }
-  const occupancyRecords = Array.from(occupancyRecordMap.values());
+  const occupancyRecords = Array.from(occupancyRecordMap.values())
+    .filter((record) => !deletedExistingBuildingIds.has(record.buildingId));
 
   for (const space of input.spaces) {
     const buildingId = space.propertyId;
@@ -1106,7 +1124,7 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   }
   const stackingPlanEntries = Array.from(stackingPlanEntryMap.values()).sort((left, right) =>
     `${left.buildingId}-${left.floor}-${left.suite}`.localeCompare(`${right.buildingId}-${right.floor}-${right.suite}`),
-  );
+  ).filter((entry) => !deletedExistingBuildingIds.has(entry.buildingId));
 
   for (const obligation of input.obligations) {
     const sourceDocs = obligation.sourceDocumentIds || [];
@@ -1210,7 +1228,62 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   const companies = [
     ...mergedCompanies,
     ...existingCompanies.filter((company) => !mergedCompanies.some((item) => item.id === company.id)),
-  ];
+  ].map((company) => (
+    company.buildingId && deletedExistingBuildingIds.has(company.buildingId)
+      ? { ...company, buildingId: "" }
+      : company
+  ));
+
+  const shortlists = existingShortlists
+    .filter((item) => asText(item.buildingId) && !deletedExistingBuildingIds.has(asText(item.buildingId)))
+    .map((item) => ({
+      ...item,
+      clientId: input.clientId,
+    }));
+  const shortlistIdSet = new Set(shortlists.map((item) => item.id));
+  const shortlistEntries = existingShortlistEntries
+    .filter((item) => (
+      asText(item.shortlistId)
+      && shortlistIdSet.has(asText(item.shortlistId))
+      && asText(item.buildingId)
+      && !deletedExistingBuildingIds.has(asText(item.buildingId))
+      && asText(item.suite)
+    ))
+    .map((item) => ({
+      ...item,
+      clientId: input.clientId,
+      owner: asText(item.owner),
+    }));
+  const shortlistEntryIdSet = new Set(shortlistEntries.map((item) => item.id));
+  const tours = existingTours
+    .filter((item) => (
+      asText(item.buildingId)
+      && !deletedExistingBuildingIds.has(asText(item.buildingId))
+      && asText(item.suite)
+      && (!asText(item.shortlistEntryId) || shortlistEntryIdSet.has(asText(item.shortlistEntryId)))
+    ))
+    .map((item) => ({
+      ...item,
+      clientId: input.clientId,
+      assignee: asText(item.assignee) || asText(item.broker),
+      attendees: ensureArray<string>(item.attendees),
+    }));
+  const workflowBoardViews = existingWorkflowBoardViews
+    .filter((item) => {
+      if (!asText(item.name)) return false;
+      const buildingId = asText(item.buildingId);
+      return !buildingId || buildingId === "all" || !deletedExistingBuildingIds.has(buildingId);
+    })
+    .map((item) => ({
+      ...item,
+      clientId: input.clientId,
+      scope: (asText((item as { scope?: string }).scope) || (asText(item.dealId) ? "deal" : "team")) as CrmWorkflowBoardViewScope,
+      createdBy: asText((item as { createdBy?: string }).createdBy),
+      team: asText((item as { team?: string }).team),
+      buildingId: asText(item.buildingId) || "all",
+      broker: asText(item.broker) || "all",
+      dateFilter: (asText(item.dateFilter) || "all") as CrmWorkflowBoardDateFilter,
+    }));
 
   const prospectingRecords: CrmProspectingRecord[] = companies.map((company) => {
     const existingRecord = existingProspecting.find((record) => record.companyId === company.id);
@@ -1331,41 +1404,13 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   return {
     companies,
     buildings,
+    deletedBuildingKeys,
     occupancyRecords,
     stackingPlanEntries,
-    shortlists: existingShortlists
-      .filter((item) => asText(item.buildingId))
-      .map((item) => ({
-        ...item,
-        clientId: input.clientId,
-      })),
-    shortlistEntries: existingShortlistEntries
-      .filter((item) => asText(item.shortlistId) && asText(item.buildingId) && asText(item.suite))
-      .map((item) => ({
-        ...item,
-        clientId: input.clientId,
-        owner: asText(item.owner),
-      })),
-    tours: existingTours
-      .filter((item) => asText(item.buildingId) && asText(item.suite))
-      .map((item) => ({
-        ...item,
-        clientId: input.clientId,
-        assignee: asText(item.assignee) || asText(item.broker),
-        attendees: ensureArray<string>(item.attendees),
-      })),
-    workflowBoardViews: existingWorkflowBoardViews
-      .filter((item) => asText(item.name))
-      .map((item) => ({
-        ...item,
-        clientId: input.clientId,
-        scope: (asText((item as { scope?: string }).scope) || (asText(item.dealId) ? "deal" : "team")) as CrmWorkflowBoardViewScope,
-        createdBy: asText((item as { createdBy?: string }).createdBy),
-        team: asText((item as { team?: string }).team),
-        buildingId: asText(item.buildingId) || "all",
-        broker: asText(item.broker) || "all",
-        dateFilter: (asText(item.dateFilter) || "all") as CrmWorkflowBoardDateFilter,
-      })),
+    shortlists,
+    shortlistEntries,
+    tours,
+    workflowBoardViews,
     prospectingRecords,
     clientRelationshipRecords,
     tasks: existingTasks,

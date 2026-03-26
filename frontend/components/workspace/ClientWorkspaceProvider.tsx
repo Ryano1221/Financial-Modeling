@@ -23,6 +23,7 @@ import {
   CRM_SETTINGS_STORAGE_KEY,
   DEAL_LIBRARY_STORAGE_KEY,
   DEAL_STAGE_CONFIG_STORAGE_KEY,
+  DELETED_DOCUMENT_LIBRARY_STORAGE_KEY,
   DOCUMENT_LIBRARY_STORAGE_KEY,
   REPRESENTATION_MODE_STORAGE_KEY,
 } from "@/lib/workspace/storage";
@@ -31,6 +32,7 @@ import { inferWorkspaceDocumentType } from "@/lib/workspace/document-type";
 import { inferDocumentMimeType, isWordDocumentFile } from "@/lib/workspace/document-preview";
 import { getDealDocumentStageTransition } from "@/lib/workspace/deal-stage-automation";
 import { fetchWorkspaceCloudState, saveWorkspaceCloudState } from "@/lib/workspace/cloud";
+import { filterDocumentsByDeletedIds, normalizeDeletionIds } from "@/lib/workspace/deletions";
 import { normalizeRepresentationMode, type RepresentationMode } from "@/lib/workspace/representation-mode";
 import {
   CLIENT_DOCUMENT_TYPES,
@@ -174,6 +176,11 @@ function getDocumentStorageKey(session: SupabaseAuthSession | null): string {
   return userId ? `${DOCUMENT_LIBRARY_STORAGE_KEY}:${userId}` : DOCUMENT_LIBRARY_STORAGE_KEY;
 }
 
+function getDeletedDocumentStorageKey(session: SupabaseAuthSession | null): string {
+  const userId = asText(session?.user?.id);
+  return userId ? `${DELETED_DOCUMENT_LIBRARY_STORAGE_KEY}:${userId}` : DELETED_DOCUMENT_LIBRARY_STORAGE_KEY;
+}
+
 function mergeDocumentPayloads(
   documents: ClientWorkspaceDocument[],
   cachedDocuments: ClientWorkspaceDocument[],
@@ -202,6 +209,16 @@ function readCachedDocuments(
   const legacyDocuments = parseStoredDocuments(storage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
   if (scopedDocuments.length === 0) return options?.allowLegacyFallback ? legacyDocuments : [];
   return mergeDocumentPayloads(scopedDocuments, legacyDocuments);
+}
+
+function readDeletedDocumentIds(
+  storage: Storage,
+  session: SupabaseAuthSession | null,
+): string[] {
+  const scopedIds = normalizeDeletionIds(storage.getItem(getDeletedDocumentStorageKey(session)));
+  if (!session) return scopedIds;
+  const legacyIds = normalizeDeletionIds(storage.getItem(DELETED_DOCUMENT_LIBRARY_STORAGE_KEY));
+  return normalizeDeletionIds([...scopedIds, ...legacyIds]);
 }
 
 function parseStoredClients(raw: string | null): ClientWorkspaceClient[] {
@@ -436,6 +453,7 @@ function serializeWorkspaceStateForCloud(
   dealStageMap: Record<string, string[]>,
   crmSettingsMap: Record<string, ClientCrmSettings>,
   documents: ClientWorkspaceDocument[],
+  deletedDocumentIds: string[],
   activeClientId: string | null,
   options?: { includeSnapshots?: boolean },
 ): Record<string, unknown> {
@@ -471,6 +489,7 @@ function serializeWorkspaceStateForCloud(
     dealStageMap,
     crmSettingsMap,
     documents: serializedDocuments,
+    deletedDocumentIds: normalizeDeletionIds(deletedDocumentIds),
     activeClientId: activeClientId || null,
   };
 }
@@ -549,6 +568,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   const [dealStageMap, setDealStageMap] = useState<Record<string, string[]>>({});
   const [crmSettingsMap, setCrmSettingsMap] = useState<Record<string, ClientCrmSettings>>({});
   const [allDocuments, setAllDocuments] = useState<ClientWorkspaceDocument[]>([]);
+  const [deletedDocumentIds, setDeletedDocumentIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -606,7 +626,16 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         loadedRepresentationMode,
       );
       const cachedDocuments = readCachedDocuments(window.localStorage, session, { allowLegacyFallback: true });
-      const loadedDocuments = mergeDocumentPayloads(parseStoredDocuments(JSON.stringify(documentsRaw)), cachedDocuments);
+      const localDeletedDocumentIds = readDeletedDocumentIds(window.localStorage, session);
+      const syncedDeletedDocumentIds = normalizeDeletionIds(state?.deletedDocumentIds);
+      const combinedDeletedDocumentIds = normalizeDeletionIds([
+        ...syncedDeletedDocumentIds,
+        ...localDeletedDocumentIds,
+      ]);
+      const loadedDocuments = filterDocumentsByDeletedIds(
+        mergeDocumentPayloads(parseStoredDocuments(JSON.stringify(documentsRaw)), cachedDocuments),
+        combinedDeletedDocumentIds,
+      );
       const resolvedActive =
         activeRaw && loadedClients.some((client) => client.id === activeRaw)
           ? activeRaw
@@ -617,6 +646,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setDealStageMap(loadedDealStages);
       setCrmSettingsMap(loadedCrmSettings);
       setAllDocuments(loadedDocuments);
+      setDeletedDocumentIds(combinedDeletedDocumentIds);
       setActiveClientId(resolvedActive);
     };
 
@@ -636,7 +666,11 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         parseStoredCrmSettingsMap(window.localStorage.getItem(CRM_SETTINGS_STORAGE_KEY), loadedRepresentationMode),
         loadedRepresentationMode,
       );
-      const loadedDocuments = readCachedDocuments(window.localStorage, session);
+      const localDeletedDocumentIds = readDeletedDocumentIds(window.localStorage, session);
+      const loadedDocuments = filterDocumentsByDeletedIds(
+        readCachedDocuments(window.localStorage, session),
+        localDeletedDocumentIds,
+      );
       const storedActiveId = asText(window.localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY));
       setRepresentationModeState(loadedRepresentationMode);
       setClients(loadedClients);
@@ -644,6 +678,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setDealStageMap(loadedDealStages);
       setCrmSettingsMap(loadedCrmSettings);
       setAllDocuments(loadedDocuments);
+      setDeletedDocumentIds(localDeletedDocumentIds);
       if (storedActiveId && loadedClients.some((client) => client.id === storedActiveId)) {
         setActiveClientId(storedActiveId);
       } else {
@@ -756,6 +791,16 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    const storageKey = getDeletedDocumentStorageKey(session);
+    if (deletedDocumentIds.length > 0) {
+      window.localStorage.setItem(storageKey, JSON.stringify(deletedDocumentIds));
+      return;
+    }
+    window.localStorage.removeItem(storageKey);
+  }, [ready, deletedDocumentIds, session]);
+
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
     if (session && !cloudLocalFallback) {
       window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
       return;
@@ -793,6 +838,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         dealStageMap,
         crmSettingsMap,
         allDocuments,
+        deletedDocumentIds,
         activeClientId,
         {
           includeSnapshots: true,
@@ -817,6 +863,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
               dealStageMap,
               crmSettingsMap,
               allDocuments,
+              deletedDocumentIds,
               activeClientId,
               {
                 includeSnapshots: false,
@@ -862,6 +909,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     dealStageMap,
     crmSettingsMap,
     allDocuments,
+    deletedDocumentIds,
     activeClientId,
     cloudLocalFallback,
   ]);
@@ -1252,6 +1300,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
   const removeDocument = useCallback((documentId: string) => {
     const id = asText(documentId);
     if (!id) return;
+    setDeletedDocumentIds((prev) => normalizeDeletionIds([...prev, id]));
     setAllDocuments((prev) => prev.filter((doc) => doc.id !== id));
     setAllDeals((prev) =>
       prev.map((deal) => {

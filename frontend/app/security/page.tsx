@@ -58,6 +58,9 @@ export default function SecurityPage() {
               The dedicated Buildings module reads shared market inventory for common building reference data, while focused-building context, stack-plan edits, suite records, and downstream workflow handoffs remain client-scoped.
             </p>
             <p className="text-sm text-slate-300 sm:text-base">
+              Intentional document and building deletions now persist as client-scoped workspace tombstones, which prevents stale local or cloud snapshots from resurrecting records a user explicitly removed.
+            </p>
+            <p className="text-sm text-slate-300 sm:text-base">
               Suite-level selection inside Buildings can create survey rows from the active client workspace only. Those handoffs do not publish private suite economics globally and continue to inherit the same client-scoped survey storage boundary.
             </p>
             <p className="text-sm text-slate-300 sm:text-base">
