@@ -4937,13 +4937,16 @@ def _extract_labeled_section(
     if not heading_group:
         return ""
     stop_group = "|".join(pattern for pattern in stop_heading_patterns if pattern)
-    if stop_group:
-        pattern = re.compile(
-            rf"(?is)\b(?:{heading_group})\s*:\s*(.+?)(?=\b(?:{stop_group})\s*:|$)"
-        )
-    else:
-        pattern = re.compile(rf"(?is)\b(?:{heading_group})\s*:\s*(.+)$")
-    matches = list(pattern.finditer(text))
+    try:
+        if stop_group:
+            compiled = re.compile(
+                rf"(?is)\b(?:{heading_group})\s*:\s*(.+?)(?=\b(?:{stop_group})\s*:|$)"
+            )
+        else:
+            compiled = re.compile(rf"(?is)\b(?:{heading_group})\s*:\s*(.+)$")
+        matches = list(compiled.finditer(text))
+    except Exception:
+        return ""
     if not matches:
         return ""
     return str(matches[-1].group(1) or "").strip()
@@ -7064,7 +7067,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             pass
 
     # Option-aware fallback for counter proposals that provide Option One/Two economics.
-    option_hints = _extract_option_counter_terms(text)
+    try:
+        option_hints = _extract_option_counter_terms(text)
+    except Exception as _opt_err:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("option_counter_terms_failed err=%s", str(_opt_err)[:200])
+        option_hints = {}
     raw_option_variants = option_hints.get("options") if isinstance(option_hints.get("options"), list) else []
     has_multiple_option_variants = len(raw_option_variants) >= 2
     option_term = _coerce_int_token(option_hints.get("term_months"), 0) or 0
@@ -10629,8 +10637,15 @@ def _normalize_impl(
         extraction_text_for_summary = text or ""
         doc_type_hint = _detect_document_type(text, file.filename or "") if text.strip() else "unknown"
 
-        extracted_hints = _extract_lease_hints(text, file.filename or "", rid)
-        note_highlights = _extract_lease_note_highlights(text)
+        try:
+            extracted_hints = _extract_lease_hints(text, file.filename or "", rid)
+        except Exception as _hints_err:
+            _LOG.warning("lease_hints_extraction_failed rid=%s err=%s", rid, str(_hints_err)[:200])
+            extracted_hints = {}
+        try:
+            note_highlights = _extract_lease_note_highlights(text)
+        except Exception:
+            note_highlights = []
         is_generated_report_doc = bool(text.strip() and _looks_like_generated_report_document(text))
 
         if is_generated_report_doc:
@@ -11522,12 +11537,19 @@ def _normalize_impl(
             if warning and warning not in warnings:
                 warnings.append(str(warning))
 
-        option_variants = _build_canonical_option_variants(
-            canonical=canonical,
-            extracted_hints=extracted_hints,
-            filename=file.filename or "",
-        )
-        conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
+        try:
+            option_variants = _build_canonical_option_variants(
+                canonical=canonical,
+                extracted_hints=extracted_hints,
+                filename=file.filename or "",
+            )
+        except Exception as _ov_err:
+            _LOG.warning("build_option_variants_failed rid=%s err=%s", rid, str(_ov_err)[:200])
+            option_variants = []
+        try:
+            conf_from_missing, missing, questions = _compute_confidence_and_missing(canonical)
+        except Exception:
+            conf_from_missing, missing, questions = 0.5, [], []
         merge_used_legacy = bool(fallback_fields)
         if used_fallback or merge_used_legacy:
             confidence_score = min(confidence_score, conf_from_missing)
