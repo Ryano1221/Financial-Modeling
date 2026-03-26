@@ -91,7 +91,6 @@ import { ClientWorkspaceGate } from "@/components/workspace/ClientWorkspaceGate"
 import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCenter";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCenter";
-import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import type {
   ClientDocumentSourceModule,
@@ -100,6 +99,7 @@ import type {
 } from "@/lib/workspace/types";
 import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
 import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
+import { normalizerResponseFromSnapshot, repairDocumentNormalizeSnapshot, repairNormalizerResponse } from "@/lib/lease-extraction-repair";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { dataUrlToFile, inferDocumentMimeType } from "@/lib/workspace/document-preview";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
@@ -616,17 +616,6 @@ function HomeContent() {
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
-  const [pendingNormalizeReview, setPendingNormalizeReview] = useState<{
-    data: NormalizerResponse;
-    source?: {
-      name?: string;
-      file?: File | null;
-      sourceDocumentId?: string;
-      sourceModule?: "financial-analyses" | "sublease-recovery" | "upload";
-      skipDocumentRegister?: boolean;
-    };
-    message: string;
-  } | null>(null);
   const [brandId, setBrandId] = useState<string>("default");
   const [globalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
@@ -1082,16 +1071,19 @@ function HomeContent() {
   }, []);
 
   const toDocumentNormalizeSnapshot = useCallback((data: NormalizerResponse): DocumentNormalizeSnapshot | undefined => {
-    if (!data?.canonical_lease) return undefined;
-    return {
-      canonical_lease: data.canonical_lease,
-      extraction_summary: data.extraction_summary,
-      review_tasks: data.review_tasks || [],
-      field_confidence: data.field_confidence || {},
-      warnings: data.warnings || [],
-      confidence_score: Number(data.confidence_score || 0),
-      option_variants: data.option_variants || [],
-    };
+    return repairDocumentNormalizeSnapshot(
+      data?.canonical_lease
+        ? {
+            canonical_lease: data.canonical_lease,
+            extraction_summary: data.extraction_summary,
+            review_tasks: data.review_tasks || [],
+            field_confidence: data.field_confidence || {},
+            warnings: data.warnings || [],
+            confidence_score: Number(data.confidence_score || 0),
+            option_variants: data.option_variants || [],
+          }
+        : undefined,
+    );
   }, []);
 
   const handleNormalizeSuccess = useCallback(
@@ -1105,19 +1097,19 @@ function HomeContent() {
         skipDocumentRegister?: boolean;
       },
     ) => {
-      const hasCanonical = !!data?.canonical_lease;
+      const repairedData = repairNormalizerResponse(data) || data;
+      const hasCanonical = !!repairedData?.canonical_lease;
       console.log("[compute] about to call", { hasCanonical });
       setExtractError(null);
-      setPendingNormalizeReview(null);
       setActiveTopTab("lease-comparison");
 
-      if (!data.canonical_lease) {
+      if (!repairedData.canonical_lease) {
         console.log("[compute] skip: no canonical_lease");
         setExtractError("Extraction completed, but no lease payload was returned. Please retry the upload.");
         return;
       }
 
-      const canonical = data.canonical_lease;
+      const canonical = repairedData.canonical_lease;
       let resolvedSourceDocumentId = source?.sourceDocumentId;
       let resolvedSourceDocumentName = source?.name;
       if (!source?.skipDocumentRegister && activeClientId) {
@@ -1126,21 +1118,31 @@ function HomeContent() {
           name: source?.name || `Lease ${formatDateISO(new Date())}`,
           file: source?.file,
           sourceModule: source?.sourceModule || "financial-analyses",
-          normalize: data,
+          normalize: repairedData,
           parsed: true,
         });
         resolvedSourceDocumentId = savedDocument?.id || resolvedSourceDocumentId;
         resolvedSourceDocumentName = savedDocument?.name || resolvedSourceDocumentName;
       }
+      const snapshot = toDocumentNormalizeSnapshot(repairedData);
+      if (resolvedSourceDocumentId && snapshot?.canonical_lease) {
+        updateDocument(resolvedSourceDocumentId, {
+          parsed: true,
+          building: canonical.building_name || canonical.premises_name || "",
+          address: canonical.address || "",
+          suite: canonical.suite || "",
+          normalizeSnapshot: snapshot,
+        });
+      }
       if (source?.sourceModule === "financial-analyses" && resolvedSourceDocumentId) {
         autoImportedAnalysisDocumentIdsRef.current[resolvedSourceDocumentId] = true;
       }
-      const documentTypeDetected = (data.extraction_summary?.document_type_detected || "unknown").trim();
+      const documentTypeDetected = (repairedData.extraction_summary?.document_type_detected || "unknown").trim();
       const canonicalWithDocType: BackendCanonicalLease = {
         ...canonical,
         document_type_detected: documentTypeDetected || "unknown",
       };
-      const optionVariantsWithDocType = (Array.isArray(data.option_variants) ? data.option_variants : []).map((variant) => ({
+      const optionVariantsWithDocType = (Array.isArray(repairedData.option_variants) ? repairedData.option_variants : []).map((variant) => ({
         ...variant,
         document_type_detected: documentTypeDetected || "unknown",
       }));
@@ -1167,58 +1169,8 @@ function HomeContent() {
       });
       revealComparisonSummary();
     },
-    [addScenarioFromCanonical, runComputeForScenario, activeClientId, registerDocument, revealComparisonSummary]
+    [addScenarioFromCanonical, runComputeForScenario, activeClientId, registerDocument, revealComparisonSummary, toDocumentNormalizeSnapshot, updateDocument]
   );
-
-  const handleNormalizeReviewConfirm = useCallback(async (canonical: BackendCanonicalLease) => {
-    if (!pendingNormalizeReview) return;
-
-    const confirmedData: NormalizerResponse = {
-      ...pendingNormalizeReview.data,
-      canonical_lease: canonical,
-      confidence_score: Math.max(0.85, Number(pendingNormalizeReview.data.confidence_score || 0)),
-      missing_fields: [],
-      clarification_questions: [],
-      review_tasks: [],
-      export_allowed: true,
-      extraction_confidence: {
-        ...(pendingNormalizeReview.data.extraction_confidence || {}),
-        overall: Math.max(0.85, Number((pendingNormalizeReview.data.extraction_confidence as { overall?: unknown } | undefined)?.overall || pendingNormalizeReview.data.confidence_score || 0)),
-        status: "yellow",
-        export_allowed: true,
-      },
-      warnings: Array.from(new Set([
-        ...(pendingNormalizeReview.data.warnings || []),
-        "Lease fields were manually confirmed before scenario creation.",
-      ])),
-    };
-
-    const snapshot = toDocumentNormalizeSnapshot(confirmedData);
-    if (pendingNormalizeReview.source?.sourceDocumentId && snapshot?.canonical_lease) {
-      updateDocument(pendingNormalizeReview.source.sourceDocumentId, {
-        parsed: true,
-        building: canonical.building_name || canonical.premises_name || "",
-        address: canonical.address || "",
-        suite: canonical.suite || "",
-        normalizeSnapshot: snapshot,
-      });
-    }
-
-    setPendingNormalizeReview(null);
-    setExtractError(null);
-
-    await handleNormalizeSuccess(confirmedData, pendingNormalizeReview.source?.sourceDocumentId
-      ? {
-          ...pendingNormalizeReview.source,
-          skipDocumentRegister: true,
-        }
-      : pendingNormalizeReview.source);
-  }, [handleNormalizeSuccess, pendingNormalizeReview, toDocumentNormalizeSnapshot, updateDocument]);
-
-  const handleNormalizeReviewCancel = useCallback(() => {
-    setPendingNormalizeReview(null);
-    setExtractError("Extraction was paused for review. Update the lease fields below or upload a cleaner source document.");
-  }, []);
 
   const routeNormalizedLease = useCallback(async (
     data: NormalizerResponse,
@@ -1230,30 +1182,24 @@ function HomeContent() {
       skipDocumentRegister?: boolean;
     },
   ) => {
-    const intake = getNormalizeIntakeDecision(data);
+    const repairedData = repairNormalizerResponse(data) || data;
+    const intake = getNormalizeIntakeDecision(repairedData);
     setActiveTopTab("lease-comparison");
 
     if (!intake.autoAdd) {
-      setPendingNormalizeReview({
-        data,
-        source,
-        message: intake.message,
-      });
       setExtractError(intake.message);
       return;
     }
 
-    setPendingNormalizeReview(null);
-    await handleNormalizeSuccess(data, source);
+    await handleNormalizeSuccess(repairedData, source);
   }, [handleNormalizeSuccess]);
 
   const handleExtractError = useCallback((message: string) => {
-    setPendingNormalizeReview(null);
     setExtractError(message || null);
   }, []);
 
   const handleExistingDocumentSelection = useCallback(async (document: ClientWorkspaceDocument) => {
-    let snapshot = document.normalizeSnapshot;
+    let snapshot = repairDocumentNormalizeSnapshot(document.normalizeSnapshot);
     if (!snapshot?.canonical_lease && document.previewDataUrl) {
       try {
         setExtractError(`Re-parsing ${document.name} for comparison summary...`);
@@ -1279,17 +1225,11 @@ function HomeContent() {
       setExtractError("Selected document has no parsed payload. Re-upload it on this tab and it will open the comparison summary automatically.");
       return;
     }
-    const payload: NormalizerResponse = {
-      canonical_lease: snapshot.canonical_lease,
-      option_variants: snapshot.option_variants || [],
-      confidence_score: Number(snapshot.confidence_score || 0),
-      field_confidence: snapshot.field_confidence || {},
-      missing_fields: [],
-      clarification_questions: [],
-      warnings: snapshot.warnings || [],
-      extraction_summary: snapshot.extraction_summary,
-      review_tasks: snapshot.review_tasks || [],
-    };
+    const payload = normalizerResponseFromSnapshot(snapshot);
+    if (!payload?.canonical_lease) {
+      setExtractError("Selected document could not be repaired into a valid comparison scenario. Re-upload the source document on this tab.");
+      return;
+    }
     void routeNormalizedLease(payload, {
       name: document.name,
       sourceDocumentId: document.id,
@@ -1337,19 +1277,8 @@ function HomeContent() {
 
     pendingDocs.forEach((document) => {
       autoImportedAnalysisDocumentIdsRef.current[document.id] = true;
-      const snapshot = document.normalizeSnapshot;
-      if (!snapshot?.canonical_lease) return;
-      const payload: NormalizerResponse = {
-        canonical_lease: snapshot.canonical_lease,
-        option_variants: snapshot.option_variants || [],
-        confidence_score: Number(snapshot.confidence_score || 0),
-        field_confidence: snapshot.field_confidence || {},
-        missing_fields: [],
-        clarification_questions: [],
-        warnings: snapshot.warnings || [],
-        extraction_summary: snapshot.extraction_summary,
-        review_tasks: snapshot.review_tasks || [],
-      };
+      const payload = normalizerResponseFromSnapshot(document.normalizeSnapshot);
+      if (!payload?.canonical_lease) return;
       void routeNormalizedLease(payload, {
         name: document.name,
         sourceDocumentId: document.id,
@@ -2604,18 +2533,6 @@ function HomeContent() {
                 }
                 onError={handleExtractError}
               />
-              {pendingNormalizeReview ? (
-                <div className="mt-4 text-left">
-                  <div className="mb-3 rounded-2xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-                    {pendingNormalizeReview.message}
-                  </div>
-                  <NormalizeReviewCard
-                    data={pendingNormalizeReview.data}
-                    onConfirm={handleNormalizeReviewConfirm}
-                    onCancel={handleNormalizeReviewCancel}
-                  />
-                </div>
-              ) : null}
               {activeClient ? (
                 <div className="mt-3">
                   <ClientDocumentPicker

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiUrl, getBaseUrl } from "@/lib/api";
+import { repairNormalizerResponse } from "@/lib/lease-extraction-repair";
 import type { NormalizerResponse } from "@/lib/types";
 import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 
@@ -158,16 +159,17 @@ export function ExtractUpload({
                 throw new Error("Normalize returned non-JSON: " + rawText.slice(0, 200));
               }
               if (data.canonical_lease) {
-                const intake = getNormalizeIntakeDecision(data);
+                const repaired = repairNormalizerResponse(data) || data;
+                const intake = getNormalizeIntakeDecision(repaired);
                 console.log("[normalize] parsed", {
-                  hasCanonical: !!data?.canonical_lease,
-                  lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type,
+                  hasCanonical: !!repaired?.canonical_lease,
+                  lease_type: (repaired as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type,
                   parsed: intake.parsed,
                   autoAdd: intake.autoAdd,
                 });
                 console.log("[normalize] calling onSuccess");
-                const persisted = await persistDocument(data, intake.autoAdd);
-                await onSuccess(data, {
+                const persisted = await persistDocument(repaired, intake.autoAdd);
+                await onSuccess(repaired, {
                   fileName: persisted?.fileName || file.name,
                   file,
                   sourceDocumentId: persisted?.sourceDocumentId,

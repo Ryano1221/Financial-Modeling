@@ -109,14 +109,16 @@ export function getNormalizeIntakeDecision(
   const hasInvalidCoreValues = variants.length === 0 || variants.some((variant) => hasInvalidCanonicalCoreValues(variant));
 
   const parsed = !hasCriticalMissing && !hasHardReviewWarning && !hasBlockerReviewTask && !hasInvalidCoreValues;
-  const requiresReview = !parsed || review.needsReview || review.lowConfidence;
+  const requiresReview = !parsed || review.needsReview;
   const autoAdd = parsed && !requiresReview;
 
   let message = "Extraction is ready to add to the comparison.";
   if (!parsed) {
-    message = "Extraction found the document, but key lease fields are incomplete. Review and confirm before adding it to the analysis.";
+    message = "Extraction found the document, but the core lease terms are still incomplete. Upload the source lease or proposal again so the extractor can rebuild the scenario cleanly.";
   } else if (requiresReview) {
-    message = "Extraction finished, but this lease should be reviewed once before it is added to the comparison.";
+    message = "Extraction found unresolved lease conflicts that still need a cleaner source document before this scenario can be added.";
+  } else if (review.lowConfidence) {
+    message = "Extraction is being auto-added with repaired confidence and validation notes.";
   }
 
   return {

@@ -131,15 +131,16 @@ describe("normalize review gate", () => {
     expect(decision.requiresReview).toBe(false);
   });
 
-  it("routes low-confidence extractions into manual review", () => {
+  it("auto-adds low-confidence extractions when the canonical lease is complete", () => {
     const decision = getNormalizeIntakeDecision(
       makeNormalizerResponse({
         confidence_score: 0.72,
       }),
     );
     expect(decision.parsed).toBe(true);
-    expect(decision.autoAdd).toBe(false);
-    expect(decision.requiresReview).toBe(true);
+    expect(decision.autoAdd).toBe(true);
+    expect(decision.requiresReview).toBe(false);
+    expect(decision.lowConfidence).toBe(true);
   });
 
   it("marks incomplete extractions as not parsed", () => {

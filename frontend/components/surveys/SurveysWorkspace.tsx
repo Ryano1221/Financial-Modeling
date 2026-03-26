@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
 import { getDisplayErrorMessage } from "@/lib/api";
+import { normalizerResponseFromSnapshot } from "@/lib/lease-extraction-repair";
 import type { NormalizerResponse } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
@@ -145,19 +146,8 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
 
   const onSelectExistingDocument = useCallback((document: ClientWorkspaceDocument) => {
     try {
-      const snapshot = document.normalizeSnapshot;
-      if (snapshot?.canonical_lease) {
-        const normalized: NormalizerResponse = {
-          canonical_lease: snapshot.canonical_lease,
-          option_variants: snapshot.option_variants || [],
-          confidence_score: Number(snapshot.confidence_score || 0),
-          field_confidence: snapshot.field_confidence || {},
-          missing_fields: [],
-          clarification_questions: [],
-          warnings: snapshot.warnings || [],
-          extraction_summary: snapshot.extraction_summary,
-          review_tasks: snapshot.review_tasks || [],
-        };
+      const normalized = normalizerResponseFromSnapshot(document.normalizeSnapshot);
+      if (normalized?.canonical_lease) {
         const entry = mapNormalizeToSurveyEntry(normalized, document.name, clientId);
         addEntry(entry);
         setStatus(`Loaded ${document.name} from client document library.`);

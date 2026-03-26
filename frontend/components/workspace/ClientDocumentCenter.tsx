@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
+import { repairNormalizerResponse } from "@/lib/lease-extraction-repair";
 import { isParseableWorkspaceDocument, normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 import {
@@ -269,6 +270,7 @@ export function ClientDocumentCenter({
           normalizeError = getDisplayErrorMessage(normalizeProblem);
         }
 
+        normalize = repairNormalizerResponse(normalize) || normalize;
         const intake = getNormalizeIntakeDecision(normalize);
         const savedDocument = await registerDocument({
           clientId: activeClient.id,
