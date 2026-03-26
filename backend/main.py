@@ -8983,13 +8983,87 @@ def _append_review_task(
     )
 
 
+def _normalize_review_task_issue_code(issue_code: object, *, field_path: str, message: str) -> str:
+    raw = re.sub(r"[^A-Za-z0-9]+", "_", str(issue_code or "").strip().upper()).strip("_")
+    if raw:
+        return raw[:96]
+
+    field_slug = re.sub(r"[^A-Za-z0-9]+", "_", field_path.strip().upper()).strip("_")
+    message_slug = re.sub(r"[^A-Za-z0-9]+", "_", message.strip().upper()).strip("_")
+    base = field_slug or message_slug or "GENERAL"
+    digest = hashlib.sha1(f"{field_path}|{message}".encode("utf-8")).hexdigest()[:8].upper()
+    return f"REVIEW_TASK_{base[:48]}_{digest}"
+
+
+def _normalize_review_evidence_item(item: object) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    bbox = item.get("bbox")
+    bbox_list = bbox if isinstance(bbox, list) else None
+    try:
+        confidence = float(item.get("source_confidence") or 0.0)
+    except Exception:
+        confidence = 0.0
+    page_value = item.get("page")
+    try:
+        page = int(page_value) if page_value not in (None, "") else None
+    except Exception:
+        page = None
+    snippet_raw = item.get("snippet")
+    snippet = str(snippet_raw).strip() if snippet_raw not in (None, "") else None
+    return {
+        "page": page,
+        "snippet": snippet[:600] if snippet else None,
+        "bbox": bbox_list,
+        "source": str(item.get("source") or "normalize_review_task"),
+        "source_confidence": round(max(0.0, min(1.0, confidence)), 4),
+    }
+
+
+def _normalize_review_task(task: object) -> dict[str, Any] | None:
+    if not isinstance(task, dict):
+        return None
+    field_path = str(task.get("field_path") or "").strip() or "general"
+    severity = str(task.get("severity") or "").strip().lower()
+    if severity not in {"info", "warn", "blocker"}:
+        severity = "warn"
+    message = str(task.get("message") or "").strip() or "Manual review required for extracted lease data."
+    issue_code = _normalize_review_task_issue_code(task.get("issue_code"), field_path=field_path, message=message)
+    candidates = [candidate for candidate in list(task.get("candidates") or []) if isinstance(candidate, dict)]
+    evidence = [
+        normalized
+        for normalized in (_normalize_review_evidence_item(item) for item in list(task.get("evidence") or []))
+        if normalized is not None
+    ]
+    normalized_task = {
+        "field_path": field_path,
+        "severity": severity,
+        "issue_code": issue_code,
+        "message": message,
+        "candidates": candidates,
+        "recommended_value": task.get("recommended_value"),
+        "evidence": evidence,
+    }
+    for key, value in task.items():
+        if key not in normalized_task:
+            normalized_task[key] = value
+    return normalized_task
+
+
+def _normalize_review_tasks(tasks: list[object]) -> list[dict[str, Any]]:
+    normalized_tasks: list[dict[str, Any]] = []
+    for task in tasks or []:
+        normalized = _normalize_review_task(task)
+        if normalized is not None:
+            normalized_tasks.append(normalized)
+    return normalized_tasks
+
+
 def _merge_review_tasks(primary: list[dict], supplemental: list[dict]) -> list[dict]:
     merged: list[dict] = []
     seen: set[tuple[str, str]] = set()
-    for source in (primary or [], supplemental or []):
+    for source in (_normalize_review_tasks(list(primary or [])), _normalize_review_tasks(list(supplemental or []))):
         for task in source:
-            if not isinstance(task, dict):
-                continue
             field_path = str(task.get("field_path") or "").strip().lower()
             issue_code = str(task.get("issue_code") or "").strip().lower()
             key = (field_path, issue_code)

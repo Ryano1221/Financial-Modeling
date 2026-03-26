@@ -91,6 +91,7 @@ import { ClientWorkspaceGate } from "@/components/workspace/ClientWorkspaceGate"
 import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCenter";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCenter";
+import { NormalizeReviewCard } from "@/components/NormalizeReviewCard";
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import type {
   ClientDocumentSourceModule,
@@ -98,6 +99,7 @@ import type {
   DocumentNormalizeSnapshot,
 } from "@/lib/workspace/types";
 import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
+import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { dataUrlToFile, inferDocumentMimeType } from "@/lib/workspace/document-preview";
 const PENDING_SCENARIO_KEY = "lease_deck_pending_scenario";
@@ -614,6 +616,17 @@ function HomeContent() {
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
   const [exportPdfError, setExportPdfError] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
+  const [pendingNormalizeReview, setPendingNormalizeReview] = useState<{
+    data: NormalizerResponse;
+    source?: {
+      name?: string;
+      file?: File | null;
+      sourceDocumentId?: string;
+      sourceModule?: "financial-analyses" | "sublease-recovery" | "upload";
+      skipDocumentRegister?: boolean;
+    };
+    message: string;
+  } | null>(null);
   const [brandId, setBrandId] = useState<string>("default");
   const [globalDiscountRate] = useState(0.08);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
@@ -1095,6 +1108,7 @@ function HomeContent() {
       const hasCanonical = !!data?.canonical_lease;
       console.log("[compute] about to call", { hasCanonical });
       setExtractError(null);
+      setPendingNormalizeReview(null);
       setActiveTopTab("lease-comparison");
 
       if (!data.canonical_lease) {
@@ -1156,7 +1170,85 @@ function HomeContent() {
     [addScenarioFromCanonical, runComputeForScenario, activeClientId, registerDocument, revealComparisonSummary]
   );
 
+  const handleNormalizeReviewConfirm = useCallback(async (canonical: BackendCanonicalLease) => {
+    if (!pendingNormalizeReview) return;
+
+    const confirmedData: NormalizerResponse = {
+      ...pendingNormalizeReview.data,
+      canonical_lease: canonical,
+      confidence_score: Math.max(0.85, Number(pendingNormalizeReview.data.confidence_score || 0)),
+      missing_fields: [],
+      clarification_questions: [],
+      review_tasks: [],
+      export_allowed: true,
+      extraction_confidence: {
+        ...(pendingNormalizeReview.data.extraction_confidence || {}),
+        overall: Math.max(0.85, Number((pendingNormalizeReview.data.extraction_confidence as { overall?: unknown } | undefined)?.overall || pendingNormalizeReview.data.confidence_score || 0)),
+        status: "yellow",
+        export_allowed: true,
+      },
+      warnings: Array.from(new Set([
+        ...(pendingNormalizeReview.data.warnings || []),
+        "Lease fields were manually confirmed before scenario creation.",
+      ])),
+    };
+
+    const snapshot = toDocumentNormalizeSnapshot(confirmedData);
+    if (pendingNormalizeReview.source?.sourceDocumentId && snapshot?.canonical_lease) {
+      updateDocument(pendingNormalizeReview.source.sourceDocumentId, {
+        parsed: true,
+        building: canonical.building_name || canonical.premises_name || "",
+        address: canonical.address || "",
+        suite: canonical.suite || "",
+        normalizeSnapshot: snapshot,
+      });
+    }
+
+    setPendingNormalizeReview(null);
+    setExtractError(null);
+
+    await handleNormalizeSuccess(confirmedData, pendingNormalizeReview.source?.sourceDocumentId
+      ? {
+          ...pendingNormalizeReview.source,
+          skipDocumentRegister: true,
+        }
+      : pendingNormalizeReview.source);
+  }, [handleNormalizeSuccess, pendingNormalizeReview, toDocumentNormalizeSnapshot, updateDocument]);
+
+  const handleNormalizeReviewCancel = useCallback(() => {
+    setPendingNormalizeReview(null);
+    setExtractError("Extraction was paused for review. Update the lease fields below or upload a cleaner source document.");
+  }, []);
+
+  const routeNormalizedLease = useCallback(async (
+    data: NormalizerResponse,
+    source?: {
+      name?: string;
+      file?: File | null;
+      sourceDocumentId?: string;
+      sourceModule?: "financial-analyses" | "sublease-recovery" | "upload";
+      skipDocumentRegister?: boolean;
+    },
+  ) => {
+    const intake = getNormalizeIntakeDecision(data);
+    setActiveTopTab("lease-comparison");
+
+    if (!intake.autoAdd) {
+      setPendingNormalizeReview({
+        data,
+        source,
+        message: intake.message,
+      });
+      setExtractError(intake.message);
+      return;
+    }
+
+    setPendingNormalizeReview(null);
+    await handleNormalizeSuccess(data, source);
+  }, [handleNormalizeSuccess]);
+
   const handleExtractError = useCallback((message: string) => {
+    setPendingNormalizeReview(null);
     setExtractError(message || null);
   }, []);
 
@@ -1198,13 +1290,13 @@ function HomeContent() {
       extraction_summary: snapshot.extraction_summary,
       review_tasks: snapshot.review_tasks || [],
     };
-    void handleNormalizeSuccess(payload, {
+    void routeNormalizedLease(payload, {
       name: document.name,
       sourceDocumentId: document.id,
       sourceModule: "financial-analyses",
       skipDocumentRegister: true,
     });
-  }, [handleNormalizeSuccess, toDocumentNormalizeSnapshot, updateDocument]);
+  }, [routeNormalizedLease, toDocumentNormalizeSnapshot, updateDocument]);
 
   const handleFinancialAnalysisDocumentIngested = useCallback(async (payload: {
     document: ClientWorkspaceDocument;
@@ -1215,14 +1307,14 @@ function HomeContent() {
       return;
     }
     if (!payload.normalize?.canonical_lease) return;
-    await handleNormalizeSuccess(payload.normalize, {
+    await routeNormalizedLease(payload.normalize, {
       name: payload.document.name,
       file: payload.file,
       sourceDocumentId: payload.document.id,
       sourceModule: "financial-analyses",
       skipDocumentRegister: true,
     });
-  }, [activeDocumentDropSourceModule, activePlatformModule, handleNormalizeSuccess]);
+  }, [activePlatformModule, routeNormalizedLease]);
 
   useEffect(() => {
     if (!workspaceReady || !hasRestored || !activeClientId || activePlatformModule !== "financial-analyses" || activeTopTab !== "lease-comparison") {
@@ -1233,9 +1325,10 @@ function HomeContent() {
         .map((scenario) => String(scenario.source_document_id || "").trim())
         .filter(Boolean)
     );
-    const pendingDocs = allDocuments.filter((document) =>
+      const pendingDocs = allDocuments.filter((document) =>
       document.clientId === activeClientId
       && document.sourceModule === "financial-analyses"
+      && document.parsed
       && Boolean(document.normalizeSnapshot?.canonical_lease)
       && !importedSourceIds.has(document.id)
       && !autoImportedAnalysisDocumentIdsRef.current[document.id]
@@ -1257,7 +1350,7 @@ function HomeContent() {
         extraction_summary: snapshot.extraction_summary,
         review_tasks: snapshot.review_tasks || [],
       };
-      void handleNormalizeSuccess(payload, {
+      void routeNormalizedLease(payload, {
         name: document.name,
         sourceDocumentId: document.id,
         sourceModule: "financial-analyses",
@@ -1269,7 +1362,7 @@ function HomeContent() {
     activePlatformModule,
     activeTopTab,
     allDocuments,
-    handleNormalizeSuccess,
+    routeNormalizedLease,
     hasRestored,
     scenarios,
     workspaceReady,
@@ -2501,7 +2594,7 @@ function HomeContent() {
                     : undefined;
                 }}
                 onSuccess={(data, context) =>
-                  handleNormalizeSuccess(data, {
+                  routeNormalizedLease(data, {
                     name: context?.fileName,
                     file: context?.file,
                     sourceDocumentId: context?.sourceDocumentId,
@@ -2511,6 +2604,18 @@ function HomeContent() {
                 }
                 onError={handleExtractError}
               />
+              {pendingNormalizeReview ? (
+                <div className="mt-4 text-left">
+                  <div className="mb-3 rounded-2xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                    {pendingNormalizeReview.message}
+                  </div>
+                  <NormalizeReviewCard
+                    data={pendingNormalizeReview.data}
+                    onConfirm={handleNormalizeReviewConfirm}
+                    onCancel={handleNormalizeReviewCancel}
+                  />
+                </div>
+              ) : null}
               {activeClient ? (
                 <div className="mt-3">
                   <ClientDocumentPicker

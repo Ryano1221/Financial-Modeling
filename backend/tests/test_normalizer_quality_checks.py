@@ -343,6 +343,84 @@ def test_normalize_impl_merges_dated_rent_review_tasks_from_hints(monkeypatch) -
     assert rent_review.candidates[0]["category"] == "monthly_total"
 
 
+def test_normalize_impl_sanitizes_malformed_review_tasks(monkeypatch) -> None:
+    monkeypatch.setattr(main, "extract_text_from_pdf", lambda _buf: "lease term text")
+    monkeypatch.setattr(main, "text_quality_requires_ocr", lambda _text: False)
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "lease")
+    monkeypatch.setattr(
+        main,
+        "_extract_lease_hints",
+        lambda _text, _filename, _rid: {
+            "building_name": "Signal Tower",
+            "suite": "700",
+            "rsf": 12000.0,
+            "commencement_date": date(2026, 1, 1),
+            "expiration_date": date(2033, 8, 31),
+            "term_months": 92,
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Signal Tower",
+                rsf=12000.0,
+                commencement=date(2026, 1, 1),
+                expiration=date(2033, 8, 31),
+                rent_steps=[RentStep(start=0, end=91, rate_psf_yr=42.0)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=8.0,
+                base_year_opex_psf_yr=8.0,
+                opex_growth=0.03,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"rsf": 0.9},
+            warnings=[],
+            source="pdf_text",
+            text_length=15,
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [
+                {
+                    "field_path": "term.commencement_date",
+                    "severity": "warn",
+                    "message": "Commencement mentioned but not firm.",
+                    "evidence": [{"snippet": "Lease shall commence on delivery."}],
+                },
+                {
+                    "field_path": "term.expiration_date",
+                    "severity": "warn",
+                    "message": "92 months mentioned.",
+                },
+            ],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "yellow", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="malformed-review-task.pdf", file=BytesIO(b"pdf-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "PDF", None, None, upload)
+
+    review_tasks = list(result.review_tasks or [])
+    assert len(review_tasks) >= 2
+    commencement_review = next(task for task in review_tasks if task.field_path == "term.commencement_date")
+    expiration_review = next(task for task in review_tasks if task.field_path == "term.expiration_date")
+
+    assert commencement_review.issue_code.startswith("REVIEW_TASK_TERM_COMMENCEMENT_DATE_")
+    assert expiration_review.issue_code.startswith("REVIEW_TASK_TERM_EXPIRATION_DATE_")
+    assert commencement_review.evidence[0].source == "normalize_review_task"
+
+
 def test_supplemental_quality_checks_flags_opex_equal_to_ti_allowance() -> None:
     canonical = main._dict_to_canonical(
         {

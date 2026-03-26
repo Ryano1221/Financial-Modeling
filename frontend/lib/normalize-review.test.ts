@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { BackendCanonicalLease, ExtractionReviewTask } from "@/lib/types";
-import { hasInvalidCanonicalCoreValues, shouldRequireNormalizeReview } from "@/lib/normalize-review";
+import type { BackendCanonicalLease, ExtractionReviewTask, NormalizerResponse } from "@/lib/types";
+import {
+  getNormalizeIntakeDecision,
+  hasInvalidCanonicalCoreValues,
+  shouldRequireNormalizeReview,
+} from "@/lib/normalize-review";
 
 function makeCanonical(overrides: Partial<BackendCanonicalLease> = {}): BackendCanonicalLease {
   return {
@@ -20,6 +24,19 @@ function makeCanonical(overrides: Partial<BackendCanonicalLease> = {}): BackendC
     free_rent_months: 8,
     discount_rate_annual: 0.08,
     rent_schedule: [{ start_month: 0, end_month: 87, rent_psf_annual: 26 }],
+    ...overrides,
+  };
+}
+
+function makeNormalizerResponse(overrides: Partial<NormalizerResponse> = {}): NormalizerResponse {
+  return {
+    canonical_lease: makeCanonical(),
+    confidence_score: 0.93,
+    field_confidence: {},
+    missing_fields: [],
+    clarification_questions: [],
+    warnings: [],
+    review_tasks: [],
     ...overrides,
   };
 }
@@ -105,5 +122,36 @@ describe("normalize review gate", () => {
       canonicalVariants: [makeCanonical()],
     });
     expect(decision.needsReview).toBe(true);
+  });
+
+  it("auto-adds strong extractions", () => {
+    const decision = getNormalizeIntakeDecision(makeNormalizerResponse());
+    expect(decision.parsed).toBe(true);
+    expect(decision.autoAdd).toBe(true);
+    expect(decision.requiresReview).toBe(false);
+  });
+
+  it("routes low-confidence extractions into manual review", () => {
+    const decision = getNormalizeIntakeDecision(
+      makeNormalizerResponse({
+        confidence_score: 0.72,
+      }),
+    );
+    expect(decision.parsed).toBe(true);
+    expect(decision.autoAdd).toBe(false);
+    expect(decision.requiresReview).toBe(true);
+  });
+
+  it("marks incomplete extractions as not parsed", () => {
+    const decision = getNormalizeIntakeDecision(
+      makeNormalizerResponse({
+        canonical_lease: makeCanonical({ rsf: 0 }),
+        confidence_score: 0.52,
+        missing_fields: ["rsf", "rent_schedule"],
+      }),
+    );
+    expect(decision.parsed).toBe(false);
+    expect(decision.autoAdd).toBe(false);
+    expect(decision.requiresReview).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { getDisplayErrorMessage } from "@/lib/api";
+import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
 import type { ClientDocumentSourceModule } from "@/lib/workspace/types";
@@ -56,13 +57,14 @@ export function BrokerOsCommandCenter({
         } catch {
           normalize = null;
         }
+        const intake = getNormalizeIntakeDecision(normalize);
         await registerDocument({
           clientId: activeClient.id,
           name: file.name,
           file,
           sourceModule,
           normalize,
-          parsed: Boolean(normalize),
+          parsed: intake.autoAdd,
         });
         processed += 1;
       }

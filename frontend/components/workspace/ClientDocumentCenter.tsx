@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
 import { isParseableWorkspaceDocument, normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
+import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 import {
   CLIENT_DOCUMENT_TYPES,
   type ClientDocumentSourceModule,
@@ -268,13 +269,14 @@ export function ClientDocumentCenter({
           normalizeError = getDisplayErrorMessage(normalizeProblem);
         }
 
+        const intake = getNormalizeIntakeDecision(normalize);
         const savedDocument = await registerDocument({
           clientId: activeClient.id,
           name: file.name,
           file,
           sourceModule,
           normalize,
-          parsed: Boolean(normalize?.canonical_lease),
+          parsed: intake.autoAdd,
         });
         if (savedDocument && normalize?.canonical_lease) {
           try {
@@ -286,6 +288,9 @@ export function ClientDocumentCenter({
           } catch (ingestError) {
             console.warn("[document-center] workflow_ingest_failed", ingestError);
           }
+        }
+        if (parseable && normalize?.canonical_lease && !intake.autoAdd) {
+          extractionIssues.push(`${file.name}: ${intake.message}`);
         }
         if (parseable && normalizeError) {
           extractionIssues.push(`${file.name}: ${normalizeError}`);

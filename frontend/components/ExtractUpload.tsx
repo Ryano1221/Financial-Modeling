@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getApiUrl, getBaseUrl } from "@/lib/api";
 import type { NormalizerResponse } from "@/lib/types";
+import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 
 const NORMALIZE_TIMEOUT_MS = 180000;
 const NORMALIZE_TIMEOUT_MESSAGE =
@@ -157,12 +158,15 @@ export function ExtractUpload({
                 throw new Error("Normalize returned non-JSON: " + rawText.slice(0, 200));
               }
               if (data.canonical_lease) {
+                const intake = getNormalizeIntakeDecision(data);
                 console.log("[normalize] parsed", {
                   hasCanonical: !!data?.canonical_lease,
                   lease_type: (data as { canonical_lease?: { lease_type?: string } })?.canonical_lease?.lease_type,
+                  parsed: intake.parsed,
+                  autoAdd: intake.autoAdd,
                 });
                 console.log("[normalize] calling onSuccess");
-                const persisted = await persistDocument(data, true);
+                const persisted = await persistDocument(data, intake.autoAdd);
                 await onSuccess(data, {
                   fileName: persisted?.fileName || file.name,
                   file,
@@ -275,7 +279,7 @@ export function ExtractUpload({
           setBatchStatus(`Processing ${i + 1}/${accepted.length}: ${file.name}`);
           await sendFile(file);
         }
-        setBatchStatus(`Finished ${accepted.length} proposal${accepted.length === 1 ? "" : "s"}.`);
+        setBatchStatus(`Finished ${accepted.length} document${accepted.length === 1 ? "" : "s"}.`);
       } finally {
         setLoading(false);
         setTimeout(() => setBatchStatus(null), 2500);
@@ -384,43 +388,85 @@ export function ExtractUpload({
           </div>
         </div>
       )}
-      {showInlineDropZone ? (
-        <div
-          onDrop={onDrop}
-          onDragOver={onDragOver}
-          onDragLeave={onDragLeave}
-          className={`
-            border-2 border-dashed rounded-2xl text-center transition-all duration-200
-            p-4 sm:p-5 min-h-[120px] sm:min-h-[140px] flex flex-col items-center justify-center
-            ${dragOver ? "border-blue-300/70 bg-blue-500/12 shadow-[0_0_0_1px_rgba(147,197,253,0.4),0_16px_45px_rgba(30,64,175,0.2)]" : "border-slate-300/30 bg-slate-900/30"}
-            ${loading ? "pointer-events-none opacity-70" : ""}
-          `}
-        >
-          <div className="mx-auto flex w-full max-w-[38ch] flex-col items-center justify-center gap-3">
-            <p className="text-sm font-semibold tracking-tight leading-relaxed text-slate-100">
-              Drag and drop one or more <strong className="text-slate-50">.pdf</strong>, <strong className="text-slate-50">.docx</strong>, or <strong className="text-slate-50">.doc</strong> lease documents here, or click to choose.
-            </p>
-            <label
-              htmlFor="extract-file-input"
-              className="btn-premium btn-premium-primary inline-flex items-center justify-center cursor-pointer focus-within:focus-ring"
-            >
-              {loading ? "Extracting…" : "Choose files"}
-            </label>
+      <div
+        onDrop={showInlineDropZone ? onDrop : undefined}
+        onDragOver={showInlineDropZone ? onDragOver : undefined}
+        onDragLeave={showInlineDropZone ? onDragLeave : undefined}
+        className={`
+          overflow-hidden rounded-[28px] border transition-all duration-200
+          ${showInlineDropZone ? "border-dashed border-slate-300/30" : "border-white/15"}
+          ${dragOver ? "border-blue-300/70 bg-blue-500/12 shadow-[0_0_0_1px_rgba(147,197,253,0.4),0_16px_45px_rgba(30,64,175,0.2)]" : "bg-[linear-gradient(180deg,rgba(15,23,42,0.92),rgba(15,23,42,0.72))]"}
+          ${loading ? "pointer-events-none opacity-70" : ""}
+        `}
+      >
+        <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.85fr)] lg:items-center">
+          <div className="space-y-4 text-left">
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-200/80">Financial Analysis Extractor</p>
+              <h3 className="text-2xl font-semibold tracking-tight text-white sm:text-[2rem]">
+                Upload one source lease or proposal
+              </h3>
+              <p className="max-w-2xl text-sm leading-6 text-slate-300 sm:text-[15px]">
+                Use the original PDF or Word file. We validate the core lease math before anything is added to the comparison so broken parses stop for review instead of creating bad scenarios.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs text-slate-200">
+              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">PDF</span>
+              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOCX</span>
+              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOC</span>
+              <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">
+                Core-field validation enabled
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <label
+                htmlFor="extract-file-input"
+                className="btn-premium btn-premium-primary inline-flex cursor-pointer items-center justify-center focus-within:focus-ring"
+              >
+                {loading ? "Extracting..." : "Choose files"}
+              </label>
+              <p className="text-sm text-slate-300">
+                {showInlineDropZone ? "Or drag files directly into this panel." : "You can also drag files anywhere on this tab."}
+              </p>
+            </div>
+
+            {batchStatus ? (
+              <div className="rounded-2xl border border-cyan-300/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+                {batchStatus}
+              </div>
+            ) : null}
           </div>
-          <input
-            type="file"
-            accept=".pdf,.docx,.doc"
-            multiple
-            onChange={onFileInput}
-            disabled={loading}
-            className="hidden"
-            id="extract-file-input"
-          />
-          {batchStatus && <p className="mt-4 text-xs text-slate-400">{batchStatus}</p>}
+
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Step 1</p>
+              <p className="mt-2 text-sm font-semibold text-white">Upload the source document</p>
+              <p className="mt-2 text-sm leading-6 text-slate-300">Start with the actual lease, proposal, amendment, or counter instead of a generated analysis PDF.</p>
+            </div>
+            <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Step 2</p>
+              <p className="mt-2 text-sm font-semibold text-white">We validate the essentials</p>
+              <p className="mt-2 text-sm leading-6 text-slate-300">RSF, term dates, and rent schedule have to land cleanly before the scenario can flow straight into comparison.</p>
+            </div>
+            <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Step 3</p>
+              <p className="mt-2 text-sm font-semibold text-white">Review only when needed</p>
+              <p className="mt-2 text-sm leading-6 text-slate-300">Low-confidence extractions pause in a simple confirmation screen so the analysis stays clean and easy to trust.</p>
+            </div>
+          </div>
         </div>
-      ) : batchStatus ? (
-        <p className="text-xs text-slate-400 text-center">{batchStatus}</p>
-      ) : null}
+        <input
+          type="file"
+          accept=".pdf,.docx,.doc"
+          multiple
+          onChange={onFileInput}
+          disabled={loading}
+          className="hidden"
+          id="extract-file-input"
+        />
+      </div>
     </div>
   );
 }

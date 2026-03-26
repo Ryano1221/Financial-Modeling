@@ -1,4 +1,4 @@
-import type { BackendCanonicalLease, ExtractionReviewTask } from "@/lib/types";
+import type { BackendCanonicalLease, ExtractionReviewTask, NormalizerResponse } from "@/lib/types";
 
 export const HARD_REVIEW_WARNING_PATTERNS = [
   /automatic extraction failed/i,
@@ -16,6 +16,14 @@ const CRITICAL_MISSING_FIELDS = new Set([
   "commencement_date",
   "expiration_date",
 ]);
+
+export interface NormalizeIntakeDecision {
+  parsed: boolean;
+  autoAdd: boolean;
+  requiresReview: boolean;
+  lowConfidence: boolean;
+  message: string;
+}
 
 export function hasInvalidCanonicalCoreValues(canonical: BackendCanonicalLease): boolean {
   return (
@@ -65,4 +73,57 @@ export function shouldRequireNormalizeReview(input: {
     (criticallyLowConfidence && hasWarnReviewTask);
 
   return { needsReview, lowConfidence };
+}
+
+export function getNormalizeIntakeDecision(
+  data?: Pick<
+    NormalizerResponse,
+    "canonical_lease" | "option_variants" | "missing_fields" | "warnings" | "confidence_score" | "review_tasks"
+  > | null,
+): NormalizeIntakeDecision {
+  const canonical = data?.canonical_lease;
+  const variants = [
+    canonical,
+    ...(Array.isArray(data?.option_variants) ? data?.option_variants : []),
+  ].filter(Boolean) as BackendCanonicalLease[];
+
+  const review = shouldRequireNormalizeReview({
+    missingFields: data?.missing_fields || [],
+    warnings: data?.warnings || [],
+    confidenceScore: data?.confidence_score,
+    reviewTasks: data?.review_tasks || [],
+    canonicalVariants: variants,
+  });
+
+  const missingFields = Array.isArray(data?.missing_fields) ? data?.missing_fields : [];
+  const warnings = Array.isArray(data?.warnings) ? data?.warnings : [];
+  const reviewTasks = Array.isArray(data?.review_tasks) ? data?.review_tasks : [];
+
+  const hasCriticalMissing = missingFields.some((field) => CRITICAL_MISSING_FIELDS.has(String(field)));
+  const hasHardReviewWarning = warnings.some((warning) =>
+    HARD_REVIEW_WARNING_PATTERNS.some((pattern) => pattern.test(String(warning ?? ""))),
+  );
+  const hasBlockerReviewTask = reviewTasks.some(
+    (task) => String(task?.severity ?? "").toLowerCase() === "blocker",
+  );
+  const hasInvalidCoreValues = variants.length === 0 || variants.some((variant) => hasInvalidCanonicalCoreValues(variant));
+
+  const parsed = !hasCriticalMissing && !hasHardReviewWarning && !hasBlockerReviewTask && !hasInvalidCoreValues;
+  const requiresReview = !parsed || review.needsReview || review.lowConfidence;
+  const autoAdd = parsed && !requiresReview;
+
+  let message = "Extraction is ready to add to the comparison.";
+  if (!parsed) {
+    message = "Extraction found the document, but key lease fields are incomplete. Review and confirm before adding it to the analysis.";
+  } else if (requiresReview) {
+    message = "Extraction finished, but this lease should be reviewed once before it is added to the comparison.";
+  }
+
+  return {
+    parsed,
+    autoAdd,
+    requiresReview,
+    lowConfidence: review.lowConfidence,
+    message,
+  };
 }

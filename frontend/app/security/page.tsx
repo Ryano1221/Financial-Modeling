@@ -116,7 +116,7 @@ export default function SecurityPage() {
               <li>The shared document system uses one client-scoped library for uploads, parsing, linking, and cross-module workflows.</li>
               <li>Openable file payloads for supported uploads can be cached locally in the originating browser to preserve reopen behavior after refresh, while cloud sync continues to store compact document metadata rather than broadening cross-client file exposure.</li>
               <li>When a Financial Analyses document retains a local file payload but is missing a parsed snapshot, the app can re-normalize that file inside the authenticated workspace flow to restore comparison inputs without expanding the storage boundary beyond that browser and client workspace. The same scoped rule now applies whether the document entered through the extract widget or the tab-wide drag-and-drop ingestion path.</li>
-              <li>Financial Analyses intake now requires a canonical lease before a document is treated as parsed, which prevents false-positive upload states from silently skipping the comparison summary.</li>
+              <li>Financial Analyses intake now requires validated core lease fields before a document is treated as parsed, and low-confidence extractions pause for manual confirmation instead of silently entering the comparison workflow.</li>
               <li>The shared AI orchestration layer interprets prompts differently by mode, but tool execution, audit logging, and workspace boundaries remain the same.</li>
               <li>The shared export pipeline applies one authorization path for PDF, spreadsheet, and share-link generation regardless of mode.</li>
             </ul>
@@ -127,6 +127,7 @@ export default function SecurityPage() {
             <ul className="list-disc space-y-2 pl-5 text-sm text-slate-300 sm:text-base">
               <li>Production traffic is pinned to <strong>thecremodel.com</strong> through canonical-host controls.</li>
               <li>Lease uploads keep file-type checks, timeout handling, OCR guardrails, and user-safe error messaging in place before processing continues.</li>
+              <li>The Financial Analyses extractor now validates RSF, term, and rent schedule coverage before auto-adding a scenario, which reduces the chance of incomplete lease math entering downstream reports.</li>
               <li>DOCX proposal normalization now also handles option-driven Word layouts with heading-based parsing and bounded rent-step reconstruction, which improves extraction coverage without widening document access beyond the existing authenticated upload path.</li>
               <li>Normalization guardrails preserve explicit carry-forward economics cues, so clauses that point back to the existing lease structure can be modeled without letting speculative proposal language overwrite unrelated protected records.</li>
               <li>Contact and proof endpoints continue to use same-origin application routes so browser-facing support flows stay aligned with the live production domain.</li>

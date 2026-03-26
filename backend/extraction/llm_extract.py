@@ -24,6 +24,8 @@ _SYSTEM_PROMPT = (
     "- opex.mode: use exactly 'nnn', 'base_year', or 'full_service'; null if uncertain.\n"
     "- abatements: scope must be exactly 'base_rent_only' or 'gross_rent'.\n"
     "- Create a review_task for any field where evidence is ambiguous, missing, or conflicting.\n"
+    "- Every review_task must include field_path, severity, issue_code, and message.\n"
+    "- issue_code must be a short uppercase snake_case identifier that explains the issue.\n"
     "- Never fabricate values not supported by the evidence."
 )
 
@@ -159,9 +161,10 @@ def _build_schema() -> dict[str, Any]:
                     "properties": {
                         "field_path": {"type": "string"},
                         "severity": {"type": "string"},
+                        "issue_code": {"type": "string"},
                         "message": {"type": "string"},
                     },
-                    "required": ["field_path", "severity", "message"],
+                    "required": ["field_path", "severity", "issue_code", "message"],
                     "additionalProperties": False,
                 },
             },
