@@ -17,7 +17,6 @@ interface ScenarioFormProps {
   onAddScenario: () => void;
   onDuplicateScenario: () => void;
   onDeleteScenario: (id: string) => void;
-  onAcceptChanges: () => void;
 }
 
 const defaultScenarioInput: ScenarioInput = {
@@ -58,7 +57,6 @@ export function ScenarioForm({
   onAddScenario,
   onDuplicateScenario,
   onDeleteScenario,
-  onAcceptChanges,
 }: ScenarioFormProps) {
   const [commencementInput, setCommencementInput] = useState("");
   const [expirationInput, setExpirationInput] = useState("");
@@ -276,6 +274,7 @@ export function ScenarioForm({
     );
   };
   const formatCurrencyPsf = (value: number): string => `$${(Math.round(value * 100) / 100).toFixed(2)}`;
+  const formatCompactDate = (value: string): string => isoToDisplayDate(value) || "TBD";
   const opexRangeLabel = (startMonth: number, endMonth: number): string => {
     const startVal = opexAnnualAtMonth(startMonth);
     const endVal = opexAnnualAtMonth(endMonth);
@@ -772,7 +771,10 @@ export function ScenarioForm({
     return (
       <div className="surface-card p-4 sm:p-5 md:p-6">
         <p className="heading-kicker mb-2">Editor</p>
-        <h2 className="heading-section mb-2">Scenario editor</h2>
+        <h2 className="heading-section mb-2">Select an option to edit</h2>
+        <p className="mb-4 text-sm text-slate-400">
+          Choose a scenario from the left or start a fresh option.
+        </p>
         <button
           type="button"
           onClick={onAddScenario}
@@ -784,44 +786,70 @@ export function ScenarioForm({
     );
   }
 
+  const scenarioHeadline = buildPremisesName(scenario.building_name, scenario.suite, scenario.floor) || scenario.name || "Scenario";
+  const scenarioDocumentType = (scenario.document_type_detected || "scenario").replace(/_/g, " ");
+  const scenarioOpexLabel =
+    scenario.opex_mode === "base_year" ? "Base year" : scenario.opex_mode === "full_service" ? "Full service" : "NNN";
+
   return (
     <div className="surface-card p-4 sm:p-5 md:p-6">
-      <div className="mb-4">
-        <div>
-          <p className="heading-kicker mb-1">Editor</p>
-          <h2 className="heading-section">Scenario editor</h2>
+      <div className="mb-6 border-b border-white/10 pb-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="heading-kicker mb-1">Editing</p>
+            <h2 className="heading-section">{scenarioHeadline}</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Changes save instantly as you refine the active option.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.14em]">
+              <span className="rounded-full border border-white/12 bg-white/[0.04] px-3 py-1 text-slate-300">
+                {scenarioDocumentType}
+              </span>
+              <span className="rounded-full border border-white/12 bg-white/[0.04] px-3 py-1 text-slate-300">
+                {formatRsf(scenario.rsf)} RSF
+              </span>
+              <span className="rounded-full border border-white/12 bg-white/[0.04] px-3 py-1 text-slate-300">
+                {formatCompactDate(scenario.commencement)} to {formatCompactDate(scenario.expiration)}
+              </span>
+              <span className="rounded-full border border-white/12 bg-white/[0.04] px-3 py-1 text-slate-300">
+                {scenarioOpexLabel}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <button type="button" onClick={onAddScenario} className={btnSecondary}>
+              Add scenario
+            </button>
+            <button type="button" onClick={onDuplicateScenario} className={btnSecondary}>
+              Duplicate
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined" && window.confirm("Delete this scenario?")) {
+                  onDeleteScenario(scenario.id);
+                }
+              }}
+              className="btn-premium btn-premium-danger w-full sm:w-auto"
+            >
+              Delete
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="mb-5 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onAcceptChanges}
-          className="btn-premium btn-premium-success w-full sm:w-auto"
-          title="Save edits and close the scenario editor"
-        >
-          Accept changes
-        </button>
-        <button type="button" onClick={onAddScenario} className={btnSecondary}>
-          Add scenario
-        </button>
-        <button type="button" onClick={onDuplicateScenario} className={btnSecondary}>
-          Duplicate scenario
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (typeof window !== "undefined" && window.confirm("Delete this scenario?")) {
-              onDeleteScenario(scenario.id);
-            }
-          }}
-          className="btn-premium btn-premium-danger w-full sm:w-auto"
-        >
-          Delete scenario
-        </button>
-      </div>
-
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        <label className="block sm:col-span-2 xl:col-span-3">
+          <span className="text-sm text-slate-300">Scenario name</span>
+          <input
+            type="text"
+            value={scenario.name ?? ""}
+            onChange={(e) => update("name", e.target.value)}
+            className={inputClass}
+            placeholder="e.g. Option A"
+          />
+        </label>
         <label className="block">
           <span className="text-sm text-slate-300">Building name</span>
           <input type="text" value={scenario.building_name ?? ""} onChange={(e) => update("building_name", e.target.value)} className={inputClass} placeholder="e.g. Capital View Center" />

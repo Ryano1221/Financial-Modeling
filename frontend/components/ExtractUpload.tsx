@@ -411,7 +411,7 @@ export function ExtractUpload({
                 Upload the original lease, proposal, amendment, or counter.
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                PDF, DOCX, or DOC. Core lease terms validate before the scenario lands in comparison.
+                PDF, DOCX, or DOC. Core lease terms validate before the option enters comparison.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">

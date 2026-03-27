@@ -1041,7 +1041,7 @@ function HomeContent() {
         scenarioWithId = harmonized.find((s) => s.id === scenarioWithId.id) ?? scenarioWithId;
         return harmonized;
       });
-      setSelectedId(null);
+      setSelectedId(scenarioWithId.id);
       setResults((prev) => {
         const next = { ...prev };
         for (const id of cacheInvalidationIds) {
@@ -1306,7 +1306,7 @@ function HomeContent() {
       const scenarioInput: ScenarioInput = JSON.parse(raw);
       const withId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput, clientId: workspaceScopeId });
       setScenarios((prev) => [...prev, withId]);
-      setSelectedId(null);
+      setSelectedId(withId.id);
     } catch {
       // ignore invalid or missing
     }
@@ -1320,7 +1320,7 @@ function HomeContent() {
       discount_rate_annual: globalDiscountRate,
     });
     setScenarios((prev) => [...prev, newScenario]);
-    setSelectedId(null);
+    setSelectedId(newScenario.id);
     setResults((prev) => {
       const next = { ...prev };
       delete next[newScenario.id];
@@ -1336,6 +1336,7 @@ function HomeContent() {
       name: `${selectedScenario.name} (copy)`,
     };
     setScenarios((prev) => [...prev, copy]);
+    setSelectedId(copy.id);
     setResults((prev) => {
       const next = { ...prev };
       delete next[copy.id];
@@ -1345,8 +1346,14 @@ function HomeContent() {
 
   const deleteScenario = useCallback((id: string) => {
     delete computeRequestEpochRef.current[id];
-    setScenarios((prev) => prev.filter((s) => s.id !== id));
-    setSelectedId((current) => (current === id ? null : current));
+    setScenarios((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      setSelectedId((current) => {
+        if (current !== id) return current;
+        return next[0]?.id ?? null;
+      });
+      return next;
+    });
     setResults((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -1360,10 +1367,15 @@ function HomeContent() {
     });
   }, []);
 
-  const acceptScenarioChanges = useCallback(() => {
-    setSelectedId(null);
-  }, []);
-
+  useEffect(() => {
+    if (scenarios.length === 0) {
+      if (selectedId !== null) setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !scenarios.some((scenario) => scenario.id === selectedId)) {
+      setSelectedId(scenarios[0].id);
+    }
+  }, [scenarios, selectedId]);
   const duplicateFromList = useCallback((id: string) => {
     const source = scenarios.find((s) => s.id === id);
     if (!source) return;
@@ -1373,6 +1385,7 @@ function HomeContent() {
       name: `${source.name} (copy)`,
     };
     setScenarios((prev) => [...prev, copy]);
+    setSelectedId(copy.id);
     setResults((prev) => {
       const next = { ...prev };
       delete next[copy.id];
@@ -2497,71 +2510,88 @@ function HomeContent() {
         <section id="extract" className="scroll-mt-24 bg-grid">
           <div className="mx-auto w-full max-w-[96vw] space-y-4">
             <div className="surface-card p-4 sm:p-5">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] xl:items-start">
                 <div className="min-w-0">
                   <p className="heading-kicker mb-1">Financial Analyses</p>
-                  <h2 className="heading-section">Lease comparison</h2>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs text-slate-200">
-                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                    {parsedDocumentsCount} parsed
-                  </span>
-                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                    {scenarios.length} scenarios
-                  </span>
-                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                    {includedScenarios.length} in report
-                  </span>
-                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                    {selectedScenario ? "editing selected" : "no scenario selected"}
-                  </span>
-                </div>
-              </div>
+                  <h2 className="heading-section">Lease comparison workspace</h2>
+                  <p className="mt-2 max-w-3xl text-sm text-slate-300">
+                    Load the source document, refine the strongest options, and export a clean comparison from one guided workspace.
+                  </p>
 
-              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-                <ExtractUpload
-                  compact
-                  showAdvancedOptions={showDiagnostics}
-                  showInlineDropZone={false}
-                  onPersistDocument={async ({ file, normalize, parsed }) => {
-                    if (!activeClientId) return;
-                    const savedDocument = await registerDocument({
-                      clientId: activeClientId,
-                      name: file.name,
-                      file,
-                      sourceModule: "financial-analyses",
-                      normalize,
-                      parsed,
-                    });
-                    return savedDocument
-                      ? {
-                          sourceDocumentId: savedDocument.id,
-                          fileName: savedDocument.name,
-                        }
-                      : undefined;
-                  }}
-                  onSuccess={(data, context) =>
-                    routeNormalizedLease(data, {
-                      name: context?.fileName,
-                      file: context?.file,
-                      sourceDocumentId: context?.sourceDocumentId,
-                      sourceModule: "financial-analyses",
-                      skipDocumentRegister: true,
-                    })
-                  }
-                  onError={handleExtractError}
-                />
-
-                {activeClient ? (
-                  <div className="flex xl:justify-end">
-                    <ClientDocumentPicker
-                      buttonLabel="Use Existing Client Document"
-                      buttonAlign="right"
-                      allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
-                      onSelectDocument={handleExistingDocumentSelection}
-                    />
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+                    <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Parsed docs</p>
+                      <p className="mt-1 text-2xl font-semibold text-white">{parsedDocumentsCount}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Options</p>
+                      <p className="mt-1 text-2xl font-semibold text-white">{scenarios.length}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">In presentation</p>
+                      <p className="mt-1 text-2xl font-semibold text-white">{includedScenarios.length}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Active option</p>
+                      <p className="mt-1 truncate text-sm font-semibold text-white">
+                        {selectedScenario
+                          ? getPremisesDisplayName({
+                              building_name: selectedScenario.building_name,
+                              suite: selectedScenario.suite,
+                              floor: selectedScenario.floor,
+                              scenario_name: selectedScenario.name,
+                            })
+                          : "Ready"}
+                      </p>
+                    </div>
                   </div>
-                ) : null}
+                </div>
+
+                <div className="space-y-3">
+                  <ExtractUpload
+                    compact
+                    showAdvancedOptions={showDiagnostics}
+                    showInlineDropZone={false}
+                    onPersistDocument={async ({ file, normalize, parsed }) => {
+                      if (!activeClientId) return;
+                      const savedDocument = await registerDocument({
+                        clientId: activeClientId,
+                        name: file.name,
+                        file,
+                        sourceModule: "financial-analyses",
+                        normalize,
+                        parsed,
+                      });
+                      return savedDocument
+                        ? {
+                            sourceDocumentId: savedDocument.id,
+                            fileName: savedDocument.name,
+                          }
+                        : undefined;
+                    }}
+                    onSuccess={(data, context) =>
+                      routeNormalizedLease(data, {
+                        name: context?.fileName,
+                        file: context?.file,
+                        sourceDocumentId: context?.sourceDocumentId,
+                        sourceModule: "financial-analyses",
+                        skipDocumentRegister: true,
+                      })
+                    }
+                    onError={handleExtractError}
+                  />
+
+                  {activeClient ? (
+                    <div className="flex xl:justify-end">
+                      <ClientDocumentPicker
+                        buttonLabel="Use Existing Client Document"
+                        buttonAlign="right"
+                        allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
+                        onSelectDocument={handleExistingDocumentSelection}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               {extractError ? (
@@ -2598,7 +2628,6 @@ function HomeContent() {
                     onAddScenario={addScenario}
                     onDuplicateScenario={duplicateScenario}
                     onDeleteScenario={deleteScenario}
-                    onAcceptChanges={acceptScenarioChanges}
                   />
 
               </div>
@@ -2606,7 +2635,7 @@ function HomeContent() {
               <ResultsActionsCard>
                   <section className="space-y-4">
                     <div>
-                      <p className="heading-kicker mb-2">Outputs</p>
+                      <p className="heading-kicker mb-2">Deliverables</p>
                       <h2 className="heading-section mb-1">Exports and analytics</h2>
                       <p className="text-xs text-slate-400">Exports respect scenario-level discount overrides and default to 8% when no override is set.</p>
                     </div>
