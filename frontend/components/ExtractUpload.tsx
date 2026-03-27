@@ -16,6 +16,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 interface ExtractUploadProps {
+  compact?: boolean;
   showAdvancedOptions?: boolean;
   showInlineDropZone?: boolean;
   onPersistDocument?: (
@@ -82,6 +83,7 @@ function classifyFailureReason(raw: unknown): string | null {
 }
 
 export function ExtractUpload({
+  compact = false,
   showAdvancedOptions = false,
   showInlineDropZone = true,
   onPersistDocument,
@@ -401,64 +403,94 @@ export function ExtractUpload({
           ${loading ? "pointer-events-none opacity-70" : ""}
         `}
       >
-        <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.85fr)] lg:items-center">
-          <div className="space-y-4 text-left">
-            <div className="space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-200/80">Financial Analysis Extractor</p>
-              <h3 className="text-2xl font-semibold tracking-tight text-white sm:text-[2rem]">
-                Upload the source lease document
-              </h3>
-              <p className="max-w-2xl text-sm leading-6 text-slate-300 sm:text-[15px]">
-                Use the original PDF or Word file. We normalize the lease terms, validate the core math, and send clean scenarios straight into comparison.
+        {compact ? (
+          <div className="flex flex-col gap-3 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-200/80">Source document</p>
+              <p className="mt-2 text-sm text-slate-200">
+                Upload the original lease, proposal, amendment, or counter.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                PDF, DOCX, or DOC. Core lease terms validate before the scenario lands in comparison.
               </p>
             </div>
-
-            <div className="flex flex-wrap gap-2 text-xs text-slate-200">
-              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">PDF</span>
-              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOCX</span>
-              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOC</span>
-              <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">
-                Auto-validates core terms
-              </span>
-            </div>
-
             <div className="flex flex-wrap items-center gap-3">
               <label
                 htmlFor="extract-file-input"
                 className="btn-premium btn-premium-primary inline-flex cursor-pointer items-center justify-center focus-within:focus-ring"
               >
-                {loading ? "Extracting..." : "Choose files"}
+                {loading ? "Extracting..." : "Upload source document"}
               </label>
-              <p className="text-sm text-slate-300">
-                {showInlineDropZone ? "Or drag files directly into this panel." : "You can also drag files anywhere on this tab."}
-              </p>
+              <span className="text-xs text-slate-400">
+                {showInlineDropZone ? "Or drag files into this panel." : "Drag anywhere on this tab."}
+              </span>
             </div>
-
             {batchStatus ? (
               <div className="rounded-2xl border border-cyan-300/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
                 {batchStatus}
               </div>
             ) : null}
           </div>
+        ) : (
+          <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.85fr)] lg:items-center">
+            <div className="space-y-4 text-left">
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-cyan-200/80">Financial Analysis Extractor</p>
+                <h3 className="text-2xl font-semibold tracking-tight text-white sm:text-[2rem]">
+                  Upload the source lease document
+                </h3>
+                <p className="max-w-2xl text-sm leading-6 text-slate-300 sm:text-[15px]">
+                  Use the original PDF or Word file. We normalize the lease terms, validate the core math, and send clean scenarios straight into comparison.
+                </p>
+              </div>
 
-          <div className="rounded-2xl border border-white/12 bg-white/5 p-4 sm:p-5">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">What happens next</p>
-            <div className="mt-3 space-y-3 text-sm text-slate-200">
-              <div className="flex items-start gap-3">
-                <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
-                <p>Start with the actual lease, proposal, amendment, or counter rather than a generated report PDF.</p>
+              <div className="flex flex-wrap gap-2 text-xs text-slate-200">
+                <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">PDF</span>
+                <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOCX</span>
+                <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">DOC</span>
+                <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">
+                  Auto-validates core terms
+                </span>
               </div>
-              <div className="flex items-start gap-3">
-                <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
-                <p>RSF, term dates, and rent schedule are checked before the scenario enters comparison.</p>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <label
+                  htmlFor="extract-file-input"
+                  className="btn-premium btn-premium-primary inline-flex cursor-pointer items-center justify-center focus-within:focus-ring"
+                >
+                  {loading ? "Extracting..." : "Choose files"}
+                </label>
+                <p className="text-sm text-slate-300">
+                  {showInlineDropZone ? "Or drag files directly into this panel." : "You can also drag files anywhere on this tab."}
+                </p>
               </div>
-              <div className="flex items-start gap-3">
-                <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
-                <p>Clean extracts auto-open in the comparison workspace so you can keep moving without extra clicks.</p>
+
+              {batchStatus ? (
+                <div className="rounded-2xl border border-cyan-300/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+                  {batchStatus}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-2xl border border-white/12 bg-white/5 p-4 sm:p-5">
+              <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">What happens next</p>
+              <div className="mt-3 space-y-3 text-sm text-slate-200">
+                <div className="flex items-start gap-3">
+                  <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
+                  <p>Start with the actual lease, proposal, amendment, or counter rather than a generated report PDF.</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
+                  <p>RSF, term dates, and rent schedule are checked before the scenario enters comparison.</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300" />
+                  <p>Clean extracts auto-open in the comparison workspace so you can keep moving without extra clicks.</p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
         <input
           type="file"
           accept=".pdf,.docx,.doc"

@@ -2495,146 +2495,90 @@ function HomeContent() {
           onDocumentIngested={handleFinancialAnalysisDocumentIngested}
         />
         <section id="extract" className="scroll-mt-24 bg-grid">
-          <div className="mx-auto w-full max-w-[96vw] space-y-5">
-            <div className="surface-card brand-panel p-4 sm:p-5 md:p-6">
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(340px,430px)] xl:items-center">
-                <div>
-                  <p className="heading-kicker mb-2">Financial Analyses</p>
-                  <h2 className="heading-section mb-3">A cleaner lease comparison workspace</h2>
-                  <p className="max-w-3xl text-sm leading-6 text-slate-300">
-                    Bring in a source lease or proposal, refine the scenarios that matter, and export from one calmer workspace.
-                    The intake rail stays separate from the comparison editor so the page is easier to scan and operate.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-200">
-                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                      {parsedDocumentsCount} parsed document{parsedDocumentsCount === 1 ? "" : "s"}
-                    </span>
-                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                      {scenarios.length} scenario{scenarios.length === 1 ? "" : "s"}
-                    </span>
-                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                      {includedScenarios.length} in report
-                    </span>
-                    <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
-                      {engineResults.length} result set{engineResults.length === 1 ? "" : "s"}
-                    </span>
-                  </div>
+          <div className="mx-auto w-full max-w-[96vw] space-y-4">
+            <div className="surface-card p-4 sm:p-5">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="min-w-0">
+                  <p className="heading-kicker mb-1">Financial Analyses</p>
+                  <h2 className="heading-section">Lease comparison</h2>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Client</p>
-                    <p className="mt-2 text-sm font-semibold text-white">{heroClientName}</p>
-                    <p className="mt-1 text-xs text-slate-400">{workspaceStatus}</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Selection</p>
-                    <p className="mt-2 text-sm font-semibold text-white">
-                      {selectedScenario
-                        ? getPremisesDisplayName({
-                            building_name: selectedScenario.building_name,
-                            suite: selectedScenario.suite,
-                            floor: selectedScenario.floor,
-                            scenario_name: selectedScenario.name,
-                          })
-                        : "No scenario selected"}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {selectedScenario ? "Editing the active option" : "Choose a scenario to edit details"}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Share-ready</p>
-                    <p className="mt-2 text-sm font-semibold text-white">
-                      {includedScenarios.length > 0 ? "Yes" : "Not yet"}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">Share links follow the scenarios included in summary.</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/12 bg-white/5 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-slate-400">Branding</p>
-                    <p className="mt-2 text-sm font-semibold text-white">{brokerageName || "The CRE Model"}</p>
-                    <p className="mt-1 text-xs text-slate-400">Prepared for {reportMeta.prepared_for.trim() || "Client"}</p>
-                  </div>
+                <div className="flex flex-wrap gap-2 text-xs text-slate-200">
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                    {parsedDocumentsCount} parsed
+                  </span>
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                    {scenarios.length} scenarios
+                  </span>
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                    {includedScenarios.length} in report
+                  </span>
+                  <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1">
+                    {selectedScenario ? "editing selected" : "no scenario selected"}
+                  </span>
                 </div>
               </div>
-            </div>
 
-            <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)] items-start">
-              <aside className="space-y-4 xl:sticky xl:top-28">
-                <div className="surface-card p-4 sm:p-5">
-                  <p className="heading-kicker mb-1">Document intake</p>
-                  <h3 className="text-lg font-semibold tracking-tight text-white">Start with the source file</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-300">
-                    Upload the original proposal, counter, amendment, or lease. Saved client documents can also be pulled back into comparison from the same workspace.
-                  </p>
-                </div>
-
-                <div id="upload-section">
-                  <ExtractUpload
-                    showAdvancedOptions={showDiagnostics}
-                    showInlineDropZone={false}
-                    onPersistDocument={async ({ file, normalize, parsed }) => {
-                      if (!activeClientId) return;
-                      const savedDocument = await registerDocument({
-                        clientId: activeClientId,
-                        name: file.name,
-                        file,
-                        sourceModule: "financial-analyses",
-                        normalize,
-                        parsed,
-                      });
-                      return savedDocument
-                        ? {
-                            sourceDocumentId: savedDocument.id,
-                            fileName: savedDocument.name,
-                          }
-                        : undefined;
-                    }}
-                    onSuccess={(data, context) =>
-                      routeNormalizedLease(data, {
-                        name: context?.fileName,
-                        file: context?.file,
-                        sourceDocumentId: context?.sourceDocumentId,
-                        sourceModule: "financial-analyses",
-                        skipDocumentRegister: true,
-                      })
-                    }
-                    onError={handleExtractError}
-                  />
-                </div>
+              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+                <ExtractUpload
+                  compact
+                  showAdvancedOptions={showDiagnostics}
+                  showInlineDropZone={false}
+                  onPersistDocument={async ({ file, normalize, parsed }) => {
+                    if (!activeClientId) return;
+                    const savedDocument = await registerDocument({
+                      clientId: activeClientId,
+                      name: file.name,
+                      file,
+                      sourceModule: "financial-analyses",
+                      normalize,
+                      parsed,
+                    });
+                    return savedDocument
+                      ? {
+                          sourceDocumentId: savedDocument.id,
+                          fileName: savedDocument.name,
+                        }
+                      : undefined;
+                  }}
+                  onSuccess={(data, context) =>
+                    routeNormalizedLease(data, {
+                      name: context?.fileName,
+                      file: context?.file,
+                      sourceDocumentId: context?.sourceDocumentId,
+                      sourceModule: "financial-analyses",
+                      skipDocumentRegister: true,
+                    })
+                  }
+                  onError={handleExtractError}
+                />
 
                 {activeClient ? (
-                  <div className="surface-card p-4 sm:p-5">
-                    <p className="heading-kicker mb-1">Saved client documents</p>
-                    <h3 className="text-lg font-semibold tracking-tight text-white">Reuse an existing upload</h3>
-                    <p className="mt-2 text-sm text-slate-300">
-                      Pull an already saved client document straight back into the comparison workspace without re-uploading it.
-                    </p>
-                    <div className="mt-4">
-                      <ClientDocumentPicker
-                        buttonLabel="Select Existing Client Document"
-                        buttonAlign="left"
-                        allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
-                        onSelectDocument={handleExistingDocumentSelection}
-                      />
-                    </div>
+                  <div className="flex xl:justify-end">
+                    <ClientDocumentPicker
+                      buttonLabel="Use Existing Client Document"
+                      buttonAlign="right"
+                      allowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
+                      onSelectDocument={handleExistingDocumentSelection}
+                    />
                   </div>
                 ) : null}
+              </div>
 
-                {extractError ? (
-                  <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                    {extractError}
-                  </div>
-                ) : null}
+              {extractError ? (
+                <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {extractError}
+                </div>
+              ) : null}
 
-                {showDiagnostics ? (
-                  <div className="surface-card p-4 text-left">
-                    <Diagnostics />
-                  </div>
-                ) : null}
-              </aside>
+              {showDiagnostics ? (
+                <div className="mt-3 surface-card p-4 text-left">
+                  <Diagnostics />
+                </div>
+              ) : null}
+            </div>
 
-              <div ref={comparisonSummaryRef} className="space-y-5">
-                <div className="grid gap-5 2xl:grid-cols-[minmax(330px,0.92fr)_minmax(0,1.48fr)] items-start">
+            <div ref={comparisonSummaryRef} className="space-y-4">
+              <div className="grid gap-4 2xl:grid-cols-[minmax(360px,0.95fr)_minmax(0,1.35fr)] items-start">
                   <ScenarioList
                     scenarios={scenarios}
                     selectedId={selectedId}
@@ -2656,19 +2600,15 @@ function HomeContent() {
                     onDeleteScenario={deleteScenario}
                     onAcceptChanges={acceptScenarioChanges}
                   />
-                </div>
 
-                <ResultsActionsCard>
-                  <section className="space-y-5">
+              </div>
+
+              <ResultsActionsCard>
+                  <section className="space-y-4">
                     <div>
                       <p className="heading-kicker mb-2">Outputs</p>
-                      <h2 className="heading-section mb-2">Exports and analytics</h2>
-                      <p className="max-w-3xl text-sm text-slate-300">
-                        Export the current comparison, review equalized results, and build presentation-ready analytics from the scenarios you keep in summary.
-                      </p>
-                      <p className="mt-2 text-xs text-slate-400">
-                        Per-scenario discount overrides are respected automatically. Otherwise the workspace defaults to 8%.
-                      </p>
+                      <h2 className="heading-section mb-1">Exports and analytics</h2>
+                      <p className="text-xs text-slate-400">Exports respect scenario-level discount overrides and default to 8% when no override is set.</p>
                     </div>
 
                     {!authSession && (
@@ -2751,7 +2691,7 @@ function HomeContent() {
                     )}
 
                     {engineResults.length > 0 && (
-                      <div className="space-y-5">
+                      <div className="space-y-4">
                         {equalizedUi.needsCustomWindow && (
                           <div className="border border-amber-500/40 bg-amber-500/10 p-4">
                             <p className="text-sm font-medium text-amber-200">
@@ -2816,7 +2756,6 @@ function HomeContent() {
                     )}
                   </section>
                 </ResultsActionsCard>
-              </div>
             </div>
           </div>
         </section>

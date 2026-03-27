@@ -771,11 +771,8 @@ export function ScenarioForm({
   if (!scenario) {
     return (
       <div className="surface-card p-4 sm:p-5 md:p-6">
-        <p className="heading-kicker mb-2">Scenario details</p>
+        <p className="heading-kicker mb-2">Editor</p>
         <h2 className="heading-section mb-2">Scenario editor</h2>
-        <p className="text-sm text-slate-300 mb-4">
-          Select a scenario from the list or add a new one.
-        </p>
         <button
           type="button"
           onClick={onAddScenario}
@@ -791,11 +788,8 @@ export function ScenarioForm({
     <div className="surface-card p-4 sm:p-5 md:p-6">
       <div className="mb-4">
         <div>
-          <p className="heading-kicker mb-1">Scenario details</p>
+          <p className="heading-kicker mb-1">Editor</p>
           <h2 className="heading-section">Scenario editor</h2>
-          <p className="mt-2 text-sm text-slate-400">
-            Adjust the selected option without losing the extracted lease structure.
-          </p>
         </div>
       </div>
 
