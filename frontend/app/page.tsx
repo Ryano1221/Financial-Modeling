@@ -2918,7 +2918,6 @@ function HomeContent() {
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
             <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
             <DealsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
-            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
           </main>
           );
         }
