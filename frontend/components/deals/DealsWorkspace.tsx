@@ -2529,13 +2529,6 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           >
             Open Pipeline
           </button>
-          <button
-            type="button"
-            className={`btn-premium ${showAdvancedWorkspace ? "btn-premium-primary" : "btn-premium-secondary"}`}
-            onClick={() => setShowAdvancedWorkspace((current) => !current)}
-          >
-            {showAdvancedWorkspace ? "Hide Advanced" : "Advanced Workspace"}
-          </button>
         </div>
       }
     >
@@ -2677,7 +2670,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           </PlatformMetricStrip>
         </PlatformDashboardTier>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="grid grid-cols-1 gap-4">
           <PlatformPanel kicker="Priority Queue" title={isLandlordMode ? "Buildings to review" : "Relationships to review"}>
             <div className="space-y-2">
               {isLandlordMode ? (
@@ -2727,43 +2720,28 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
               ) : null}
             </div>
           </PlatformPanel>
-
-          <PlatformPanel kicker="Advanced Workspace" title="Open the full operating layer only when you need it">
-            <p className="text-sm text-slate-300">
-              The CRM still includes intake, filters, pipeline views, building inventory, reminders, outreach, and full profile editing. They are now tucked behind one control so the first screen stays clear.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" className="btn-premium btn-premium-primary" onClick={() => setShowAdvancedWorkspace((current) => !current)}>
-                {showAdvancedWorkspace ? "Hide Advanced Workspace" : "Open Advanced Workspace"}
-              </button>
-              <button type="button" className="btn-premium btn-premium-secondary" onClick={() => openDrillDownView({ ref: pipelineViewsRef, nextView: "board" })}>
-                Jump to Deal Board
-              </button>
-            </div>
-          </PlatformPanel>
-        </div>
-
-        <div className="border border-white/15 bg-black/20 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="heading-kicker mb-1">Advanced CRM</p>
-              <h3 className="text-base sm:text-lg text-white">{showAdvancedWorkspace ? "Full operating workspace is open" : "Full operating workspace is hidden"}</h3>
-              <p className="mt-1 text-sm text-slate-400">
-                Expand this only when you need intake, filters, building intelligence, follow-ups, or detailed pipeline tooling.
-              </p>
-            </div>
-            <button
-              type="button"
-              className={`btn-premium ${showAdvancedWorkspace ? "btn-premium-primary" : "btn-premium-secondary"}`}
-              onClick={() => setShowAdvancedWorkspace((current) => !current)}
-            >
-              {showAdvancedWorkspace ? "Collapse" : "Expand"}
-            </button>
-          </div>
         </div>
 
         {showAdvancedWorkspace ? (
           <>
+        <div className="border border-white/15 bg-black/20 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="heading-kicker mb-1">Advanced CRM</p>
+              <h3 className="text-base sm:text-lg text-white">Full operating workspace</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Intake, filters, building intelligence, follow-ups, and detailed pipeline tooling are open below.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-premium btn-premium-secondary"
+              onClick={() => setShowAdvancedWorkspace(false)}
+            >
+              Hide Advanced
+            </button>
+          </div>
+        </div>
         <PlatformDashboardTier
           label="Insights"
           title="Mode-Aware Intelligence"
