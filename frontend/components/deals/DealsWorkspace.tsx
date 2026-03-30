@@ -387,6 +387,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [generatedDraft, setGeneratedDraft] = useState<{ subject: string; body: string; recommendation: string } | null>(null);
   const [generatedDraftStatus, setGeneratedDraftStatus] = useState("");
+  const [showAdvancedWorkspace, setShowAdvancedWorkspace] = useState(false);
   const [buildingPhotoStatus, setBuildingPhotoStatus] = useState<{ buildingId: string; message: string }>({
     buildingId: "",
     message: "",
@@ -408,6 +409,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     landlordName: "",
   });
   const operatingLayerRef = useRef<HTMLDivElement | null>(null);
+  const intakeRef = useRef<HTMLDivElement | null>(null);
   const inventoryRef = useRef<HTMLDivElement | null>(null);
   const relationshipGridRef = useRef<HTMLDivElement | null>(null);
   const followUpEngineRef = useRef<HTMLDivElement | null>(null);
@@ -2400,6 +2402,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     companyId?: string;
     buildingId?: string;
   }) => {
+    setShowAdvancedWorkspace(true);
     if (input.nextView) setView(input.nextView);
     if (input.filtersPatch) {
       setFilters((prev) => ({
@@ -2512,27 +2515,156 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       headerAlign="center"
       actions={
         <div className="flex flex-wrap justify-center gap-2">
-          {representationProfile.crm.availableViews.map((viewId) => (
-            <button
-              key={viewId}
-              type="button"
-              className={`btn-premium ${view === viewId ? "btn-premium-primary" : "btn-premium-secondary"}`}
-              onClick={() => setView(viewId)}
-            >
-              {representationProfile.crm.viewLabels[viewId]}
-            </button>
-          ))}
+          <button
+            type="button"
+            className="btn-premium btn-premium-secondary"
+            onClick={() => openDrillDownView({ ref: intakeRef })}
+          >
+            Add Record
+          </button>
+          <button
+            type="button"
+            className="btn-premium btn-premium-secondary"
+            onClick={() => openDrillDownView({ ref: pipelineViewsRef, nextView: "board" })}
+          >
+            Open Pipeline
+          </button>
+          <button
+            type="button"
+            className={`btn-premium ${showAdvancedWorkspace ? "btn-premium-primary" : "btn-premium-secondary"}`}
+            onClick={() => setShowAdvancedWorkspace((current) => !current)}
+          >
+            {showAdvancedWorkspace ? "Hide Advanced" : "Advanced Workspace"}
+          </button>
         </div>
       }
     >
       <div className="space-y-5">
         <PlatformDashboardTier
-          label="Command Metrics"
-          title="Command Center"
-          description="The most important numbers surface first and every metric jumps straight into the relevant filtered workspace."
+          label="Start Here"
+          title="Use CRM in three steps"
+          description="The CRM is simplest when you treat it as one operating loop: capture a record, open the active deal, and work the next follow-up."
+        >
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <button
+                type="button"
+                onClick={() => openDrillDownView({ ref: intakeRef })}
+                className="border border-white/15 bg-black/20 p-4 text-left transition hover:border-cyan-300/40 hover:bg-cyan-500/10"
+              >
+                <p className="heading-kicker mb-2">Step 1</p>
+                <p className="text-base text-white">Add a company or building</p>
+                <p className="mt-2 text-sm text-slate-400">Start with the record you want to manage, then attach timing and location details.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => openDrillDownView({ ref: pipelineViewsRef, nextView: "board" })}
+                className="border border-white/15 bg-black/20 p-4 text-left transition hover:border-cyan-300/40 hover:bg-cyan-500/10"
+              >
+                <p className="heading-kicker mb-2">Step 2</p>
+                <p className="text-base text-white">Open the live deal flow</p>
+                <p className="mt-2 text-sm text-slate-400">Move active requirements through the board instead of searching the full CRM surface.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => openDrillDownView({ ref: followUpEngineRef })}
+                className="border border-white/15 bg-black/20 p-4 text-left transition hover:border-cyan-300/40 hover:bg-cyan-500/10"
+              >
+                <p className="heading-kicker mb-2">Step 3</p>
+                <p className="text-base text-white">Work the next follow-up</p>
+                <p className="mt-2 text-sm text-slate-400">Use reminders, tasks, and AI drafts only when timing or momentum needs attention.</p>
+              </button>
+            </div>
+
+            <PlatformPanel kicker="Current Focus" title={isLandlordMode ? "Portfolio focus" : "Relationship focus"}>
+              {isLandlordMode ? (
+                activeInventoryBuilding ? (
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-base text-white">{displayBuildingName(activeInventoryBuilding)}</p>
+                      <p className="mt-1 text-sm text-slate-400">
+                        {[activeInventoryBuilding.address, activeInventoryBuilding.submarket, activeInventoryBuilding.market].filter(Boolean).join(" • ") || "Austin inventory"}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Owner</p>
+                        <p className="mt-1 text-white">{activeInventoryBuilding.ownerName || "Pending"}</p>
+                      </div>
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Leasing</p>
+                        <p className="mt-1 text-white">{activeInventoryBuilding.leasingCompanyName || "Pending"}</p>
+                      </div>
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Total suites</p>
+                        <p className="mt-1 text-white">{formatInt(activeBuildingSummary?.totalSuites || 0)}</p>
+                      </div>
+                      <div className="border border-white/10 bg-black/20 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Vacant suites</p>
+                        <p className="mt-1 text-white">{formatInt(activeBuildingSummary?.vacantSuites || 0)}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" className="btn-premium btn-premium-secondary" onClick={() => openDrillDownView({ ref: profileWorkspaceRef, buildingId: activeInventoryBuilding.id, nextView: "stacking_plan" })}>
+                        Open Building Hub
+                      </button>
+                      <button type="button" className="btn-premium btn-premium-secondary" onClick={() => openDrillDownView({ ref: inventoryRef, buildingId: activeInventoryBuilding.id })}>
+                        Open Inventory
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">Choose a building from the advanced workspace to open the portfolio hub.</p>
+                )
+              ) : selectedCompany ? (
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-base text-white">{selectedCompany.name}</p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {[selectedCompany.market, selectedCompany.submarket, tenantHubSummary?.locationLabel].filter(Boolean).join(" • ") || "No location assigned yet"}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="border border-white/10 bg-black/20 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Expiration</p>
+                      <p className="mt-1 text-white">{formatDate(selectedCompany.currentLeaseExpiration)}</p>
+                    </div>
+                    <div className="border border-white/10 bg-black/20 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Next follow-up</p>
+                      <p className="mt-1 text-white">{formatDate(selectedCompany.nextFollowUpDate)}</p>
+                    </div>
+                    <div className="border border-white/10 bg-black/20 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Linked docs</p>
+                      <p className="mt-1 text-white">{formatInt(selectedCompany.linkedDocumentIds.length)}</p>
+                    </div>
+                    <div className="border border-white/10 bg-black/20 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Linked deals</p>
+                      <p className="mt-1 text-white">{formatInt(selectedCompany.linkedDealIds.length)}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn-premium btn-premium-secondary" onClick={() => openDrillDownView({ ref: profileWorkspaceRef, companyId: selectedCompany.id })}>
+                      Open Profile
+                    </button>
+                    <button type="button" className="btn-premium btn-premium-secondary" onClick={() => openDrillDownView({ ref: pipelineViewsRef, nextView: "board" })}>
+                      Open Deal Board
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">Select a company in the advanced workspace to keep one relationship in focus.</p>
+              )}
+            </PlatformPanel>
+          </div>
+        </PlatformDashboardTier>
+
+        <PlatformDashboardTier
+          label="Snapshot"
+          title="What needs attention right now"
+          description="Keep the first screen short: timing, pipeline, and follow-up pressure only."
         >
           <PlatformMetricStrip>
-            {commandMetricCards.map((card) => (
+            {commandMetricCards.slice(0, 4).map((card) => (
               <PlatformMetricCard
                 key={card.label}
                 label={card.label}
@@ -2545,6 +2677,93 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           </PlatformMetricStrip>
         </PlatformDashboardTier>
 
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+          <PlatformPanel kicker="Priority Queue" title={isLandlordMode ? "Buildings to review" : "Relationships to review"}>
+            <div className="space-y-2">
+              {isLandlordMode ? (
+                displayedBuildings.slice(0, 6).map((building) => (
+                  <button
+                    key={building.id}
+                    type="button"
+                    onClick={() => {
+                      focusBuilding(building);
+                      openDrillDownView({ ref: profileWorkspaceRef, buildingId: building.id, nextView: "stacking_plan" });
+                    }}
+                    className={`w-full border p-3 text-left transition ${
+                      activeInventoryBuilding?.id === building.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"
+                    }`}
+                  >
+                    <p className="text-sm text-white">{displayBuildingName(building)}</p>
+                    <p className="mt-1 text-xs text-slate-400">{[building.submarket, building.market, building.address].filter(Boolean).join(" • ") || "Austin inventory"}</p>
+                  </button>
+                ))
+              ) : (
+                [...filteredCompanies].sort(compareByCriticalDate).slice(0, 6).map((company) => (
+                  <button
+                    key={company.id}
+                    type="button"
+                    onClick={() => openDrillDownView({ ref: profileWorkspaceRef, companyId: company.id })}
+                    className={`w-full border p-3 text-left transition ${
+                      selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm text-white">{company.name}</p>
+                        <p className="mt-1 text-xs text-slate-400">{[company.market, company.submarket].filter(Boolean).join(" • ") || "Market pending"}</p>
+                      </div>
+                      <span className={`border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${companyTypeBadgeClass(company.type)}`}>
+                        {company.type.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-300">
+                      Expiration {formatDate(company.currentLeaseExpiration)} · Follow-up {formatDate(company.nextFollowUpDate)}
+                    </p>
+                  </button>
+                ))
+              )}
+              {(isLandlordMode ? displayedBuildings.length : filteredCompanies.length) === 0 ? (
+                <p className="text-sm text-slate-400">No records yet. Use Add Record to start the CRM workspace.</p>
+              ) : null}
+            </div>
+          </PlatformPanel>
+
+          <PlatformPanel kicker="Advanced Workspace" title="Open the full operating layer only when you need it">
+            <p className="text-sm text-slate-300">
+              The CRM still includes intake, filters, pipeline views, building inventory, reminders, outreach, and full profile editing. They are now tucked behind one control so the first screen stays clear.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" className="btn-premium btn-premium-primary" onClick={() => setShowAdvancedWorkspace((current) => !current)}>
+                {showAdvancedWorkspace ? "Hide Advanced Workspace" : "Open Advanced Workspace"}
+              </button>
+              <button type="button" className="btn-premium btn-premium-secondary" onClick={() => openDrillDownView({ ref: pipelineViewsRef, nextView: "board" })}>
+                Jump to Deal Board
+              </button>
+            </div>
+          </PlatformPanel>
+        </div>
+
+        <div className="border border-white/15 bg-black/20 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="heading-kicker mb-1">Advanced CRM</p>
+              <h3 className="text-base sm:text-lg text-white">{showAdvancedWorkspace ? "Full operating workspace is open" : "Full operating workspace is hidden"}</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                Expand this only when you need intake, filters, building intelligence, follow-ups, or detailed pipeline tooling.
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`btn-premium ${showAdvancedWorkspace ? "btn-premium-primary" : "btn-premium-secondary"}`}
+              onClick={() => setShowAdvancedWorkspace((current) => !current)}
+            >
+              {showAdvancedWorkspace ? "Collapse" : "Expand"}
+            </button>
+          </div>
+        </div>
+
+        {showAdvancedWorkspace ? (
+          <>
         <PlatformDashboardTier
           label="Insights"
           title="Mode-Aware Intelligence"
@@ -2740,6 +2959,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
               </PlatformPanel>
             </div>
 
+            <div ref={intakeRef} className="xl:col-span-4 scroll-mt-28">
             <PlatformPanel kicker="CRM Intake" title={representationProfile.crm.intakeTitle} className="xl:col-span-4">
           <div className="grid grid-cols-1 gap-2">
             <input className="input-premium" placeholder="Company name" value={companyForm.name} onChange={(event) => setCompanyForm((prev) => ({ ...prev, name: event.target.value }))} />
@@ -2836,6 +3056,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           <p className="mt-3 text-xs text-slate-400">{status}</p>
           {error ? <p className="mt-1 text-xs text-red-300">{error}</p> : null}
         </PlatformPanel>
+            </div>
 
         <PlatformPanel kicker="Filters" title={representationProfile.crm.filtersTitle} className="xl:col-span-8">
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2">
@@ -4727,6 +4948,8 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </PlatformPanel>
           </div>
         </PlatformDashboardTier>
+          </>
+        ) : null}
       </div>
     </PlatformSection>
   );

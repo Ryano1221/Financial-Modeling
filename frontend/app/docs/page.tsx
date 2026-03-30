@@ -121,7 +121,7 @@ export default function DocsPage() {
               <div className="surface-card p-4">
                 <p className="heading-kicker">Dashboards + CRM</p>
                 <p className="mt-2 text-sm text-slate-300">Tenant dashboards center companies and relationships. Landlord dashboards center buildings, suites, vacancies, tours, proposals, and downtime risk.</p>
-                <p className="mt-2 text-sm text-slate-300">Dashboards are organized into Command Metrics, grouped Insights, and a Drill-Down Workspace so the highest-priority information appears first without removing any detail.</p>
+                <p className="mt-2 text-sm text-slate-300">CRM now opens with a shorter start-here flow, a smaller priority snapshot, and a focused record view first, while deeper pipeline, intake, and inventory tools stay available inside an advanced workspace when you need them.</p>
                 <p className="mt-2 text-sm text-slate-300">The Deals workspace now includes a dedicated deal-room shell inspired by enterprise leasing systems: each transaction can be run through explicit Overview, Company, Updates, Listings, Tours, Negotiation, User Management, and Client View tabs instead of one long generic form.</p>
                 <p className="mt-2 text-sm text-slate-300">Those deal rooms keep projected close timing, move reason, current-location constraints, access controls, curated client-view summaries, and negotiation trackers attached to the same underlying transaction record used by CRM boards and building workflows.</p>
                 <p className="mt-2 text-sm text-slate-300">A dedicated Buildings module now exposes the full building and suite inventory on one shared map with filters, result lists, detail panels, and building-first workflow actions into Surveys, CRM, and Analyses.</p>
@@ -159,7 +159,7 @@ export default function DocsPage() {
           <section className="space-y-3">
             <h2 className="heading-section">Core Modules</h2>
             <ul className="list-disc space-y-2 pl-5 text-sm text-slate-300 sm:text-base">
-              <li><strong>CRM:</strong> The mode-aware operating hub for companies or buildings, linked records, tasks, reminders, activities, AI actions, and execution workflows.</li>
+              <li><strong>CRM:</strong> The mode-aware operating hub for companies or buildings, linked records, tasks, reminders, activities, AI actions, and execution workflows. The landing view is now simplified for first-time users with a guided start-here flow, a short priority queue, and one current-focus panel before the deeper operating workspace expands.</li>
               <li><strong>Deal Rooms:</strong> A transaction-first operating layer for overview summaries, listing progression, tours, negotiation tracking, access management, updates, and curated client-facing previews.</li>
               <li><strong>Buildings:</strong> A shared building browser with comprehensive map filters, suite visibility, stacking plans, and handoff actions into surveys and other workflows. Client-scoped building removals now persist across refresh and cloud sync, so deleted buildings do not repopulate from saved workspace state.</li>
               <li><strong>Surveys:</strong> Market options, shortlist management, and location intelligence using the shared record graph.</li>
