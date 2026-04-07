@@ -3010,6 +3010,8 @@ def _clean_address_candidate(raw: str) -> str:
     v = " ".join((raw or "").split()).strip(" ,.;:|-")
     if not v:
         return ""
+    v = re.split(r"(?i)\bbuilding\s+brochure\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.split(r"(?i)\bdear\s+[A-Z][A-Za-z]+(?:\s+and\s+[A-Z][A-Za-z]+)?\b", v, maxsplit=1)[0].strip(" ,.;:|-")
     v = re.sub(r'(?i)\s*\((?:the\s+)?"?\s*(?:premises|lease premises|subleased premises).*$','', v).strip(" ,.;:|-")
     v = re.sub(r'(?i),\s*(?:suite|ste\.?|unit|floor)\s*$', "", v).strip(" ,.;:|-")
     v = re.sub(r'(?i)\s+and\s+located(?:\s+at)?\s+.*$', "", v).strip(" ,.;:|-")
@@ -3110,6 +3112,8 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     if not v:
         return ""
     raw_candidate = v
+    v = re.split(r"(?i)\bbuilding\s+brochure\b", v, maxsplit=1)[0].strip(" ,.;:|-")
+    v = re.split(r"(?i)\bdear\s+[A-Z][A-Za-z]+(?:\s+and\s+[A-Z][A-Za-z]+)?\b", v, maxsplit=1)[0].strip(" ,.;:|-")
     # Remove common leading labels.
     v = re.sub(r"(?i)^(?:premises|premises name|building|building name|property|property name|address)\s*[:#-]\s*", "", v).strip(" ,.;:|-")
     # Remove suite tokens from candidate building names.
@@ -3130,15 +3134,20 @@ def _clean_building_candidate(raw: str, suite_hint: str = "") -> str:
     preserve_leading_named_building = bool(
         re.search(
             r"(?i)\b(?:building|tower|plaza|center|centre|campus|park|place)\b",
-            re.split(r"(?i)\s+located\s+at\s+", raw_candidate, maxsplit=1)[0],
+            re.split(r"(?i)\s+at\s+|\s+located\s+at\s+", raw_candidate, maxsplit=1)[0],
         )
     )
     if re.search(r"(?i)\s+at\s+", v) and not preserve_leading_named_building:
         at_parts = [part.strip(" ,.;:|-") for part in re.split(r"(?i)\s+at\s+", v) if part.strip(" ,.;:|-")]
         if len(at_parts) >= 2:
+            leading = " ".join(at_parts[:-1]).strip(" ,.;:|-")
             trailing = at_parts[-1]
+            leading_low = leading.lower()
             trailing_low = trailing.lower()
-            if _looks_like_address(trailing) or any(
+            if _looks_like_address(trailing) or (
+                any(token in trailing_low for token in ("building", "tower", "plaza", "center", "centre", "campus", "park"))
+                and not any(token in leading_low for token in ("building", "tower", "plaza", "center", "centre", "campus", "park"))
+            ) or any(
                 token in trailing_low for token in ("building", "tower", "plaza", "center", "centre", "campus", "park")
             ):
                 v = trailing
@@ -7544,6 +7553,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         prefill_hints = extract_prefill_hints(text)
     except Exception:
         prefill_hints = {}
+    prefill_opex = _coerce_float_token(prefill_hints.get("base_opex_psf_yr"), 0.0) or 0.0
+    if prefill_opex > 0 and (_coerce_float_token(hints.get("opex_psf_year_1"), 0.0) or 0.0) <= 0:
+        hints["opex_psf_year_1"] = float(round(prefill_opex, 4))
     rate_conflict_flag = str(prefill_hints.get("_rate_psf_yr_conflict") or "").strip()
     rate_conflict_candidates_raw = (
         prefill_hints.get("_rate_psf_yr_candidates")
@@ -7847,6 +7859,19 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         suite_hint=hints.get("suite", ""),
         address_hint=hints.get("address", ""),
     )
+    explicit_building_label_match = re.search(r"(?im)^\s*building\s*:\s*(?:\|\s*)?([^,\n|]{2,120})", text)
+    if explicit_building_label_match:
+        explicit_building_name = _clean_building_candidate(
+            explicit_building_label_match.group(1),
+            suite_hint=hints.get("suite", ""),
+        )
+        current_building_name = str(hints.get("building_name") or "").strip()
+        if explicit_building_name and (
+            not current_building_name
+            or _looks_like_address(current_building_name)
+            or _building_name_is_suspicious(current_building_name)
+        ):
+            hints["building_name"] = explicit_building_name
     building_info_match = re.search(
         r"(?i)\bbuilding\s+information\s*:\s*([A-Za-z0-9][A-Za-z0-9 &\-\./]{1,100}?)\s+is\b",
         text,
@@ -7920,9 +7945,13 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         low_line = line.lower()
         if not line.strip():
             continue
-        if not any(token in low_line for token in ("full service", "full-service", "fsg", "gross")):
+        if not re.search(r"(?i)\b(?:full[\s-]*service(?:\s+gross)?|fsg|gross\s+lease|gross\s+rent)\b", line):
             continue
         if any(token in low_line for token in ("modified gross", "base year", "expense stop", "gross with stop")):
+            continue
+        if re.search(r"(?i)\bgross(?:ed)?\s*up\b|\bgross-up\b", line):
+            continue
+        if re.search(r"(?i)\b(?:operating expenses?|opex|cam|real estate taxes?)\b", line):
             continue
         if not re.search(r"(?i)\b(?:base\s+rent|rental\s+rate|lease\s+rate|annual\s+rent|rent)\b", line):
             continue
@@ -9332,6 +9361,44 @@ def _merge_review_tasks(primary: list[dict], supplemental: list[dict]) -> list[d
     return merged
 
 
+def _review_task_is_resolved(task: dict[str, Any], canonical: CanonicalLease) -> bool:
+    issue_code = str(task.get("issue_code") or "").strip().upper()
+    field_path = str(task.get("field_path") or "").strip().lower()
+    lease_type_value = (
+        canonical.lease_type.value if hasattr(canonical.lease_type, "value") else canonical.lease_type
+    )
+    is_full_service = _is_full_service_lease_type(lease_type_value)
+    opex = _coerce_float_token(getattr(canonical, "opex_psf_year_1", None), 0.0) or 0.0
+    term = _coerce_int_token(getattr(canonical, "term_months", None), 0) or 0
+    comm = getattr(canonical, "commencement_date", None)
+    exp = getattr(canonical, "expiration_date", None)
+
+    if issue_code == "OPEX_NNN_INCOMPLETE":
+        return bool(is_full_service or opex > 0)
+    if issue_code in {
+        "RENT_STEPS_MISSING",
+        "RENT_SCHEDULE_GAP_OR_OVERLAP",
+        "RENT_SCHEDULE_INVALID_RANGE",
+        "RENT_SCHEDULE_COVERAGE",
+    }:
+        has_issue, _message = _rent_schedule_coverage_issues(canonical)
+        return not has_issue
+    if issue_code == "TERM_MISMATCH" or field_path == "term.term_months":
+        if isinstance(comm, date) and isinstance(exp, date) and term > 0:
+            implied = _month_diff(comm, exp)
+            return abs(int(implied) - int(term)) <= 1
+    return False
+
+
+def _prune_resolved_review_tasks(tasks: list[dict], canonical: CanonicalLease) -> list[dict]:
+    pruned: list[dict] = []
+    for task in _normalize_review_tasks(list(tasks or [])):
+        if _review_task_is_resolved(task, canonical):
+            continue
+        pruned.append(task)
+    return pruned
+
+
 _NORMALIZE_PRIMARY_PATH_BY_FIELD: dict[str, str] = {
     "commencement_date": "term.commencement_date",
     "expiration_date": "term.expiration_date",
@@ -9611,8 +9678,18 @@ def _merge_canonical_primary_then_legacy(
         if isinstance(primary_extraction.get("confidence"), dict)
         else {}
     )
+    primary_review_tasks = [
+        task for task in list(primary_extraction.get("review_tasks") or [])
+        if isinstance(task, dict)
+    ]
+    primary_premises = (
+        primary_extraction.get("premises")
+        if isinstance(primary_extraction.get("premises"), dict)
+        else {}
+    )
     primary_updates = _collect_primary_updates_from_canonical_extraction(primary_extraction)
     primary_building_name = str(primary_updates.get("building_name") or "").strip()
+    raw_primary_building_name = str(primary_premises.get("building_name") or "").strip()
     legacy_building_name = str(getattr(legacy_canonical, "building_name", "") or "").strip()
     primary_suite = str(primary_updates.get("suite") or "").strip()
     legacy_suite = str(getattr(legacy_canonical, "suite", "") or "").strip()
@@ -9633,10 +9710,12 @@ def _merge_canonical_primary_then_legacy(
     suppressed_noisy_primary_suite = False
     suppressed_exhibit_usf_primary_rsf = False
     suppressed_zero_primary_rent = False
+    suppressed_fragmentary_primary_rent = False
     suppressed_incomplete_primary_opex = False
     suppressed_implausibly_low_primary_opex = False
     suppressed_implausibly_low_primary_ti = False
     suppressed_entitlement_primary_parking_count = False
+    suppressed_rofr_primary_suite = False
 
     if (
         primary_building_name
@@ -9646,6 +9725,17 @@ def _merge_canonical_primary_then_legacy(
     ):
         primary_updates.pop("building_name", None)
         suppressed_noisy_primary_building = True
+    elif (
+        not primary_building_name
+        and raw_primary_building_name
+        and legacy_building_name
+        and not _building_name_is_suspicious(legacy_building_name)
+        and (
+            _building_name_is_suspicious(raw_primary_building_name)
+            or not _clean_building_candidate(raw_primary_building_name)
+        )
+    ):
+        suppressed_noisy_primary_building = True
     if (
         primary_suite
         and _suite_value_is_suspicious(primary_suite)
@@ -9654,6 +9744,16 @@ def _merge_canonical_primary_then_legacy(
     ):
         primary_updates.pop("suite", None)
         suppressed_noisy_primary_suite = True
+    suite_spans = extraction_provenance.get("premises.suite") if isinstance(extraction_provenance.get("premises.suite"), list) else []
+    suite_snippet = " ".join(str(span.get("snippet") or "") for span in suite_spans if isinstance(span, dict)).lower()
+    if (
+        primary_suite
+        and not legacy_suite
+        and len(primary_suite) <= 2
+        and any(token in suite_snippet for token in ("right of first refusal", "rofr", "exhibit b"))
+    ):
+        primary_updates.pop("suite", None)
+        suppressed_rofr_primary_suite = True
     rsf_spans = extraction_provenance.get("premises.rsf") if isinstance(extraction_provenance.get("premises.rsf"), list) else []
     rsf_snippet = " ".join(str(span.get("snippet") or "") for span in rsf_spans if isinstance(span, dict)).lower()
     if (
@@ -9685,6 +9785,23 @@ def _merge_canonical_primary_then_legacy(
     ):
         primary_updates.pop("rent_schedule", None)
         suppressed_zero_primary_rent = True
+    primary_rent_last_month = _rent_schedule_last_covered_month(primary_rent_steps)
+    legacy_rent_last_month = _rent_schedule_last_covered_month(legacy_rent_steps)
+    primary_has_incomplete_rent_review = any(
+        str(task.get("issue_code") or "").strip().upper() in {"INCOMPLETE_RENT_SCHEDULE", "RENT_SCHEDULE_COVERAGE"}
+        for task in primary_review_tasks
+    )
+    if (
+        "rent_schedule" in primary_updates
+        and primary_rent_steps
+        and legacy_rent_steps
+        and legacy_rent_last_month >= 23
+        and primary_rent_last_month >= 0
+        and primary_rent_last_month + 6 <= legacy_rent_last_month
+        and (len(primary_rent_steps) == 1 or primary_has_incomplete_rent_review)
+    ):
+        primary_updates.pop("rent_schedule", None)
+        suppressed_fragmentary_primary_rent = True
     if (
         legacy_opex_base is not None
         and legacy_opex_base > 0
@@ -9724,6 +9841,23 @@ def _merge_canonical_primary_then_legacy(
         and primary_parking_count is not None
         and 0 < primary_parking_count <= 2
         and (primary_parking_ratio is None or primary_parking_ratio <= 0)
+    ):
+        primary_updates.pop("parking_count", None)
+        suppressed_entitlement_primary_parking_count = True
+    elif (
+        legacy_parking_count is not None
+        and legacy_parking_count >= 10
+        and primary_parking_count is not None
+        and 0 < primary_parking_count <= max(2, int(round(float(legacy_parking_count) * 0.5)))
+        and (
+            primary_parking_ratio is None
+            or primary_parking_ratio <= 0
+            or (
+                legacy_parking_ratio is not None
+                and legacy_parking_ratio > 0
+                and primary_parking_ratio + 0.25 < legacy_parking_ratio
+            )
+        )
     ):
         primary_updates.pop("parking_count", None)
         suppressed_entitlement_primary_parking_count = True
@@ -9825,6 +9959,19 @@ def _merge_canonical_primary_then_legacy(
                 "evidence": [],
             }
         )
+    if suppressed_rofr_primary_suite:
+        warnings.append("Retained legacy suite because primary extraction picked up a ROFR exhibit suite instead of the main premises.")
+        review_tasks.append(
+            {
+                "field_path": "suite",
+                "severity": "warn",
+                "issue_code": "SUITE_OVERRIDE_ROFR_EXHIBIT",
+                "message": "Primary extraction captured a suite from a ROFR/exhibit clause instead of the primary premises. Legacy/deterministic suite was retained.",
+                "candidates": [{"field": "suite", "source": "legacy_fallback"}],
+                "recommended_value": legacy_suite,
+                "evidence": suite_spans,
+            }
+        )
     if suppressed_exhibit_usf_primary_rsf:
         warnings.append("Retained legacy RSF because primary extraction appears to have selected exhibit USF instead of RSF.")
         review_tasks.append(
@@ -9846,6 +9993,19 @@ def _merge_canonical_primary_then_legacy(
                 "severity": "warn",
                 "issue_code": "RENT_OVERRIDE_ZERO_PRIMARY",
                 "message": "Primary extraction produced a degenerate zero-dollar rent schedule. Legacy/deterministic rent schedule was retained.",
+                "candidates": [{"field": "rent_schedule", "source": "legacy_fallback"}],
+                "recommended_value": None,
+                "evidence": [],
+            }
+        )
+    if suppressed_fragmentary_primary_rent:
+        warnings.append("Retained legacy rent schedule because primary extraction only captured an incomplete front slice of the rent schedule.")
+        review_tasks.append(
+            {
+                "field_path": "rent_schedule",
+                "severity": "warn",
+                "issue_code": "RENT_OVERRIDE_FRAGMENTARY_PRIMARY",
+                "message": "Primary extraction only captured an incomplete rent schedule while deterministic parsing recovered a fuller schedule. Legacy/deterministic rent schedule was retained.",
                 "candidates": [{"field": "rent_schedule", "source": "legacy_fallback"}],
                 "recommended_value": None,
                 "evidence": [],
@@ -9959,12 +10119,27 @@ def _building_name_is_suspicious(value: str) -> bool:
         "tenant shall",
         "landlord shall",
         "premises:",
+        "areas/amenities",
+        "building features",
+        "common area benefits",
         "lease term",
         "commencement date",
         "https://",
         "http://",
     )
     return any(token in v for token in noisy_tokens)
+
+
+def _rent_schedule_last_covered_month(rent_schedule: list[Any]) -> int:
+    last_month = -1
+    for step in list(rent_schedule or []):
+        end_month = _coerce_int_token(getattr(step, "end_month", None), None)
+        if end_month is None and isinstance(step, dict):
+            end_month = _coerce_int_token(step.get("end_month"), None)
+        if end_month is None:
+            continue
+        last_month = max(last_month, int(end_month))
+    return last_month
 
 
 def _rent_schedule_coverage_issues(lease: CanonicalLease) -> tuple[bool, str]:
@@ -12017,6 +12192,7 @@ def _normalize_impl(
             merged_review_tasks,
             list(merge_metadata.get("review_tasks") or []),
         )
+        merged_review_tasks = _prune_resolved_review_tasks(merged_review_tasks, canonical)
         extraction_artifacts["review_tasks"] = merged_review_tasks
         blockers = [
             t for t in merged_review_tasks
@@ -12026,8 +12202,7 @@ def _normalize_impl(
             t for t in merged_review_tasks
             if str((t or {}).get("severity") or "").lower() == "warn"
         ]
-        if blockers:
-            extraction_artifacts["export_allowed"] = False
+        extraction_artifacts["export_allowed"] = not blockers
         if blockers:
             warnings.append(f"Extraction produced {len(blockers)} blocker(s); manual review is required.")
         extraction_confidence_payload = dict(extraction_artifacts.get("extraction_confidence") or {})

@@ -102,6 +102,73 @@ def test_extract_lease_hints_handles_reversed_suite_tokens_and_proposal_header_n
     assert schedule[0]["rent_psf_annual"] == 17.0
 
 
+def test_regex_prefill_prefers_explicit_turnkey_zero_allowance_over_test_fit_allowance() -> None:
+    text = (
+        'In addition to the "turn-key" delivery, Landlord will provide an allowance equal to $.00 per RSF '
+        "that Tenant can use towards moving costs, FF&E, security, and data & cabling.\n"
+        "Test-Fit: Landlord will provide a test-fit allowance equal to $0.15 per RSF of the Premises.\n"
+    )
+
+    prefill = _regex_prefill(text)
+
+    assert prefill.get("ti_allowance_psf") == 0.0
+
+
+def test_extract_lease_hints_avoids_false_full_service_from_grossed_up_opex_clause() -> None:
+    text = (
+        "Re: Office Lease Proposal for Sprinklr (Tenant).\n"
+        "Building: 1300 East 5th, located at 1300 E. 5th Street, Austin, TX 78702.\n"
+        "Commencement Date: The Commencement Date will upon Substantial Completion of the Premises estimated to be no later than December 1st, 2026.\n"
+        "Lease Term: Ninety-one (91) months from the Commencement Date.\n"
+        "Base Annual Net Rental Rate: Months 1-12: Annual Base Rent: $43.50/RSF.\n"
+        'In addition to the "turn-key" delivery, Landlord will provide an allowance equal to $10.00 per RSF that Tenant can use towards moving costs, FF&E, security, and data & cabling.\n'
+        "Operating Expenses and Real Estate Taxes: In addition to the Base Rental Rate, Tenant will be responsible for its proportionate share of Building Operating Expenses and Real Estate Taxes during the term of the lease. 2026 estimated Operating Expenses and Real Estate Taxes are $20.06 per RSF. All operating expenses shall be grossed up to reflect 100% occupancy.\n"
+        "Parking: Tenant will have access to a parking ratio of 2.7 spaces per 1,000 RSF. There will be a charge of $185 per month per space for unreserved spaces; reserved spaces are $250 per month per space.\n"
+    )
+
+    hints = main._extract_lease_hints(text, "sprinklr-7-year.docx", "test-rid")
+
+    assert hints["building_name"] == "1300 East 5th"
+    assert hints["address"] == "1300 E. 5th Street, Austin, TX 78702"
+    assert hints["lease_type"] == "NNN"
+    assert "full_service_rate_psf_yr" not in hints
+    assert hints["opex_psf_year_1"] == 20.06
+    assert hints["opex_source_year"] == 2026
+    assert hints["ti_allowance_psf"] == 10.0
+    assert hints["parking_rate_monthly"] == 185.0
+
+
+def test_apply_safe_defaults_prefers_document_prefill_for_explicit_ti_and_parking() -> None:
+    raw = {
+        "scenario": {
+            "name": "Sprinklr 1300 E 5th",
+            "rsf": 12153,
+            "commencement": "2026-12-01",
+            "expiration": "2032-05-31",
+            "rent_steps": [{"start": 0, "end": 65, "rate_psf_yr": 43.5}],
+            "ti_allowance_psf": 5.0,
+            "parking_spaces": 7,
+            "parking_cost_monthly_per_space": 0.0,
+        },
+        "confidence": {"ti_allowance_psf": 0.8, "parking_spaces": 0.8},
+        "warnings": [],
+    }
+    prefill = {
+        "term_months": 66,
+        "ti_allowance_psf": 0.0,
+        "parking_spaces": 33,
+        "parking_cost_monthly_per_space": 185.0,
+    }
+
+    scenario, _confidence, warnings = _apply_safe_defaults(raw, prefill=prefill)
+
+    assert scenario["ti_allowance_psf"] == 0.0
+    assert scenario["parking_spaces"] == 33
+    assert scenario["parking_cost_monthly_per_space"] == 185.0
+    assert any("explicit allowance stated in the document" in warning for warning in warnings)
+    assert "Parking count was reset to the document-derived entitlement." in warnings
+
+
 def test_apply_safe_defaults_normalizes_none_numeric_fields() -> None:
     raw = {
         "scenario": {

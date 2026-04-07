@@ -90,6 +90,146 @@ def test_run_extraction_artifacts_uses_canonical_only_fallback_when_pipeline_err
     assert artifacts["canonical_extraction"]["rent_steps"][0]["source"] == "canonical_normalizer"
 
 
+def test_prune_resolved_review_tasks_drops_stale_pipeline_blockers() -> None:
+    canonical = main._dict_to_canonical(
+        {
+            "building_name": "1300 East 5th",
+            "address": "1300 E. 5th Street, Austin, TX 78702",
+            "suite": "400",
+            "rsf": 12153,
+            "commencement_date": "2026-12-01",
+            "expiration_date": "2034-06-30",
+            "term_months": 91,
+            "lease_type": "NNN",
+            "opex_psf_year_1": 20.06,
+            "rent_schedule": [
+                {"start_month": 0, "end_month": 11, "rent_psf_annual": 43.5},
+                {"start_month": 12, "end_month": 23, "rent_psf_annual": 44.81},
+                {"start_month": 24, "end_month": 35, "rent_psf_annual": 46.15},
+                {"start_month": 36, "end_month": 47, "rent_psf_annual": 47.54},
+                {"start_month": 48, "end_month": 59, "rent_psf_annual": 48.96},
+                {"start_month": 60, "end_month": 71, "rent_psf_annual": 50.43},
+                {"start_month": 72, "end_month": 83, "rent_psf_annual": 51.94},
+                {"start_month": 84, "end_month": 90, "rent_psf_annual": 53.5},
+            ],
+        }
+    )
+    tasks = [
+        {
+            "field_path": "opex",
+            "severity": "blocker",
+            "issue_code": "OPEX_NNN_INCOMPLETE",
+            "message": "NNN cues detected but OpEx mode/base information is missing.",
+        },
+        {
+            "field_path": "term.term_months",
+            "severity": "blocker",
+            "issue_code": "TERM_MISMATCH",
+            "message": "Term mismatch: implied=88 months from dates but term_months=60.",
+        },
+        {
+            "field_path": "rent_steps",
+            "severity": "blocker",
+            "issue_code": "RENT_SCHEDULE_COVERAGE",
+            "message": "Rent schedule ends at month 59; expected 90.",
+        },
+    ]
+
+    pruned = main._prune_resolved_review_tasks(tasks, canonical)
+
+    assert pruned == []
+
+
+def test_normalize_impl_prunes_stale_pipeline_blockers_after_hint_repair(monkeypatch) -> None:
+    text = (
+        "Re: Office Lease Proposal for Sprinklr (Tenant).\n"
+        "Building: 1300 East 5th, located at 1300 E. 5th Street, Austin, TX 78702.\n"
+        "Premises: Suite 400 consisting of 12,153 RSF.\n"
+        "Commencement Date: The Commencement Date will upon Substantial Completion of the Premises estimated to be no later than December 1st, 2026.\n"
+        "Lease Term: Ninety-one (91) months from the Commencement Date.\n"
+        "Base Annual Net Rental Rate: Months 1-12: Annual Base Rent: $43.50/RSF. Months 13-24: Annual Base Rent: $44.81/RSF. Months 25-36: Annual Base Rent: $46.15/RSF. Months 37-48: Annual Base Rent: $47.54/RSF. Months 49-60: Annual Base Rent: $48.96/RSF. Months 61-72: Annual Base Rent: $50.43/RSF. Months 73-84: Annual Base Rent: $51.94/RSF. Months 85-91: Annual Base Rent: $53.50/RSF.\n"
+        'In addition to the "turn-key" delivery, Landlord will provide an allowance equal to $10.00 per RSF that Tenant can use towards moving costs, FF&E, security, and data & cabling.\n'
+        "Operating Expenses and Real Estate Taxes: In addition to the Base Rental Rate, Tenant will be responsible for its proportionate share of Building Operating Expenses and Real Estate Taxes during the term of the lease. 2026 estimated Operating Expenses and Real Estate Taxes are $20.06 per RSF. All operating expenses shall be grossed up to reflect 100% occupancy.\n"
+        "Parking: Tenant will have access to a parking ratio of 2.7 spaces per 1,000 RSF. There will be a charge of $185 per month per space for unreserved spaces; reserved spaces are $250 per month per space.\n"
+    )
+    monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: (text, "docx"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "proposal")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="1300 East 5th Suite 400",
+                rsf=12153.0,
+                commencement=date(2026, 12, 1),
+                expiration=date(2034, 6, 30),
+                rent_steps=[
+                    RentStep(start=0, end=11, rate_psf_yr=43.5),
+                    RentStep(start=12, end=23, rate_psf_yr=44.81),
+                    RentStep(start=24, end=35, rate_psf_yr=46.15),
+                    RentStep(start=36, end=47, rate_psf_yr=47.54),
+                    RentStep(start=48, end=59, rate_psf_yr=48.96),
+                    RentStep(start=60, end=71, rate_psf_yr=50.43),
+                    RentStep(start=72, end=83, rate_psf_yr=51.94),
+                    RentStep(start=84, end=90, rate_psf_yr=53.5),
+                ],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=0.0,
+                base_year_opex_psf_yr=0.0,
+                opex_growth=0.0,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"rsf": 0.8, "rent_steps": 0.8},
+            warnings=[],
+            source="docx",
+            text_length=len(text),
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [
+                {
+                    "field_path": "opex",
+                    "severity": "blocker",
+                    "issue_code": "OPEX_NNN_INCOMPLETE",
+                    "message": "NNN cues detected but OpEx mode/base information is missing.",
+                },
+                {
+                    "field_path": "term.term_months",
+                    "severity": "blocker",
+                    "issue_code": "TERM_MISMATCH",
+                    "message": "Term mismatch: implied=88 months from dates but term_months=60.",
+                },
+                {
+                    "field_path": "rent_steps",
+                    "severity": "blocker",
+                    "issue_code": "RENT_SCHEDULE_COVERAGE",
+                    "message": "Rent schedule ends at month 59; expected 90.",
+                },
+            ],
+            "export_allowed": False,
+            "extraction_confidence": {"overall": 0.45, "status": "red", "export_allowed": False},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="1300-e-5th-sprinklr.docx", file=BytesIO(b"docx-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "WORD", None, None, upload)
+
+    assert result.canonical_lease.building_name == "1300 East 5th"
+    assert result.canonical_lease.opex_psf_year_1 == 20.06
+    assert result.canonical_lease.parking_rate_monthly == 185.0
+    assert result.canonical_lease.lease_type == "NNN"
+    assert result.export_allowed is True
+    assert not any(task.severity == "blocker" for task in result.review_tasks)
+
+
 def test_merge_canonical_primary_then_legacy_prefers_primary_values() -> None:
     legacy = main._dict_to_canonical(
         {
@@ -1375,6 +1515,89 @@ def test_merge_canonical_primary_then_legacy_rejects_noisy_building_and_short_te
     review_codes = {str(task.get("issue_code") or "") for task in list(meta.get("review_tasks") or [])}
     assert "BUILDING_OVERRIDE_NOISY" in review_codes
     assert "TERM_OVERRIDE_SHORT_PRIMARY" in review_codes
+
+
+def test_merge_canonical_primary_then_legacy_rejects_fragmentary_primary_rent_and_rofr_suite() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "1300 East 5th",
+            "suite": "",
+            "address": "1300 E. 5th Street, Austin, TX 78702",
+            "rsf": 12153,
+            "commencement_date": "2026-12-01",
+            "expiration_date": "2034-06-30",
+            "term_months": 91,
+            "rent_schedule": [
+                {"start_month": 0, "end_month": 11, "rent_psf_annual": 43.5},
+                {"start_month": 12, "end_month": 23, "rent_psf_annual": 44.8},
+                {"start_month": 24, "end_month": 35, "rent_psf_annual": 46.15},
+                {"start_month": 36, "end_month": 47, "rent_psf_annual": 47.53},
+                {"start_month": 48, "end_month": 59, "rent_psf_annual": 48.96},
+                {"start_month": 60, "end_month": 71, "rent_psf_annual": 50.43},
+                {"start_month": 72, "end_month": 83, "rent_psf_annual": 51.94},
+                {"start_month": 84, "end_month": 90, "rent_psf_annual": 53.5},
+            ],
+            "parking_count": 33,
+            "parking_ratio": 2.7,
+            "parking_rate_monthly": 185.0,
+        }
+    )
+    extraction = {
+        "term": {"commencement_date": "2026-12-01", "expiration_date": "2026-11-30", "term_months": 1},
+        "premises": {
+            "building_name": "Areas/Amenities: Building features the following amenities & common area benefits:",
+            "suite": "C",
+            "floor": "4th",
+            "address": "Premises: The Premises will consist of approximately 12,153 RSF on the 4th floor.",
+            "rsf": 12153,
+        },
+        "rent_steps": [{"start_month": 0, "end_month": 0, "rent_psf_annual": 43.5}],
+        "parking": {"spaces": 7},
+        "review_tasks": [
+            {
+                "field_path": "rent_steps",
+                "severity": "warn",
+                "issue_code": "INCOMPLETE_RENT_SCHEDULE",
+                "message": "Only the initial rent period was extracted.",
+            }
+        ],
+        "confidence": {"overall": 0.75},
+        "provenance": {
+            "premises.building_name": [
+                {
+                    "page": 1,
+                    "snippet": "Areas/Amenities: Building features the following amenities & common area benefits:",
+                    "source": "pdf_text_regex",
+                    "source_confidence": 0.58,
+                }
+            ],
+            "premises.suite": [
+                {
+                    "page": 1,
+                    "snippet": "Right of First Refusal on Suite C included as Exhibit B.",
+                    "source": "pdf_text_regex",
+                    "source_confidence": 0.72,
+                }
+            ],
+        },
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={"building_name": 0.95, "rent_schedule": 0.95, "parking_count": 0.9},
+    )
+
+    assert merged.building_name == "1300 East 5th"
+    assert merged.suite == ""
+    assert len(merged.rent_schedule) == 8
+    assert merged.parking_count == 33
+    assert meta["field_sources"]["building_name"] == "legacy_fallback"
+    assert meta["field_sources"]["rent_schedule"] == "legacy_fallback"
+    assert meta["field_sources"]["parking_count"] == "legacy_fallback"
+    review_codes = {str(task.get("issue_code") or "") for task in list(meta.get("review_tasks") or [])}
+    assert "BUILDING_OVERRIDE_NOISY" in review_codes
+    assert "PARKING_OVERRIDE_ENTITLEMENT_COUNT_PRIMARY" in review_codes
 
 
 def test_normalize_impl_centre_one_regression_retains_floor_and_ignores_share_as_opex_growth(monkeypatch) -> None:

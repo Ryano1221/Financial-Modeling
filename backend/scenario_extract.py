@@ -2269,12 +2269,21 @@ def _regex_prefill(text: str) -> dict:
         line_low = line.lower()
         line_has_ti_keyword = _has_ti_context_token(line)
         neighbor_window = " ".join(lines[max(0, idx - 1): idx + 2]).lower()
+        turnkey_allowance_context = bool(
+            "allowance" in line_low
+            and re.search(r"(?i)\ballowance\s+equal\s+to\b", line)
+            and re.search(
+                r"(?i)\b(?:turn[\s-]?key|landlord\s+(?:will|shall)\s+provide|in\s+addition\s+to\s+the\s+[\"“”']?turn[\s-]?key)\b",
+                neighbor_window,
+            )
+        )
         line_is_allowance_with_ti_context = (
             "allowance" in line_low
             and (
                 _has_ti_context_token(neighbor_window)
                 or "tenant improvement" in neighbor_window
                 or "tenant improvements" in neighbor_window
+                or turnkey_allowance_context
             )
         )
         if not line_has_ti_keyword and not line_is_allowance_with_ti_context:
@@ -2318,6 +2327,8 @@ def _regex_prefill(text: str) -> dict:
             score = 0
             if line_has_ti_keyword or line_is_allowance_with_ti_context:
                 score += 6
+            if turnkey_allowance_context:
+                score += 4
             if any(
                 tok in local_low
                 for tok in (
@@ -2372,6 +2383,16 @@ def _regex_prefill(text: str) -> dict:
         ti_psf_candidates.sort(key=lambda row: (-row[0], -row[2], -row[1]))
         if ti_psf_candidates[0][0] > -2:
             ti_allowance_psf = ti_psf_candidates[0][1]
+    if ti_allowance_psf is None:
+        turnkey_allowance_match = re.search(
+            rf"(?is)\b(?:in\s+addition\s+to\s+the\s+[\"“”']?turn[\s-]?key\b|turn[\s-]?key\b|landlord\s+(?:will|shall)\s+provide\b)"
+            rf"[\s\S]{{0,220}}?\ballowance\s+equal\s+to\s+\$?\s*((?:[\d,]+(?:\.\d+)?)|(?:\.\d+))\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b",
+            text,
+        )
+        if turnkey_allowance_match:
+            turnkey_allowance_value = _coerce_float_token(turnkey_allowance_match.group(1), None)
+            if turnkey_allowance_value is not None and 0 <= float(turnkey_allowance_value) <= 500:
+                ti_allowance_psf = float(turnkey_allowance_value)
     if ti_allowance_psf is None:
         for m in _RE_TI.finditer(text):
             seg = (m.group(0) or "")
@@ -2977,9 +2998,12 @@ def _regex_prefill(text: str) -> dict:
 
     parking_rate_patterns = [
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\s*(?:per|\/)\s*month\b",
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\s*(?:per|\/)\s*(?:space|stall|permit)\b",
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:access\s*cards?|cards?|permits?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
         r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*\/\s*(?:access\s*cards?|cards?|permits?)\s*\/\s*(?:month|mo\.?)\b",
         r"(?i)\bparking\b[^.\n]{0,120}\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:month|mo\.?)\b",
+        r"(?i)\b(?:current\s+rate\s+for\s+)?(?:unreserved|reserved)?\s*parking\b[^.\n]{0,80}\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\b",
+        r"(?i)\$\s*([\d,]+(?:\.\d{1,2})?)\s*(?:per|\/)\s*(?:space|stall)\b[^\n]{0,32}\b(?:plus\s+tax|monthly)\b",
     ]
     for pat in parking_rate_patterns:
         m = re.search(pat, text)
@@ -3415,6 +3439,38 @@ def _apply_safe_defaults(raw: dict | Any, prefill: dict | None = None) -> tuple[
     scenario.setdefault("sublease_income_monthly", 0.0)
     scenario.setdefault("sublease_start_month", 0)
     scenario.setdefault("sublease_duration_months", 0)
+    prefill_ti_allowance_psf = _coerce_float_token((prefill or {}).get("ti_allowance_psf"), None)
+    current_ti_allowance_psf = _coerce_float_token(scenario.get("ti_allowance_psf"), None)
+    if prefill_ti_allowance_psf is not None and (
+        current_ti_allowance_psf is None
+        or abs(float(current_ti_allowance_psf) - float(prefill_ti_allowance_psf)) > 0.01
+    ):
+        scenario["ti_allowance_psf"] = float(prefill_ti_allowance_psf)
+        if current_ti_allowance_psf is not None:
+            warnings.append("Tenant improvement allowance was reset to the explicit allowance stated in the document.")
+
+    prefill_parking_spaces = _coerce_int_token((prefill or {}).get("parking_spaces"), None)
+    current_parking_spaces = _coerce_int_token(scenario.get("parking_spaces"), None)
+    if prefill_parking_spaces is not None and prefill_parking_spaces > 0 and (
+        current_parking_spaces is None
+        or current_parking_spaces <= 0
+        or abs(int(current_parking_spaces) - int(prefill_parking_spaces)) >= 2
+    ):
+        scenario["parking_spaces"] = int(prefill_parking_spaces)
+        if current_parking_spaces is not None and current_parking_spaces > 0:
+            warnings.append("Parking count was reset to the document-derived entitlement.")
+
+    prefill_parking_rate = _coerce_float_token((prefill or {}).get("parking_cost_monthly_per_space"), None)
+    current_parking_rate = _coerce_float_token(scenario.get("parking_cost_monthly_per_space"), None)
+    if prefill_parking_rate is not None and prefill_parking_rate > 0 and (
+        current_parking_rate is None
+        or current_parking_rate <= 0
+        or abs(float(current_parking_rate) - float(prefill_parking_rate)) > 0.01
+    ):
+        scenario["parking_cost_monthly_per_space"] = float(prefill_parking_rate)
+        if current_parking_rate is not None and current_parking_rate > 0:
+            warnings.append("Parking rate was reset to the explicit monthly-per-space rate stated in the document.")
+
     # model_validate requires these numeric fields to be real numbers, not None.
     scenario["free_rent_months"] = max(0, int(_coerce_int_token(scenario.get("free_rent_months"), 0) or 0))
     scenario["ti_allowance_psf"] = max(0.0, float(_coerce_float_token(scenario.get("ti_allowance_psf"), 0.0) or 0.0))
