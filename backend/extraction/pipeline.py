@@ -105,6 +105,30 @@ def _repair_rent_schedule(steps: list[dict[str, Any]], term_months: int) -> list
     return fixed
 
 
+def _sanitize_review_tasks_for_schema(tasks: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for task in list(tasks or []):
+        if not isinstance(task, dict):
+            continue
+        normalized = dict(task)
+        severity = str(normalized.get("severity") or "").strip().lower()
+        if severity not in {"info", "warn", "blocker"}:
+            severity = "warn"
+        normalized["severity"] = severity
+        normalized["field_path"] = str(normalized.get("field_path") or "general").strip() or "general"
+        normalized["issue_code"] = str(normalized.get("issue_code") or "REVIEW_TASK").strip() or "REVIEW_TASK"
+        normalized["message"] = (
+            str(normalized.get("message") or "").strip()
+            or "Manual review required for canonical extraction output."
+        )
+        candidates = normalized.get("candidates")
+        normalized["candidates"] = list(candidates) if isinstance(candidates, list) else []
+        evidence = normalized.get("evidence")
+        normalized["evidence"] = list(evidence) if isinstance(evidence, list) else []
+        sanitized.append(normalized)
+    return sanitized
+
+
 def _finalize_extraction(extraction: dict[str, Any], *, solver_debug: dict[str, Any] | None = None, solver_degraded: bool = False) -> dict[str, Any]:
     term = extraction.setdefault("term", {})
     premises = extraction.setdefault("premises", {})
@@ -455,6 +479,7 @@ def run_extraction_pipeline(
         solver_debug=solver_debug,
         solver_degraded=solver_degraded,
     )
+    extraction["review_tasks"] = _sanitize_review_tasks_for_schema(extraction.get("review_tasks"))
 
     extraction = validate_extraction(
         extraction,

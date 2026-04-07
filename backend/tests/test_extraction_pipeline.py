@@ -96,6 +96,32 @@ def test_opex_gating_when_nnn_cues_present_and_opex_missing() -> None:
     assert "OPEX_NNN_INCOMPLETE" in blocker_codes
 
 
+def test_pipeline_sanitizes_non_schema_review_task_severities() -> None:
+    sanitized = extraction_pipeline._sanitize_review_tasks_for_schema(
+        [
+            {
+                "field_path": "rent_steps",
+                "severity": "low",
+                "issue_code": "INCOMPLETE_RENT_SCHEDULE",
+                "message": "Only the first rent row was captured.",
+                "candidates": None,
+                "evidence": None,
+            }
+        ]
+    )
+
+    assert sanitized == [
+        {
+            "field_path": "rent_steps",
+            "severity": "warn",
+            "issue_code": "INCOMPLETE_RENT_SCHEDULE",
+            "message": "Only the first rent row was captured.",
+            "candidates": [],
+            "evidence": [],
+        }
+    ]
+
+
 def test_arbitration_conflict_has_resolution_or_review_task() -> None:
     regex_candidates = {
         "term_months": [
