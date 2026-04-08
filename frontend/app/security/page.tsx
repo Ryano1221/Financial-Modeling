@@ -86,7 +86,7 @@ export default function SecurityPage() {
               for security questions or vulnerability reports.
             </p>
             <p className="text-sm text-slate-300 sm:text-base">
-              The Contact page now routes submitted messages to the same inbox, so operational issues and security follow-up both reach the core support channel.
+              The Contact page points users to the same inbox, so operational issues and security follow-up both stay centered on the core support channel.
             </p>
           </section>
         </section>

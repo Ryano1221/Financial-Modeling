@@ -36,7 +36,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "How do I contact support?",
-    a: "Use the Contact page or email info@thecremodel.com directly. Contact form submissions are routed to that same inbox so support stays in one place.",
+    a: "Use the Contact page for support guidance or email info@thecremodel.com directly.",
   },
   {
     q: "Do Survey and Lease Abstract exports match the Financial Analysis presentation style?",
