@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 
 import extraction.pipeline as extraction_pipeline
+from docx import Document
 from extraction.normalize import NormalizedDocument, PageData
 from extraction.classify import classify_document
 from extraction.regex import mine_candidates
@@ -629,3 +631,45 @@ def test_run_extraction_pipeline_flags_unresolved_parking_abatement_period(monke
     issue_codes = {task.get("issue_code") for task in result.get("review_tasks") or []}
     assert "FREE_RENT_INCOMPLETE" in issue_codes
     assert "PARKING_ABATEMENT_PERIOD_UNRESOLVED" in issue_codes
+
+
+def test_run_extraction_pipeline_docx_proposal_uses_legacy_hint_fallback(monkeypatch) -> None:
+    doc = Document()
+    for line in (
+        "REVISED Office Lease Proposal for Sprinklr (Tenant).",
+        "Building: 1300 East 5th, located at 1300 E. 5th Street, Austin, Texas 78702.",
+        "Premises: approximately 12,153 rentable square feet located on the 4th floor.",
+        "Commencement Date: no later than December 1, 2026.",
+        "Lease Term: Sixty-six (66) Months from the Commencement Date.",
+        "Base Rental Rate: $43.50/RSF NNN. Beginning in Month 13, the Base Rent will be subject to annual escalations of 3.0%.",
+        "Rental Abatement: So long as Tenant is not in default, Base Rent and Building Operating Expenses and Real Estate Taxes will be abated for the initial three (3) months of the Lease Term, followed by three (3) months of Base Rent abatement. During the Base Rent abatement period, Tenant will be responsible for Building Operating Expenses and Real Estate Taxes.",
+        "In addition to the turn-key delivery, Landlord will provide an allowance equal to $5.00 per RSF that Tenant can use towards moving costs, FF&E, security, and data & cabling.",
+        "Operating Expenses and Real Estate Taxes: 2026 estimated Operating Expenses and Real Estate Taxes are $20.06 per RSF.",
+        "Parking: Tenant will have access to a parking ratio of 2.7 spaces per 1,000 RSF. There will be a charge of $185 per month per space for unreserved spaces. Tenant will have abated parking during the initial twenty-four (24) months of the Lease Term.",
+        "Test-Fit: Landlord will provide a test-fit allowance equal to $0.15 per RSF of the Premises for Tenant's preferred architect for space planning.",
+    ):
+        doc.add_paragraph(line)
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
+    monkeypatch.setattr(extraction_pipeline, "structured_extract", lambda *args, **kwargs: {"review_tasks": []})
+
+    result = extraction_pipeline.run_extraction_pipeline(
+        file_bytes=buf.getvalue(),
+        filename="1300 E 5th_Sprinklr_LL_REVISED_4.6.26(5_Year).docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+    assert result["document"]["doc_type"] == "proposal"
+    assert result["term"]["term_months"] == 66
+    assert result["term"]["commencement_date"] == "2026-12-01"
+    assert result["term"]["expiration_date"] == "2032-05-31"
+    assert result["tenant_improvements"]["ti_allowance_psf"] == 5.0
+    assert result["parking"]["ratio_per_1000_rsf"] == 2.7
+    assert result["parking"]["rate_monthly_per_space"] == 185.0
+    assert [(item["start_month"], item["end_month"], item["scope"]) for item in result["abatements"]] == [
+        (0, 2, "gross_rent"),
+        (3, 5, "base_rent_only"),
+    ]
+    assert [(item["start_month"], item["end_month"]) for item in result["parking_abatements"]] == [(0, 23)]

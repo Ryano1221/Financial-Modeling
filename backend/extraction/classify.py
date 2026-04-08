@@ -5,6 +5,7 @@ from typing import Any
 from .normalize import NormalizedDocument
 
 _DOC_RULES: list[tuple[str, tuple[str, ...], float]] = [
+    ("proposal", ("revised office lease proposal", "office lease proposal", "lease proposal", "proposal presented to"), 0.88),
     ("floorplan", ("floor plan", "floorplan", "stacking plan", "test fit"), 0.89),
     ("flyer", ("marketing flyer", "marketing brochure", "property flyer", "availabilities"), 0.84),
     ("counter_proposal", ("counter proposal", "counteroffer", "counter-offer"), 0.86),
@@ -36,6 +37,15 @@ def optional_layoutlmv3_classify(_features: dict[str, Any] | None = None) -> dic
 
 def classify_document(normalized: NormalizedDocument) -> dict[str, Any]:
     first_pages_text = "\n".join((p.text or "") for p in normalized.pages[:3]).lower()
+    proposal_like = (
+        "proposal" in first_pages_text
+        and (
+            "lease term" in first_pages_text
+            or "commencement date" in first_pages_text
+            or "base rental rate" in first_pages_text
+            or "base annual net rental rate" in first_pages_text
+        )
+    )
     sublease_strong = any(
         token in first_pages_text
         for token in (
@@ -67,6 +77,10 @@ def classify_document(normalized: NormalizedDocument) -> dict[str, Any]:
             continue
         for n in needles:
             if n in first_pages_text:
+                if label == "floorplan" and n == "test fit" and proposal_like:
+                    # Proposal/LOI docs often mention a test-fit exhibit; do not let that
+                    # overwhelm the surrounding lease economics and misclassify the document.
+                    continue
                 doc_type = label
                 doc_type_conf = conf
                 doc_evidence.append(

@@ -20,6 +20,64 @@ from .tables import extract_rent_step_candidates_with_review
 from .validate import validate_extraction
 
 
+def _looks_like_proposal_docx_text(filename: str, text: str) -> bool:
+    if not str(filename or "").lower().endswith((".docx", ".doc")):
+        return False
+    low = str(text or "").lower()
+    if not low.strip():
+        return False
+    cue_hits = sum(
+        1
+        for cue in (
+            "proposal",
+            "lease term",
+            "commencement date",
+            "base rental rate",
+            "base annual net rental rate",
+            "rental abatement",
+            "parking:",
+            "operating expenses",
+        )
+        if cue in low
+    )
+    return cue_hits >= 3
+
+
+def _build_legacy_docx_canonical_fallback(
+    *,
+    filename: str,
+    text: str,
+) -> CanonicalLease | None:
+    if not _looks_like_proposal_docx_text(filename, text):
+        return None
+    try:
+        import main as legacy_main
+    except Exception:
+        return None
+    try:
+        extracted_hints = legacy_main._extract_lease_hints(text, filename, "extract-pipeline")
+    except Exception:
+        return None
+    if not isinstance(extracted_hints, dict):
+        return None
+
+    has_rsf = bool(float(extracted_hints.get("rsf") or 0) > 0)
+    has_term = bool(int(extracted_hints.get("term_months") or 0) > 0)
+    has_schedule = bool(isinstance(extracted_hints.get("rent_schedule"), list) and extracted_hints.get("rent_schedule"))
+    if not (has_rsf and has_term and has_schedule):
+        return None
+
+    try:
+        payload = legacy_main._build_hint_driven_proposal_canonical_payload(extracted_hints, filename)
+        hinted_ti_budget_total = extracted_hints.get("ti_budget_total")
+        if hinted_ti_budget_total not in (None, ""):
+            payload["ti_budget_total"] = float(hinted_ti_budget_total)
+        canonical, _warnings = legacy_main.normalize_canonical_lease(payload)
+        return canonical
+    except Exception:
+        return None
+
+
 def _parse_date(value: Any) -> date | None:
     raw = str(value or "").strip()
     if not raw:
@@ -277,7 +335,13 @@ def _flatten_evidence(provenance: dict[str, list[dict[str, Any]]], extra: list[d
     return out[:200]
 
 
-def _apply_canonical_fallback(extraction: dict[str, Any], canonical: CanonicalLease | None, provenance: dict[str, list[dict[str, Any]]]) -> None:
+def _apply_canonical_fallback(
+    extraction: dict[str, Any],
+    canonical: CanonicalLease | None,
+    provenance: dict[str, list[dict[str, Any]]],
+    *,
+    force: bool = False,
+) -> None:
     if canonical is None:
         return
 
@@ -300,58 +364,106 @@ def _apply_canonical_fallback(extraction: dict[str, Any], canonical: CanonicalLe
         "opex.growth_rate": ("growth_rate", float(canonical.opex_growth_rate)),
     }
 
-    for field_path, (target_key, value) in fallback_map.items():
-        section = field_path.split(".")[0]
-        bucket = extraction[section]
-        if bucket.get(target_key) in (None, "", 0, 0.0):
-            if value in (None, "", 0, 0.0) and target_key not in {"term_months", "rsf"}:
-                continue
-            bucket[target_key] = value
-            provenance.setdefault(field_path, []).insert(
-                0,
-                {
-                    "page": None,
-                    "snippet": "canonical normalizer fallback",
-                    "bbox": None,
-                    "source": "canonical_normalizer",
-                    "source_confidence": 0.9,
-                },
-            )
-
-    if not extraction.get("rent_steps") and canonical.rent_schedule:
-        extraction["rent_steps"] = [
-            {
-                "start_month": int(step.start_month),
-                "end_month": int(step.end_month),
-                "rate_psf_annual": float(step.rent_psf_annual),
-                "source": "canonical_normalizer",
-                "source_confidence": 0.9,
-            }
-            for step in canonical.rent_schedule
-        ]
-        provenance["rent_steps"] = [
+    def _set_provenance(field_path: str, snippet: str) -> None:
+        provenance[field_path] = [
             {
                 "page": None,
-                "snippet": "canonical rent schedule fallback",
+                "snippet": snippet,
                 "bbox": None,
                 "source": "canonical_normalizer",
                 "source_confidence": 0.9,
             }
         ]
 
-    if not extraction.get("abatements") and canonical.free_rent_periods:
-        extraction["abatements"] = [
-            {
-                "start_month": int(fr.start_month),
-                "end_month": int(fr.end_month),
-                "scope": "gross_rent" if str(canonical.free_rent_scope).lower().startswith("gross") else "base_rent_only",
-                "source": "canonical_normalizer",
-                "classification": "rent_abatement",
-            }
-            for fr in canonical.free_rent_periods
-        ]
+    for field_path, (target_key, value) in fallback_map.items():
+        section = field_path.split(".")[0]
+        bucket = extraction[section]
+        current_value = bucket.get(target_key)
+        if not force and current_value not in (None, "", 0, 0.0):
+            continue
+        if value in (None, "", 0, 0.0) and target_key not in {"term_months", "rsf"}:
+            continue
+        bucket[target_key] = value
+        _set_provenance(field_path, "canonical normalizer fallback")
 
-    if not abatement_analysis:
+    ti_psf = float(getattr(canonical, "ti_allowance_psf", 0.0) or 0.0)
+    ti_total = ti_psf * float(canonical.rsf or 0.0) if ti_psf > 0 and float(canonical.rsf or 0.0) > 0 else 0.0
+    current_ti = extraction.setdefault("tenant_improvements", {})
+    if force or not any(current_ti.get(key) not in (None, "", 0, 0.0) for key in ("ti_allowance_psf", "ti_allowance_total")):
+        if ti_psf > 0 or ti_total > 0:
+            current_ti["ti_allowance_psf"] = round(ti_psf, 4) if ti_psf > 0 else None
+            current_ti["ti_allowance_total"] = round(ti_total, 2) if ti_total > 0 else None
+            _set_provenance("tenant_improvements.ti_allowance_psf", "canonical tenant improvement fallback")
+
+    current_parking = extraction.setdefault("parking", {})
+    parking_ratio = float(getattr(canonical, "parking_ratio", 0.0) or 0.0)
+    parking_rate = float(getattr(canonical, "parking_rate_monthly", 0.0) or 0.0)
+    parking_count = int(getattr(canonical, "parking_count", 0) or 0)
+    if force or not any(current_parking.get(key) not in (None, "", 0, 0.0) for key in ("ratio_per_1000_rsf", "rate_monthly_per_space", "spaces")):
+        if parking_ratio > 0:
+            current_parking["ratio_per_1000_rsf"] = parking_ratio
+        if parking_rate > 0:
+            current_parking["rate_monthly_per_space"] = parking_rate
+        if parking_count > 0:
+            current_parking["spaces"] = parking_count
+        if parking_ratio > 0 or parking_rate > 0 or parking_count > 0:
+            _set_provenance("parking", "canonical parking fallback")
+
+    if force or extraction.get("concessions", {}).get("free_rent_months") in (None, "", 0):
+        free_rent_months = int(getattr(canonical, "free_rent_months", 0) or 0)
+        if free_rent_months > 0:
+            extraction.setdefault("concessions", {})["free_rent_months"] = free_rent_months
+            _set_provenance("concessions.free_rent_months", "canonical concession fallback")
+
+    if force or not extraction.get("rent_steps"):
+        if canonical.rent_schedule:
+            extraction["rent_steps"] = [
+                {
+                    "start_month": int(step.start_month),
+                    "end_month": int(step.end_month),
+                    "rate_psf_annual": float(step.rent_psf_annual),
+                    "source": "canonical_normalizer",
+                    "source_confidence": 0.9,
+                }
+                for step in canonical.rent_schedule
+            ]
+            _set_provenance("rent_steps", "canonical rent schedule fallback")
+
+    if force or not extraction.get("abatements"):
+        canonical_abatements = []
+        for fr in getattr(canonical, "free_rent_periods", []) or []:
+            scope = str(getattr(fr, "scope", getattr(canonical, "free_rent_scope", "base")) or "base").strip().lower()
+            if scope not in {"base", "gross"}:
+                scope = "base"
+            canonical_abatements.append(
+                {
+                    "start_month": int(fr.start_month),
+                    "end_month": int(fr.end_month),
+                    "scope": "gross_rent" if scope == "gross" else "base_rent_only",
+                    "source": "canonical_normalizer",
+                    "classification": "rent_abatement",
+                }
+            )
+        if canonical_abatements:
+            extraction["abatements"] = canonical_abatements
+            _set_provenance("abatements", "canonical abatement fallback")
+
+    if force or not extraction.get("parking_abatements"):
+        canonical_parking_abatements = [
+            {
+                "start_month": int(period.start_month),
+                "end_month": int(period.end_month),
+                "source": "canonical_normalizer",
+                "classification": "parking_abatement",
+            }
+            for period in (getattr(canonical, "parking_abatement_periods", []) or [])
+        ]
+        if canonical_parking_abatements:
+            extraction["parking_abatements"] = canonical_parking_abatements
+            _set_provenance("parking_abatements", "canonical parking abatement fallback")
+
+    abatement_analysis = extraction.setdefault("abatement_analysis", {})
+    if force or not abatement_analysis:
         has_phase_in = bool(getattr(canonical, "phase_in_schedule", None))
         has_abatement = bool(extraction.get("abatements"))
         classification = "none"
@@ -361,22 +473,20 @@ def _apply_canonical_fallback(extraction: dict[str, Any], canonical: CanonicalLe
             classification = "phase_in"
         elif has_abatement:
             classification = "rent_abatement"
-        extraction["abatement_analysis"] = {
-            "classification": classification,
-            "phase_in_detected": has_phase_in,
-            "phase_in_confidence": 0.9 if has_phase_in else 0.0,
-            "scope": extraction["abatements"][0].get("scope") if has_abatement else None,
+        scopes = {
+            str(item.get("scope") or "").strip().lower()
+            for item in (extraction.get("abatements") or [])
+            if isinstance(item, dict)
         }
-        provenance.setdefault("abatement_analysis", []).insert(
-            0,
+        abatement_analysis.update(
             {
-                "page": None,
-                "snippet": "canonical abatement/phase-in fallback",
-                "bbox": None,
-                "source": "canonical_normalizer",
-                "source_confidence": 0.9,
-            },
+                "classification": classification,
+                "phase_in_detected": has_phase_in,
+                "phase_in_confidence": 0.9 if has_phase_in else 0.0,
+                "scope": "mixed" if len(scopes) > 1 else (next(iter(scopes)) if scopes else None),
+            }
         )
+        _set_provenance("abatement_analysis", "canonical abatement/phase-in fallback")
 
 
 def _calc_source_quality(provenance: dict[str, list[dict[str, Any]]]) -> float:
@@ -422,6 +532,26 @@ def run_extraction_pipeline(
     regex_candidates = mine_candidates(normalized)
     snippets = retrieve_section_snippets(normalized)
     classification = classify_document(normalized)
+    legacy_hint_canonical = _build_legacy_docx_canonical_fallback(
+        filename=filename,
+        text=normalized.full_text,
+    )
+    if legacy_hint_canonical and classification.get("doc_type") == "floorplan":
+        low_text = str(normalized.full_text or "").lower()
+        classification["doc_type"] = "counter_proposal" if "counter" in low_text else "proposal"
+        classification["confidence"] = round(max(float(classification.get("confidence") or 0.0), 0.88), 4)
+        evidence_spans = list(classification.get("evidence_spans") or [])
+        evidence_spans.insert(
+            0,
+            {
+                "page": 1,
+                "snippet": "proposal-style DOCX lease economics override test-fit/floorplan cue",
+                "bbox": None,
+                "source": "rule_classifier",
+                "source_confidence": 0.88,
+            },
+        )
+        classification["evidence_spans"] = evidence_spans[:6]
     llm = structured_extract(snippets=snippets, table_candidates=rent_step_candidates, regex_candidates=regex_candidates)
 
     reconciled = reconcile(
@@ -472,7 +602,30 @@ def run_extraction_pipeline(
         "export_allowed": True,
     }
 
-    _apply_canonical_fallback(extraction, canonical_lease, provenance)
+    weak_extraction = (
+        int((extraction.get("term") or {}).get("term_months") or 0) <= 1
+        or not extraction.get("rent_steps")
+        or not any(
+            (extraction.get("tenant_improvements") or {}).get(key) not in (None, "", 0, 0.0)
+            for key in ("ti_allowance_psf", "ti_allowance_total")
+        )
+        or not any(
+            (extraction.get("parking") or {}).get(key) not in (None, "", 0, 0.0)
+            for key in ("ratio_per_1000_rsf", "rate_monthly_per_space", "spaces")
+        )
+        or (
+            bool(extraction.get("abatements"))
+            and any(str(item.get("scope") or "").strip().lower() in {"", "unspecified"} for item in (extraction.get("abatements") or []))
+        )
+        or (classification.get("doc_type") == "floorplan" and legacy_hint_canonical is not None)
+    )
+    effective_canonical_fallback = canonical_lease if canonical_lease is not None else legacy_hint_canonical
+    _apply_canonical_fallback(
+        extraction,
+        effective_canonical_fallback,
+        provenance,
+        force=bool(legacy_hint_canonical is not None and canonical_lease is None and weak_extraction),
+    )
 
     extraction = _finalize_extraction(
         extraction,
