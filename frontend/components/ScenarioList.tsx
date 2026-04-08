@@ -12,6 +12,7 @@ interface ScenarioListProps {
   scenarios: ScenarioWithId[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onEdit?: (id: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onRename?: (id: string, newName: string) => void;
@@ -25,6 +26,7 @@ export function ScenarioList({
   scenarios,
   selectedId,
   onSelect,
+  onEdit,
   onDuplicate,
   onDelete,
   onRename,
@@ -238,8 +240,15 @@ export function ScenarioList({
                           Rename
                         </button>
                       ) : null}
-                      <button type="button" onClick={() => onSelect(s.id)} className={actionBtnNeutral}>
-                        {isSelected ? "Selected" : "Edit"}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelect(s.id);
+                          if (onEdit) onEdit(s.id);
+                        }}
+                        className={actionBtnNeutral}
+                      >
+                        Edit
                       </button>
                       <button type="button" onClick={() => onDuplicate(s.id)} className={actionBtnNeutral}>
                         Duplicate

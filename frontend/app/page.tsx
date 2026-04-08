@@ -723,6 +723,7 @@ function HomeContent() {
   }, []);
 
   const [hasRestored, setHasRestored] = useState(false);
+  const [isScenarioEditorOpen, setIsScenarioEditorOpen] = useState(true);
   useEffect(() => {
     if (!workspaceReady) return;
     setScenarios([]);
@@ -730,6 +731,7 @@ function HomeContent() {
     setResults({});
     setCanonicalComputeCache({});
     setIncludedInSummary({});
+    setIsScenarioEditorOpen(true);
     computeRequestEpochRef.current = {};
     autoImportedAnalysisDocumentIdsRef.current = {};
     setHasRestored(false);
@@ -1326,6 +1328,7 @@ function HomeContent() {
       delete next[newScenario.id];
       return next;
     });
+    setIsScenarioEditorOpen(true);
   }, [globalDiscountRate, workspaceScopeId]);
 
   const duplicateScenario = useCallback(() => {
@@ -1342,10 +1345,12 @@ function HomeContent() {
       delete next[copy.id];
       return next;
     });
+    setIsScenarioEditorOpen(true);
   }, [selectedScenario]);
 
   const deleteScenario = useCallback((id: string) => {
     delete computeRequestEpochRef.current[id];
+    if (selectedId === id) setIsScenarioEditorOpen(false);
     setScenarios((prev) => {
       const next = prev.filter((s) => s.id !== id);
       setSelectedId((current) => {
@@ -1365,7 +1370,7 @@ function HomeContent() {
       delete next[id];
       return next;
     });
-  }, []);
+  }, [selectedId]);
 
   useEffect(() => {
     if (scenarios.length === 0) {
@@ -1391,6 +1396,7 @@ function HomeContent() {
       delete next[copy.id];
       return next;
     });
+    setIsScenarioEditorOpen(true);
   }, [scenarios]);
 
   const updateScenario = useCallback((updated: ScenarioWithId) => {
@@ -2613,6 +2619,10 @@ function HomeContent() {
                     scenarios={scenarios}
                     selectedId={selectedId}
                     onSelect={setSelectedId}
+                    onEdit={(id) => {
+                      setSelectedId(id);
+                      setIsScenarioEditorOpen(true);
+                    }}
                     onDuplicate={duplicateFromList}
                     onDelete={deleteScenario}
                     onRename={renameScenario}
@@ -2622,13 +2632,87 @@ function HomeContent() {
                     includedInSummary={includedInSummary}
                   />
 
-                  <ScenarioForm
-                    scenario={selectedScenario}
-                    onUpdate={updateScenario}
-                    onAddScenario={addScenario}
-                    onDuplicateScenario={duplicateScenario}
-                    onDeleteScenario={deleteScenario}
-                  />
+                  {isScenarioEditorOpen || !selectedScenario ? (
+                    <ScenarioForm
+                      scenario={selectedScenario}
+                      onUpdate={updateScenario}
+                      onAddScenario={addScenario}
+                      onDuplicateScenario={duplicateScenario}
+                      onDeleteScenario={deleteScenario}
+                      onCloseEditor={() => setIsScenarioEditorOpen(false)}
+                    />
+                  ) : (
+                    <div className="surface-card p-4 sm:p-5 md:p-6">
+                      <div className="mb-6 border-b border-white/10 pb-5">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <p className="heading-kicker mb-1">Selected Option</p>
+                            <h2 className="heading-section">
+                              {getPremisesDisplayName({
+                                building_name: selectedScenario.building_name,
+                                suite: selectedScenario.suite,
+                                floor: selectedScenario.floor,
+                                scenario_name: selectedScenario.name,
+                              })}
+                            </h2>
+                            <p className="mt-2 text-sm text-slate-400">
+                              Review the active option here, then open the editor only when you want to make changes.
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 lg:justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setIsScenarioEditorOpen(true)}
+                              className="btn-premium btn-premium-primary"
+                            >
+                              Show editor
+                            </button>
+                            <button type="button" onClick={addScenario} className="btn-premium btn-premium-secondary">
+                              Add scenario
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">RSF</p>
+                          <p className="mt-1 text-lg font-semibold text-white">
+                            {new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(
+                              Math.max(0, Number(selectedScenario.rsf) || 0)
+                            )}{" "}
+                            RSF
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Commencement</p>
+                          <p className="mt-1 text-lg font-semibold text-white">{formatDateISO(selectedScenario.commencement)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Expiration</p>
+                          <p className="mt-1 text-lg font-semibold text-white">{formatDateISO(selectedScenario.expiration)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/12 bg-white/[0.04] px-4 py-3">
+                          <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Opex Mode</p>
+                          <p className="mt-1 text-lg font-semibold uppercase text-white">
+                            {selectedScenario.opex_mode === "base_year"
+                              ? "Base Year"
+                              : selectedScenario.opex_mode === "full_service"
+                                ? "FSG"
+                                : "NNN"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-2xl border border-white/12 bg-slate-950/35 p-4">
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Notes</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">
+                          {selectedScenario.notes?.trim() || "No scenario notes yet. Open the editor to add assumptions, clause detail, or rent context."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
               </div>
 

@@ -17,6 +17,7 @@ interface ScenarioFormProps {
   onAddScenario: () => void;
   onDuplicateScenario: () => void;
   onDeleteScenario: (id: string) => void;
+  onCloseEditor?: () => void;
 }
 
 const defaultScenarioInput: ScenarioInput = {
@@ -57,6 +58,7 @@ export function ScenarioForm({
   onAddScenario,
   onDuplicateScenario,
   onDeleteScenario,
+  onCloseEditor,
 }: ScenarioFormProps) {
   const [commencementInput, setCommencementInput] = useState("");
   const [expirationInput, setExpirationInput] = useState("");
@@ -818,6 +820,11 @@ export function ScenarioForm({
           </div>
 
           <div className="flex flex-wrap gap-2 lg:justify-end">
+            {onCloseEditor ? (
+              <button type="button" onClick={onCloseEditor} className={btnSecondary}>
+                Hide editor
+              </button>
+            ) : null}
             <button type="button" onClick={onAddScenario} className={btnSecondary}>
               Add scenario
             </button>
