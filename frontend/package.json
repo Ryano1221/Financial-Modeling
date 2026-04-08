@@ -19,6 +19,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@vercel/speed-insights": "^2.0.0",
     "exceljs": "^4.4.0",
     "framer-motion": "^12.34.0",
     "leaflet": "^1.9.4",
