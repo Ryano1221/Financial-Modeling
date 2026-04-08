@@ -93,7 +93,13 @@ export default function ContactPage() {
               For the fastest help, tell us the active client, the module you were in, and the exact action you expected to happen.
             </p>
             <p className="text-sm sm:text-base text-slate-300">
+              If the issue was with an export, include whether it was Excel or PDF and whether it came from Financial Analyses, Surveys, or Lease Abstracts.
+            </p>
+            <p className="text-sm sm:text-base text-slate-300">
               If the issue involved a lease, amendment, sublease, or landlord consent, include the document name and whether the problem was extraction, import, or obligation mapping.
+            </p>
+            <p className="text-sm sm:text-base text-slate-300">
+              If a scanned PDF spent a long time processing before failing, mention that it was image-only or non-searchable so we can trace the OCR path directly.
             </p>
           </div>
 
@@ -103,6 +109,7 @@ export default function ContactPage() {
               <ul className="mt-3 space-y-2 text-sm text-slate-300">
                 <li>Client or workspace name</li>
                 <li>Module: CRM, Buildings, Financial Analyses, Surveys, Lease Abstracts, or Obligations</li>
+                <li>Whether the issue was in the Excel export, PDF export, or on-screen review</li>
                 <li>Whether the top bar showed cloud sync or LOCAL MODE</li>
                 <li>How many files were in the upload batch when it failed</li>
                 <li>Whether the editor was open or still in review mode</li>
@@ -121,7 +128,7 @@ export default function ContactPage() {
             </div>
           </section>
 
-          <form onSubmit={onSubmit} className="surface-card p-4 sm:p-6 space-y-4">
+          <form onSubmit={onSubmit} noValidate className="surface-card p-4 sm:p-6 space-y-4">
             <label className="block">
               <span className="text-xs sm:text-sm text-slate-300">Name</span>
               <input
@@ -131,7 +138,7 @@ export default function ContactPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Your name"
                 maxLength={120}
-                required
+                aria-required="true"
               />
             </label>
             <label className="block">
@@ -143,7 +150,7 @@ export default function ContactPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@company.com"
                 maxLength={320}
-                required
+                aria-required="true"
               />
             </label>
             <label className="block">
@@ -154,7 +161,7 @@ export default function ContactPage() {
                 onChange={(e) => setMessage(e.target.value)}
                 placeholder="How can we help?"
                 maxLength={5000}
-                required
+                aria-required="true"
               />
             </label>
 
