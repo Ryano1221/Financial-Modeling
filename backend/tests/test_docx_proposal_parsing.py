@@ -8,7 +8,13 @@ from docx import Document
 
 import main
 from models import Scenario
-from scenario_extract import _apply_safe_defaults, _regex_prefill, _should_ocr_docx_images, extract_text_from_docx
+from scenario_extract import (
+    _apply_safe_defaults,
+    _normalize_docx_tracked_revision_artifacts,
+    _regex_prefill,
+    _should_ocr_docx_images,
+    extract_text_from_docx,
+)
 
 
 def test_extract_text_from_docx_includes_table_rows() -> None:
@@ -136,6 +142,79 @@ def test_extract_lease_hints_avoids_false_full_service_from_grossed_up_opex_clau
     assert hints["opex_source_year"] == 2026
     assert hints["ti_allowance_psf"] == 10.0
     assert hints["parking_rate_monthly"] == 185.0
+
+
+def test_normalize_docx_tracked_revision_artifacts_sanitizes_sprinklr_redline_tokens() -> None:
+    raw = (
+        "Lease Term: Eighty-fourSixty-six (8466) Months from the Commencement Date.\n"
+        "Rental Abatement: Base Rent and Building Operating Expenses and Real Estate Taxes will be abated "
+        "for the initial five three (53) months of the Lease Term, followed by five three (53) months of "
+        "Base Rent abatement.\n"
+        'In addition to the "turn-key" delivery, Landlord will provide an allowance equal to $105.00 per RSF '
+        "that Tenant can use towards moving costs, FF&E, security, and data & cabling.\n"
+        "Tenant will have abated parking during the initial twenty-fourthirty-six (3624) months of the Lease Term.\n"
+    )
+
+    cleaned = _normalize_docx_tracked_revision_artifacts(raw)
+
+    assert "Sixty-six (66) months" in cleaned
+    assert "initial three (3) months" in cleaned
+    assert "followed by three (3) months of Base Rent abatement" in cleaned
+    assert "allowance equal to $5.00 per RSF" in cleaned
+    assert "initial twenty-four (24) months" in cleaned
+
+
+def test_extract_lease_hints_parses_sprinklr_five_year_redline_clause() -> None:
+    text = (
+        "Building: 1300 East 5th, located at 1300 E. 5th Street, Austin, Texas 78702.\n"
+        "Premises: approximately 12,153 rentable square feet located on the 4th floor.\n"
+        "Commencement Date: no later than December 1, 2026.\n"
+        "Lease Term: Sixty-six (66) Months from the Commencement Date.\n"
+        "Base Rental Rate: $43.50/RSF NNN. Beginning in Month 13, the Base Rent will be subject to annual escalations of 3.0%.\n"
+        "Rental Abatement: So long as Tenant is not in default, Base Rent and Building Operating Expenses and Real Estate Taxes will be abated for the initial three (3) months of the Lease Term, "
+        "followed by three (3) months of Base Rent abatement. During the Base Rent abatement period, Tenant will be responsible for Building Operating Expenses and Real Estate Taxes.\n"
+        'In addition to the "turn-key" delivery, Landlord will provide an allowance equal to $5.00 per RSF that Tenant can use towards moving costs, FF&E, security, and data & cabling.\n'
+        "Operating Expenses and Real Estate Taxes: 2026 estimated Operating Expenses and Real Estate Taxes are $20.06 per RSF.\n"
+        "Parking: Tenant will have access to a parking ratio of 2.7 spaces per 1,000 RSF. There will be a charge of $185 per month per space for unreserved spaces. "
+        "Tenant will have abated parking during the initial twenty-four (24) months of the Lease Term.\n"
+    )
+
+    hints = main._extract_lease_hints(text, "1300 E 5th_Sprinklr_LL_REVISED_4.6.26(5_Year).docx", "test-rid")
+
+    assert hints["term_months"] == 66
+    assert str(hints["expiration_date"]) == "2032-05-31"
+    assert hints["ti_allowance_psf"] == 5.0
+    assert hints["free_rent_scope"] == "base"
+    assert hints["free_rent_end_month"] == 5
+    assert hints["free_rent_periods"] == [
+        {"start_month": 0, "end_month": 2, "scope": "gross"},
+        {"start_month": 3, "end_month": 5, "scope": "base"},
+    ]
+    assert hints["parking_abatement_periods"] == [{"start_month": 0, "end_month": 23}]
+
+
+def test_extract_lease_hints_parses_sprinklr_seven_year_redline_clause() -> None:
+    text = (
+        "Building: 1300 East 5th, located at 1300 E. 5th Street, Austin, Texas 78702.\n"
+        "Premises: approximately 12,153 rentable square feet located on the 4th floor.\n"
+        "Commencement Date: no later than December 1, 2026.\n"
+        "Lease Term: Ninety-one (91) Months from the Commencement Date.\n"
+        "Base Rental Rate: $43.50/RSF NNN. Beginning in Month 13, the Base Rent will be subject to annual escalations of 3.0%.\n"
+        "Rental Abatement: So long as Tenant is not in default, Base Rent and Building Operating Expenses and Real Estate Taxes will be abated for the initial seven (7) months of the Lease Term.\n"
+        'In addition to the "turn-key" delivery, Landlord will provide an allowance equal to $10.00 per RSF that Tenant can use towards moving costs, FF&E, security, and data & cabling.\n'
+        "Operating Expenses and Real Estate Taxes: 2026 estimated Operating Expenses and Real Estate Taxes are $20.06 per RSF.\n"
+        "Parking: Tenant will have access to a parking ratio of 2.7 spaces per 1,000 RSF. There will be a charge of $185 per month per space for unreserved spaces. "
+        "Tenant will have abated parking during the initial twenty-four (24) months of the Lease Term.\n"
+    )
+
+    hints = main._extract_lease_hints(text, "1300 E 5th_Sprinklr_LL_REVISED_4.6.26(7_Year).docx", "test-rid")
+
+    assert hints["term_months"] == 91
+    assert str(hints["expiration_date"]) == "2034-06-30"
+    assert hints["ti_allowance_psf"] == 10.0
+    assert hints["free_rent_scope"] == "gross"
+    assert hints["free_rent_end_month"] == 6
+    assert hints["parking_abatement_periods"] == [{"start_month": 0, "end_month": 23}]
 
 
 def test_apply_safe_defaults_prefers_document_prefill_for_explicit_ti_and_parking() -> None:

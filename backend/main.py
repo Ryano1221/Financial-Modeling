@@ -7215,6 +7215,9 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
     if re.search(
         r"(?i)\b(?:gross\s+rent\s+abatement|gross\s+abatement|abate\s+base\s+rent\s+and\s+operating\s+expenses|base\s+rent\s+and\s+operating\s+expenses\s+abated)\b",
         text,
+    ) or re.search(
+        r"(?i)\bbase\s+rent\b[^\n]{0,80}\boperating\s+expenses\b[^\n]{0,80}\b(?:real\s+estate\s+taxes\b[^\n]{0,80})?\b(?:shall\s+be\s+|will\s+be\s+)?abated\b",
+        text,
     ) or re.search(r"(?i)\bmonths?\b[^\n]{0,80}\bof\s+gross\s+rent\b[^\n]{0,80}\babated\b", text):
         hints["free_rent_scope"] = "gross"
     elif re.search(r"(?i)\b(?:base\s+rent\s+abatement|base-only\s+abatement|base\s+abatement|base\s+free\s+rent)\b", text) or re.search(
@@ -7222,6 +7225,44 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
         text,
     ) or re.search(r"(?i)\b(?:annual\s+)?base\s+rent\b[^\n]{0,80}\b(?:shall\s+be\s+)?abated\b", text):
         hints["free_rent_scope"] = "base"
+
+    mixed_abatement_match = re.search(
+        r"(?is)\bbase\s+rent\b[\s\S]{0,120}\boperating\s+expenses\b[\s\S]{0,120}\babated\s+for\s+the\s+initial\s+"
+        r"(?:([a-z\-]+)\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b"
+        r"[\s\S]{0,120}\bfollowed\s+by\s+"
+        r"(?:([a-z\-]+)\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\s+of\s+base\s+rent\s+abatement\b",
+        text,
+    )
+    if mixed_abatement_match:
+        gross_months = (
+            _coerce_int_token(mixed_abatement_match.group(2), 0)
+            or _coerce_int_token(mixed_abatement_match.group(3), 0)
+            or _word_token_to_int(mixed_abatement_match.group(1))
+            or 0
+        )
+        base_months = (
+            _coerce_int_token(mixed_abatement_match.group(5), 0)
+            or _coerce_int_token(mixed_abatement_match.group(6), 0)
+            or _word_token_to_int(mixed_abatement_match.group(4))
+            or 0
+        )
+        if gross_months > 0:
+            mixed_periods: list[dict] = [{"start_month": 0, "end_month": gross_months - 1, "scope": "gross"}]
+            if base_months > 0:
+                mixed_periods.append(
+                    {
+                        "start_month": gross_months,
+                        "end_month": gross_months + base_months - 1,
+                        "scope": "base",
+                    }
+                )
+            hints["free_rent_periods"] = _normalize_option_free_rent_periods(
+                mixed_periods,
+                term_months=_coerce_int_token(hints.get("term_months"), 0) or 0,
+            )
+            hints["free_rent_scope"] = "base"
+            hints["free_rent_start_month"] = 0
+            hints["free_rent_end_month"] = gross_months + max(0, base_months) - 1
 
     free_range_match = re.search(
         r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,100}\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b",
@@ -7469,6 +7510,20 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if free_count > 0:
                 parking_abatement_ranges.append((0, max(0, free_count - 1)))
                 break
+    if not parking_abatement_ranges:
+        parking_abatement_word_match = re.search(
+            r"(?i)\bparking(?:\s+charges?|\s+rent|\s+fees?)?[^\n]{0,120}\b(?:abated|abatement|waived|free)\b[^\n]{0,80}\binitial\s+(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b",
+            text,
+        )
+        if not parking_abatement_word_match:
+            parking_abatement_word_match = re.search(
+                r"(?i)\babated\s+parking\b[^\n]{0,80}\binitial\s+(?:[a-z\-]+\s*\((\d{1,3})\)|\(?(\d{1,3})\)?)\s+months?\b",
+                text,
+            )
+        if parking_abatement_word_match:
+            free_count = _coerce_int_token(parking_abatement_word_match.group(1), 0) or _coerce_int_token(parking_abatement_word_match.group(2), 0) or 0
+            if free_count > 0:
+                parking_abatement_ranges.append((0, max(0, free_count - 1)))
 
     # Some proposals express parking abatement by reference to the rent abatement period
     # (e.g., "Parking costs shall be abated during the Abatement Period").

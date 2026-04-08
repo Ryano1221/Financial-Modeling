@@ -4,8 +4,6 @@ from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
 
-from openpyxl import load_workbook
-
 COLUMN_MAP = {
     "longitude": "Longitude",
     "latitude": "Latitude",
@@ -137,6 +135,11 @@ def _build_record(row: tuple[Any, ...], header_map: dict[str, int], source_note:
 
 
 def parse_costar_inventory_workbook(file_bytes: bytes, filename: str) -> list[dict[str, Any]]:
+    try:
+        from openpyxl import load_workbook
+    except Exception as exc:  # pragma: no cover - exercised by runtime environment
+        raise ImportError("openpyxl is required to import CoStar inventory workbooks") from exc
+
     workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
     sheet = workbook.worksheets[0]
     rows = sheet.iter_rows(values_only=True)

@@ -131,9 +131,6 @@ def _should_ocr_docx_images(current_text: str) -> bool:
     if not text.strip():
         return False
 
-    if re.search(r"(?i)\b(as\s+shown\s+on\s+the\s+attached\s+schedule|attached\s+schedule|rent\s+schedule)\b", text):
-        return True
-
     has_base_rent_amount = bool(
         re.search(
             r"(?is)\b(?:lease\s+rate|base\s+(?:annual\s+net\s+)?rental?\s+rate|base\s+rent|basic\s+rent|rental\s+rate)\b"
@@ -153,6 +150,19 @@ def _should_ocr_docx_images(current_text: str) -> bool:
             text,
         )
     )
+    has_ti_allowance = bool(
+        re.search(
+            rf"(?is)\ballowance\s+equal\s+to\s+\$?\s*[\d,]+(?:\.\d+)?\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b"
+            r"|\b(?:tenant\s+improvement(?:s)?|ti(?:a)?\s+allowance|tenant\s+allowance)\b[^\n]{0,220}\$\s*[\d,]+(?:\.\d+)?",
+            text,
+        )
+    )
+    has_parking_rate = bool(
+        re.search(
+            r"(?i)\bparking\b[^\n]{0,180}\$\s*[\d,]+(?:\.\d+)?\s*(?:per|/)\s*(?:space|stall|permit|month|mo\.?)",
+            text,
+        )
+    )
     has_explicit_escalation = bool(
         re.search(
             r"(?i)\b(?:annual\s+base\s+rent\s+escalation|annual\s+rental\s+increases?|annual\s+escalations?|annual\s+increases?)\b"
@@ -163,8 +173,20 @@ def _should_ocr_docx_images(current_text: str) -> bool:
     )
 
     has_core_text_economics = has_base_rent_amount and has_term and has_commencement
+    has_strong_native_proposal_text = (
+        len(text.strip()) >= 1200
+        and has_term
+        and has_ti_allowance
+        and has_structured_parking_data
+        and has_parking_rate
+    )
+    if has_strong_native_proposal_text:
+        return False
     if has_core_text_economics:
         return False
+
+    if re.search(r"(?i)\b(as\s+shown\s+on\s+the\s+attached\s+schedule|attached\s+schedule|rent\s+schedule)\b", text):
+        return True
 
     has_parking_language = "parking" in low
     if has_base_rent_amount and has_term and (has_explicit_escalation or not has_parking_language or has_structured_parking_data):
@@ -351,14 +373,15 @@ def extract_text_from_docx(file: BinaryIO) -> str:
         raw_bytes = file.read()
         file.seek(0)
         doc = Document(file)
-        parts = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+        paragraph_parts = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+        table_parts: list[str] = []
         # Proposal/LOI files often place key economics in tables. Include them in text payload.
         for table in doc.tables:
             for row in table.rows:
                 cells = [" ".join((cell.text or "").split()) for cell in row.cells]
                 cells = [c for c in cells if c]
                 if cells:
-                    parts.append(" | ".join(cells))
+                    table_parts.append(" | ".join(cells))
         # Build "accepted changes" text directly from WordprocessingML.
         # Keep inserted/current text, ignore deleted text so redlined LOIs parse the final terms.
         try:
@@ -393,9 +416,11 @@ def extract_text_from_docx(file: BinaryIO) -> str:
                     xml_lines.append(line)
 
             if xml_lines:
-                parts.extend(xml_lines)
+                parts = table_parts + xml_lines
+            else:
+                parts = paragraph_parts + table_parts
         except Exception:
-            pass
+            parts = paragraph_parts + table_parts
 
         def _extract_docx_image_ocr_chunks(docx_bytes: bytes) -> list[str]:
             try:
@@ -470,13 +495,14 @@ def extract_text_from_docx(file: BinaryIO) -> str:
             return image_chunks
 
         # OCR embedded DOCX images only when key economics look incomplete.
-        current_text = "\n\n".join(parts)
+        current_text = _normalize_docx_tracked_revision_artifacts("\n\n".join(parts))
         current_low = current_text.lower()
         should_ocr_images = _should_ocr_docx_images(current_text)
         if should_ocr_images:
             parts.extend(_extract_docx_image_ocr_chunks(raw_bytes))
 
-        return "\n\n".join(parts) if parts else ""
+        final_text = _normalize_docx_tracked_revision_artifacts("\n\n".join(parts)) if parts else ""
+        return final_text
     except Exception as e:
         raise ValueError(f"Failed to read DOCX: {e}") from e
 
@@ -1041,6 +1067,128 @@ def _percent_token_to_float(token: str | None) -> float | None:
             if parsed is not None:
                 return float(parsed)
     return None
+
+
+def _int_to_word_token(value: int) -> str | None:
+    if value < 0:
+        return None
+    if value < 20:
+        for word, number in _WORD_UNITS.items():
+            if number == value:
+                return word
+        return None
+    if value < 100:
+        tens = (value // 10) * 10
+        ones = value % 10
+        tens_word = next((word for word, number in _WORD_TENS.items() if number == tens), None)
+        if not tens_word:
+            return None
+        if ones == 0:
+            return tens_word
+        ones_word = next((word for word, number in _WORD_UNITS.items() if number == ones), None)
+        if not ones_word:
+            return None
+        return f"{tens_word}-{ones_word}"
+    return None
+
+
+def _normalize_docx_tracked_revision_artifacts(text: str) -> str:
+    normalized = str(text or "")
+    if not normalized:
+        return normalized
+
+    def _replace_merged_month_words(match: re.Match[str]) -> str:
+        raw_token = str(match.group(1) or "")
+        digit_token = str(match.group(2) or "")
+        if len(digit_token) != 4:
+            return match.group(0)
+        first_digits = _coerce_int_token(digit_token[:2], None)
+        tail_digits = _coerce_int_token(digit_token[2:], None)
+        if first_digits is None or tail_digits is None or not (1 <= tail_digits <= 240):
+            return match.group(0)
+        if raw_token == raw_token.lower() and not ("parking" in normalized[max(0, match.start() - 140): match.end() + 40].lower()):
+            return match.group(0)
+        tail_word = _int_to_word_token(int(tail_digits))
+        if not tail_word:
+            return match.group(0)
+        if raw_token[:1].isupper():
+            tail_word = tail_word.capitalize()
+        return f"{tail_word} ({int(tail_digits)}) months"
+
+    normalized = re.sub(
+        r"(?i)\b([A-Za-z-]+(?:[A-Z][A-Za-z-]+)+)\s*\((\d{4})\)\s+months\b",
+        _replace_merged_month_words,
+        normalized,
+    )
+    normalized = re.sub(
+        r"(?i)(parking[\s\S]{0,120}\binitial\s+)([a-z-]+)\s*\((\d{4})\)\s+months\b",
+        lambda m: (
+            f"{m.group(1)}{_int_to_word_token(int(str(m.group(3))[2:])) or m.group(2)} "
+            f"({int(str(m.group(3))[2:])}) months"
+            if len(str(m.group(3) or "")) == 4 and 1 <= int(str(m.group(3))[2:]) <= 240
+            else m.group(0)
+        ),
+        normalized,
+    )
+
+    def _replace_merged_single_digit_months(match: re.Match[str]) -> str:
+        first_word = str(match.group(1) or "")
+        second_word = str(match.group(2) or "")
+        digits = str(match.group(3) or "")
+        first_val = _word_token_to_int(first_word)
+        second_val = _word_token_to_int(second_word)
+        if first_val is None or second_val is None:
+            return match.group(0)
+        if not (0 <= first_val <= 9 and 0 <= second_val <= 12):
+            return match.group(0)
+        if digits != f"{first_val}{second_val}":
+            return match.group(0)
+        return f"{second_word} ({second_val}) months"
+
+    normalized = re.sub(
+        r"\b([A-Za-z-]+)\s+([A-Za-z-]+)\s*\((\d{2})\)\s+months\b",
+        _replace_merged_single_digit_months,
+        normalized,
+    )
+
+    def _replace_merged_escalation_pct(match: re.Match[str]) -> str:
+        prefix = str(match.group(1) or "")
+        numeric_blob = str(match.group(2) or "")
+        numeric_parts = re.findall(r"\d+(?:\.\d+)?", numeric_blob)
+        if len(numeric_parts) < 2:
+            return match.group(0)
+        tail = numeric_parts[-1]
+        try:
+            tail_value = float(tail)
+        except ValueError:
+            return match.group(0)
+        if not (0 < tail_value <= 25):
+            return match.group(0)
+        return f"{prefix}{tail}%"
+
+    normalized = re.sub(
+        r"(?i)(annual\s+(?:escalations?|increases?)\s+(?:of\s+)?)([\d.]+)%\b",
+        _replace_merged_escalation_pct,
+        normalized,
+    )
+    normalized = re.sub(
+        r"(?i)(beginning\s+in\s+year\s+)\d+\s+(\d+)\b",
+        lambda m: f"{m.group(1)}{m.group(2)}",
+        normalized,
+    )
+
+    normalized = re.sub(
+        rf"(?is)(allowance\s+equal\s+to\s+\$)(\d{{3}})\.00(\s*(?:/|per)?\s*(?:rentable\s+)?{_SF_UNIT_PATTERN}\b[\s\S]{{0,120}}?\b(?:moving\s+costs|ff&e|security|data\s*&\s*cabling)\b)",
+        lambda m: (
+            f"{m.group(1)}{int(str(m.group(2))[2:])}.00{m.group(3)}"
+            if 0 < int(str(m.group(2))[2:]) <= 50
+            else m.group(0)
+        ),
+        normalized,
+    )
+
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    return normalized
 
 
 def _has_ti_context_token(text: str) -> bool:
