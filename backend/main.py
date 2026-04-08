@@ -276,6 +276,42 @@ def _mask_email(value: str) -> str:
     return f"{masked_local}@{domain}"
 
 
+def _contact_inbox_email() -> str:
+    configured = str(os.getenv("CONTACT_INBOX_EMAIL") or "info@thecremodel.com").strip().lower()
+    return configured or "info@thecremodel.com"
+
+
+def _build_contact_submission_email(
+    *,
+    name: str,
+    email: str,
+    message: str,
+    submitted_at_iso: str,
+    source_ip: str,
+    user_agent: str,
+) -> tuple[str, str]:
+    subject = f"theCREmodel contact form | {name}"
+    body_lines = [
+        "New message from theCREmodel contact form.",
+        "",
+        f"Submitted: {submitted_at_iso}",
+        f"Name: {name}",
+        f"Email: {email}",
+    ]
+    if source_ip:
+        body_lines.append(f"Source IP: {source_ip}")
+    if user_agent:
+        body_lines.append(f"User Agent: {user_agent}")
+    body_lines.extend(
+        [
+            "",
+            "Message:",
+            message,
+        ]
+    )
+    return subject, "\n".join(body_lines)
+
+
 def _validate_tour_recap_email(body: SendTourRecapRequest) -> SendTourRecapRequest:
     to_email = str(body.to_email or "").strip().lower()
     subject = str(body.subject or "").strip()
@@ -1093,7 +1129,8 @@ def get_auth_me(request: Request):
 def submit_contact(body: ContactSubmissionRequest, request: Request):
     """
     Accepts support contact submissions.
-    Logs minimal, sanitized metadata only (no raw message body).
+    Logs minimal, sanitized metadata only (no raw message body) and forwards
+    the submission to the configured support inbox.
     """
     name, email, message = _validate_contact_submission(body)
 
@@ -1101,17 +1138,46 @@ def submit_contact(body: ContactSubmissionRequest, request: Request):
     forwarded_for = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
     source_ip = forwarded_for or (request.client.host if request.client else "")
     user_agent = (request.headers.get("user-agent") or "").strip()[:200]
+    submitted_at_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    inbox_email = _contact_inbox_email()
+    subject, email_body = _build_contact_submission_email(
+        name=name,
+        email=email,
+        message=message,
+        submitted_at_iso=submitted_at_iso,
+        source_ip=source_ip[:64],
+        user_agent=user_agent,
+    )
+
+    try:
+        _send_smtp_email(
+            to_email=inbox_email,
+            subject=subject,
+            body=email_body,
+            reply_to=email,
+        )
+    except HTTPException as exc:
+        if exc.status_code >= 500:
+            raise HTTPException(
+                status_code=503,
+                detail="We couldn't deliver your message right now. Please email info@thecremodel.com directly.",
+            ) from exc
+        raise
 
     logging.getLogger("uvicorn.error").info(
-        "CONTACT_SUBMISSION name=%s email=%s message_len=%s message_sha256=%s ip=%s ua=%s",
+        "CONTACT_SUBMISSION_SENT name=%s email=%s inbox=%s message_len=%s message_sha256=%s ip=%s ua=%s",
         name[:120],
         _mask_email(email),
+        _mask_email(inbox_email),
         len(message),
         message_sha,
         source_ip[:64],
         user_agent,
     )
-    return {"ok": True, "message": "Thanks for contacting us. We will follow up shortly."}
+    return {
+        "ok": True,
+        "message": f"Thanks for contacting us. Your message was sent to {inbox_email}.",
+    }
 
 
 @app.post("/crm/send-tour-recap")
