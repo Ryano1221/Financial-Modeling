@@ -128,7 +128,7 @@ export default function ContactPage() {
             </div>
           </section>
 
-          <form onSubmit={onSubmit} noValidate className="surface-card p-4 sm:p-6 space-y-4">
+          <form onSubmit={onSubmit} noValidate className="space-y-4">
             <label className="block">
               <span className="text-xs sm:text-sm text-slate-300">Name</span>
               <input
