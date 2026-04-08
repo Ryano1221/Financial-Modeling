@@ -20,11 +20,11 @@ const FAQ_ITEMS = [
   },
   {
     q: "Where does my workspace save when I am signed in?",
-    a: "Signed-in workspaces are saved under that user account in cloud storage, so switching accounts does not reuse another user’s active client, documents, or saved records.",
+    a: "Signed-in workspaces and module state are saved under that user account in cloud storage, so switching accounts does not reuse another user’s active client, documents, analyses, surveys, or saved report settings, and the same user can restore that data on another device after signing back in.",
   },
   {
     q: "Can I upload more than one proposal at a time?",
-    a: "Yes. Financial Analyses and the document library support batch uploads, and browser-side source caching no longer depends on a single localStorage record that can fail on the second proposal.",
+    a: "Yes. Financial Analyses and the document library support batch uploads, and browser-side source caching now prefers browser-managed document storage while keeping only lightweight metadata in local fallback storage so larger batches do not fail on the second proposal.",
   },
   {
     q: "Can Obligations parse signed subleases and landlord consents?",
@@ -40,7 +40,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Do Survey and Lease Abstract exports match the Financial Analysis presentation style?",
-    a: "Yes. Survey and Lease Abstract exports now follow the same branded hierarchy, logo treatment, print formatting, and client-ready polish used by Financial Analysis deliverables.",
+    a: "Yes. Survey and Lease Abstract exports now use the same branded hierarchy, logo treatment, print formatting, and client-ready finish as the Financial Analysis design system, while staying labeled as survey and lease abstract deliverables.",
   },
   {
     q: "What changes when I switch representation mode?",
@@ -101,7 +101,7 @@ export default function DocsPage() {
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">Surveys</p>
-                <p className="mt-2 text-sm text-slate-300">Keep the survey table, map, editor, and occupancy cost view together so market options are easy to compare, then export branded Excel and PDF packages that match Financial Analysis output quality.</p>
+                <p className="mt-2 text-sm text-slate-300">Keep the survey table, map, editor, and occupancy cost view together so market options are easy to compare, then export branded Excel and PDF packages that use the same presentation standards as Financial Analysis while remaining clearly labeled as survey deliverables.</p>
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">Lease Abstracts</p>

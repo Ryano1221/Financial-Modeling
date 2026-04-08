@@ -6,16 +6,15 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
-import type { ChartRow } from "@/components/Charts";
 import { getApiUrl, fetchApiProxy, getAuthHeaders, getDisplayErrorMessage } from "@/lib/api";
 import { ExtractUpload } from "@/components/ExtractUpload";
-import { FeatureTiles } from "@/components/FeatureTiles";
 import {
   PlatformModuleTabs,
 } from "@/components/platform/PlatformShell";
 import {
   FINANCIAL_ANALYSES_TOOL_TABS,
   getDefaultPlatformModuleId,
+  getPlatformModulesForMode,
   isFinancialAnalysesToolId,
   resolveActivePlatformModule,
   type FinancialAnalysesToolId,
@@ -48,8 +47,15 @@ import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
 import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
 import { SummaryMatrix } from "@/components/SummaryMatrix";
 import { AnalyticsWorkbench } from "@/components/AnalyticsWorkbench";
+import { ClientRenderBoundary } from "@/components/ClientRenderBoundary";
 import { formatDateISO } from "@/lib/format";
 import { computeEqualizedComparison, type EqualizedWindowInput } from "@/lib/equalized";
+import {
+  collectRenderableFinancialAnalysisScenarios,
+  createEmptyEqualizedComparisonResult,
+  validateScenarioForFinancialAnalysis,
+} from "@/lib/financial-analyses-runtime";
+import { mergeImportedFinancialAnalysisScenario } from "@/lib/financial-analysis-import";
 import {
   backendCanonicalToScenarioInput,
   scenarioInputToBackendCanonical,
@@ -84,20 +90,23 @@ import { DealsWorkspace } from "@/components/deals/DealsWorkspace";
 import { BuildingsWorkspace } from "@/components/buildings/BuildingsWorkspace";
 import { buildPlatformExportFileName } from "@/lib/export-design";
 import { downloadBlob as downloadBlobFile } from "@/lib/export-runtime";
-import { buildFinancialAnalysesShareLink } from "@/lib/financial-analyses/share";
+import {
+  buildFinancialAnalysesShareLink,
+  buildFinancialAnalysesSharePayload,
+} from "@/lib/financial-analyses/share";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
+import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { ClientWorkspaceGate } from "@/components/workspace/ClientWorkspaceGate";
 import { ClientDocumentCenter } from "@/components/workspace/ClientDocumentCenter";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
-import { BrokerOsCommandCenter } from "@/components/workspace/BrokerOsCommandCenter";
-import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import type {
   ClientDocumentSourceModule,
   ClientWorkspaceDocument,
   DocumentNormalizeSnapshot,
 } from "@/lib/workspace/types";
-import { LANDLORD_REP_MODE, TENANT_REP_MODE } from "@/lib/workspace/representation-mode";
+import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
 import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 import { normalizerResponseFromSnapshot, repairDocumentNormalizeSnapshot, repairNormalizerResponse } from "@/lib/lease-extraction-repair";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
@@ -109,6 +118,23 @@ const REPORT_META_STATE_KEY = "lease_deck_report_meta_state";
 const CRE_DEFAULT_BROKERAGE_NAME = "The CRE Model";
 const CRE_DEFAULT_PREPARED_BY = "The CRE Model";
 const CRE_DEFAULT_LOGO_PUBLIC_PATH = "/brand/logo.png";
+
+type StoredScenarioState = {
+  scenarios?: ScenarioWithId[];
+  includedInSummary?: Record<string, boolean>;
+};
+
+type StoredReportMetaState = {
+  reportMeta?: Partial<{
+    prepared_for: string;
+    prepared_by: string;
+    report_date: string;
+    market: string;
+    submarket: string;
+  }>;
+  clientLogoDataUrl?: string | null;
+  clientLogoFileName?: string | null;
+};
 
 function nextId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -583,7 +609,6 @@ function HomeContent() {
     registerDocument,
     updateDocument,
   } = useClientWorkspace();
-  const { runAiCommand, suggestPlan } = useBrokerOs();
   const workspaceScopeId = workspaceReady
     ? (activeClientId || (isAuthenticated ? "unselected" : "guest"))
     : "boot";
@@ -605,6 +630,10 @@ function HomeContent() {
   );
   const defaultPlatformModuleId = useMemo(
     () => getDefaultPlatformModuleId(representationMode),
+    [representationMode],
+  );
+  const platformModules = useMemo(
+    () => getPlatformModulesForMode(representationMode),
     [representationMode],
   );
   const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>(defaultPlatformModuleId);
@@ -648,14 +677,10 @@ function HomeContent() {
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
   const computeRequestEpochRef = useRef<Record<string, number>>({});
   const autoImportedAnalysisDocumentIdsRef = useRef<Record<string, true>>({});
+  const analysisImportInFlightRef = useRef<Record<string, true>>({});
+  const analysisImportQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [includedInSummary, setIncludedInSummary] = useState<Record<string, boolean>>({});
   const [canonicalComputeCache, setCanonicalComputeCache] = useState<Record<string, CanonicalComputeResponse>>({});
-  const [heroAiPrompt, setHeroAiPrompt] = useState(
-    "Run a sublease recovery using the Austin obligation and these three proposals.",
-  );
-  const [heroAiRunning, setHeroAiRunning] = useState(false);
-  const [heroAiStatus, setHeroAiStatus] = useState<string | null>(null);
-  const [heroAiError, setHeroAiError] = useState<string | null>(null);
   const isProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
   const rawModuleParam = String(searchParams?.get("module") || "").trim().toLowerCase();
 
@@ -705,16 +730,6 @@ function HomeContent() {
     setActivePlatformModule(defaultPlatformModuleId);
   }, [rawModuleParam, activePlatformModule, defaultPlatformModuleId]);
 
-  useEffect(() => {
-    if (representationMode === LANDLORD_REP_MODE) {
-      setHeroAiPrompt("Build a listing summary for the 16th floor availability at 500 W 2nd.");
-      return;
-    }
-    if (representationMode === TENANT_REP_MODE) {
-      setHeroAiPrompt("Run a sublease recovery using the Austin obligation and these three proposals.");
-    }
-  }, [representationMode]);
-
   const getDefaultBrokerageLogoDataUrl = useCallback(async (): Promise<string | null> => {
     if (!defaultBrokerageLogoPromiseRef.current) {
       defaultBrokerageLogoPromiseRef.current = fetchPublicAssetDataUrl(CRE_DEFAULT_LOGO_PUBLIC_PATH);
@@ -734,31 +749,74 @@ function HomeContent() {
     setIsScenarioEditorOpen(true);
     computeRequestEpochRef.current = {};
     autoImportedAnalysisDocumentIdsRef.current = {};
+    analysisImportInFlightRef.current = {};
+    analysisImportQueueRef.current = Promise.resolve();
     setHasRestored(false);
   }, [scenariosStorageKey, workspaceReady]);
 
   useEffect(() => {
+    if (activePlatformModule === "financial-analyses" && activeTopTab === "lease-comparison") return;
+    setIsScenarioEditorOpen(false);
+  }, [activePlatformModule, activeTopTab]);
+
+  useEffect(() => {
     if (!workspaceReady || hasRestored || typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(scenariosStorageKey);
-      if (!raw) {
+    let cancelled = false;
+
+    const applyStoredState = (payload: StoredScenarioState | null) => {
+      if (!payload) {
         setHasRestored(true);
         return;
       }
-      const data = JSON.parse(raw) as { scenarios?: ScenarioWithId[]; includedInSummary?: Record<string, boolean> };
-      if (Array.isArray(data.scenarios) && data.scenarios.length > 0) {
-        const restoredScenarios = data.scenarios.map((s) =>
+      if (Array.isArray(payload.scenarios) && payload.scenarios.length > 0) {
+        const restoredScenarios = payload.scenarios.map((s) =>
           normalizeScenarioEconomics({ ...s, clientId: workspaceScopeId }),
         );
         setScenarios(restoredScenarios);
         setSelectedId(null);
       }
-      if (data.includedInSummary && typeof data.includedInSummary === "object") setIncludedInSummary(data.includedInSummary);
-      setHasRestored(true);
-    } catch {
+      if (payload.includedInSummary && typeof payload.includedInSummary === "object") {
+        setIncludedInSummary(payload.includedInSummary);
+      }
       setHasRestored(true);
     }
-  }, [hasRestored, scenariosStorageKey, workspaceScopeId, workspaceReady]);
+
+    const readLocalState = (): StoredScenarioState | null => {
+      try {
+        const raw = localStorage.getItem(scenariosStorageKey);
+        if (!raw) return null;
+        return JSON.parse(raw) as StoredScenarioState;
+      } catch {
+        return null;
+      }
+    };
+
+    async function hydrateScenarios() {
+      const localState = readLocalState();
+      if (isAuthenticated) {
+        try {
+          const remote = await fetchWorkspaceCloudSection(scenariosStorageKey);
+          if (cancelled) return;
+          const resolved = preferLocalWhenRemoteEmpty(
+            (remote.value as StoredScenarioState | null) ?? null,
+            localState,
+            (value) => Array.isArray(value.scenarios) && value.scenarios.length > 0,
+          );
+          applyStoredState(resolved);
+          return;
+        } catch (error) {
+          console.warn("financial_analyses_cloud_load_failed", error);
+          if (cancelled) return;
+        }
+      }
+      applyStoredState(localState);
+    }
+
+    void hydrateScenarios();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasRestored, scenariosStorageKey, workspaceScopeId, workspaceReady, isAuthenticated]);
 
   useEffect(() => {
     if (!workspaceReady || typeof window === "undefined" || !hasRestored) return;
@@ -766,15 +824,17 @@ function HomeContent() {
     scenarios.forEach((s) => {
       included[s.id] = includedInSummary[s.id] !== false;
     });
+    const payload: StoredScenarioState = { scenarios, includedInSummary: included };
     try {
-      localStorage.setItem(
-        scenariosStorageKey,
-        JSON.stringify({ scenarios, includedInSummary: included })
-      );
+      localStorage.setItem(scenariosStorageKey, JSON.stringify(payload));
     } catch {
       // ignore
     }
-  }, [scenarios, includedInSummary, hasRestored, scenariosStorageKey, workspaceReady]);
+    if (!isAuthenticated) return;
+    void saveWorkspaceCloudSection(scenariosStorageKey, payload).catch((error) => {
+      console.warn("financial_analyses_cloud_save_failed", error);
+    });
+  }, [scenarios, includedInSummary, hasRestored, scenariosStorageKey, workspaceReady, isAuthenticated]);
 
   useEffect(() => {
     if (!workspaceReady || !hasRestored) return;
@@ -835,20 +895,59 @@ function HomeContent() {
 
   useEffect(() => {
     if (!workspaceReady || typeof window === "undefined") return;
-    setBrandId("default");
+    let cancelled = false;
+
+    const readLocalBrandId = (): string | null => {
+      try {
+        const value = localStorage.getItem(brandStorageKey);
+        return value ? String(value).trim() : null;
+      } catch {
+        return null;
+      }
+    };
+
+    async function hydrateBrandId() {
+      const localBrandId = readLocalBrandId();
+      if (isAuthenticated) {
+        try {
+          const remote = await fetchWorkspaceCloudSection(brandStorageKey);
+          if (cancelled) return;
+          const resolved = preferLocalWhenRemoteEmpty(
+            typeof remote.value === "string" ? remote.value.trim() : null,
+            localBrandId,
+            (value) => {
+              const normalized = String(value || "").trim();
+              return Boolean(normalized) && normalized !== "default";
+            },
+          );
+          setBrandId(resolved || "default");
+          return;
+        } catch (error) {
+          console.warn("financial_analyses_brand_cloud_load_failed", error);
+          if (cancelled) return;
+        }
+      }
+      setBrandId(localBrandId || "default");
+    }
+
+    void hydrateBrandId();
+    return () => {
+      cancelled = true;
+    };
+  }, [brandStorageKey, workspaceReady, isAuthenticated]);
+
+  useEffect(() => {
+    if (!workspaceReady || typeof window === "undefined" || !brandId) return;
     try {
-      const s = localStorage.getItem(brandStorageKey);
-      if (s) setBrandId(s);
+      localStorage.setItem(brandStorageKey, brandId);
     } catch {
       // ignore localStorage failures
     }
-  }, [brandStorageKey, workspaceReady]);
-
-  useEffect(() => {
-    if (workspaceReady && typeof window !== "undefined" && brandId) {
-      localStorage.setItem(brandStorageKey, brandId);
-    }
-  }, [brandId, brandStorageKey, workspaceReady]);
+    if (!isAuthenticated) return;
+    void saveWorkspaceCloudSection(brandStorageKey, brandId).catch((error) => {
+      console.warn("financial_analyses_brand_cloud_save_failed", error);
+    });
+  }, [brandId, brandStorageKey, workspaceReady, isAuthenticated]);
 
   const loadOrganizationBranding = useCallback(async () => {
     if (!authSession) {
@@ -890,60 +989,97 @@ function HomeContent() {
 
   useEffect(() => {
     if (!workspaceReady || typeof window === "undefined") return;
-    setReportMeta({
-      prepared_for: activeClient?.name || "",
-      prepared_by: "",
-      report_date: "",
-      market: "",
-      submarket: "",
-    });
-    setClientLogoDataUrl(activeClient?.logoDataUrl || null);
-    setClientLogoFileName(activeClient?.logoFileName || null);
-    try {
-      const raw = localStorage.getItem(reportMetaStorageKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        reportMeta?: Partial<{
-          prepared_for: string;
-          prepared_by: string;
-          report_date: string;
-          market: string;
-          submarket: string;
-        }>;
-        clientLogoDataUrl?: string | null;
-        clientLogoFileName?: string | null;
+    let cancelled = false;
+
+    const applyStoredReportMeta = (payload: StoredReportMetaState | null) => {
+      const defaultState = {
+        prepared_for: activeClient?.name || "",
+        prepared_by: "",
+        report_date: "",
+        market: "",
+        submarket: "",
       };
-      if (parsed.reportMeta && typeof parsed.reportMeta === "object") {
+      if (payload?.reportMeta && typeof payload.reportMeta === "object") {
         setReportMeta({
-          prepared_for: String(parsed.reportMeta.prepared_for || activeClient?.name || "").trim(),
-          prepared_by: String(parsed.reportMeta.prepared_by || "").trim(),
-          report_date: String(parsed.reportMeta.report_date || "").trim(),
-          market: String(parsed.reportMeta.market || "").trim(),
-          submarket: String(parsed.reportMeta.submarket || "").trim(),
+          prepared_for: String(payload.reportMeta.prepared_for || activeClient?.name || "").trim(),
+          prepared_by: String(payload.reportMeta.prepared_by || "").trim(),
+          report_date: String(payload.reportMeta.report_date || "").trim(),
+          market: String(payload.reportMeta.market || "").trim(),
+          submarket: String(payload.reportMeta.submarket || "").trim(),
         });
+      } else {
+        setReportMeta(defaultState);
       }
-      setClientLogoDataUrl(parsed.clientLogoDataUrl || activeClient?.logoDataUrl || null);
-      setClientLogoFileName(parsed.clientLogoFileName || activeClient?.logoFileName || null);
-    } catch {
-      // ignore parse errors
+      setClientLogoDataUrl(payload?.clientLogoDataUrl || activeClient?.logoDataUrl || null);
+      setClientLogoFileName(payload?.clientLogoFileName || activeClient?.logoFileName || null);
+    };
+
+    const readLocalReportMeta = (): StoredReportMetaState | null => {
+      try {
+        const raw = localStorage.getItem(reportMetaStorageKey);
+        if (!raw) return null;
+        return JSON.parse(raw) as StoredReportMetaState;
+      } catch {
+        return null;
+      }
+    };
+
+    async function hydrateReportMeta() {
+      const localState = readLocalReportMeta();
+      if (isAuthenticated) {
+        try {
+          const remote = await fetchWorkspaceCloudSection(reportMetaStorageKey);
+          if (cancelled) return;
+          const resolved = preferLocalWhenRemoteEmpty(
+            (remote.value as StoredReportMetaState | null) ?? null,
+            localState,
+            (value) => {
+              const report = value.reportMeta;
+              const hasReportContent = Boolean(
+                report && (
+                  String(report.prepared_for || "").trim()
+                  || String(report.prepared_by || "").trim()
+                  || String(report.report_date || "").trim()
+                  || String(report.market || "").trim()
+                  || String(report.submarket || "").trim()
+                ),
+              );
+              return hasReportContent || Boolean(String(value.clientLogoDataUrl || "").trim() || String(value.clientLogoFileName || "").trim());
+            },
+          );
+          applyStoredReportMeta(resolved);
+          return;
+        } catch (error) {
+          console.warn("financial_analyses_report_cloud_load_failed", error);
+          if (cancelled) return;
+        }
+      }
+      applyStoredReportMeta(localState);
     }
-  }, [reportMetaStorageKey, activeClient?.name, activeClient?.logoDataUrl, activeClient?.logoFileName, workspaceReady]);
+
+    void hydrateReportMeta();
+    return () => {
+      cancelled = true;
+    };
+  }, [reportMetaStorageKey, activeClient?.name, activeClient?.logoDataUrl, activeClient?.logoFileName, workspaceReady, isAuthenticated]);
 
   useEffect(() => {
     if (!workspaceReady || typeof window === "undefined") return;
+    const payload: StoredReportMetaState = {
+      reportMeta,
+      clientLogoDataUrl,
+      clientLogoFileName,
+    };
     try {
-      localStorage.setItem(
-        reportMetaStorageKey,
-        JSON.stringify({
-          reportMeta,
-          clientLogoDataUrl,
-          clientLogoFileName,
-        }),
-      );
+      localStorage.setItem(reportMetaStorageKey, JSON.stringify(payload));
     } catch {
       // ignore storage limits
     }
-  }, [reportMetaStorageKey, reportMeta, clientLogoDataUrl, clientLogoFileName, workspaceReady]);
+    if (!isAuthenticated) return;
+    void saveWorkspaceCloudSection(reportMetaStorageKey, payload).catch((error) => {
+      console.warn("financial_analyses_report_cloud_save_failed", error);
+    });
+  }, [reportMetaStorageKey, reportMeta, clientLogoDataUrl, clientLogoFileName, workspaceReady, isAuthenticated]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1010,20 +1146,35 @@ function HomeContent() {
       onAdded?: (s: ScenarioWithId) => void,
       preferredName?: string,
       sourceDocument?: { id?: string; name?: string },
-    ) => {
-      let scenarioInput = normalizeScenarioEconomics({
-        ...backendCanonicalToScenarioInput(canonical, preferredName),
-        source_document_id: sourceDocument?.id,
-        source_document_name: sourceDocument?.name,
-      });
-      scenarioInput = normalizeScenarioEconomics({ ...scenarioInput, clientId: workspaceScopeId });
-      if (hasCommencementBeforeToday(scenarioInput.commencement)) {
-        scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, "remaining_obligation"));
+    ): { added: boolean; scenario?: ScenarioWithId; error?: string } => {
+      let scenarioWithId: ScenarioWithId | null = null;
+      let cacheInvalidationIds: string[] = [];
+      let validationError: string | null = null;
+
+      try {
+        let scenarioInput = normalizeScenarioEconomics({
+          ...backendCanonicalToScenarioInput(canonical, preferredName),
+          source_document_id: sourceDocument?.id,
+          source_document_name: sourceDocument?.name,
+        });
+        scenarioInput = normalizeScenarioEconomics({ ...scenarioInput, clientId: workspaceScopeId });
+        if (hasCommencementBeforeToday(scenarioInput.commencement)) {
+          scenarioInput = normalizeScenarioEconomics(applyLeaseModelChoice(scenarioInput, "remaining_obligation"));
+        }
+        scenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
+      } catch (error) {
+        console.warn("[financial-analyses] invalid_canonical_variant", error, canonical);
+        validationError =
+          "This extracted option could not be loaded into analysis. Re-upload the source document so the extractor can rebuild it cleanly.";
       }
-      let scenarioWithId: ScenarioWithId = normalizeScenarioEconomics({ id: nextId(), ...scenarioInput });
-      let cacheInvalidationIds: string[] = [scenarioWithId.id];
+
+      if (!scenarioWithId) {
+        setExtractError(validationError);
+        return { added: false, error: validationError || undefined };
+      }
+
       setScenarios((prev) => {
-        const merged = [...prev, scenarioWithId];
+        const merged = mergeImportedFinancialAnalysisScenario(prev, scenarioWithId as ScenarioWithId);
         const harmonized = harmonizeExtractedScenarios(merged).map((s) => normalizeScenarioEconomics(s));
         const previousById = new Map(merged.map((s) => [s.id, s]));
         cacheInvalidationIds = harmonized
@@ -1037,12 +1188,29 @@ function HomeContent() {
             );
           })
           .map((s) => s.id);
-        if (!cacheInvalidationIds.includes(scenarioWithId.id)) {
-          cacheInvalidationIds.push(scenarioWithId.id);
+        if (!cacheInvalidationIds.includes((scenarioWithId as ScenarioWithId).id)) {
+          cacheInvalidationIds.push((scenarioWithId as ScenarioWithId).id);
         }
-        scenarioWithId = harmonized.find((s) => s.id === scenarioWithId.id) ?? scenarioWithId;
+        const resolvedScenario =
+          harmonized.find((s) => s.id === (scenarioWithId as ScenarioWithId).id)
+          ?? (scenarioWithId as ScenarioWithId);
+        scenarioWithId = resolvedScenario;
+        validationError = validateScenarioForFinancialAnalysis(resolvedScenario, globalDiscountRate);
+        if (validationError) {
+          console.warn("[financial-analyses] rejected_invalid_scenario", {
+            scenarioId: resolvedScenario.id,
+            scenarioName: resolvedScenario.name,
+          });
+          return prev;
+        }
         return harmonized;
       });
+
+      if (validationError || !scenarioWithId) {
+        setExtractError(validationError);
+        return { added: false, error: validationError || undefined };
+      }
+
       setSelectedId(scenarioWithId.id);
       setResults((prev) => {
         const next = { ...prev };
@@ -1060,8 +1228,9 @@ function HomeContent() {
       });
       setExtractError(null);
       onAdded?.(scenarioWithId);
+      return { added: true, scenario: scenarioWithId };
     },
-    [workspaceScopeId]
+    [globalDiscountRate, workspaceScopeId]
   );
 
   const revealComparisonSummary = useCallback(() => {
@@ -1150,9 +1319,11 @@ function HomeContent() {
       }));
       const canonicalVariants = collectCanonicalVariants(canonicalWithDocType, optionVariantsWithDocType);
       const totalVariants = canonicalVariants.length;
+      let addedCount = 0;
+      let lastAddError: string | null = null;
       canonicalVariants.forEach((variant, index) => {
         const preferredName = canonicalDisplayNameForAdd(variant, index, totalVariants);
-        addScenarioFromCanonical(
+        const addResult = addScenarioFromCanonical(
           variant,
           (newScenario) => {
             console.log("[compute] about to run", {
@@ -1168,7 +1339,19 @@ function HomeContent() {
             name: resolvedSourceDocumentName,
           }
         );
+        if (addResult.added) {
+          addedCount += 1;
+        } else if (addResult.error) {
+          lastAddError = addResult.error;
+        }
       });
+      if (addedCount === 0) {
+        setExtractError(
+          lastAddError ||
+            "Extraction completed, but the option data could not be validated for comparison. Upload a cleaner source document and try again.",
+        );
+        return;
+      }
       revealComparisonSummary();
     },
     [addScenarioFromCanonical, runComputeForScenario, activeClientId, registerDocument, revealComparisonSummary, toDocumentNormalizeSnapshot, updateDocument]
@@ -1184,16 +1367,39 @@ function HomeContent() {
       skipDocumentRegister?: boolean;
     },
   ) => {
-    const repairedData = repairNormalizerResponse(data) || data;
-    const intake = getNormalizeIntakeDecision(repairedData);
-    setActiveTopTab("lease-comparison");
-
-    if (!intake.autoAdd) {
-      setExtractError(intake.message);
-      return;
+    const sourceDocumentId = String(source?.sourceDocumentId || "").trim();
+    if (sourceDocumentId) {
+      if (analysisImportInFlightRef.current[sourceDocumentId]) {
+        return;
+      }
+      if (autoImportedAnalysisDocumentIdsRef.current[sourceDocumentId]) {
+        return;
+      }
+      analysisImportInFlightRef.current[sourceDocumentId] = true;
     }
 
-    await handleNormalizeSuccess(repairedData, source);
+    const runImport = async () => {
+      try {
+        const repairedData = repairNormalizerResponse(data) || data;
+        const intake = getNormalizeIntakeDecision(repairedData);
+        setActiveTopTab("lease-comparison");
+
+        if (!intake.autoAdd) {
+          setExtractError(intake.message);
+          return;
+        }
+
+        await handleNormalizeSuccess(repairedData, source);
+      } finally {
+        if (sourceDocumentId) {
+          delete analysisImportInFlightRef.current[sourceDocumentId];
+        }
+      }
+    };
+
+    const queuedImport = analysisImportQueueRef.current.then(runImport, runImport);
+    analysisImportQueueRef.current = queuedImport.catch(() => {});
+    await queuedImport;
   }, [handleNormalizeSuccess]);
 
   const handleExtractError = useCallback((message: string) => {
@@ -1267,13 +1473,14 @@ function HomeContent() {
         .map((scenario) => String(scenario.source_document_id || "").trim())
         .filter(Boolean)
     );
-      const pendingDocs = allDocuments.filter((document) =>
+    const pendingDocs = allDocuments.filter((document) =>
       document.clientId === activeClientId
       && document.sourceModule === "financial-analyses"
       && document.parsed
       && Boolean(document.normalizeSnapshot?.canonical_lease)
       && !importedSourceIds.has(document.id)
       && !autoImportedAnalysisDocumentIdsRef.current[document.id]
+      && !analysisImportInFlightRef.current[document.id]
     );
     if (pendingDocs.length === 0) return;
 
@@ -1604,9 +1811,17 @@ function HomeContent() {
     };
   }, [results, globalDiscountRate]);
 
+  const scenarioRuntimeHealth = useMemo(
+    () => collectRenderableFinancialAnalysisScenarios(scenarios, globalDiscountRate),
+    [globalDiscountRate, scenarios],
+  );
+  const renderableScenarioIds = useMemo(
+    () => new Set(scenarioRuntimeHealth.validScenarios.map((scenario) => scenario.id)),
+    [scenarioRuntimeHealth.validScenarios],
+  );
   const includedScenarios = useMemo(
-    () => scenarios.filter((s) => includedInSummary[s.id] !== false),
-    [scenarios, includedInSummary]
+    () => scenarios.filter((s) => includedInSummary[s.id] !== false && renderableScenarioIds.has(s.id)),
+    [scenarios, includedInSummary, renderableScenarioIds]
   );
   const scenariosById = useMemo<Record<string, ScenarioWithId>>(
     () =>
@@ -1617,15 +1832,27 @@ function HomeContent() {
     [scenarios]
   );
 
-  const equalizedUi = useMemo(
-    () => computeEqualizedComparison(includedScenarios, globalDiscountRate, equalizedCustomWindow),
-    [includedScenarios, globalDiscountRate, equalizedCustomWindow]
-  );
+  const equalizedUi = useMemo(() => {
+    try {
+      return computeEqualizedComparison(includedScenarios, globalDiscountRate, equalizedCustomWindow);
+    } catch (error) {
+      console.warn("[financial-analyses] equalized_ui_failed", error);
+      return createEmptyEqualizedComparisonResult(
+        "Equalized comparison is unavailable until all included options validate cleanly.",
+      );
+    }
+  }, [includedScenarios, globalDiscountRate, equalizedCustomWindow]);
 
-  const equalizedForExport = useMemo(
-    () => computeEqualizedComparison(scenarios, globalDiscountRate, equalizedCustomWindow),
-    [scenarios, globalDiscountRate, equalizedCustomWindow]
-  );
+  const equalizedForExport = useMemo(() => {
+    try {
+      return computeEqualizedComparison(scenarioRuntimeHealth.validScenarios, globalDiscountRate, equalizedCustomWindow);
+    } catch (error) {
+      console.warn("[financial-analyses] equalized_export_failed", error);
+      return createEmptyEqualizedComparisonResult(
+        "Equalized comparison is unavailable until all options validate cleanly.",
+      );
+    }
+  }, [scenarioRuntimeHealth.validScenarios, globalDiscountRate, equalizedCustomWindow]);
 
   const exportPdfDeck = useCallback(async () => {
     if (scenarios.length === 0) {
@@ -1938,6 +2165,12 @@ function HomeContent() {
       const resolvedBrokerageName = authSession
         ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
         : CRE_DEFAULT_BROKERAGE_NAME;
+      const engineResultsForShare = includedScenarios.map((scenario) => {
+        const cached = canonicalComputeCache[scenario.id];
+        return cached
+          ? canonicalResponseToEngineResult(cached, scenario.id, scenario.name, scenario)
+          : runMonthlyEngine(scenarioToCanonical(scenario), globalDiscountRate);
+      });
       const scenariosForShare = includedScenarios.map((scenario) => {
         const result = getScenarioResultForExport(scenario);
         const cached = canonicalComputeCache[scenario.id];
@@ -1962,18 +2195,14 @@ function HomeContent() {
           equalizedAvgCostPsfYear: Number(equalized?.averageCostPsfYear || 0),
         };
       });
-      const equalizedWindow = equalizedUi.windowStart && equalizedUi.windowEnd
-        ? {
-          start: equalizedUi.windowStart,
-          end: equalizedUi.windowEnd,
-          source: equalizedUi.windowSource || "overlap",
-        }
-        : null;
       const link = buildFinancialAnalysesShareLink(
-        {
-          scenarios: scenariosForShare,
-          equalizedWindow,
-        },
+        buildFinancialAnalysesSharePayload({
+          scenarioRows: scenariosForShare,
+          results: engineResultsForShare,
+          equalized: equalizedUi,
+          customCharts: customChartsForExport,
+          canonicalByScenarioId: canonicalComputeCache,
+        }),
         {
           brokerageName: resolvedBrokerageName,
           clientName: meta.prepared_for || "Client",
@@ -1997,6 +2226,8 @@ function HomeContent() {
     canonicalComputeCache,
     equalizedUi,
     defaultPreparedByFromAuth,
+    customChartsForExport,
+    globalDiscountRate,
   ]);
 
   const engineResults = useMemo(() => {
@@ -2020,22 +2251,10 @@ function HomeContent() {
     }
     return included.map((s) => runMonthlyEngine(scenarioToCanonical(s), globalDiscountRate));
   }, [includedScenarios, globalDiscountRate, isProduction, canonicalComputeCache]);
-
-  const chartData: ChartRow[] = engineResults
-    .map((r) => ({
-      name: r.scenarioName,
-      avg_cost_psf_year: Number(r.metrics.avgCostPsfYr),
-      npv_cost: Number(r.metrics.npvAtDiscount),
-      avg_cost_year: Number(r.metrics.avgAllInCostPerYear),
-      total_obligation: Number(r.metrics.totalObligation),
-    }))
-    .filter(
-      (row) =>
-        Number.isFinite(row.avg_cost_psf_year) &&
-        Number.isFinite(row.npv_cost) &&
-        Number.isFinite(row.avg_cost_year) &&
-        Number.isFinite(row.total_obligation)
-    );
+  const comparisonResultsResetKey = useMemo(
+    () => engineResults.map((result) => `${result.scenarioId}:${result.scenarioName}`).join("|"),
+    [engineResults],
+  );
 
   const scopedDeals = useMemo(
     () => (activeClientId ? allDeals.filter((deal) => deal.clientId === activeClientId) : allDeals),
@@ -2061,19 +2280,10 @@ function HomeContent() {
         .filter((key) => key !== "::"),
     ).size;
   }, [scopedDocuments]);
-  const landlordAvailableSpacesCount = useMemo(() => {
-    return scopedDocuments.filter((doc) => String(doc.suite || "").trim().length > 0).length;
-  }, [scopedDocuments]);
   const landlordActiveToursCount = useMemo(() => {
     return scopedDeals.filter((deal) => {
       const stage = String(deal.stage || "").toLowerCase();
       return stage.includes("tour");
-    }).length;
-  }, [scopedDeals]);
-  const landlordActiveProposalsCount = useMemo(() => {
-    return scopedDeals.filter((deal) => {
-      const stage = String(deal.stage || "").toLowerCase();
-      return stage.includes("proposal") || stage.includes("counter");
     }).length;
   }, [scopedDeals]);
   const landlordSignedDealsCount = useMemo(() => {
@@ -2082,202 +2292,62 @@ function HomeContent() {
       return deal.status === "won" || stage.includes("executed");
     }).length;
   }, [scopedDeals]);
-  const hasScenarioErrors = useMemo(
-    () => scenarios.some((scenario) => {
-      const row = results[scenario.id];
-      return Boolean(row && typeof row === "object" && "error" in row);
-    }),
-    [scenarios, results],
-  );
-  const workflowCoverageCount = useMemo(() => {
-    const hasAnalyses = scenarios.length > 0;
-    const hasSurveys = scopedDocuments.some((doc) => doc.type === "surveys" || doc.type === "flyers" || doc.type === "floorplans");
-    const hasCompletedLeases = scopedDocuments.some((doc) => doc.type === "leases" || doc.type === "amendments" || doc.type === "abstracts");
-    const hasSublease = scopedDocuments.some((doc) => doc.type === "proposals" || doc.type === "lois" || doc.type === "counters" || doc.type === "sublease documents");
-    const hasDeals = activeDealsCount > 0;
-    return [hasAnalyses, hasSurveys, hasCompletedLeases, hasSublease, hasDeals].filter(Boolean).length;
-  }, [scenarios.length, scopedDocuments, activeDealsCount]);
-  const workspaceStatus = useMemo(() => {
-    if (heroAiRunning || exportExcelLoading || exportPdfLoading) return "In Progress";
-    if (extractError || heroAiError || hasScenarioErrors) return "Needs Review";
-    if (activeDealsCount > 0 || scenarios.length > 0 || scopedDocuments.length > 0) return "In Progress";
-    return "Ready";
-  }, [
-    heroAiRunning,
-    exportExcelLoading,
-    exportPdfLoading,
-    extractError,
-    heroAiError,
-    hasScenarioErrors,
-    activeDealsCount,
-    scenarios.length,
-    scopedDocuments.length,
-  ]);
-  const heroPipelineActions = useMemo(
-    () => {
-      if (isLandlordMode) {
-        return [
-          { label: "LISTINGS", value: `${landlordAvailableSpacesCount}`, active: landlordAvailableSpacesCount > 0 },
-          { label: "INQUIRIES", value: `${activeDealsCount}`, active: activeDealsCount > 0 },
-          { label: "TOURS", value: `${landlordActiveToursCount}`, active: landlordActiveToursCount > 0 },
-          { label: "PROPOSALS", value: `${landlordActiveProposalsCount}`, active: landlordActiveProposalsCount > 0 },
-        ];
-      }
-      return [
-        { label: "UPLOAD", value: `${scopedDocuments.length}`, active: scopedDocuments.length > 0 },
-        { label: "EXTRACT", value: `${parsedDocumentsCount}`, active: parsedDocumentsCount > 0 },
-        { label: "ANALYZE", value: `${scenarios.length}`, active: scenarios.length > 0 },
-        { label: "TRACK", value: `${activeDealsCount}`, active: activeDealsCount > 0 },
-      ];
-    },
-    [
-      isLandlordMode,
-      landlordAvailableSpacesCount,
-      activeDealsCount,
-      landlordActiveToursCount,
-      landlordActiveProposalsCount,
-      scopedDocuments.length,
-      parsedDocumentsCount,
-      scenarios.length,
-    ],
-  );
-  const heroMetricCards = useMemo(() => {
-    if (isLandlordMode) {
-      return [
-        { label: "Properties", value: landlordPropertyCount },
-        { label: "Available Spaces", value: landlordAvailableSpacesCount },
-        { label: "Active Proposals", value: landlordActiveProposalsCount },
-      ];
-    }
-    return [
-      { label: "Active Deals", value: activeDealsCount },
-      { label: "Scenarios", value: scenarios.length },
-      { label: "Documents", value: scopedDocuments.length },
-    ];
-  }, [
-    isLandlordMode,
-    landlordPropertyCount,
-    landlordAvailableSpacesCount,
-    landlordActiveProposalsCount,
-    activeDealsCount,
-    scenarios.length,
-    scopedDocuments.length,
-  ]);
-  const heroAiPlan = useMemo(
-    () => suggestPlan(heroAiPrompt),
-    [heroAiPrompt, suggestPlan],
-  );
-
-  const resultErrors = scenarios
-    .map((s) => {
-      const r = results[s.id];
-      if (r && "error" in r) return { name: s.name, error: r.error };
-      return null;
-    })
-    .filter((x): x is { name: string; error: string } => x !== null);
+  const resultErrors = useMemo(() => {
+    const computeErrors = scenarios
+      .map((s) => {
+        const r = results[s.id];
+        if (r && "error" in r) return { name: s.name, error: r.error };
+        return null;
+      })
+      .filter((x): x is { name: string; error: string } => x !== null);
+    const runtimeErrors = scenarioRuntimeHealth.errors.map(({ name, error }) => ({ name, error }));
+    return [...computeErrors, ...runtimeErrors];
+  }, [results, scenarioRuntimeHealth.errors, scenarios]);
   const coverMetaPreview = buildReportMeta();
-  const heroTrendSeries = useMemo(() => {
-    const source = chartData
-      .map((row) => Number(isLandlordMode ? row.avg_cost_year : row.npv_cost))
-      .filter((value) => Number.isFinite(value) && value > 0)
-      .slice(-12);
-    if (source.length >= 5) return source;
-    const baseline =
-      100
-      + (scopedDocuments.length * 6)
-      + (parsedDocumentsCount * 5)
-      + (activeDealsCount * 8)
-      + (scenarios.length * 7)
-      + (isLandlordMode ? landlordPropertyCount * 5 : 0);
-    return Array.from({ length: 10 }, (_, index) => {
-      const trendLift = index * (2.5 + workflowCoverageCount * 0.6);
-      const modulation =
-        Math.sin((index + scopedDocuments.length) * 0.75) * (2 + Math.max(0, 4 - workflowCoverageCount) * 0.35);
-      const correction = hasScenarioErrors && index > 6 ? -2.2 : 0;
-      return baseline + trendLift + modulation + correction;
-    });
-  }, [
-    chartData,
-    isLandlordMode,
-    scopedDocuments.length,
-    parsedDocumentsCount,
-    activeDealsCount,
-    scenarios.length,
-    landlordPropertyCount,
-    workflowCoverageCount,
-    hasScenarioErrors,
-  ]);
-  const heroTrendChart = useMemo(() => {
-    const values = heroTrendSeries.length >= 2 ? heroTrendSeries : [heroTrendSeries[0] || 100, (heroTrendSeries[0] || 100) + 6];
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = Math.max(1, max - min);
-    const frame = { left: 12, right: 308, top: 8, bottom: 64 };
-    const points = values.map((value, index) => {
-      const x = values.length === 1
-        ? (frame.left + frame.right) / 2
-        : frame.left + (index * (frame.right - frame.left)) / (values.length - 1);
-      const y = frame.bottom - ((value - min) / span) * (frame.bottom - frame.top);
-      return { x, y };
-    });
-    const strokePath = points.reduce((path, point, index) => {
-      if (index === 0) return `M ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
-      const prev = points[index - 1];
-      const controlX = ((prev.x + point.x) / 2).toFixed(2);
-      return `${path} C ${controlX} ${prev.y.toFixed(2)}, ${controlX} ${point.y.toFixed(2)}, ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
-    }, "");
-    const firstPoint = points[0];
-    const lastPoint = points[points.length - 1];
-    const areaPath = `${strokePath} L ${lastPoint.x.toFixed(2)} ${frame.bottom} L ${firstPoint.x.toFixed(2)} ${frame.bottom} Z`;
-    const deltaPercent = values.length > 1
-      ? ((values[values.length - 1] - values[0]) / Math.max(1, Math.abs(values[0]))) * 100
-      : 0;
-    return { points, strokePath, areaPath, deltaPercent };
-  }, [heroTrendSeries]);
-  const heroTrendDeltaLabel = useMemo(() => {
-    const direction = heroTrendChart.deltaPercent >= 0 ? "+" : "";
-    return `${direction}${heroTrendChart.deltaPercent.toFixed(1)}% period trend`;
-  }, [heroTrendChart.deltaPercent]);
-  const runHeroAiCommand = useCallback(async () => {
-    const command = heroAiPrompt.trim();
-    if (!command) {
-      setHeroAiError("Enter an AI command.");
-      return;
-    }
-    if (!authSession || !activeClientId) {
-      setHeroAiError("Sign in and select a client workspace to run AI workflows.");
-      setHeroAiStatus(null);
-      return;
-    }
-    setHeroAiRunning(true);
-    setHeroAiError(null);
-    setHeroAiStatus(null);
-    try {
-      const result = await runAiCommand(command);
-      const successCount = result.results.filter((item) => item.ok).length;
-      const failureCount = result.results.length - successCount;
-      setHeroAiStatus(
-        [
-          `Intent: ${result.resolvedIntent}`,
-          `${successCount} action${successCount === 1 ? "" : "s"} completed`,
-          failureCount > 0 ? `${failureCount} action${failureCount === 1 ? "" : "s"} need review` : "No failures",
-        ].join(" · "),
-      );
-    } catch (error) {
-      setHeroAiError(getDisplayErrorMessage(error));
-    } finally {
-      setHeroAiRunning(false);
-    }
-  }, [heroAiPrompt, authSession, activeClientId, runAiCommand]);
-  const openWorkspaceHref = authSession ? "/?module=deals" : "/account?mode=signin";
-  const heroClientName = activeClient?.name || coverMetaPreview.prepared_for || "Client Workspace";
-  const heroPreparedBy = coverMetaPreview.prepared_by || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY;
-  const heroCapabilitiesLabel = isLandlordMode
-    ? "Deals • Availabilities • Marketing • Lease Tracking • Reporting • AI Workflows"
-    : "Financial Analyses • Surveys • Lease Abstracts • CRM • Obligations • AI Workflows";
-  const heroWorkflowFooterLabel = isLandlordMode
-    ? `${landlordSignedDealsCount} signed · ${workflowCoverageCount} workflows active`
-    : `${parsedDocumentsCount} parsed · ${workflowCoverageCount} workflows active`;
+  const openWorkspaceHref = authSession ? `/?module=${defaultPlatformModuleId}` : "/account?mode=signin";
+  const homeClientName = activeClient?.name || coverMetaPreview.prepared_for || "Client Workspace";
+  const homeOverviewCards = isLandlordMode
+    ? [
+        { label: "Properties", value: landlordPropertyCount, detail: "tracked in this workspace" },
+        { label: "Open inquiries", value: activeDealsCount, detail: "live deal flow" },
+        { label: "Active tours", value: landlordActiveToursCount, detail: "next actions ready" },
+        { label: "Signed deals", value: landlordSignedDealsCount, detail: "closed in workspace" },
+      ]
+    : [
+        { label: "Saved documents", value: scopedDocuments.length, detail: "client-ready source files" },
+        { label: "Parsed options", value: scenarios.length, detail: "analysis scenarios built" },
+        { label: "Active deals", value: activeDealsCount, detail: "current client workflows" },
+        { label: "Parsed leases", value: parsedDocumentsCount, detail: "trusted extraction outputs" },
+      ];
+  const homeSteps = isLandlordMode
+    ? [
+        {
+          title: "Add a record",
+          description: "Start with the property, inquiry, or client you are actively managing.",
+        },
+        {
+          title: "Open the live workspace",
+          description: "Use deals, buildings, and reporting as one connected operating layer.",
+        },
+        {
+          title: "Move the next action",
+          description: "Advance tours, proposals, and signed deals without leaving the platform.",
+        },
+      ]
+    : [
+        {
+          title: "Upload the source document",
+          description: "Start with the lease, proposal, counter, flyer, or floorplan that matters.",
+        },
+        {
+          title: "Work from the active record",
+          description: "Analyses, surveys, abstracts, CRM, and obligations stay linked to the same client.",
+        },
+        {
+          title: "Deliver the output",
+          description: "Edit the live result, then export or share from the same workspace.",
+        },
+      ];
   const showHomeHero = rawModuleParam.length === 0;
   const topNavOffsetClass = "pt-24 sm:pt-28";
   const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === "financial-analyses";
@@ -2299,194 +2369,86 @@ function HomeContent() {
   return (
     <>
       {showHomeHero ? (
-        <>
-          <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
-            <div className="app-container">
-              <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] border border-white/25">
-                <div className="p-6 sm:p-8 lg:p-12 border-b xl:border-b-0 xl:border-r border-white/25">
-                  <p className="heading-kicker mb-4">Platform</p>
-                  <h1 className="heading-display max-w-4xl leading-[0.94]">
-                    The Commercial Real Estate
-                    <br />
-                    Operating System
+        <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
+          <div className="app-container space-y-6">
+            <div className="overflow-hidden rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(6,16,31,0.95),rgba(8,22,42,0.88))] shadow-[0_24px_70px_rgba(2,12,27,0.28)]">
+              <div className="grid gap-0 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+                <div className="p-6 sm:p-8 lg:p-10">
+                  <p className="heading-kicker mb-3">Platform</p>
+                  <h1 className="heading-display max-w-3xl !text-[clamp(2.3rem,5vw,4.5rem)] leading-[0.96]">
+                    Commercial real estate workflows, without the clutter.
                   </h1>
-
-                  <p className="body-lead mt-6 max-w-xl">
-                    Transform documents, deals, and obligations into structured insights in minutes. Built for leasing
-                    brokers, investment firms, and enterprise real estate teams.
+                  <p className="body-lead mt-5 max-w-2xl text-slate-200">
+                    theCREmodel keeps documents, analyses, CRM, surveys, lease abstracts, buildings, and obligations in one connected client workspace so the next step is always obvious.
                   </p>
-                  <div className="mt-5 border border-white/20 bg-black/30 px-3 py-2 text-xs sm:text-sm text-slate-200">
-                    {heroCapabilitiesLabel}
-                  </div>
 
-                  <div className="flex gap-3 sm:gap-4 mt-8 flex-wrap">
-                    <Link
-                      href={openWorkspaceHref}
-                      className="btn-premium btn-premium-primary w-full sm:w-auto px-8"
-                    >
-                      Open Workspace
+                  <div className="mt-7 flex flex-wrap gap-3">
+                    <Link href={openWorkspaceHref} className="btn-premium btn-premium-primary px-7">
+                      {authSession ? "Open Workspace" : "Sign In To Start"}
                     </Link>
-
-                    <Link
-                      href="/example"
-                      className="btn-premium btn-premium-secondary w-full sm:w-auto px-8"
-                    >
-                      View Platform Demo
+                    <Link href="/example" className="btn-premium btn-premium-secondary px-7">
+                      View Demo
                     </Link>
                   </div>
 
-                  <div className="mt-7 border border-white/20 bg-black/35 p-3 sm:p-4">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <p className="heading-kicker">Ask AI</p>
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-300">orchestration layer</p>
-                    </div>
-                    <form
-                      className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void runHeroAiCommand();
-                      }}
-                    >
-                      <input
-                        value={heroAiPrompt}
-                        onChange={(event) => setHeroAiPrompt(event.target.value)}
-                        className="input-premium !py-2.5"
-                        placeholder={
-                          isLandlordMode
-                            ? "Show me all availabilities with proposals outstanding."
-                            : "Run a sublease recovery using the Austin obligation and these three proposals."
-                        }
-                      />
-                      <button
-                        type="submit"
-                        className="btn-premium btn-premium-secondary w-full sm:w-auto"
-                        disabled={heroAiRunning}
-                      >
-                        {heroAiRunning ? "Running..." : "Run Workflow"}
-                      </button>
-                    </form>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {heroAiPlan.toolCalls.slice(0, 4).map((call, index) => (
-                        <span
-                          key={`${call.tool}-${index}`}
-                          className="border border-white/20 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-slate-300"
-                        >
-                          {call.tool}
-                        </span>
-                      ))}
-                    </div>
-                    {heroAiStatus ? <p className="mt-2 text-xs text-cyan-200">{heroAiStatus}</p> : null}
-                    {heroAiError ? <p className="mt-2 text-xs text-red-300">{heroAiError}</p> : null}
+                  <div className="mt-8 grid gap-3 md:grid-cols-3">
+                    {homeSteps.map((step, index) => (
+                      <div key={step.title} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-cyan-100/70">Step {index + 1}</p>
+                        <h2 className="mt-2 text-lg font-semibold text-white">{step.title}</h2>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">{step.description}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
-                <div className="p-4 sm:p-6 lg:p-8 bg-white/[0.01] flex">
-                  <div className="border border-white/25 bg-black/65 p-2 sm:p-3 flex-1 min-h-[280px]">
-                    <div className="grid grid-cols-12 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 h-full">
-                      <div className="col-span-6 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.18)" }}>
-                        <p className="heading-kicker mb-1">Client</p>
-                        <p className="text-sm sm:text-base tracking-tight text-white leading-tight truncate">{heroClientName}</p>
-                      </div>
-                      {heroMetricCards.map((metric, index) => (
-                        <div
-                          key={metric.label}
-                          className="col-span-2 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center"
-                          style={{ ["--parallax-y" as string]: `calc(var(--hero-scroll-y, 0px) * -${(0.12 - index * 0.03).toFixed(2)})` }}
-                        >
-                          <p className="heading-kicker mb-1">{metric.label}</p>
-                          <p className="text-2xl sm:text-3xl tracking-tight text-white leading-none">{metric.value}</p>
-                        </div>
-                      ))}
 
-                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.1)" }}>
-                        <p className="heading-kicker mb-1">Status</p>
-                        <p className="inline-flex items-center gap-1.5 text-sm text-white/90 leading-tight">
-                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-200 animate-pulse" />
-                          {workspaceStatus}
-                        </p>
-                      </div>
-                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.07)" }}>
-                        <p className="heading-kicker mb-1">Prepared by</p>
-                        <p className="text-sm text-white/90 leading-tight truncate">{heroPreparedBy}</p>
-                      </div>
-                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col justify-center" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
-                        <p className="heading-kicker mb-1">Report date</p>
-                        <p className="text-sm text-white/90 leading-tight">{coverMetaPreview.report_date}</p>
-                      </div>
+                <div className="border-t border-white/10 bg-white/[0.03] p-6 sm:p-8 lg:border-l lg:border-t-0">
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                    <p className="heading-kicker">Current Workspace</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">{homeClientName}</h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      {authSession
+                        ? "Everything stays tied to the active client, so uploads, workflows, and exports remain easy to follow."
+                        : "Sign in to work from a live client workspace with connected records and saved progress."}
+                    </p>
+                  </div>
 
-                      <div className="col-span-8 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col min-h-[132px]" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.05)" }}>
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="heading-kicker">Portfolio trend</p>
-                          <p className="text-[11px] uppercase tracking-[0.12em] text-white/70">live system</p>
-                        </div>
-                        <div className="flex-1 border border-white/10 bg-black/35 p-2">
-                          <svg viewBox="0 0 320 72" className="w-full h-full min-h-[92px]" preserveAspectRatio="none">
-                            <defs>
-                              <linearGradient id="hero-trend-fill" x1="0%" y1="0%" x2="0%" y2="100%">
-                                <stop offset="0%" stopColor="rgba(103,232,249,0.35)" />
-                                <stop offset="100%" stopColor="rgba(103,232,249,0.02)" />
-                              </linearGradient>
-                            </defs>
-                            <g stroke="rgba(255,255,255,0.08)" strokeWidth="1">
-                              {[16, 28, 40, 52, 64].map((y) => (
-                                <line key={y} x1="12" x2="308" y1={y} y2={y} />
-                              ))}
-                            </g>
-                            <path d={heroTrendChart.areaPath} fill="url(#hero-trend-fill)" />
-                            <path
-                              d={heroTrendChart.strokePath}
-                              fill="none"
-                              stroke="rgba(255,255,255,0.92)"
-                              strokeWidth="2.1"
-                              strokeLinejoin="round"
-                              strokeLinecap="round"
-                            />
-                            {heroTrendChart.points.length > 0 ? (
-                              <circle
-                                cx={heroTrendChart.points[heroTrendChart.points.length - 1]?.x}
-                                cy={heroTrendChart.points[heroTrendChart.points.length - 1]?.y}
-                                r="2.6"
-                                fill="rgba(103,232,249,0.95)"
-                              />
-                            ) : null}
-                          </svg>
-                        </div>
-                        <div className="mt-1 flex items-center justify-between text-[10px] uppercase tracking-[0.08em] text-slate-400">
-                          <span>{heroTrendDeltaLabel}</span>
-                          <span>{heroTrendSeries.length} points</span>
-                        </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {homeOverviewCards.map((card) => (
+                      <div key={card.label} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{card.label}</p>
+                        <p className="mt-2 text-3xl font-semibold tracking-tight text-white">{card.value}</p>
+                        <p className="mt-1 text-sm text-slate-400">{card.detail}</p>
                       </div>
-                      <div className="col-span-4 border border-white/20 px-3 py-2.5 hero-parallax-layer flex flex-col" style={{ ["--parallax-y" as string]: "calc(var(--hero-scroll-y, 0px) * -0.03)" }}>
-                        <p className="heading-kicker mb-2">Workflow actions</p>
-                        <div className="grid grid-cols-1 gap-1.5 text-[10px] uppercase tracking-[0.12em] h-full content-center">
-                          {heroPipelineActions.map((action) => (
-                            <div
-                              key={action.label}
-                              className={`border px-2 py-1 flex items-center justify-between ${
-                                action.active ? "border-cyan-300/60 bg-cyan-500/10 text-cyan-100" : "border-white/20 text-white/80"
-                              }`}
-                            >
-                              <span>{action.label}</span>
-                              <span>{action.value}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-2">{heroWorkflowFooterLabel}</p>
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
               </div>
             </div>
-          </section>
 
-          <FeatureTiles
-            documentCount={scopedDocuments.length}
-            workflowCount={workflowCoverageCount}
-            insightCount={Math.max(1, chartData.length + parsedDocumentsCount)}
-            activeClientName={heroClientName}
-            representationMode={representationMode}
-          />
-        </>
+            <section className="grid gap-4 lg:grid-cols-3">
+              {platformModules.map((module) => {
+                const href = !module.requiresAuth || authSession
+                  ? `/?module=${module.id}`
+                  : "/account?mode=signin";
+                return (
+                  <Link
+                    key={module.id}
+                    href={href}
+                    className="group rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(8,18,34,0.82),rgba(7,16,29,0.92))] p-5 transition hover:border-cyan-300/30 hover:bg-cyan-500/[0.05]"
+                  >
+                    <p className="heading-kicker">{module.requiresAuth ? "Workspace" : "Open Access"}</p>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">{module.label}</h2>
+                    <p className="mt-3 text-sm leading-6 text-slate-300">{module.description}</p>
+                    <p className="mt-5 text-[11px] uppercase tracking-[0.16em] text-cyan-100/80">
+                      {module.requiresAuth && !authSession ? "Sign in to open" : "Open module"}
+                    </p>
+                  </Link>
+                );
+              })}
+            </section>
+          </div>
+        </section>
       ) : null}
 
       {!showHomeHero && moduleHasDedicatedTopTabs ? (
@@ -2854,17 +2816,31 @@ function HomeContent() {
                           </div>
                         )}
 
-                        <SummaryMatrix
-                          results={engineResults}
-                          equalized={equalizedUi}
-                          scenariosById={scenariosById}
-                          onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
-                        />
-                        <AnalyticsWorkbench
-                          results={engineResults}
-                          canonicalByScenarioId={canonicalComputeCache}
-                          onCustomChartsChange={setCustomChartsForExport}
-                        />
+                        <ClientRenderBoundary
+                          resetKeys={[comparisonResultsResetKey, engineResults.length]}
+                          title="Comparison matrix needs a refresh."
+                          description="Your imported proposals are still saved, but this matrix section hit a temporary render issue while updating."
+                        >
+                          <SummaryMatrix
+                            key={`summary-${comparisonResultsResetKey}`}
+                            results={engineResults}
+                            equalized={equalizedUi}
+                            scenariosById={scenariosById}
+                            onUpdateTiBudgetPsf={updateScenarioTiBudgetPsf}
+                          />
+                        </ClientRenderBoundary>
+                        <ClientRenderBoundary
+                          resetKeys={[comparisonResultsResetKey, engineResults.length]}
+                          title="Analytics are reloading."
+                          description="The comparison data is still available. This chart section hit a client-side render issue and will reset when the scenario set changes."
+                        >
+                          <AnalyticsWorkbench
+                            key={`analytics-${comparisonResultsResetKey}`}
+                            results={engineResults}
+                            canonicalByScenarioId={canonicalComputeCache}
+                            onCustomChartsChange={setCustomChartsForExport}
+                          />
+                        </ClientRenderBoundary>
                       </div>
                     )}
                   </section>
@@ -2872,7 +2848,6 @@ function HomeContent() {
             </div>
           </div>
         </section>
-        <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
       </main>
       ) : (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
@@ -2937,7 +2912,6 @@ function HomeContent() {
               }}
             />
           </section>
-          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
         </main>
           );
         }
@@ -2965,7 +2939,6 @@ function HomeContent() {
               clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
             }}
           />
-          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
         </main>
           );
         }
@@ -2993,7 +2966,6 @@ function HomeContent() {
               clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
             }}
           />
-          <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
         </main>
           );
         }
@@ -3010,7 +2982,6 @@ function HomeContent() {
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
             <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
             <BuildingsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
-            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
           </main>
           );
         }
@@ -3018,7 +2989,6 @@ function HomeContent() {
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
             <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
             <ObligationsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
-            <BrokerOsCommandCenter sourceModule={activeDocumentDropSourceModule} />
           </main>
         );
       })() : null}

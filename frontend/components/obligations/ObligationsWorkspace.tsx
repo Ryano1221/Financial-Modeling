@@ -9,6 +9,7 @@ import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicke
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import {
   buildTimelineBuckets,
@@ -241,25 +242,34 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
     };
 
     async function hydrate() {
+      let localParsed: Partial<ObligationStorageState> | null = null;
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        localParsed = raw ? (JSON.parse(raw) as Partial<ObligationStorageState>) : null;
+      } catch {
+        localParsed = null;
+      }
       if (isAuthenticated) {
         try {
           const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
           if (cancelled) return;
-          applyParsed((remote.value as Partial<ObligationStorageState> | null) ?? null);
+          applyParsed(
+            preferLocalWhenRemoteEmpty(
+              (remote.value as Partial<ObligationStorageState> | null) ?? null,
+              localParsed,
+              (value) =>
+                (Array.isArray(value.obligations) && value.obligations.length > 0)
+                || (Array.isArray(value.documents) && value.documents.length > 0)
+                || (Array.isArray(value.companies) && value.companies.length > 0),
+            ),
+          );
           return;
         } catch (error) {
           console.warn("obligations_cloud_load_failed", error);
           if (cancelled) return;
-          applyParsed(null);
-          return;
         }
       }
-      try {
-        const raw = localStorage.getItem(scopedStorageKey);
-        applyParsed(raw ? (JSON.parse(raw) as Partial<ObligationStorageState>) : null);
-      } catch {
-        applyParsed(null);
-      }
+      applyParsed(localParsed);
     }
 
     void hydrate();
@@ -287,17 +297,13 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
       activeCompanyId,
       selectedObligationId,
     };
+    localStorage.setItem(scopedStorageKey, JSON.stringify(payload));
     if (isAuthenticated) {
       void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
         console.warn("obligations_cloud_save_failed", error);
       });
       return;
     }
-    if (companies.length === 0) {
-      localStorage.removeItem(scopedStorageKey);
-      return;
-    }
-    localStorage.setItem(scopedStorageKey, JSON.stringify(payload));
   }, [clientId, companies, obligations, documents, activeCompanyId, selectedObligationId, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const activeCompany = useMemo(

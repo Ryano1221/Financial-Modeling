@@ -26,7 +26,7 @@ export default function SecurityPage() {
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="surface-card p-5">
               <p className="heading-kicker">Authentication</p>
-              <p className="mt-2 text-sm text-slate-300">Protected workflows, storage actions, and client-facing exports run with authenticated user context, including account-scoped cloud workspace persistence and branded deliverables generated inside that same boundary.</p>
+              <p className="mt-2 text-sm text-slate-300">Protected workflows, storage actions, and client-facing exports run with authenticated user context, including account-scoped cloud workspace persistence that restores saved workspace state only inside that signed-in user account across devices.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Workspace Isolation</p>
@@ -38,7 +38,7 @@ export default function SecurityPage() {
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Browser Storage</p>
-              <p className="mt-2 text-sm text-slate-300">Large source-file payloads are cached in browser-managed document storage instead of relying on one oversized localStorage entry, which reduces quota failures during multi-file uploads.</p>
+              <p className="mt-2 text-sm text-slate-300">Large source-file payloads are cached in browser-managed document storage instead of relying on one oversized localStorage entry, and local fallback now acts as a recovery cache for the same signed-in account while cloud sync remains the source used to restore records on another device.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Bounded OCR</p>

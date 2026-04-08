@@ -18,6 +18,7 @@ import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvid
 import { fetchApiProxy } from "@/lib/api";
 import { getBuildingRegistryEntry, hasCuratedBuildingPhoto } from "@/lib/building-photos";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { loadBuildingFocus, persistBuildingFocus } from "@/lib/workspace/building-focus";
 import { fetchSharedMarketInventory, type SharedMarketInventoryResponse } from "@/lib/workspace/market-inventory";
 import {
@@ -508,33 +509,34 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     let cancelled = false;
     setStorageHydrated(false);
     async function hydrate() {
+      const emptyState = emptyCrmWorkspaceState(representationMode);
+      let localDraft = emptyState;
+      if (typeof window !== "undefined") {
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          localDraft = raw ? (JSON.parse(raw) as CrmWorkspaceState) : emptyState;
+        } catch {
+          localDraft = emptyState;
+        }
+      }
       if (isAuthenticated) {
         try {
           const remote = await fetchWorkspaceCloudSection(storageKey);
           if (cancelled) return;
-          if (remote?.value && typeof remote.value === "object") {
-            setCrmDraft(remote.value as CrmWorkspaceState);
-          } else {
-            setCrmDraft(emptyCrmWorkspaceState(representationMode));
-          }
+          setCrmDraft(
+            preferLocalWhenRemoteEmpty(
+              remote?.value && typeof remote.value === "object" ? (remote.value as CrmWorkspaceState) : null,
+              localDraft,
+              (value) => JSON.stringify(value) !== JSON.stringify(emptyState),
+            ) || emptyState,
+          );
           setStorageHydrated(true);
           return;
         } catch {
           if (cancelled) return;
         }
       }
-      if (typeof window !== "undefined") {
-        try {
-          const raw = window.localStorage.getItem(storageKey);
-          if (raw) {
-            setCrmDraft(JSON.parse(raw) as CrmWorkspaceState);
-          } else {
-            setCrmDraft(emptyCrmWorkspaceState(representationMode));
-          }
-        } catch {
-          setCrmDraft(emptyCrmWorkspaceState(representationMode));
-        }
-      }
+      setCrmDraft(localDraft);
       if (!cancelled) setStorageHydrated(true);
     }
     void hydrate();
@@ -3514,7 +3516,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
               </div>
             )
           ) : !selectedCompany ? (
-            <p className="text-sm text-slate-400">Select a prospect or client profile to inspect the full command center view.</p>
+            <p className="text-sm text-slate-400">Select a prospect or client profile to open the active CRM workspace.</p>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
               <div className="xl:col-span-4 border border-white/15 bg-black/20 p-3 space-y-3">

@@ -59,6 +59,7 @@ import type {
 } from "@/lib/workspace/os-types";
 import type { ClientWorkspaceDeal, ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { fetchSharedMarketInventory, type SharedMarketInventoryResponse } from "@/lib/workspace/market-inventory";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
@@ -522,9 +523,18 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
       }
       try {
         const remote = await fetchWorkspaceCloudSection(key);
-        const parsed = remote?.value && typeof remote.value === "object"
-          ? (remote.value as BrokerageOsArtifactsState)
-          : localArtifacts;
+        const parsed = preferLocalWhenRemoteEmpty(
+          remote?.value && typeof remote.value === "object"
+            ? (remote.value as BrokerageOsArtifactsState)
+            : null,
+          localArtifacts,
+          (value) =>
+            value.activityLog.length > 0
+            || value.changeLog.length > 0
+            || value.auditTrail.length > 0
+            || value.exports.length > 0
+            || value.shareLinks.length > 0,
+        ) || localArtifacts;
         if (!cancelled) setArtifacts({
           activityLog: Array.isArray(parsed.activityLog) ? parsed.activityLog : [],
           changeLog: Array.isArray(parsed.changeLog) ? parsed.changeLog : [],
@@ -565,7 +575,18 @@ export function BrokerOsProvider({ children }: { children: ReactNode }) {
       const loadRemoteSection = async (sectionKey: string, localValue: Record<string, unknown> | null) => {
         try {
           const remote = await fetchWorkspaceCloudSection(sectionKey);
-          if (remote && typeof remote.value === "object") return remote.value as Record<string, unknown>;
+          if (remote && typeof remote.value === "object") {
+            return preferLocalWhenRemoteEmpty(
+              remote.value as Record<string, unknown>,
+              localValue,
+              (value) =>
+                Object.values(value).some((entry) => {
+                  if (Array.isArray(entry)) return entry.length > 0;
+                  if (entry && typeof entry === "object") return Object.keys(entry as Record<string, unknown>).length > 0;
+                  return Boolean(String(entry || "").trim());
+                }),
+            );
+          }
         } catch {
           // ignore and use local fallback
         }

@@ -8,6 +8,7 @@ import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import {
@@ -289,25 +290,31 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
     };
 
     async function hydrate() {
+      let localParsed: { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string } | null = null;
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        localParsed = raw ? (JSON.parse(raw) as { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string }) : null;
+      } catch {
+        localParsed = null;
+      }
       if (isAuthenticated) {
         try {
           const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
           if (cancelled) return;
-          applyParsed((remote.value as { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string } | null) ?? null);
+          applyParsed(
+            preferLocalWhenRemoteEmpty(
+              (remote.value as { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string } | null) ?? null,
+              localParsed,
+              (value) => Array.isArray(value.documents) && value.documents.length > 0,
+            ),
+          );
           return;
         } catch (error) {
           console.warn("completed_leases_cloud_load_failed", error);
           if (cancelled) return;
-          setStorageHydrated(true);
-          return;
         }
       }
-      try {
-        const raw = localStorage.getItem(scopedStorageKey);
-        applyParsed(raw ? (JSON.parse(raw) as { documents?: CompletedLeaseDocumentRecord[]; selectedId?: string }) : null);
-      } catch {
-        setStorageHydrated(true);
-      }
+      applyParsed(localParsed);
     }
 
     void hydrate();
@@ -319,18 +326,16 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!storageHydrated) return;
-    if (isAuthenticated) {
-      const payload = documents.length === 0 ? null : { documents, selectedId };
-      void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
-        console.warn("completed_leases_cloud_save_failed", error);
-      });
-      return;
-    }
-    if (documents.length === 0) {
+    const payload = documents.length === 0 ? null : { documents, selectedId };
+    if (payload) {
+      localStorage.setItem(scopedStorageKey, JSON.stringify(payload));
+    } else {
       localStorage.removeItem(scopedStorageKey);
-      return;
     }
-    localStorage.setItem(scopedStorageKey, JSON.stringify({ documents, selectedId }));
+    if (!isAuthenticated) return;
+    void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
+      console.warn("completed_leases_cloud_save_failed", error);
+    });
   }, [documents, selectedId, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const selected = useMemo(

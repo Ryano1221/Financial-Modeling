@@ -21,6 +21,7 @@ import { createManualSurveyEntryFromBuilding } from "@/lib/surveys/engine";
 import type { SurveyEntry } from "@/lib/surveys/types";
 import type { ScenarioInput } from "@/lib/types";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import {
   CRM_OS_STORAGE_KEY,
   buildCrmWorkspaceState,
@@ -207,7 +208,7 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
   const [shortlistName, setShortlistName] = useState("");
   const [scheduledTourAt, setScheduledTourAt] = useState("");
   const [workflowNotes, setWorkflowNotes] = useState("");
-  const [status, setStatus] = useState("Use the Buildings workspace to browse towers, drill into suites, edit stack plans, and push context into downstream workflows.");
+  const [status, setStatus] = useState("Select a building, review the suite mix, and move the best options into the next workflow.");
   const [error, setError] = useState("");
   const [buildingPhotoStatus, setBuildingPhotoStatus] = useState<{ buildingId: string; message: string }>({ buildingId: "", message: "" });
 
@@ -215,11 +216,27 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
     let cancelled = false;
     setStorageHydrated(false);
     async function hydrate() {
+      const emptyState = emptyCrmWorkspaceState(representationMode);
+      let localDraft = emptyState;
+      if (typeof window !== "undefined") {
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          localDraft = raw ? (JSON.parse(raw) as CrmWorkspaceState) : emptyState;
+        } catch {
+          localDraft = emptyState;
+        }
+      }
       if (isAuthenticated) {
         try {
           const remote = await fetchWorkspaceCloudSection(storageKey);
           if (!cancelled) {
-            setCrmDraft(remote?.value && typeof remote.value === "object" ? (remote.value as CrmWorkspaceState) : emptyCrmWorkspaceState(representationMode));
+            setCrmDraft(
+              preferLocalWhenRemoteEmpty(
+                remote?.value && typeof remote.value === "object" ? (remote.value as CrmWorkspaceState) : null,
+                localDraft,
+                (value) => JSON.stringify(value) !== JSON.stringify(emptyState),
+              ) || emptyState,
+            );
             setStorageHydrated(true);
             return;
           }
@@ -227,14 +244,7 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
           // local fallback below
         }
       }
-      if (typeof window !== "undefined") {
-        try {
-          const raw = window.localStorage.getItem(storageKey);
-          setCrmDraft(raw ? (JSON.parse(raw) as CrmWorkspaceState) : emptyCrmWorkspaceState(representationMode));
-        } catch {
-          setCrmDraft(emptyCrmWorkspaceState(representationMode));
-        }
-      }
+      setCrmDraft(localDraft);
       if (!cancelled) setStorageHydrated(true);
     }
     void hydrate();
@@ -941,25 +951,26 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
   return (
     <PlatformSection
       kicker="Buildings"
-      title="Building Intelligence Workspace"
-      description="Browse all buildings and suites on one comprehensive map, filter the active set, edit stack plans, and carry building context into surveys and related workflows."
+      title="Buildings"
+      description="Start with one building, review the best suites, and send the right options into Surveys, CRM, or Financial Analyses."
       actions={activeInventoryBuilding ? (
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn-premium btn-premium-secondary" onClick={queueBuildingForSurveys}>Add To Surveys</button>
-          <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={queueSelectedSuitesForSurveys} disabled={selectedSuites.length === 0}>Add Selected Suites</button>
-          <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={queueSelectedSuitesForAnalyses} disabled={selectedSuites.length === 0}>Add Suites To Analyses</button>
-          <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={() => saveShortlistWorkflow("shortlist")} disabled={selectedSuites.length === 0}>Add To Shortlist</button>
-          <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={() => saveShortlistWorkflow("tour")} disabled={selectedSuites.length === 0}>Schedule Tour</button>
-          <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={() => saveShortlistWorkflow("proposal_requested")} disabled={selectedSuites.length === 0}>Request Proposal</button>
-          <button type="button" className="btn-premium btn-premium-secondary" onClick={() => {
-            persistBuildingFocus(clientId, activeInventoryBuilding);
-            router.push("/?module=surveys");
-          }}>Open Surveys</button>
-          <button type="button" className="btn-premium btn-premium-secondary" onClick={() => {
-            persistBuildingFocus(clientId, activeInventoryBuilding);
-            router.push("/?module=deals");
-          }}>Open CRM</button>
-          <Link className="btn-premium btn-premium-secondary" href="/?module=financial-analyses" onClick={() => persistBuildingFocus(clientId, activeInventoryBuilding)}>
+          <button type="button" className="btn-premium btn-premium-secondary" onClick={queueBuildingForSurveys}>
+            Add Building To Surveys
+          </button>
+          <button
+            type="button"
+            className="btn-premium btn-premium-secondary disabled:opacity-50"
+            onClick={queueSelectedSuitesForAnalyses}
+            disabled={selectedSuites.length === 0}
+          >
+            Add Selected Suites To Analyses
+          </button>
+          <Link
+            className="btn-premium btn-premium-secondary"
+            href="/?module=financial-analyses"
+            onClick={() => persistBuildingFocus(clientId, activeInventoryBuilding)}
+          >
             Open Analyses
           </Link>
           <button
@@ -974,17 +985,16 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
       maxWidthClassName="max-w-[96vw]"
     >
       <PlatformMetricStrip>
-        <PlatformMetricCard label="Buildings" value={formatInt(displayedBuildings.length)} detail="Current filtered building set." tone="accent" />
-        <PlatformMetricCard label="Mapped Pins" value={formatInt(buildingInventoryMetrics.mappedCount)} detail="Buildings with map coordinates." />
-        <PlatformMetricCard label="Curated Photos" value={formatInt(buildingInventoryMetrics.pinnedPhotoCount)} detail="Verified or uploaded building photos." />
-        <PlatformMetricCard label="Map Selected" value={formatInt(buildingInventoryMetrics.selectedCount)} detail="Buildings selected directly from the map." />
-        <PlatformMetricCard label="Inventory RSF" value={formatInt(buildingInventoryMetrics.totalRSF)} detail="Tracked rentable area across the active set." />
+        <PlatformMetricCard label="Buildings" value={formatInt(displayedBuildings.length)} detail="current filtered set" tone="accent" />
+        <PlatformMetricCard label="Mapped" value={formatInt(buildingInventoryMetrics.mappedCount)} detail="with map coordinates" />
+        <PlatformMetricCard label="Selected" value={formatInt(buildingInventoryMetrics.selectedCount)} detail="picked on the map" />
+        <PlatformMetricCard label="Tracked RSF" value={formatInt(buildingInventoryMetrics.totalRSF)} detail="in active inventory" />
       </PlatformMetricStrip>
 
       <PlatformDashboardTier
-        label="Portfolio Map"
-        title={activeInventoryBuilding ? displayBuildingName(activeInventoryBuilding) : "Shared Building Inventory"}
-        description="The map and the right-side result set stay together so you can click buildings, keep the surrounding set visible, and move directly into suite-level editing."
+        label="Browser"
+        title={activeInventoryBuilding ? displayBuildingName(activeInventoryBuilding) : "Building Browser"}
+        description="Use the map and results together, then work from one active building at a time."
       >
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.95fr]">
           <div className="space-y-3">
@@ -992,7 +1002,7 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="heading-kicker">Property Browser</p>
-                  <p className="mt-1 text-xs text-slate-400">Filter the building inventory by name, class, photo coverage, map coverage, and sort order.</p>
+                  <p className="mt-1 text-xs text-slate-400">Filter the list, click a building, and keep the active context on the right.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -1108,10 +1118,9 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
               statusMessage={buildingPhotoStatus.buildingId === activeInventoryBuilding?.id ? buildingPhotoStatus.message : ""}
             />
 
-            <PlatformPanel kicker="Building Actions" title="Use This Building Across The Platform">
+            <PlatformPanel kicker="Current Building" title="Use This Building Across The Platform">
               <div className="space-y-3 text-sm text-slate-300">
-                <p>{activeInventoryBuilding ? `Use ${displayBuildingName(activeInventoryBuilding)} as the active building context across the client workspace.` : "Select a building to start from one shared building context."}</p>
-                <p className="text-xs text-slate-400">Removing a building now creates a client-scoped delete record, so it stays gone after refresh and cloud sync instead of being rebuilt from saved workspace state.</p>
+                <p>{activeInventoryBuilding ? `${displayBuildingName(activeInventoryBuilding)} is the active building for downstream surveys, analyses, and CRM work.` : "Select a building to start from one shared building context."}</p>
                 {activeBuildingSummary ? (
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="border border-white/10 bg-black/20 p-2"><p className="text-slate-400">Vacant Suites</p><p className="mt-1 text-white">{formatInt(activeBuildingSummary.vacantSuites)}</p></div>
@@ -1123,14 +1132,27 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
                 <div className="space-y-2">
                   {aiRecommendations.map((item) => <div key={item} className="border border-white/10 bg-black/20 p-2 text-xs text-slate-200">• {item}</div>)}
                 </div>
+                {activeInventoryBuilding ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn-premium btn-premium-secondary" onClick={() => {
+                      persistBuildingFocus(clientId, activeInventoryBuilding);
+                      router.push("/?module=surveys");
+                    }}>Open Surveys</button>
+                    <button type="button" className="btn-premium btn-premium-secondary" onClick={() => {
+                      persistBuildingFocus(clientId, activeInventoryBuilding);
+                      router.push("/?module=deals");
+                    }}>Open CRM</button>
+                    <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={queueSelectedSuitesForSurveys} disabled={selectedSuites.length === 0}>Add Selected Suites To Surveys</button>
+                  </div>
+                ) : null}
                 {error ? <p className="text-xs text-red-300">{error}</p> : null}
                 <p className="text-xs text-cyan-100">{status}</p>
               </div>
             </PlatformPanel>
 
-            <PlatformPanel kicker="Shortlist + Tours" title="Move Selected Suites Into Live Workflow">
+            <PlatformPanel kicker="Workflow" title="Move Selected Suites Into Live Workflow">
               <div className="space-y-3 text-sm text-slate-300">
-                <p>Select a deal, choose suites, and push them into a shortlist, scheduled tour, or proposal-requested state without leaving the building workspace.</p>
+                <p>Select a deal, choose suites, and push them into a shortlist, a scheduled tour, or proposal-requested status.</p>
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                   <select className="input-premium" value={workflowDealId} onChange={(event) => setWorkflowDealId(event.target.value)}>
                     <option value="">No linked deal</option>
@@ -1284,9 +1306,9 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
 
       {activeInventoryBuilding ? (
         <PlatformDashboardTier
-          label="Stacking Plan"
+          label="Suites"
           title={`${displayBuildingName(activeInventoryBuilding)} Suite Stack`}
-          description="Edit floors, suites, tenants, and economics in one building-first workspace. Current lease and sublease uploads continue to inform the stack, while proposals stay non-authoritative."
+          description="Review the available suite set, then edit the stack only when you need deeper detail."
         >
           <div className="space-y-4">
             <PlatformPanel kicker="Suite Browser" title="Filter And Select Suites">

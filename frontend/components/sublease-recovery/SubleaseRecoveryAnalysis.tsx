@@ -6,6 +6,7 @@ import type { NormalizerResponse, ScenarioWithId } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import {
@@ -176,11 +177,22 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
     };
 
     async function hydrate() {
+      let localParsed: { seed?: string; scenarios?: SubleaseScenario[] } | null = null;
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        localParsed = raw ? (JSON.parse(raw) as { seed?: string; scenarios?: SubleaseScenario[] }) : null;
+      } catch {
+        localParsed = null;
+      }
       if (isAuthenticated) {
         try {
           const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
           if (cancelled) return;
-          const parsed = remote.value as { seed?: string; scenarios?: SubleaseScenario[] } | null;
+          const parsed = preferLocalWhenRemoteEmpty(
+            (remote.value as { seed?: string; scenarios?: SubleaseScenario[] } | null) ?? null,
+            localParsed,
+            (value) => value.seed === scenarioSeed(existingKey) && Array.isArray(value.scenarios) && value.scenarios.length > 0,
+          );
           if (parsed && parsed.seed === scenarioSeed(existingKey) && Array.isArray(parsed.scenarios) && parsed.scenarios.length > 0) {
             const restored = parsed.scenarios.map((scenario) => normalizeStoredScenario(existing, scenario, clientId));
             setScenarios(restored);
@@ -196,21 +208,13 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
         applyDefaults();
         return;
       }
-      try {
-        const raw = localStorage.getItem(scopedStorageKey);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { seed?: string; scenarios?: SubleaseScenario[] };
-          if (parsed.seed === scenarioSeed(existingKey) && Array.isArray(parsed.scenarios) && parsed.scenarios.length > 0) {
-            const restored = parsed.scenarios.map((scenario) => normalizeStoredScenario(existing, scenario, clientId));
-            setScenarios(restored);
-            setActiveScenarioId(restored[0].id);
-            setSaveStatus("Loaded saved scenarios");
-            setStorageHydrated(true);
-            return;
-          }
-        }
-      } catch {
-        // ignore parse issues and reset from baseline
+      if (localParsed?.seed === scenarioSeed(existingKey) && Array.isArray(localParsed.scenarios) && localParsed.scenarios.length > 0) {
+        const restored = localParsed.scenarios.map((scenario) => normalizeStoredScenario(existing, scenario, clientId));
+        setScenarios(restored);
+        setActiveScenarioId(restored[0].id);
+        setSaveStatus("Loaded saved scenarios");
+        setStorageHydrated(true);
+        return;
       }
       applyDefaults();
     }
@@ -223,23 +227,26 @@ export function SubleaseRecoveryAnalysis({ clientId, sourceScenario, exportBrand
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!storageHydrated) return;
+    const payload = scenarios.length === 0 ? null : { seed: scenarioSeed(existingKey), scenarios };
+    try {
+      if (!payload) {
+        localStorage.removeItem(scopedStorageKey);
+      } else {
+        localStorage.setItem(scopedStorageKey, JSON.stringify(payload));
+        setSaveStatus(`Saved ${new Date().toLocaleTimeString()}`);
+      }
+    } catch {
+      if (!isAuthenticated) {
+        setSaveStatus("Unable to save in this browser");
+      }
+    }
     if (isAuthenticated) {
-      const payload = scenarios.length === 0 ? null : { seed: scenarioSeed(existingKey), scenarios };
       void saveWorkspaceCloudSection(scopedStorageKey, payload)
         .then(() => setSaveStatus(`Saved to account ${new Date().toLocaleTimeString()}`))
         .catch(() => setSaveStatus("Unable to save to account"));
       return;
     }
-    if (scenarios.length === 0) {
-      localStorage.removeItem(scopedStorageKey);
-      return;
-    }
-    try {
-      localStorage.setItem(scopedStorageKey, JSON.stringify({ seed: scenarioSeed(existingKey), scenarios }));
-      setSaveStatus(`Saved ${new Date().toLocaleTimeString()}`);
-    } catch {
-      setSaveStatus("Unable to save in this browser");
-    }
+    if (!payload) setSaveStatus("Not saved");
   }, [scenarios, existingKey, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const activeScenario = scenarios.find((scenario) => scenario.id === activeScenarioId) ?? scenarios[0] ?? null;

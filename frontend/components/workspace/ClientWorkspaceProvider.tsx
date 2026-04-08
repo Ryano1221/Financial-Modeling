@@ -30,10 +30,18 @@ import {
 import { buildWorkspaceEntityGraph, type WorkspaceEntityGraph } from "@/lib/workspace/entities";
 import { inferWorkspaceDocumentType } from "@/lib/workspace/document-type";
 import { inferDocumentMimeType, isWordDocumentFile } from "@/lib/workspace/document-preview";
+import {
+  buildLocalStorageDocumentCache,
+  clearDocumentCache,
+  loadDocumentCache,
+  saveDocumentCache,
+} from "@/lib/workspace/document-cache";
 import { getDealDocumentStageTransition } from "@/lib/workspace/deal-stage-automation";
 import { fetchWorkspaceCloudState, saveWorkspaceCloudState } from "@/lib/workspace/cloud";
+import { mergeHydratedWorkspaceState, type HydratedWorkspaceState } from "@/lib/workspace/account-sync";
 import { filterDocumentsByDeletedIds, normalizeDeletionIds } from "@/lib/workspace/deletions";
 import { normalizeRepresentationMode, type RepresentationMode } from "@/lib/workspace/representation-mode";
+import { upsertRegisteredDocument } from "@/lib/financial-analysis-import";
 import {
   CLIENT_DOCUMENT_TYPES,
   DEFAULT_DEAL_STAGES,
@@ -181,6 +189,11 @@ function getDeletedDocumentStorageKey(session: SupabaseAuthSession | null): stri
   return userId ? `${DELETED_DOCUMENT_LIBRARY_STORAGE_KEY}:${userId}` : DELETED_DOCUMENT_LIBRARY_STORAGE_KEY;
 }
 
+function getWorkspaceStorageKey(baseKey: string, session: SupabaseAuthSession | null): string {
+  const userId = asText(session?.user?.id);
+  return userId ? `${baseKey}:${userId}` : baseKey;
+}
+
 function mergeDocumentPayloads(
   documents: ClientWorkspaceDocument[],
   cachedDocuments: ClientWorkspaceDocument[],
@@ -199,15 +212,43 @@ function mergeDocumentPayloads(
   });
 }
 
-function readCachedDocuments(
+async function readCachedDocuments(
   storage: Storage,
   session: SupabaseAuthSession | null,
   options?: { allowLegacyFallback?: boolean },
-): ClientWorkspaceDocument[] {
-  const scopedDocuments = parseStoredDocuments(storage.getItem(getDocumentStorageKey(session)));
+): Promise<ClientWorkspaceDocument[]> {
+  const scopedKey = getDocumentStorageKey(session);
+  let scopedDocuments = await loadDocumentCache(scopedKey).catch(() => null);
+  if (!Array.isArray(scopedDocuments) || scopedDocuments.length === 0) {
+    scopedDocuments = parseStoredDocuments(storage.getItem(scopedKey));
+    if (scopedDocuments.length > 0) {
+      void saveDocumentCache(scopedKey, scopedDocuments).catch(() => undefined);
+    }
+  }
+  try {
+    storage.removeItem(scopedKey);
+  } catch {
+    // ignore localStorage cleanup errors
+  }
   if (!session) return scopedDocuments;
-  const legacyDocuments = parseStoredDocuments(storage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
-  if (scopedDocuments.length === 0) return options?.allowLegacyFallback ? legacyDocuments : [];
+
+  let legacyDocuments: ClientWorkspaceDocument[] = [];
+  if (options?.allowLegacyFallback) {
+    legacyDocuments = await loadDocumentCache(DOCUMENT_LIBRARY_STORAGE_KEY).catch(() => null) || [];
+    if (legacyDocuments.length === 0) {
+      legacyDocuments = parseStoredDocuments(storage.getItem(DOCUMENT_LIBRARY_STORAGE_KEY));
+      if (legacyDocuments.length > 0) {
+        void saveDocumentCache(DOCUMENT_LIBRARY_STORAGE_KEY, legacyDocuments).catch(() => undefined);
+      }
+    }
+    try {
+      storage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
+    } catch {
+      // ignore localStorage cleanup errors
+    }
+  }
+
+  if (scopedDocuments.length === 0) return legacyDocuments;
   return mergeDocumentPayloads(scopedDocuments, legacyDocuments);
 }
 
@@ -605,7 +646,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     if (!authResolved) return;
     let cancelled = false;
 
-    const applyWorkspaceState = (state: Record<string, unknown> | null | undefined) => {
+    const parseWorkspaceState = (state: Record<string, unknown> | null | undefined): HydratedWorkspaceState => {
       const loadedRepresentationMode = normalizeRepresentationMode(state?.representationMode);
       const clientsRaw = Array.isArray(state?.clients) ? state?.clients : [];
       const dealsRaw = Array.isArray(state?.deals) ? state?.deals : [];
@@ -615,30 +656,44 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       const activeRaw = asText(state?.activeClientId);
       const loadedClients = parseStoredClients(JSON.stringify(clientsRaw));
       const loadedDeals = parseStoredDeals(JSON.stringify(dealsRaw));
+      const loadedDealStages = parseStoredDealStageMap(JSON.stringify(dealStagesRaw || {}), loadedRepresentationMode);
+      const loadedCrmSettings = parseStoredCrmSettingsMap(JSON.stringify(crmSettingsRaw || {}), loadedRepresentationMode);
+      const syncedDeletedDocumentIds = normalizeDeletionIds(state?.deletedDocumentIds);
+      const loadedDocuments = filterDocumentsByDeletedIds(
+        parseStoredDocuments(JSON.stringify(documentsRaw)),
+        syncedDeletedDocumentIds,
+      );
+      return {
+        representationMode: loadedRepresentationMode,
+        clients: loadedClients,
+        deals: loadedDeals,
+        dealStageMap: loadedDealStages,
+        crmSettingsMap: loadedCrmSettings,
+        documents: loadedDocuments,
+        deletedDocumentIds: syncedDeletedDocumentIds,
+        activeClientId: activeRaw || null,
+      };
+    };
+
+    const applyHydratedWorkspaceState = (state: HydratedWorkspaceState) => {
+      const loadedRepresentationMode = normalizeRepresentationMode(state.representationMode);
+      const loadedClients = state.clients;
+      const loadedDeals = state.deals;
       const loadedDealStages = seedDealStagesForClients(
         loadedClients,
-        parseStoredDealStageMap(JSON.stringify(dealStagesRaw || {}), loadedRepresentationMode),
+        state.dealStageMap,
         loadedRepresentationMode,
       );
       const loadedCrmSettings = seedCrmSettingsForClients(
         loadedClients,
-        parseStoredCrmSettingsMap(JSON.stringify(crmSettingsRaw || {}), loadedRepresentationMode),
+        state.crmSettingsMap,
         loadedRepresentationMode,
       );
-      const cachedDocuments = readCachedDocuments(window.localStorage, session, { allowLegacyFallback: true });
-      const localDeletedDocumentIds = readDeletedDocumentIds(window.localStorage, session);
-      const syncedDeletedDocumentIds = normalizeDeletionIds(state?.deletedDocumentIds);
-      const combinedDeletedDocumentIds = normalizeDeletionIds([
-        ...syncedDeletedDocumentIds,
-        ...localDeletedDocumentIds,
-      ]);
-      const loadedDocuments = filterDocumentsByDeletedIds(
-        mergeDocumentPayloads(parseStoredDocuments(JSON.stringify(documentsRaw)), cachedDocuments),
-        combinedDeletedDocumentIds,
-      );
+      const combinedDeletedDocumentIds = normalizeDeletionIds(state.deletedDocumentIds);
+      const loadedDocuments = filterDocumentsByDeletedIds(state.documents, combinedDeletedDocumentIds);
       const resolvedActive =
-        activeRaw && loadedClients.some((client) => client.id === activeRaw)
-          ? activeRaw
+        state.activeClientId && loadedClients.some((client) => client.id === state.activeClientId)
+          ? state.activeClientId
           : (loadedClients[0]?.id || null);
       setRepresentationModeState(loadedRepresentationMode);
       setClients(loadedClients);
@@ -650,44 +705,46 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setActiveClientId(resolvedActive);
     };
 
-    const applyLocalFallback = () => {
+    const loadLocalWorkspaceState = async (): Promise<HydratedWorkspaceState> => {
+      const representationModeKey = getWorkspaceStorageKey(REPRESENTATION_MODE_STORAGE_KEY, session);
+      const clientsKey = getWorkspaceStorageKey(CLIENTS_STORAGE_KEY, session);
+      const dealsKey = getWorkspaceStorageKey(DEAL_LIBRARY_STORAGE_KEY, session);
+      const dealStagesKey = getWorkspaceStorageKey(DEAL_STAGE_CONFIG_STORAGE_KEY, session);
+      const crmSettingsKey = getWorkspaceStorageKey(CRM_SETTINGS_STORAGE_KEY, session);
+      const activeClientKey = getWorkspaceStorageKey(ACTIVE_CLIENT_STORAGE_KEY, session);
       const loadedRepresentationMode = normalizeRepresentationMode(
-        window.localStorage.getItem(REPRESENTATION_MODE_STORAGE_KEY),
+        window.localStorage.getItem(representationModeKey),
       );
-      const loadedClients = parseStoredClients(window.localStorage.getItem(CLIENTS_STORAGE_KEY));
-      const loadedDeals = parseStoredDeals(window.localStorage.getItem(DEAL_LIBRARY_STORAGE_KEY));
+      const loadedClients = parseStoredClients(window.localStorage.getItem(clientsKey));
+      const loadedDeals = parseStoredDeals(window.localStorage.getItem(dealsKey));
       const loadedDealStages = seedDealStagesForClients(
         loadedClients,
-        parseStoredDealStageMap(window.localStorage.getItem(DEAL_STAGE_CONFIG_STORAGE_KEY), loadedRepresentationMode),
+        parseStoredDealStageMap(window.localStorage.getItem(dealStagesKey), loadedRepresentationMode),
         loadedRepresentationMode,
       );
       const loadedCrmSettings = seedCrmSettingsForClients(
         loadedClients,
-        parseStoredCrmSettingsMap(window.localStorage.getItem(CRM_SETTINGS_STORAGE_KEY), loadedRepresentationMode),
+        parseStoredCrmSettingsMap(window.localStorage.getItem(crmSettingsKey), loadedRepresentationMode),
         loadedRepresentationMode,
       );
       const localDeletedDocumentIds = readDeletedDocumentIds(window.localStorage, session);
-      const loadedDocuments = filterDocumentsByDeletedIds(
-        readCachedDocuments(window.localStorage, session),
-        localDeletedDocumentIds,
-      );
-      const storedActiveId = asText(window.localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY));
-      setRepresentationModeState(loadedRepresentationMode);
-      setClients(loadedClients);
-      setAllDeals(loadedDeals);
-      setDealStageMap(loadedDealStages);
-      setCrmSettingsMap(loadedCrmSettings);
-      setAllDocuments(loadedDocuments);
-      setDeletedDocumentIds(localDeletedDocumentIds);
-      if (storedActiveId && loadedClients.some((client) => client.id === storedActiveId)) {
-        setActiveClientId(storedActiveId);
-      } else {
-        setActiveClientId(loadedClients[0]?.id || null);
-      }
+      const loadedDocuments = await readCachedDocuments(window.localStorage, session);
+      const storedActiveId = asText(window.localStorage.getItem(activeClientKey));
+      return {
+        representationMode: loadedRepresentationMode,
+        clients: loadedClients,
+        deals: loadedDeals,
+        dealStageMap: loadedDealStages,
+        crmSettingsMap: loadedCrmSettings,
+        documents: loadedDocuments,
+        deletedDocumentIds: localDeletedDocumentIds,
+        activeClientId: storedActiveId || null,
+      };
     };
 
     async function hydrate() {
       setReady(false);
+      const localState = await loadLocalWorkspaceState();
       if (session) {
         setCloudLocalFallback(false);
         setCloudSyncStatus("idle");
@@ -699,18 +756,27 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             remote.workspace_state && typeof remote.workspace_state === "object"
               ? remote.workspace_state
               : {};
-          applyWorkspaceState(workspaceState);
+          const remoteState = parseWorkspaceState(workspaceState);
+          applyHydratedWorkspaceState(mergeHydratedWorkspaceState(remoteState, localState));
           setCloudLocalFallback(false);
           setCloudSyncStatus("synced");
           setCloudSyncMessage("Cloud workspace loaded.");
           setCloudLastSyncedAt(asText(remote.updated_at) || null);
           try {
-            window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
-            window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
-            window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
-            window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
-            window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
-            window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
+            window.localStorage.removeItem(getWorkspaceStorageKey(CLIENTS_STORAGE_KEY, session));
+            window.localStorage.removeItem(getWorkspaceStorageKey(DEAL_LIBRARY_STORAGE_KEY, session));
+            window.localStorage.removeItem(getWorkspaceStorageKey(DEAL_STAGE_CONFIG_STORAGE_KEY, session));
+            window.localStorage.removeItem(getWorkspaceStorageKey(CRM_SETTINGS_STORAGE_KEY, session));
+            window.localStorage.removeItem(getWorkspaceStorageKey(ACTIVE_CLIENT_STORAGE_KEY, session));
+            window.localStorage.removeItem(getWorkspaceStorageKey(REPRESENTATION_MODE_STORAGE_KEY, session));
+            if (session) {
+              window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
+              window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
+              window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
+              window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
+              window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+              window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
+            }
           } catch {
             // ignore localStorage errors
           }
@@ -725,7 +791,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             return;
           }
           setCloudLocalFallback(true);
-          applyLocalFallback();
+          applyHydratedWorkspaceState(localState);
           setCloudSyncStatus("local");
           setCloudSyncMessage(message || "Cloud unavailable. Using local device workspace.");
           setCloudLastSyncedAt(null);
@@ -734,7 +800,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
       setCloudLocalFallback(false);
-      applyLocalFallback();
+      applyHydratedWorkspaceState(localState);
       setCloudSyncStatus("local");
       setCloudSyncMessage("Local device only (sign in for cloud sync).");
       setCloudLastSyncedAt(null);
@@ -749,44 +815,103 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    const storageKey = getWorkspaceStorageKey(CLIENTS_STORAGE_KEY, session);
     if (session && !cloudLocalFallback) {
-      window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
       return;
     }
-    window.localStorage.setItem(CLIENTS_STORAGE_KEY, JSON.stringify(clients));
+    window.localStorage.setItem(storageKey, JSON.stringify(clients));
   }, [ready, clients, session, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    const storageKey = getWorkspaceStorageKey(DEAL_LIBRARY_STORAGE_KEY, session);
     if (session && !cloudLocalFallback) {
-      window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
       return;
     }
-    window.localStorage.setItem(DEAL_LIBRARY_STORAGE_KEY, JSON.stringify(allDeals));
+    window.localStorage.setItem(storageKey, JSON.stringify(allDeals));
   }, [ready, allDeals, session, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    const storageKey = getWorkspaceStorageKey(DEAL_STAGE_CONFIG_STORAGE_KEY, session);
     if (session && !cloudLocalFallback) {
-      window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
       return;
     }
-    window.localStorage.setItem(DEAL_STAGE_CONFIG_STORAGE_KEY, JSON.stringify(dealStageMap));
+    window.localStorage.setItem(storageKey, JSON.stringify(dealStageMap));
   }, [ready, dealStageMap, session, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    const storageKey = getWorkspaceStorageKey(CRM_SETTINGS_STORAGE_KEY, session);
     if (session && !cloudLocalFallback) {
-      window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
       return;
     }
-    window.localStorage.setItem(CRM_SETTINGS_STORAGE_KEY, JSON.stringify(crmSettingsMap));
+    window.localStorage.setItem(storageKey, JSON.stringify(crmSettingsMap));
   }, [ready, crmSettingsMap, session, cloudLocalFallback]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
     const storageKey = getDocumentStorageKey(session);
-    window.localStorage.setItem(storageKey, JSON.stringify(allDocuments));
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const savedToIndexedDb = allDocuments.length > 0
+          ? await saveDocumentCache(storageKey, allDocuments)
+          : (await clearDocumentCache(storageKey), true);
+        if (cancelled) return;
+        if (savedToIndexedDb) {
+          try {
+            window.localStorage.removeItem(storageKey);
+            if (session) {
+              window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
+            }
+          } catch {
+            // ignore legacy localStorage cleanup failures
+          }
+          return;
+        }
+      } catch (error) {
+        console.warn("workspace_document_cache_save_failed", error);
+        if (cancelled) return;
+      }
+
+      if (session && !cloudLocalFallback) {
+        try {
+          window.localStorage.removeItem(storageKey);
+          window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
+        } catch {
+          // ignore cleanup failures
+        }
+        return;
+      }
+
+      try {
+        const compactDocuments = buildLocalStorageDocumentCache(allDocuments);
+        window.localStorage.setItem(storageKey, JSON.stringify(compactDocuments));
+        if (session) {
+          window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
+        }
+      } catch (error) {
+        console.warn("workspace_document_cache_localstorage_failed", error);
+        try {
+          window.localStorage.removeItem(storageKey);
+          if (session) {
+            window.localStorage.removeItem(DOCUMENT_LIBRARY_STORAGE_KEY);
+          }
+        } catch {
+          // ignore cleanup failures
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [ready, allDocuments, session, cloudLocalFallback]);
 
   useEffect(() => {
@@ -801,27 +926,29 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    const storageKey = getWorkspaceStorageKey(REPRESENTATION_MODE_STORAGE_KEY, session);
     if (session && !cloudLocalFallback) {
-      window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
       return;
     }
     if (representationMode) {
-      window.localStorage.setItem(REPRESENTATION_MODE_STORAGE_KEY, representationMode);
+      window.localStorage.setItem(storageKey, representationMode);
       return;
     }
-    window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
+    window.localStorage.removeItem(storageKey);
   }, [ready, session, cloudLocalFallback, representationMode]);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined") return;
+    const storageKey = getWorkspaceStorageKey(ACTIVE_CLIENT_STORAGE_KEY, session);
     if (session && !cloudLocalFallback) {
-      window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
       return;
     }
     if (activeClientId) {
-      window.localStorage.setItem(ACTIVE_CLIENT_STORAGE_KEY, activeClientId);
+      window.localStorage.setItem(storageKey, activeClientId);
     } else {
-      window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
     }
   }, [ready, activeClientId, session, cloudLocalFallback]);
 
@@ -1196,7 +1323,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       normalizeSnapshot: snapshot,
     };
 
-    setAllDocuments((prev) => [document, ...prev]);
+    setAllDocuments((prev) => upsertRegisteredDocument(prev, document));
     if (document.dealId) {
       const nowIso = new Date().toISOString();
       setAllDeals((prev) =>

@@ -8,6 +8,7 @@ import type { NormalizerResponse } from "@/lib/types";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { SurveyLocationsMap } from "@/components/surveys/SurveyLocationsMap";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
@@ -88,25 +89,31 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
     };
 
     async function hydrate() {
+      let localParsed: { entries?: SurveyEntry[]; selectedId?: string } | null = null;
+      try {
+        const raw = localStorage.getItem(scopedStorageKey);
+        localParsed = raw ? (JSON.parse(raw) as { entries?: SurveyEntry[]; selectedId?: string }) : null;
+      } catch {
+        localParsed = null;
+      }
       if (isAuthenticated) {
         try {
           const remote = await fetchWorkspaceCloudSection(scopedStorageKey);
           if (cancelled) return;
-          applyParsed((remote.value as { entries?: SurveyEntry[]; selectedId?: string } | null) ?? null);
+          applyParsed(
+            preferLocalWhenRemoteEmpty(
+              (remote.value as { entries?: SurveyEntry[]; selectedId?: string } | null) ?? null,
+              localParsed,
+              (value) => Array.isArray(value.entries) && value.entries.length > 0,
+            ),
+          );
           return;
         } catch (error) {
           console.warn("surveys_cloud_load_failed", error);
           if (cancelled) return;
-          setStorageHydrated(true);
-          return;
         }
       }
-      try {
-        const raw = localStorage.getItem(scopedStorageKey);
-        applyParsed(raw ? (JSON.parse(raw) as { entries?: SurveyEntry[]; selectedId?: string }) : null);
-      } catch {
-        setStorageHydrated(true);
-      }
+      applyParsed(localParsed);
     }
 
     void hydrate();
@@ -118,18 +125,16 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!storageHydrated) return;
-    if (isAuthenticated) {
-      const payload = entries.length === 0 ? null : { entries, selectedId };
-      void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
-        console.warn("surveys_cloud_save_failed", error);
-      });
-      return;
-    }
-    if (entries.length === 0) {
+    const payload = entries.length === 0 ? null : { entries, selectedId };
+    if (payload) {
+      localStorage.setItem(scopedStorageKey, JSON.stringify(payload));
+    } else {
       localStorage.removeItem(scopedStorageKey);
-      return;
     }
-    localStorage.setItem(scopedStorageKey, JSON.stringify({ entries, selectedId }));
+    if (!isAuthenticated) return;
+    void saveWorkspaceCloudSection(scopedStorageKey, payload).catch((error) => {
+      console.warn("surveys_cloud_save_failed", error);
+    });
   }, [entries, selectedId, scopedStorageKey, isAuthenticated, storageHydrated]);
 
   const selected = useMemo(() => entries.find((entry) => entry.id === selectedId) ?? entries[0] ?? null, [entries, selectedId]);
