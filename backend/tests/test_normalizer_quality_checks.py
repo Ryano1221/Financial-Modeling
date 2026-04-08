@@ -1332,6 +1332,73 @@ def test_extract_lease_hints_detects_full_service_rate_cue() -> None:
     assert float(hints.get("opex_psf_year_1") or 0.0) == 0.0
 
 
+def test_normalize_impl_prefers_sublease_body_over_attached_master_lease(monkeypatch) -> None:
+    text = (
+        "LANDLORD CONSENT TO SUBLEASE AGREEMENT\n"
+        "Sublease Agreement dated as of August 28, 2024 by and between Tenant and SIGNAL WEALTH ADVISORS, LLC.\n"
+        "THIS SUBLEASE AGREEMENT (\"Sublease\") is made and entered into August 28, 2024, by and between "
+        "A GLIMMER OF HOPE FOUNDATION and SIGNAL WEALTH ADVISORS, LLC.\n"
+        "WHEREAS, subject to the consent of Master Lessor, Sublessee desires to sublease from Sublessor the entire Master Premises.\n"
+        "WHEREAS, Sublessor and Bee Cave Properties, Inc. entered into a lease of approximately 2,175 rentable square feet "
+        "comprising Suite 201 located at 3103 Bee Caves Rd. Rollingwood, TX 78746 in the building commonly known as "
+        "Centre One Office Building (collectively, the \"Master Premises\");\n"
+        "ARTICLE III TERM; SURRENDER OF POSSESSION\n"
+        "3.01 Term. Unless the Master Lease is terminated sooner pursuant to the terms thereof, the term of this Sublease "
+        "(\"Term\") shall commence on (i) the later of Master Lessor's consent to the Sublease or (ii) September 1, 2024 "
+        "(the \"Commencement Date\") and ending on the December 31, 2026.\n"
+        "ARTICLE IV RENT\n"
+        "4.01 Base Rental. Sublessee hereby agrees to pay an annual base rental (\"Base Rent\") for the Subleased Premises:\n"
+        "Period Annual Base Rent per RSF Monthly Base Rent\n"
+        "Commencement Date - 12/31/2026 $33.50 per RSF $6,071.88\n"
+        "4.02 Operating Expenses. Sublessor and Sublessee hereby agree and acknowledge that solely for the purposes of this "
+        "Sublease, the Base Rent shall be inclusive of Operating Expenses and Taxes and Insurance.\n"
+        "BASIC LEASE INFORMATION\n"
+        "Section 3.1 Base Rent: Fixed Annual Rent is as follows:\n"
+        "Rental Rate per RSF Base Rent (Dollars) (Base) Rent Operating Expenses Rent\n"
+        "Year 1 $22.00 $47,850.00 $3,987.50 $14.50 $6,615.63\n"
+        "Section 7 Number of Parking Space for Tenant/Tenant Employees: 8 spaces.\n"
+    )
+    monkeypatch.setattr(main, "extract_text_from_pdf", lambda _buf: text)
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "sublease")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: (_ for _ in ()).throw(AssertionError("sublease fast path should bypass AI extraction")),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.9, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="executed-sublease-consent.pdf", file=BytesIO(b"pdf-bytes"))
+    result, _used_ai = main._normalize_impl("rid", "PDF", None, None, upload)
+    canonical = result.canonical_lease
+
+    lease_type_value = canonical.lease_type.value if hasattr(canonical.lease_type, "value") else str(canonical.lease_type)
+    assert canonical.building_name == "Centre One Office Building"
+    assert canonical.address == "3103 Bee Caves Rd. Rollingwood, TX 78746"
+    assert canonical.suite == "201"
+    assert canonical.rsf == 2175.0
+    assert canonical.commencement_date == date(2024, 9, 1)
+    assert canonical.expiration_date == date(2026, 12, 31)
+    assert canonical.term_months == 28
+    assert canonical.rent_schedule
+    assert canonical.rent_schedule[0].start_month == 0
+    assert canonical.rent_schedule[-1].end_month == 27
+    assert all(step.rent_psf_annual == 33.5 for step in canonical.rent_schedule)
+    assert lease_type_value == "Full Service"
+    assert canonical.opex_psf_year_1 == 0.0
+    assert canonical.expense_stop_psf == 0.0
+
+
 def test_normalize_impl_full_service_rate_cue_overrides_nnn_rate_split(monkeypatch) -> None:
     text = (
         "COMMENCEMENT DATE: March 1, 2026\n"

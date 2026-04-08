@@ -8320,6 +8320,209 @@ def _should_use_hint_driven_proposal_canonical(doc_type_hint: str, extracted_hin
     return has_rsf and has_term and has_schedule and has_location and has_option_variants
 
 
+def _extract_sublease_body_text(text: str) -> str:
+    full_text = str(text or "")
+    if not full_text.strip():
+        return ""
+
+    start_match = re.search(r"(?is)\bTHIS\s+SUBLEASE\s+AGREEMENT\b", full_text)
+    if not start_match:
+        start_match = re.search(r"(?is)\bSUBLEASE\s+AGREEMENT\b", full_text)
+    if not start_match:
+        return full_text
+
+    body = full_text[start_match.start():]
+    end_patterns = (
+        r"(?is)\bBASIC\s+LEASE\s+INFORMATION\b",
+        r"(?is)\bSECTION\s*1\.1\(a\)\s+Premises\b",
+        r"(?is)\bCERTIFICATE\s+OF\s+LEASE\s+COMMENCEMENT\s+DATE\b",
+        r"(?is)\bEXHIBIT\s+A\s+THE\s+PREMISES\b",
+    )
+    end_candidates: list[int] = []
+    for pattern in end_patterns:
+        match = re.search(pattern, body)
+        if match and match.start() > 800:
+            end_candidates.append(match.start())
+    if end_candidates:
+        body = body[: min(end_candidates)]
+    return body
+
+
+def _extract_sublease_direct_hints(text: str, filename: str) -> dict[str, Any]:
+    body = _extract_sublease_body_text(text)
+    if not body.strip():
+        return {}
+
+    hints: dict[str, Any] = {}
+
+    recital_match = re.search(
+        r"(?is)lease\s+of\s+approximately\s+(?P<rsf>\d{1,3}(?:,\d{3})+|\d{3,7})\s+rentable\s+square\s+feet\s+"
+        r"comprising\s+suite\s+(?P<suite>[A-Za-z0-9\-]+)\s+located\s+at\s+(?P<address>.+?)\s+"
+        r"in\s+the\s+building\s+commonly\s+known\s+as\s+(?P<building>.+?)(?:\s*\(\s*collectively|\s*;|,?\s+collectively|\s*\()",
+        body,
+    )
+    if recital_match:
+        suite = _normalize_suite_value(recital_match.group("suite"))
+        address = _clean_address_candidate(recital_match.group("address").strip(" ,.;:"))
+        raw_building = re.sub(r"(?i)\s*\(.*$", "", recital_match.group("building")).strip(" ,.;:")
+        building = " ".join(raw_building.split())
+        if not building:
+            building = _clean_building_candidate(
+                recital_match.group("building").strip(" ,.;:"),
+                suite_hint=suite,
+            )
+        rsf = _coerce_float_token(recital_match.group("rsf"), 0.0) or 0.0
+        if suite:
+            hints["suite"] = suite
+        if address:
+            hints["address"] = address
+        if building:
+            hints["building_name"] = building
+        if rsf > 0:
+            hints["rsf"] = rsf
+
+    term_match = re.search(
+        r"(?is)3\.01\s+Term\..{0,800}?\(ii\)\s+(?P<comm>[A-Za-z]+\s+\d{1,2},\s+\d{4})"
+        r".{0,220}?ending\s+on\s+(?:the\s+)?(?P<exp>[A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
+        body,
+    )
+    if term_match:
+        commencement = _parse_lease_date(term_match.group("comm"))
+        expiration = _parse_lease_date(term_match.group("exp"))
+        if isinstance(commencement, date):
+            hints["commencement_date"] = commencement
+        if isinstance(expiration, date):
+            hints["expiration_date"] = expiration
+        if isinstance(commencement, date) and isinstance(expiration, date):
+            hints["term_months"] = max(1, _month_diff(commencement, expiration))
+
+    rent_match = re.search(
+        r"(?is)4\.01\s+Base\s+Rental\..{0,900}?"
+        r"Commencement\s+Date\s*[–-]\s*(?P<exp>[A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})"
+        r".{0,140}?\$(?P<rate>\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s+per\s+RSF"
+        r"(?:.{0,140}?\$(?P<monthly>\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?))?",
+        body,
+    )
+    rent_rate = _coerce_float_token(rent_match.group("rate"), 0.0) if rent_match else 0.0
+    if rent_rate and rent_rate > 0:
+        commencement = hints.get("commencement_date")
+        expiration = hints.get("expiration_date") or _parse_lease_date(rent_match.group("exp"))
+        term_months = _coerce_int_token(hints.get("term_months"), 0) or 0
+        if not term_months and isinstance(commencement, date) and isinstance(expiration, date):
+            term_months = max(1, _month_diff(commencement, expiration))
+        if term_months > 0:
+            hints["rent_schedule"] = [
+                {
+                    "start_month": 0,
+                    "end_month": max(0, int(term_months) - 1),
+                    "rent_psf_annual": float(rent_rate),
+                }
+            ]
+            hints["full_service_rate_psf_yr"] = float(rent_rate)
+
+    if re.search(
+        r"(?is)4\.02\s+Operating\s+Expenses\..{0,500}?\bBase\s+Rent\b.{0,180}?\binclusive\s+of\s+Operating\s+Expenses\b",
+        body,
+    ):
+        hints["lease_type"] = "Full Service"
+        hints["expense_structure_type"] = "full_service"
+        hints["opex_psf_year_1"] = 0.0
+        hints["opex_growth_rate"] = 0.0
+        hints["opex_by_calendar_year"] = {}
+
+    if "building_name" not in hints:
+        fallback_building = _fallback_building_from_filename(filename)
+        if fallback_building:
+            hints["building_name"] = fallback_building
+
+    return hints
+
+
+def _should_use_hint_driven_sublease_canonical(doc_type_hint: str, extracted_hints: dict) -> bool:
+    if doc_type_hint != "sublease":
+        return False
+    if not isinstance(extracted_hints, dict):
+        return False
+    has_rsf = (_coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0) > 0
+    has_term = (_coerce_int_token(extracted_hints.get("term_months"), 0) or 0) > 0
+    has_schedule = isinstance(extracted_hints.get("rent_schedule"), list) and len(extracted_hints.get("rent_schedule") or []) > 0
+    has_location = any(str(extracted_hints.get(field) or "").strip() for field in ("building_name", "address", "suite"))
+    has_dates = isinstance(extracted_hints.get("commencement_date"), date) and isinstance(extracted_hints.get("expiration_date"), date)
+    return has_rsf and has_term and has_schedule and has_location and has_dates
+
+
+def _build_hint_driven_sublease_canonical_payload(extracted_hints: dict, filename: str) -> dict[str, Any]:
+    building_name = str(extracted_hints.get("building_name") or "").strip() or _fallback_building_from_filename(filename)
+    address = str(extracted_hints.get("address") or "").strip()
+    suite = _normalize_suite_value(str(extracted_hints.get("suite") or "").strip())
+    floor = _normalize_floor_candidate(str(extracted_hints.get("floor") or "").strip())
+    rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
+    commencement = extracted_hints.get("commencement_date") or date.today()
+    expiration = extracted_hints.get("expiration_date")
+    term_months = _coerce_int_token(extracted_hints.get("term_months"), 0) or 0
+    if expiration is None and isinstance(commencement, date) and term_months > 0:
+        try:
+            expiration = _expiration_from_term_months(commencement, int(term_months))
+        except Exception:
+            expiration = None
+    if expiration is None:
+        expiration = date.today()
+
+    scenario_name = " ".join(
+        part for part in [building_name, f"Suite {suite}" if suite else (f"Floor {floor}" if floor else "")]
+        if part
+    ).strip() or "Extracted sublease"
+
+    rent_schedule: list[dict[str, Any]] = []
+    for step in list(extracted_hints.get("rent_schedule") or []):
+        if not isinstance(step, dict):
+            continue
+        start_m = _coerce_int_token(step.get("start_month"), None)
+        end_m = _coerce_int_token(step.get("end_month"), start_m)
+        rate = _coerce_float_token(step.get("rent_psf_annual"), 0.0)
+        if start_m is None or end_m is None or rate <= 0:
+            continue
+        rent_schedule.append(
+            {
+                "start_month": max(0, int(start_m)),
+                "end_month": max(max(0, int(start_m)), int(end_m)),
+                "rent_psf_annual": float(rate),
+            }
+        )
+
+    lease_type = _canonicalize_lease_type_label(extracted_hints.get("lease_type")) or "Full Service"
+    is_full_service = _is_full_service_lease_type(lease_type)
+    parking_count = _coerce_int_token(extracted_hints.get("parking_count"), 0) or 0
+    parking_ratio = _coerce_float_token(extracted_hints.get("parking_ratio"), 0.0) or 0.0
+    if parking_count > 0 and rsf > 0:
+        parking_ratio = float(round((float(parking_count) / float(rsf)) * 1000.0, 6))
+
+    payload: dict[str, Any] = {
+        "scenario_name": scenario_name,
+        "building_name": building_name,
+        "suite": suite,
+        "floor": floor,
+        "address": address,
+        "premises_name": scenario_name,
+        "rsf": rsf,
+        "commencement_date": commencement,
+        "expiration_date": expiration,
+        "term_months": int(term_months),
+        "rent_schedule": rent_schedule,
+        "lease_type": lease_type,
+        "expense_structure_type": "full_service" if is_full_service else "nnn",
+        "opex_psf_year_1": 0.0 if is_full_service else (_coerce_float_token(extracted_hints.get("opex_psf_year_1"), 0.0) or 0.0),
+        "expense_stop_psf": 0.0,
+        "opex_growth_rate": 0.0 if is_full_service else (_coerce_float_token(extracted_hints.get("opex_growth_rate"), 0.0) or 0.0),
+        "discount_rate_annual": 0.08,
+        "free_rent_months": _coerce_int_token(extracted_hints.get("free_rent_months"), 0) or 0,
+        "parking_count": parking_count,
+        "parking_ratio": parking_ratio,
+        "parking_rate_monthly": _coerce_float_token(extracted_hints.get("parking_rate_monthly"), 0.0) or 0.0,
+    }
+    return payload
+
+
 def _build_hint_driven_proposal_canonical_payload(extracted_hints: dict, filename: str) -> dict[str, Any]:
     building_name = str(extracted_hints.get("building_name") or "").strip() or _fallback_building_from_filename(filename)
     address = str(extracted_hints.get("address") or "").strip()
@@ -11189,6 +11392,7 @@ def _normalize_impl(
     doc_type_hint = "unknown"
     option_variants: list[CanonicalLease] = []
     prefer_hint_driven_proposal_canonical = False
+    prefer_hint_driven_sublease_canonical = False
 
     if source_upper in ("PDF", "WORD"):
         if not file or not file.filename:
@@ -11250,11 +11454,27 @@ def _normalize_impl(
         except Exception as _hints_err:
             _LOG.warning("lease_hints_extraction_failed rid=%s err=%s", rid, str(_hints_err)[:200])
             extracted_hints = {}
+        if doc_type_hint == "sublease":
+            try:
+                sublease_direct_hints = _extract_sublease_direct_hints(text, file.filename or "")
+            except Exception as _sublease_hints_err:
+                _LOG.warning("sublease_hint_extraction_failed rid=%s err=%s", rid, str(_sublease_hints_err)[:200])
+                sublease_direct_hints = {}
+            if isinstance(sublease_direct_hints, dict) and sublease_direct_hints:
+                extracted_hints = {**extracted_hints, **sublease_direct_hints}
+            merged_parking_count = _coerce_int_token(extracted_hints.get("parking_count"), 0) or 0
+            merged_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
+            if merged_parking_count > 0 and merged_rsf > 0:
+                extracted_hints["parking_ratio"] = float(round((float(merged_parking_count) / float(merged_rsf)) * 1000.0, 6))
         try:
             note_highlights = _extract_lease_note_highlights(text)
         except Exception:
             note_highlights = []
         prefer_hint_driven_proposal_canonical = _should_use_hint_driven_proposal_canonical(
+            doc_type_hint,
+            extracted_hints,
+        )
+        prefer_hint_driven_sublease_canonical = _should_use_hint_driven_sublease_canonical(
             doc_type_hint,
             extracted_hints,
         )
@@ -11286,6 +11506,25 @@ def _normalize_impl(
                 "rent_schedule": 0.94 if extracted_hints.get("rent_schedule") else 0.4,
             }
             confidence_score = 0.9
+        elif prefer_hint_driven_sublease_canonical:
+            canonical = _dict_to_canonical(
+                _build_hint_driven_sublease_canonical_payload(extracted_hints, file.filename or ""),
+                "",
+                "",
+            )
+            field_confidence = {
+                "building_name": 0.94 if extracted_hints.get("building_name") else 0.45,
+                "address": 0.92 if extracted_hints.get("address") else 0.45,
+                "suite": 0.95 if extracted_hints.get("suite") else 0.45,
+                "floor": 0.88 if extracted_hints.get("floor") else 0.45,
+                "rsf": 0.95 if extracted_hints.get("rsf") else 0.45,
+                "commencement_date": 0.92 if extracted_hints.get("commencement_date") else 0.45,
+                "expiration_date": 0.92 if extracted_hints.get("expiration_date") else 0.45,
+                "term_months": 0.94 if extracted_hints.get("term_months") else 0.45,
+                "rent_schedule": 0.92 if extracted_hints.get("rent_schedule") else 0.45,
+                "lease_type": 0.9 if extracted_hints.get("lease_type") else 0.45,
+            }
+            confidence_score = 0.91
 
         if canonical is not None:
             pass
@@ -12150,7 +12389,7 @@ def _normalize_impl(
             if isinstance(extraction_artifacts.get("canonical_extraction"), dict)
             else {}
         )
-        if prefer_hint_driven_proposal_canonical:
+        if prefer_hint_driven_proposal_canonical or prefer_hint_driven_sublease_canonical:
             merge_metadata = {
                 "field_sources": {},
                 "fallback_fields": [],
