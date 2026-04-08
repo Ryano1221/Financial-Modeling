@@ -7,6 +7,7 @@ import { Footer } from "@/components/Footer";
 import { DebugBackendUrl } from "@/components/DebugBackendUrl";
 import { ClientWorkspaceProvider } from "@/components/workspace/ClientWorkspaceProvider";
 import { BrokerOsProvider } from "@/components/workspace/BrokerOsProvider";
+import { Analytics } from '@vercel/analytics/next';
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -63,6 +64,7 @@ export default function RootLayout({
             </Suspense>
           </BrokerOsProvider>
         </ClientWorkspaceProvider>
+        <Analytics />
       </body>
     </html>
   );
