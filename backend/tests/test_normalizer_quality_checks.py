@@ -1600,6 +1600,39 @@ def test_merge_canonical_primary_then_legacy_rejects_fragmentary_primary_rent_an
     assert "PARKING_OVERRIDE_ENTITLEMENT_COUNT_PRIMARY" in review_codes
 
 
+def test_merge_canonical_primary_then_legacy_rejects_short_primary_parking_abatement() -> None:
+    legacy = main._dict_to_canonical(
+        {
+            "building_name": "1300 East 5th",
+            "floor": "4th",
+            "rsf": 12153,
+            "commencement_date": "2026-12-01",
+            "expiration_date": "2032-05-31",
+            "term_months": 66,
+            "rent_schedule": [{"start_month": 0, "end_month": 65, "rent_psf_annual": 43.5}],
+            "parking_abatement_periods": [{"start_month": 0, "end_month": 23}],
+        }
+    )
+    extraction = {
+        "term": {"commencement_date": "2026-12-01", "expiration_date": "2032-05-31", "term_months": 66},
+        "premises": {"building_name": "1300 East 5th", "floor": "4th", "rsf": 12153},
+        "parking_abatements": [{"start_month": 0, "end_month": 2}],
+        "confidence": {"overall": 0.75},
+        "provenance": {},
+    }
+
+    merged, meta = main._merge_canonical_primary_then_legacy(
+        primary_extraction=extraction,
+        legacy_canonical=legacy,
+        legacy_field_confidence={"parking_abatement_periods": 0.9},
+    )
+
+    assert [(period.start_month, period.end_month) for period in merged.parking_abatement_periods] == [(0, 23)]
+    assert meta["field_sources"]["parking_abatement_periods"] == "legacy_fallback"
+    review_codes = {str(task.get("issue_code") or "") for task in list(meta.get("review_tasks") or [])}
+    assert "PARKING_ABATEMENT_OVERRIDE_SHORT_PRIMARY" in review_codes
+
+
 def test_normalize_impl_centre_one_regression_retains_floor_and_ignores_share_as_opex_growth(monkeypatch) -> None:
     monkeypatch.setattr(main, "extract_text_from_word", lambda _buf, _name: (CENTRE_ONE_SUITE_201_TEXT, "docx"))
     monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)

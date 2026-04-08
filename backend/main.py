@@ -9454,6 +9454,24 @@ def _prune_resolved_review_tasks(tasks: list[dict], canonical: CanonicalLease) -
     return pruned
 
 
+def _covered_month_count(periods: list[Any]) -> int:
+    covered: set[int] = set()
+    for period in list(periods or []):
+        start_raw = getattr(period, "start_month", None)
+        end_raw = getattr(period, "end_month", start_raw)
+        if isinstance(period, dict):
+            start_raw = period.get("start_month", start_raw)
+            end_raw = period.get("end_month", end_raw)
+        start_month = _coerce_int_token(start_raw, None)
+        end_month = _coerce_int_token(end_raw, start_month)
+        if start_month is None or end_month is None:
+            continue
+        start_i = max(0, int(start_month))
+        end_i = max(start_i, int(end_month))
+        covered.update(range(start_i, end_i + 1))
+    return len(covered)
+
+
 _NORMALIZE_PRIMARY_PATH_BY_FIELD: dict[str, str] = {
     "commencement_date": "term.commencement_date",
     "expiration_date": "term.expiration_date",
@@ -9770,6 +9788,7 @@ def _merge_canonical_primary_then_legacy(
     suppressed_implausibly_low_primary_opex = False
     suppressed_implausibly_low_primary_ti = False
     suppressed_entitlement_primary_parking_count = False
+    suppressed_short_primary_parking_abatement = False
     suppressed_rofr_primary_suite = False
 
     if (
@@ -9916,6 +9935,19 @@ def _merge_canonical_primary_then_legacy(
     ):
         primary_updates.pop("parking_count", None)
         suppressed_entitlement_primary_parking_count = True
+    primary_parking_periods = list(primary_updates.get("parking_abatement_periods") or [])
+    legacy_parking_periods = list(getattr(legacy_canonical, "parking_abatement_periods", []) or [])
+    primary_parking_covered_months = _covered_month_count(primary_parking_periods)
+    legacy_parking_covered_months = _covered_month_count(legacy_parking_periods)
+    if (
+        primary_parking_periods
+        and legacy_parking_periods
+        and legacy_parking_covered_months >= 6
+        and primary_parking_covered_months > 0
+        and primary_parking_covered_months + 6 <= legacy_parking_covered_months
+    ):
+        primary_updates.pop("parking_abatement_periods", None)
+        suppressed_short_primary_parking_abatement = True
     legacy_commencement = getattr(legacy_canonical, "commencement_date", None)
     legacy_expiration = getattr(legacy_canonical, "expiration_date", None)
     legacy_term_months = _coerce_int_token(getattr(legacy_canonical, "term_months", None), None)
@@ -10115,6 +10147,19 @@ def _merge_canonical_primary_then_legacy(
                 "message": "Primary extraction captured the numerator from a parking entitlement ratio as the total stall count. Legacy/deterministic parking count was retained.",
                 "candidates": [{"field": "parking_count", "source": "legacy_fallback"}],
                 "recommended_value": legacy_parking_count,
+                "evidence": [],
+            }
+        )
+    if suppressed_short_primary_parking_abatement:
+        warnings.append("Retained legacy parking abatement timing because primary extraction only captured a shorter fragment of the concession window.")
+        review_tasks.append(
+            {
+                "field_path": "parking_abatement_periods",
+                "severity": "warn",
+                "issue_code": "PARKING_ABATEMENT_OVERRIDE_SHORT_PRIMARY",
+                "message": "Primary extraction produced a materially shorter parking abatement window. Legacy/deterministic parking abatement timing was retained.",
+                "candidates": [{"field": "parking_abatement_periods", "source": "legacy_fallback"}],
+                "recommended_value": None,
                 "evidence": [],
             }
         )
