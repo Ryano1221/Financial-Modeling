@@ -31,8 +31,16 @@ const FAQ_ITEMS = [
     a: "Yes. Obligations now treats executed subleases, landlord consents, and attached backup lease exhibits as one intake flow, while prioritizing the controlling sublease terms for dates, rent, and obligation tracking.",
   },
   {
+    q: "What happens with scanned executed leases that do not have selectable text?",
+    a: "If a scanned lease has a readable Basic Lease Information page, the platform now uses a faster OCR-first extraction path for the controlling lease terms so large image-only PDFs do not spend minutes in a slower fallback route before failing.",
+  },
+  {
     q: "How do I contact support?",
     a: "Use the Contact page or email info@thecremodel.com directly. Contact form submissions are routed to that same inbox so support stays in one place.",
+  },
+  {
+    q: "Do Survey and Lease Abstract exports match the Financial Analysis presentation style?",
+    a: "Yes. Survey and Lease Abstract exports now follow the same branded hierarchy, logo treatment, print formatting, and client-ready polish used by Financial Analysis deliverables.",
   },
   {
     q: "What changes when I switch representation mode?",
@@ -93,15 +101,15 @@ export default function DocsPage() {
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">Surveys</p>
-                <p className="mt-2 text-sm text-slate-300">Keep the survey table, map, editor, and occupancy cost view together so market options are easy to compare.</p>
+                <p className="mt-2 text-sm text-slate-300">Keep the survey table, map, editor, and occupancy cost view together so market options are easy to compare, then export branded Excel and PDF packages that match Financial Analysis output quality.</p>
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">Lease Abstracts</p>
-                <p className="mt-2 text-sm text-slate-300">Parse the controlling lease terms and produce a clean abstract from the saved document set.</p>
+                <p className="mt-2 text-sm text-slate-300">Parse the controlling lease terms and produce a clean abstract from the saved document set, including institutional-grade workbook and PDF deliverables for client-facing review.</p>
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">Obligations</p>
-                <p className="mt-2 text-sm text-slate-300">Track deadlines, notices, current leases, amendments, and signed subleases from the same connected client record.</p>
+                <p className="mt-2 text-sm text-slate-300">Track deadlines, notices, current leases, amendments, signed subleases, and scanned executed lease packages from the same connected client record.</p>
               </article>
             </div>
           </section>

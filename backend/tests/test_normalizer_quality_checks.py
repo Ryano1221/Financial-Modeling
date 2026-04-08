@@ -1458,6 +1458,82 @@ def test_normalize_impl_full_service_rate_cue_overrides_nnn_rate_split(monkeypat
     assert abs(float(canonical.rent_schedule[0].rent_psf_annual) - 33.5) < 1e-6
 
 
+def test_normalize_impl_uses_direct_basic_lease_info_for_scanned_lease(monkeypatch) -> None:
+    text = (
+        "LEASE AGREEMENT BETWEEN 7171 SW PARKWAY ASSOCIATES, LP, AS LANDLORD, AND THERMON, INC., AS TENANT\n"
+        "BASIC LEASE INFORMATION\n"
+        "April 17, 2018\n"
+        "7171 SW PARKWAY ASSOCIATES, LP, a Delaware limited partnership\n"
+        "THERMON, INC., a Texas corporation\n"
+        "Suite No. 200 (east wing), containing approximately 26,996 rentable square feet, on the second floor of the "
+        "building commonly known as B300 (the “Building”) in the multi-building office complex known as Summit at Lantana, "
+        "and whose street address is 7171 Southwest Parkway, Austin, TX 78735. The Premises are outlined on the plan attached to the Lease as Exhibit A.\n"
+        "132 full calendar months, plus any partial month from the Commencement Date to the end of the month in which the Commencement Date falls.\n"
+        "The earlier of (a) the date on which Tenant occupies any portion of the Premises and begins conducting business therein, or (b) December 1, 2018.\n"
+        "Subject to the partial abatement of Basic Rent provided below, Basic Rent shall be the following amounts for the following periods of time:\n"
+        "Lease Months Annual Basic Rent Rate Per Rentable Square Foot in the Premises Monthly Basic Rent\n"
+        "1-12 $26.00 $58,491.33\n"
+        "13-24 26.75 $60,178.58\n"
+        "25-36 27.50 $61,865.83\n"
+        "37-48 28.25 $63,553.08\n"
+        "49-60 29.00 $65,240.33\n"
+        "61-72 29.75 $66,927.58\n"
+        "73-84 30.50 $68,614.83\n"
+        "85-96 31.25 $70,302.08\n"
+        "97-108 32.00 $71,989.33\n"
+        "109-120 32.75 $73,676.58\n"
+        "121-132 33.50 $75,363.83\n"
+        "Basic Rent with respect to 6,996 rentable square feet of the Premises shall be abated during the first 24 months of the Term.\n"
+        "Additional Rent: Tenant Electric, Tenant's Separate Chilled Water Costs, and Tenant's Proportionate Share of Operating Costs and Taxes.\n"
+        "Tenant's Proportionate Share: 3.30%.\n"
+        "The foregoing Basic Lease Information is incorporated into and made a part of the Lease identified above.\n"
+    )
+    monkeypatch.setattr(main, "extract_text_from_pdf", lambda _buf: "")
+    monkeypatch.setattr(main, "extract_text_from_pdf_with_ocr", lambda _buf, force_ocr=True, ocr_pages=3: (text, "ocr"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "lease")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: (_ for _ in ()).throw(AssertionError("direct lease fast path should bypass AI extraction")),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.94, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="thermon-executed-lease.pdf", file=BytesIO(b"pdf-bytes"))
+    result, processed_ok = main._normalize_impl("rid", "PDF", None, None, upload)
+    canonical = result.canonical_lease
+
+    lease_type_value = canonical.lease_type.value if hasattr(canonical.lease_type, "value") else str(canonical.lease_type)
+    assert processed_ok is True
+    assert canonical.building_name == "Summit at Lantana - B300"
+    assert canonical.address == "7171 Southwest Parkway, Austin, TX 78735"
+    assert canonical.suite == "200"
+    assert canonical.floor == "2"
+    assert canonical.rsf == 26996.0
+    assert canonical.commencement_date == date(2018, 12, 1)
+    assert canonical.expiration_date == date(2029, 11, 30)
+    assert canonical.term_months == 132
+    assert lease_type_value == "NNN"
+    assert canonical.pro_rata_share == 0.033
+    assert len(canonical.rent_schedule) >= 11
+    assert abs(float(canonical.rent_schedule[0].rent_psf_annual) - 26.0) < 1e-6
+    assert canonical.rent_schedule[-1].end_month == 131
+    assert canonical.rent_abatements
+    assert canonical.rent_abatements[0].start_month == 0
+    assert canonical.rent_abatements[0].end_month == 23
+    assert abs(float(canonical.rent_abatements[0].percent_abated) - 25.915) < 0.01
+
+
 CENTRE_ONE_SUITE_201_TEXT = """
 Preamble Building: Centre One Office Building
 3103 Bee Caves Rd.

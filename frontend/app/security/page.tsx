@@ -23,10 +23,10 @@ export default function SecurityPage() {
             </div>
           </div>
 
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="surface-card p-5">
               <p className="heading-kicker">Authentication</p>
-              <p className="mt-2 text-sm text-slate-300">Protected workflows, storage actions, and exports run with authenticated user context, including account-scoped cloud workspace persistence.</p>
+              <p className="mt-2 text-sm text-slate-300">Protected workflows, storage actions, and client-facing exports run with authenticated user context, including account-scoped cloud workspace persistence and branded deliverables generated inside that same boundary.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Workspace Isolation</p>
@@ -39,6 +39,10 @@ export default function SecurityPage() {
             <div className="surface-card p-5">
               <p className="heading-kicker">Browser Storage</p>
               <p className="mt-2 text-sm text-slate-300">Large source-file payloads are cached in browser-managed document storage instead of relying on one oversized localStorage entry, which reduces quota failures during multi-file uploads.</p>
+            </div>
+            <div className="surface-card p-5">
+              <p className="heading-kicker">Bounded OCR</p>
+              <p className="mt-2 text-sm text-slate-300">Image-only lease PDFs use a bounded OCR-first path on the controlling lease information pages so extraction stays inside the authenticated backend workflow without running unnecessarily long background processing on every page.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Production Host</p>
@@ -55,7 +59,7 @@ export default function SecurityPage() {
               </div>
               <div className="surface-card p-5">
                 <p className="heading-kicker">Integrated workflows</p>
-                <p className="mt-2 text-sm text-slate-300">Cross-module handoffs still stay inside the same client workspace, so surveys, analyses, CRM records, lease abstracts, and obligations remain connected without weakening isolation or crossing between signed-in accounts.</p>
+                <p className="mt-2 text-sm text-slate-300">Cross-module handoffs still stay inside the same client workspace, so surveys, analyses, CRM records, lease abstracts, obligations, and their exported client deliverables remain connected without weakening isolation or crossing between signed-in accounts.</p>
               </div>
             </div>
           </section>
