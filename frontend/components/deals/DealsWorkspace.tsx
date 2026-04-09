@@ -3737,7 +3737,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </PlatformPanel>
             </div>
 
-        <PlatformPanel kicker="Create Deal" title="Quick Deal Intake" className="xl:col-span-12">
+        <PlatformPanel kicker="Create Deal" title="Quick Deal Intake" className="order-3 xl:col-span-12">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input className="input-premium sm:col-span-2" placeholder="Deal name*" value={form.dealName} onChange={(event) => setForm((prev) => ({ ...prev, dealName: event.target.value }))} />
             <input className="input-premium sm:col-span-2" placeholder={representationProfile.crm.quickDealRequirementPlaceholder} value={form.requirementName} onChange={(event) => setForm((prev) => ({ ...prev, requirementName: event.target.value }))} />
@@ -3773,7 +3773,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           </div>
         </PlatformPanel>
 
-            <div ref={pipelineViewsRef} className="xl:col-span-12 scroll-mt-28">
+            <div ref={pipelineViewsRef} className="order-4 xl:col-span-12 scroll-mt-28">
         <PlatformPanel kicker="Pipeline Views" title={isLandlordMode ? "Leasing Flow" : "Deal Flow"}>
           {view === "stacking_plan" ? (
             <div className="space-y-4">
@@ -4449,7 +4449,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </PlatformPanel>
         ) : null}
 
-        <PlatformPanel kicker="Deal Room" title={selectedDeal ? selectedDeal.dealName : "Select a deal"} className="xl:col-span-12">
+        <PlatformPanel kicker="Deal Room" title={selectedDeal ? selectedDeal.dealName : "Select a deal"} className="order-2 xl:col-span-12">
           {!selectedDeal ? <p className="text-sm text-slate-400">Create a deal or select one from the CRM views.</p> : (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
