@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   PlatformDashboardTier,
@@ -920,10 +920,6 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       .map((documentId) => documents.find((document) => document.id === documentId))
       .filter((document): document is (typeof documents)[number] => Boolean(document)),
     [documents, linkedDocumentMap, selectedDeal?.id],
-  );
-  const boardGridStyle = useMemo(
-    () => ({ "--stage-count": String(Math.max(dealStages.length, 1)) } as CSSProperties),
-    [dealStages.length],
   );
   const stageOrder = useMemo(
     () => new Map<string, number>(dealStages.map((stage, index) => [stage, index])),
@@ -3831,8 +3827,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
 
           {view === "board" ? (
             <div>
-              <div className="overflow-x-auto">
-                <div className="grid gap-3 pb-2 [grid-template-columns:repeat(var(--stage-count),minmax(220px,1fr))]" style={boardGridStyle}>
+                <div className="grid grid-cols-1 gap-3 pb-2 md:grid-cols-2 xl:grid-cols-5">
                   {dealStages.map((stage) => {
                     const stageDeals = filteredDeals.filter((deal) => asText(deal.stage) === stage);
                     const isDropActive = dragOverStage === stage;
@@ -3868,7 +3863,6 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                     );
                   })}
                 </div>
-              </div>
             </div>
           ) : null}
 
