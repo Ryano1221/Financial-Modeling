@@ -30,7 +30,7 @@ export default function ContactPage() {
               If the issue involved a lease, amendment, sublease, or landlord consent, include the document name and whether the problem was extraction, import, or obligation mapping.
             </p>
             <p className="text-sm sm:text-base text-slate-300">
-              If a scanned PDF spent a long time processing before failing, mention that it was image-only or non-searchable so we can trace the OCR path directly.
+              If a scanned PDF spent a long time processing before failing, mention that it was image-only or non-searchable and include the exact file name so we can trace the OCR-bounded intake path directly.
             </p>
             <p className="text-sm sm:text-base text-slate-300">
               If a batch upload failed after the first file or after the page had already saved the documents, include how many files were in the batch and whether the page showed a browser storage or quota error.

@@ -144,6 +144,9 @@ MAX_UPLOAD_LEASE_BYTES = int(os.environ.get("MAX_UPLOAD_LEASE_BYTES", str(15 * 1
 MAX_EXTRACTION_ARTIFACTS_BYTES = int(os.environ.get("MAX_EXTRACTION_ARTIFACTS_BYTES", str(8 * 1024 * 1024)))
 SAFE_OCR_MAX_PAGES = int(os.environ.get("SAFE_OCR_MAX_PAGES", "3"))
 SKIP_OCR_ABOVE_BYTES = int(os.environ.get("SKIP_OCR_ABOVE_BYTES", str(8 * 1024 * 1024)))
+SKIP_EXTRACTION_ARTIFACTS_FOR_OCR_HEAVY_PDFS = str(
+    os.environ.get("SKIP_EXTRACTION_ARTIFACTS_FOR_OCR_HEAVY_PDFS", "true")
+).strip().lower() in {"1", "true", "yes", "on"}
 MAX_WORKSPACE_STATE_BYTES = int(os.environ.get("MAX_WORKSPACE_STATE_BYTES", str(5 * 1024 * 1024)))
 MAX_MARKET_INVENTORY_UPLOAD_BYTES = int(os.environ.get("MAX_MARKET_INVENTORY_UPLOAD_BYTES", str(25 * 1024 * 1024)))
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip().rstrip("/")
@@ -11649,14 +11652,10 @@ def _run_extraction_artifacts(
     filename: str,
     content_type: str,
     canonical: CanonicalLease,
+    skip_issue_code: str | None = None,
+    skip_message: str | None = None,
 ) -> dict:
-    if len(file_bytes) > MAX_EXTRACTION_ARTIFACTS_BYTES:
-        _LOG.warning(
-            "extraction_pipeline_skipped_large_file file=%s size=%d limit=%d",
-            filename,
-            len(file_bytes),
-            MAX_EXTRACTION_ARTIFACTS_BYTES,
-        )
+    def _skip_payload(*, issue_code: str, message: str, overall: float = 0.7) -> dict:
         return {
             "canonical_extraction": _canonical_only_extraction(canonical, doc_type="unknown"),
             "provenance": {},
@@ -11664,18 +11663,32 @@ def _run_extraction_artifacts(
                 {
                     "field_path": "pipeline",
                     "severity": "warn",
-                    "issue_code": "PIPELINE_SKIPPED_LARGE_FILE",
-                    "message": (
-                        "Deep extraction checks were skipped for a large file to keep memory usage stable."
-                    ),
+                    "issue_code": issue_code,
+                    "message": message,
                     "candidates": [],
                     "recommended_value": None,
                     "evidence": [],
                 }
             ],
             "export_allowed": True,
-            "extraction_confidence": {"overall": 0.7, "status": "yellow", "export_allowed": True},
+            "extraction_confidence": {"overall": overall, "status": "yellow", "export_allowed": True},
         }
+
+    if skip_issue_code and skip_message:
+        _LOG.info("extraction_pipeline_skipped file=%s issue_code=%s", filename, skip_issue_code)
+        return _skip_payload(issue_code=skip_issue_code, message=skip_message)
+
+    if len(file_bytes) > MAX_EXTRACTION_ARTIFACTS_BYTES:
+        _LOG.warning(
+            "extraction_pipeline_skipped_large_file file=%s size=%d limit=%d",
+            filename,
+            len(file_bytes),
+            MAX_EXTRACTION_ARTIFACTS_BYTES,
+        )
+        return _skip_payload(
+            issue_code="PIPELINE_SKIPPED_LARGE_FILE",
+            message="Deep extraction checks were skipped for a large file to keep memory usage stable.",
+        )
 
     try:
         extraction = build_extract_response(
@@ -11813,14 +11826,18 @@ def _normalize_impl(
             )
         buf = BytesIO(contents)
         text = ""
+        native_pdf_text = ""
+        native_pdf_text_weak = False
         word_source = "docx"
         ocr_used = False
         used_fallback = False
         try:
             if fn.endswith(".pdf"):
                 text = extract_text_from_pdf(buf)
+                native_pdf_text = text
+                native_pdf_text_weak = text_quality_requires_ocr(text)
                 allow_ocr = len(contents) <= SKIP_OCR_ABOVE_BYTES
-                if allow_ocr and text_quality_requires_ocr(text):
+                if allow_ocr and native_pdf_text_weak:
                     buf.seek(0)
                     pages = max(1, SAFE_OCR_MAX_PAGES)
                     try:
@@ -12874,6 +12891,19 @@ def _normalize_impl(
             confidence_score = 0.3
             used_fallback = True
             warnings.append("Lease normalization failed. A review template was loaded so you can continue.")
+        skip_issue_code: str | None = None
+        skip_message: str | None = None
+        if (
+            fn.endswith(".pdf")
+            and native_pdf_text_weak
+            and SKIP_EXTRACTION_ARTIFACTS_FOR_OCR_HEAVY_PDFS
+        ):
+            skip_issue_code = "PIPELINE_SKIPPED_OCR_HEAVY_PDF"
+            skip_message = (
+                "Deep extraction checks were skipped for an OCR-heavy scanned PDF so lease intake stays responsive."
+            )
+            if skip_message not in warnings:
+                warnings.append(skip_message)
         extraction_artifacts = _run_extraction_artifacts(
             file_bytes=contents,
             filename=file.filename or "uploaded.pdf",
@@ -12883,6 +12913,8 @@ def _normalize_impl(
                 else ("application/msword" if fn.endswith(".doc") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             ),
             canonical=canonical,
+            skip_issue_code=skip_issue_code,
+            skip_message=skip_message,
         )
         extraction_artifacts = _merge_proposal_profile_into_extraction_artifacts(
             extraction_artifacts=extraction_artifacts,

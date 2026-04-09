@@ -42,7 +42,7 @@ export default function SecurityPage() {
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Bounded OCR</p>
-              <p className="mt-2 text-sm text-slate-300">Image-only lease PDFs use a bounded OCR-first path on the controlling lease information pages so extraction stays inside the authenticated backend workflow without running unnecessarily long background processing on every page.</p>
+              <p className="mt-2 text-sm text-slate-300">Image-only lease PDFs use a bounded OCR-aware intake path so authenticated lease submission stays responsive, while deeper extraction checks are intentionally capped for OCR-heavy files instead of scanning every page synchronously.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Production Host</p>

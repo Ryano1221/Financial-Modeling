@@ -36,7 +36,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "What happens with scanned executed leases that do not have selectable text?",
-    a: "If a scanned lease has a readable Basic Lease Information page, the platform now uses a faster OCR-first extraction path for the controlling lease terms so large image-only PDFs do not spend minutes in a slower fallback route before failing.",
+    a: "Scanned executed leases now prioritize the responsive intake path first, and deeper extraction checks are bounded for OCR-heavy PDFs so large image-only files do not get stuck in a long secondary processing pass before the lease record is created.",
   },
   {
     q: "How do I contact support?",

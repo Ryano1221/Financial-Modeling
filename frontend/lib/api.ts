@@ -7,7 +7,7 @@ import { getAccessToken } from "./auth-token";
 
 const DEFAULT_TIMEOUT_MS = 300000; // 5 min for Render cold start + extraction
 const NORMALIZE_TIMEOUT_MS = 300000; // 5 min for /normalize to handle large/scanned lease docs
-const NORMALIZE_TIMEOUT_MESSAGE = "Backend took too long. Check Render logs for normalize request id.";
+const NORMALIZE_TIMEOUT_MESSAGE = "Backend took too long while processing this lease. Check Render logs for normalize request id.";
 const FRIENDLY_MESSAGE = "We're having trouble connecting right now. Please try again.";
 
 /** Single user-facing error for all lease/processing failures. Never show backend URLs, CLI, or stack traces. */
@@ -84,7 +84,7 @@ function getSafeKnownErrorMessage(raw: string): string | null {
     return "This looks like a generated report, not a source lease. Upload the original lease/proposal/amendment.";
   }
   if (lower.includes("backend took too long") || lower.includes("upstream timeout")) {
-    return "This file took too long to process. Try again, or upload a smaller/cleaner copy.";
+    return "This lease took too long to process. Try again. If it keeps happening, contact support with the document name.";
   }
   if (lower.includes("session expired")) {
     return "Session expired. Please sign in again.";
