@@ -3,10 +3,22 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
 from typing import Any
 
 from .schema import CANONICAL_EXTRACTION_SCHEMA
+
+# ---------------------------------------------------------------------------
+# Provider selection — import from parent package (backend/llm_provider.py)
+# ---------------------------------------------------------------------------
+_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+try:
+    import llm_provider as _lp
+except ImportError:
+    _lp = None  # type: ignore
 
 MODEL = os.environ.get("OPENAI_EXTRACTION_MODEL", "gpt-4.1-mini")
 
@@ -182,20 +194,72 @@ def structured_extract(
     table_candidates: list[dict[str, Any]],
     regex_candidates: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any] | None:
-    api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    # ── provider check ──────────────────────────────────────────────────────
+    use_anthropic = _lp is not None and _lp.is_anthropic()
+    if use_anthropic:
+        api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    else:
+        api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
     if not api_key:
         return None
 
+    grounded = _build_grounded_prompt(snippets, table_candidates, regex_candidates)
+    schema = _build_schema()
+
+    last_exc: Exception | None = None
+
+    # ── Anthropic path: native messages.create with tool_use ────────────────
+    if use_anthropic:
+        try:
+            from anthropic import Anthropic  # type: ignore
+        except Exception:
+            return None
+        client = Anthropic(api_key=api_key)
+        model = _lp.get_anthropic_model()
+        tool_def = {
+            "name": "lease_extract",
+            "description": "Extract structured lease fields from the provided evidence.",
+            "input_schema": schema,
+        }
+        for attempt in range(3):
+            try:
+                resp = client.messages.create(
+                    model=model,
+                    max_tokens=4096,
+                    system=_SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": grounded}],
+                    tools=[tool_def],
+                    tool_choice={"type": "tool", "name": "lease_extract"},
+                )
+                parsed: dict[str, Any] | None = None
+                for block in resp.content:
+                    if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == "lease_extract":
+                        parsed = block.input  # type: ignore[attr-defined]
+                        break
+                if parsed is None:
+                    _LOG.warning("llm_extract(anthropic): no tool_use block on attempt %d", attempt + 1)
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+                if not isinstance(parsed, dict):
+                    return None
+                return parsed
+            except Exception as exc:
+                last_exc = exc
+                _LOG.warning("llm_extract(anthropic): attempt %d failed: %s", attempt + 1, exc)
+                if attempt < 2:
+                    time.sleep(1.0 * (attempt + 1))
+        if last_exc:
+            _LOG.error("llm_extract(anthropic): all attempts failed: %s", last_exc)
+        return None
+
+    # ── OpenAI path: responses.create with strict JSON schema ───────────────
     try:
         from openai import OpenAI  # type: ignore
     except Exception:
         return None
 
     client = OpenAI(api_key=api_key)
-    grounded = _build_grounded_prompt(snippets, table_candidates, regex_candidates)
-    schema = _build_schema()
 
-    last_exc: Exception | None = None
     for attempt in range(3):
         try:
             response = client.responses.create(
@@ -238,42 +302,78 @@ def structured_extract(
 
 
 def arbitration_decision(field: str, candidates: list[dict[str, Any]], margin: float) -> dict[str, Any] | None:
-    api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
-    if not api_key or margin >= 0.05 or len(candidates) < 2:
+    if margin >= 0.05 or len(candidates) < 2:
         return None
+
+    use_anthropic = _lp is not None and _lp.is_anthropic()
+    if use_anthropic:
+        api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    else:
+        api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return None
+
+    user_content = json.dumps({
+        "field": field,
+        "candidates": candidates,
+        "instructions": "Pick one only if evidence strongly supports it; else needs_review=true.",
+    })
+    arb_schema = {
+        "type": "object",
+        "properties": {
+            "needs_review": {"type": "boolean"},
+            "chosen_value": {"type": ["string", "number", "boolean", "null"]},
+            "reason": {"type": "string"},
+        },
+        "required": ["needs_review", "chosen_value", "reason"],
+        "additionalProperties": False,
+    }
+
+    # ── Anthropic path ───────────────────────────────────────────────────────
+    if use_anthropic:
+        try:
+            from anthropic import Anthropic  # type: ignore
+        except Exception:
+            return None
+        client = Anthropic(api_key=api_key)
+        model = _lp.get_anthropic_model()
+        try:
+            resp = client.messages.create(
+                model=model,
+                max_tokens=512,
+                system="You arbitrate extraction conflicts for commercial lease fields.",
+                messages=[{"role": "user", "content": user_content}],
+                tools=[{"name": "arbitration", "description": "Arbitrate conflicting lease field extractions.", "input_schema": arb_schema}],
+                tool_choice={"type": "tool", "name": "arbitration"},
+            )
+            for block in resp.content:
+                if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == "arbitration":
+                    parsed = block.input  # type: ignore[attr-defined]
+                    return parsed if isinstance(parsed, dict) else None
+            return None
+        except Exception as exc:
+            _LOG.warning("arbitration_decision(anthropic) failed for field %s: %s", field, exc)
+            return None
+
+    # ── OpenAI path ──────────────────────────────────────────────────────────
     try:
         from openai import OpenAI  # type: ignore
     except Exception:
         return None
 
     client = OpenAI(api_key=api_key)
-    prompt = {
-        "field": field,
-        "candidates": candidates,
-        "instructions": "Pick one only if evidence strongly supports it; else needs_review=true.",
-    }
-
     try:
         resp = client.responses.create(
             model=MODEL,
             input=[
                 {"role": "system", "content": "You arbitrate extraction conflicts for commercial lease fields."},
-                {"role": "user", "content": json.dumps(prompt)},
+                {"role": "user", "content": user_content},
             ],
             text={
                 "format": {
                     "type": "json_schema",
                     "name": "arbitration",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "needs_review": {"type": "boolean"},
-                            "chosen_value": {"type": ["string", "number", "boolean", "null"]},
-                            "reason": {"type": "string"},
-                        },
-                        "required": ["needs_review", "chosen_value", "reason"],
-                        "additionalProperties": False,
-                    },
+                    "schema": arb_schema,
                     "strict": True,
                 }
             },

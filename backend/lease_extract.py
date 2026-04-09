@@ -30,16 +30,32 @@ def extract_text_from_pdf(file: BinaryIO) -> str:
 
 def _llm_extract(text: str) -> dict:
     """Call LLM to extract lease terms; returns raw dict for LeaseExtraction."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set")
+    # ── provider detection ───────────────────────────────────────────────────
+    try:
+        import llm_provider as _lp  # type: ignore
+        use_anthropic = _lp.is_anthropic()
+        api_key = _lp.get_api_key()
+    except Exception:
+        use_anthropic = False
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
 
     try:
         from openai import OpenAI
     except ImportError:
         raise ImportError("openai required: pip install openai")
 
-    client = OpenAI(api_key=api_key)
+    if use_anthropic:
+        import llm_provider as _lp  # type: ignore
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.anthropic.com/v1/",
+        )
+        model = _lp.get_anthropic_model()
+    else:
+        client = OpenAI(api_key=api_key)
+        model = os.environ.get("OPENAI_LEASE_MODEL", "gpt-4o-mini")
 
     schema_desc = """
 {
@@ -73,7 +89,7 @@ Document text:
 JSON:"""
 
     response = client.chat.completions.create(
-        model=os.environ.get("OPENAI_LEASE_MODEL", "gpt-4o-mini"),
+        model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
     )

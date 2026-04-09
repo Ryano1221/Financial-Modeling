@@ -3180,13 +3180,17 @@ def _safe_date(s: str | None) -> date:
 
 def _llm_extract_scenario(text: str, prefill: dict) -> dict:
     """Call LLM to fill gaps and validate; prefill contains regex-extracted values."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key or not str(api_key).strip():
-        raise ValueError("OPENAI_API_KEY not configured")
+    # ── provider detection ───────────────────────────────────────────────────
     try:
-        from openai import OpenAI
-    except ImportError:
-        raise ImportError("openai required: pip install openai")
+        import llm_provider as _lp  # type: ignore
+        use_anthropic = _lp.is_anthropic()
+        api_key = _lp.get_api_key()
+    except Exception:
+        use_anthropic = False
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key or not str(api_key).strip():
+            raise ValueError("OPENAI_API_KEY not configured")
+
     timeout_sec = 60.0
     try:
         timeout_env = float((os.environ.get("OPENAI_EXTRACT_TIMEOUT_SEC") or "60").strip())
@@ -3217,6 +3221,51 @@ Text:
 ---
 
 JSON:"""
+
+    # ── Anthropic path: OpenAI compat endpoint (simple chat call) ────────────
+    if use_anthropic:
+        try:
+            import llm_provider as _lp  # type: ignore
+            from openai import OpenAI
+        except ImportError:
+            raise ImportError("openai required: pip install openai")
+        anthropic_model = _lp.get_anthropic_model()
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.anthropic.com/v1/",
+            timeout=timeout_sec,
+        )
+        t0 = time.perf_counter()
+        try:
+            response = client.chat.completions.create(
+                model=anthropic_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+        except Exception as e:
+            logger.warning("[extract] Anthropic compat call failed: %s", e)
+            raise
+        elapsed = time.perf_counter() - t0
+        logger.info("[extract] LLM call duration=%.2fs model=%s (anthropic)", elapsed, anthropic_model)
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```\w*\n?", "", raw)
+            raw = re.sub(r"\n?```\s*$", "", raw)
+        out = json.loads(raw)
+        if not isinstance(out, dict):
+            raise ValueError("LLM output was not a JSON object.")
+        scenario = out.get("scenario") if isinstance(out.get("scenario"), dict) else {}
+        for k, v in prefill_for_model.items():
+            if v is not None and (scenario.get(k) is None or scenario.get(k) == ""):
+                scenario[k] = v
+        out["scenario"] = scenario
+        return out
+
+    # ── OpenAI path: multi-model fallback ────────────────────────────────────
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("openai required: pip install openai")
 
     configured = (os.environ.get("OPENAI_LEASE_MODEL") or "").strip()
     models = (
@@ -3267,7 +3316,7 @@ JSON:"""
             continue
     if last_error is not None:
         raise last_error
-    raise RuntimeError("No OpenAI model candidates configured")
+    raise RuntimeError("No LLM model candidates configured")
 
 
 def _infer_scenario_name(text: str) -> str:
@@ -3398,12 +3447,12 @@ def _heuristic_extract_scenario(text: str, prefill: dict, llm_error: Exception |
     if llm_error:
         warnings.append("Automatic extraction fallback was used for this upload.")
         msg = str(llm_error).lower()
-        if "openai_api_key" in msg:
-            warnings.append("OPENAI_API_KEY is not configured on backend.")
+        if "openai_api_key" in msg or "anthropic_api_key" in msg:
+            warnings.append("AI provider API key is not configured on backend.")
         elif "invalid api key" in msg or "incorrect api key" in msg or "unauthorized" in msg or "authentication" in msg:
-            warnings.append("OPENAI_API_KEY is invalid for this backend service.")
+            warnings.append("AI provider API key is invalid for this backend service.")
         elif "model" in msg and ("not found" in msg or "does not exist" in msg or "not have access" in msg):
-            warnings.append("Configured OpenAI model is unavailable for this API key.")
+            warnings.append("Configured AI model is unavailable for this API key.")
         elif "rate" in msg or "quota" in msg or "429" in msg:
             warnings.append("AI provider rate limit/quota reached.")
         elif "timeout" in msg:

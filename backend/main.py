@@ -919,7 +919,12 @@ def _user_branding_payload(user_id: str, settings: dict[str, str]) -> dict[str, 
 
 
 def _ai_enabled() -> bool:
-    key = os.getenv("OPENAI_API_KEY", "")
+    try:
+        import llm_provider as _lp  # type: ignore
+        return _lp.ai_enabled()
+    except Exception:
+        pass
+    key = os.getenv("OPENAI_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
     return bool(key and key.strip())
 
 
@@ -991,13 +996,19 @@ def startup_log() -> None:
     ai_enabled = _ai_enabled()
     port = os.environ.get("PORT", "8010")
     host = os.environ.get("HOST", "127.0.0.1")
+    try:
+        import llm_provider as _lp  # type: ignore
+        provider_name = _lp.get_provider()
+    except Exception:
+        provider_name = "openai"
     logging.getLogger("uvicorn.error").info(
-        "Backend starting on http://%s:%s (OPENAI_API_KEY configured: %s) version=%s",
-        host, port, ai_enabled, VERSION,
+        "Backend starting on http://%s:%s (LLM_PROVIDER=%s ai_enabled: %s) version=%s",
+        host, port, provider_name, ai_enabled, VERSION,
     )
     if not ai_enabled:
         logging.getLogger("uvicorn.error").warning(
-            "OPENAI_API_KEY is not set. Extraction and AI features will not work."
+            "No AI provider API key is set (OPENAI_API_KEY or ANTHROPIC_API_KEY). "
+            "Extraction and AI features will not work."
         )
     print("Backend ready on http://127.0.0.1:8010", flush=True)
     if get_cached_extraction.__module__ == __name__:
@@ -1008,17 +1019,28 @@ def startup_log() -> None:
 
 @app.get("/health")
 def health():
-    key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    ai_enabled = bool(key)
-    openai_configured = bool(key)
-    openai_key_prefix = (key[:7] if key else "") or None
+    try:
+        import llm_provider as _lp  # type: ignore
+        provider = _lp.get_provider()
+        ai_enabled = _lp.ai_enabled()
+        if _lp.is_anthropic():
+            key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        else:
+            key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    except Exception:
+        provider = "openai"
+        key = (os.getenv("OPENAI_API_KEY") or "").strip()
+        ai_enabled = bool(key)
+    key_prefix = (key[:7] if key else "") or None
     version = "health_v_2026_03_13_1735"
-    print("HEALTH", {"version": version, "ai_enabled": ai_enabled}, flush=True)
+    print("HEALTH", {"version": version, "ai_enabled": ai_enabled, "provider": provider}, flush=True)
     return {
         "status": "ok",
         "ai_enabled": ai_enabled,
-        "openai_configured": openai_configured,
-        "openai_key_prefix": openai_key_prefix,
+        "llm_provider": provider,
+        # Legacy keys kept for backward compat with any clients reading them
+        "openai_configured": ai_enabled,
+        "openai_key_prefix": key_prefix,
         "version": version,
     }
 
@@ -1538,8 +1560,8 @@ def extract_document(
         return response
     except ValueError as e:
         print(f"[extract] LLM ValueError: {e!s}")
-        if "OPENAI_API_KEY" in str(e):
-            raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured.") from e
+        if "OPENAI_API_KEY" in str(e) or "ANTHROPIC_API_KEY" in str(e):
+            raise HTTPException(status_code=503, detail="AI provider API key not configured.") from e
         if "rate" in str(e).lower() or "quota" in str(e).lower():
             raise HTTPException(status_code=429, detail="API rate limit or quota exceeded. Please try again later.") from e
         raise HTTPException(status_code=400, detail=str(e))
@@ -11208,8 +11230,8 @@ def _safe_extraction_warning(err: Exception | str) -> str:
     msg = str(err or "").lower()
     if not msg:
         return "AI extraction fallback was used for this upload."
-    if "openai_api_key" in msg or ("api key" in msg and "openai" in msg):
-        return "AI extraction is not configured on backend (OPENAI_API_KEY missing)."
+    if "openai_api_key" in msg or "anthropic_api_key" in msg or ("api key" in msg and ("openai" in msg or "anthropic" in msg)):
+        return "AI extraction is not configured on backend (API key missing)."
     if "quota" in msg or "rate limit" in msg or "429" in msg:
         return "AI extraction is temporarily limited (rate limit/quota)."
     if "tesseract" in msg or "poppler" in msg or "pdf2image" in msg or "pytesseract" in msg:
