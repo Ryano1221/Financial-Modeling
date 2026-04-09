@@ -6798,11 +6798,27 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             snippet = text[start:end].replace("\n", " ").strip()
             score = 0
             low = snippet.lower()
-            if any(k in low for k in ("premises", "suite", "rentable square feet", "rentable area", "consisting of", "comprising", "description of premises")):
+            if any(
+                k in low
+                for k in (
+                    "premises",
+                    "suite",
+                    "rentable square feet",
+                    "rentable area",
+                    "consisting of",
+                    "comprising",
+                    "description of premises",
+                    "containing approximately",
+                )
+            ):
                 score += 4
             if re.search(r"(?i)\bpremises\s*:\s*(?:suite|ste\.?|unit)?", low):
                 score += 3
+            if re.search(r"(?i)\bpremises\s*:\s*suite\s+no\.?\s*", low):
+                score += 4
             if re.search(r"(?i)\brentable\s+area\s*:", low):
+                score += 3
+            if re.search(r"(?i)\bsuite\s+no\.?\s*[A-Za-z0-9\-]+\b", low):
                 score += 3
             if re.search(rf"(?i)\bsuite\s*[:#-]?\s*[A-Za-z0-9\-]+\s+{value_token}\s*(?:square\s*feet|rsf)\b", snippet):
                 score += 5
@@ -6812,6 +6828,12 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 score += 8
             if re.search(r"(?i)\bconsisting\s+of\s+approximately\b", low):
                 score += 3
+            if re.search(rf"(?i)\bcontaining\s+approximately\s+{value_token}\s*(?:rentable\s+square\s+feet|square\s*feet|rsf|sf)\b", snippet):
+                score += 6
+            if "building commonly known as" in low:
+                score += 3
+            if re.search(r"(?i)\bon\s+the\s+(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+floor\b", low):
+                score += 2
             if any(k in low for k in ("total of", "amended to reflect a total", "expanded premises", "total premises")):
                 score += 6
             if any(k in low for k in ("initial leased premises", "initial premises", "original premises")):
@@ -6826,6 +6848,14 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             if re.search(r"(?i)\bper\s+\d[\d,]*\s*(?:rsf|sf|rentable\s+square\s+feet)\b", low):
                 score -= 6
             if re.search(r"(?i)\(\s*\d[\d,]*\s*rsf\s*/\s*\d[\d,]*\s*rsf\s*\)", low):
+                score -= 8
+            if "with respect to" in low:
+                score -= 8
+            if any(k in low for k in ("abated", "abatement period", "partial abatement")):
+                score -= 10
+            if "balance of the rentable square footage" in low:
+                score -= 8
+            if re.search(r"(?i)\bbasic\s+rent\b", low) and any(k in low for k in ("with respect to", "abated", "abatement period", "partial abatement")):
                 score -= 8
             if any(k in low for k in ("parking", "spaces per", "density", "work station", "workstation", "cam", "opex", "operating expenses", "taxes", "insurance")):
                 score -= 4

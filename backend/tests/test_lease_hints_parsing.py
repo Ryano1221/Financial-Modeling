@@ -168,6 +168,26 @@ def test_extract_hints_prefers_premises_rsf_over_total_and_ratio() -> None:
     assert hints["rsf"] == 3200
 
 
+def test_extract_hints_prefers_subject_premises_rsf_over_abatement_carveout() -> None:
+    text = (
+        "BASIC LEASE INFORMATION Lease Date: April 17, 2018 Landlord: 7171 SW PARKWAY ASSOCIATES, LP, a Delaware limited "
+        "partnership Tenant: THERMON, INC., a Texas corporation Premises: Suite No. 200 (east wing), containing "
+        "approximately 26,996 rentable square feet, on the second floor of the building commonly known as B300 in the "
+        "multi-building office complex known as Summit at Lantana, and whose street address is 7171 Southwest Parkway, "
+        "Austin, TX 78735. "
+        "Basic Rent with respect to 6,996 rentable square feet of the Premises shall be abated during the first 24 months "
+        "of the Term (the Partial Abatement Period). Basic Rent for the balance of the rentable square footage in the "
+        "Premises (i.e., 20,000 rentable square feet) shall be payable commencing on the Commencement Date as provided in "
+        "this Lease. EXHIBIT A OUTLINE OF PREMISES Building 300, Suite 200 26,996 rsf."
+    )
+    hints = main._extract_lease_hints(text, "thermon-executed-lease.pdf", "test-rid")
+
+    assert hints["suite"] == "200"
+    assert hints["floor"] == "2"
+    assert hints["rsf"] == 26996.0
+    assert int(hints["_rsf_score"]) >= 12
+
+
 def test_extract_hints_parses_commencement_and_expiration_from_term_clause() -> None:
     text = (
         "Term. Sublessor hereby sublets to Sublessee for the term commencing on the later to occur of "
