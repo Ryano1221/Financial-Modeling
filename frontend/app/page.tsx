@@ -118,6 +118,15 @@ const REPORT_META_STATE_KEY = "lease_deck_report_meta_state";
 const CRE_DEFAULT_BROKERAGE_NAME = "The CRE Model";
 const CRE_DEFAULT_PREPARED_BY = "The CRE Model";
 const CRE_DEFAULT_LOGO_PUBLIC_PATH = "/brand/logo.png";
+const DEFAULT_SHARE_CHART_CONFIG: CustomChartExportConfig = {
+  title: "Avg Cost/SF/YR vs NPV @ Discount Rate",
+  bar_metric_key: "avgCostPsfYr",
+  bar_metric_label: "Avg Cost/SF/YR",
+  line_metric_key: "npvAtDiscount",
+  line_metric_label: "NPV @ Discount Rate",
+  sort_direction: "desc",
+  points: [],
+};
 
 type StoredScenarioState = {
   scenarios?: ScenarioWithId[];
@@ -2200,7 +2209,9 @@ function HomeContent() {
           scenarioRows: scenariosForShare,
           results: engineResultsForShare,
           equalized: equalizedUi,
-          customCharts: customChartsForExport,
+          customCharts: customChartsForExport.length > 0
+            ? customChartsForExport
+            : [DEFAULT_SHARE_CHART_CONFIG],
           canonicalByScenarioId: canonicalComputeCache,
         }),
         {

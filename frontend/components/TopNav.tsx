@@ -11,6 +11,7 @@ import {
 import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { representationModeLabel } from "@/lib/workspace/representation-mode";
+import type { CrmCompany } from "@/lib/workspace/crm";
 
 function truncateLabel(value: string, maxChars: number): string {
   const clean = String(value || "").trim();
@@ -20,6 +21,12 @@ function truncateLabel(value: string, maxChars: number): string {
 
 function asText(value: unknown): string {
   return String(value || "").trim();
+}
+
+function formatCrmCompanyOptionLabel(company: CrmCompany, maxChars: number): string {
+  const name = truncateLabel(asText(company.name) || "Unnamed company", maxChars);
+  const type = asText(company.type).replace(/_/g, " ");
+  return type ? `${name} (${type})` : name;
 }
 
 export function TopNav() {
@@ -73,11 +80,8 @@ export function TopNav() {
     : cloudSyncStatus === "saving" || cloudSyncStatus === "local"
       ? "text-amber-200"
       : "text-emerald-300";
-  const actualClientNameKeys = new Set(clients.map((client) => asText(client.name).toLowerCase()).filter(Boolean));
   const crmClientOptions = graph.crmCompanies
-    .filter((company) => company.type === "active_client")
     .filter((company, index, list) => list.findIndex((item) => item.id === company.id) === index)
-    .filter((company) => !actualClientNameKeys.has(asText(company.name).toLowerCase()))
     .sort((left, right) => asText(left.name).localeCompare(asText(right.name)));
   const clientDropdownValue = selectedCrmCompanyId
     ? `crm:${selectedCrmCompanyId}`
@@ -215,7 +219,7 @@ export function TopNav() {
                   ))}
                   {crmClientOptions.map((company) => (
                     <option key={`crm_${company.id}`} value={`crm:${company.id}`}>
-                      {truncateLabel(company.name, 30)}
+                      {formatCrmCompanyOptionLabel(company, 30)}
                     </option>
                   ))}
                 </select>
@@ -292,7 +296,7 @@ export function TopNav() {
                   ))}
                   {crmClientOptions.map((company) => (
                     <option key={`crm_mobile_${company.id}`} value={`crm:${company.id}`}>
-                      {truncateLabel(company.name, 36)}
+                      {formatCrmCompanyOptionLabel(company, 36)}
                     </option>
                   ))}
                 </select>

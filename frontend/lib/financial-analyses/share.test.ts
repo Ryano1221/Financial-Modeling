@@ -3,7 +3,9 @@ import type { EqualizedComparisonResult } from "@/lib/equalized";
 import type { EngineResult, OptionMetrics } from "@/lib/lease-engine/monthly-engine";
 import {
   buildFinancialAnalysesSharePayload,
+  buildFinancialAnalysesShareLink,
   materializeFinancialAnalysesSharePayload,
+  parseFinancialAnalysesShareData,
 } from "@/lib/financial-analyses/share";
 
 function makeMetrics(overrides: Partial<OptionMetrics> = {}): OptionMetrics {
@@ -174,5 +176,89 @@ describe("financial analyses share payload", () => {
     expect(view.charts[0]?.barMetricKey).toBe("avgCostPsfYr");
     expect(view.annualByScenario.s1?.[0]?.[0]).toBe(0);
     expect(view.annualByScenario.s1?.[1]?.[5]).toBe(56000);
+  });
+
+  it("preserves richer data through share-link encoding and parsing", () => {
+    const originalWindow = globalThis.window;
+    const fakeWindow = {
+      btoa: (value: string) => Buffer.from(value, "utf8").toString("base64"),
+      atob: (value: string) => Buffer.from(value, "base64").toString("utf8"),
+      location: { origin: "https://thecremodel.com" },
+    } as unknown as Window & typeof globalThis;
+    globalThis.window = fakeWindow;
+
+    try {
+      const payload = buildFinancialAnalysesSharePayload({
+        scenarioRows: [
+          {
+            id: "s1",
+            scenarioName: "Option A",
+            documentType: "proposal",
+            buildingName: "One Tower",
+            suiteFloor: "Suite 500",
+            address: "100 Main St",
+            leaseType: "NNN",
+            rsf: 12000,
+            commencementDate: "2026-01-01",
+            expirationDate: "2030-12-31",
+            termMonths: 60,
+            totalObligation: 3180000,
+            npvCost: 2100000,
+            avgCostPsfYear: 53,
+            equalizedAvgCostPsfYear: 52,
+          },
+        ],
+        results: [makeResult("s1", "Option A")],
+        equalized: {
+          hasOverlap: true,
+          needsCustomWindow: false,
+          message: "",
+          windowStart: "2026-01-01",
+          windowEnd: "2030-12-31",
+          windowDays: 1826,
+          windowMonthCount: 60,
+          windowSource: "overlap",
+          metricsByScenario: {
+            s1: {
+              scenarioId: "s1",
+              averageGrossRentPsfYear: 41,
+              averageGrossRentMonth: 41000,
+              averageCostPsfYear: 52,
+              averageCostYear: 624000,
+              averageCostMonth: 52000,
+              totalCost: 3120000,
+              npvCost: 2100000,
+            },
+          },
+        },
+        customCharts: [
+          {
+            title: "Avg Cost vs NPV",
+            bar_metric_key: "avgCostPsfYr",
+            bar_metric_label: "Avg Cost/SF/YR",
+            line_metric_key: "npvAtDiscount",
+            line_metric_label: "NPV @ Discount Rate",
+            sort_direction: "desc",
+            points: [],
+          },
+        ],
+      });
+
+      const link = buildFinancialAnalysesShareLink(payload, {
+        brokerageName: "The CRE Model",
+        clientName: "Thermon",
+      });
+      const encoded = new URL(link).searchParams.get("data");
+      const parsed = parseFinancialAnalysesShareData(encoded);
+
+      expect(parsed).not.toBeNull();
+      const view = materializeFinancialAnalysesSharePayload(parsed!.payload);
+      expect(view.results).toHaveLength(1);
+      expect(view.charts[0]?.barMetricKey).toBe("avgCostPsfYr");
+      expect(view.equalized?.metricsByScenario.s1?.averageCostPsfYear).toBe(52);
+      expect(view.annualByScenario.s1?.[1]?.[5]).toBe(56000);
+    } finally {
+      globalThis.window = originalWindow;
+    }
   });
 });
