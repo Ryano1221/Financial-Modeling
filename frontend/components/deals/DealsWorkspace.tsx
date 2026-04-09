@@ -442,27 +442,6 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   const [boardAiMessages, setBoardAiMessages] = useState<Record<string, { label: string; message: string; subject?: string; body?: string }>>({});
   const [draggedShortlistEntryId, setDraggedShortlistEntryId] = useState("");
   const [draggedTourId, setDraggedTourId] = useState("");
-  const [form, setForm] = useState({
-    dealName: "",
-    requirementName: "",
-    dealType: isLandlordMode ? "Landlord Rep" : "Tenant Rep",
-    stage: dealStages[0] || (isLandlordMode ? "New Inquiry" : "New Lead"),
-    status: "open" as ClientWorkspaceDeal["status"],
-    priority: "medium" as ClientWorkspaceDeal["priority"],
-    targetMarket: "",
-    submarket: "",
-    city: "",
-    squareFootageMin: "",
-    squareFootageMax: "",
-    budget: "",
-    occupancyDateGoal: "",
-    expirationDate: "",
-    selectedProperty: "",
-    selectedSuite: "",
-    selectedLandlord: "",
-    tenantRepBroker: "",
-    notes: "",
-  });
   const [activeDealRoomTab, setActiveDealRoomTab] = useState<DealRoomTab>("overview");
   const [dealUpdateDraft, setDealUpdateDraft] = useState("");
   const [listingDraft, setListingDraft] = useState({
@@ -501,11 +480,6 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   }, [crmSettings.defaultDealsView, clientId, representationProfile.crm.availableViews, representationProfile.crm.defaultDealsView]);
 
   useEffect(() => {
-    setForm((prev) => ({
-      ...prev,
-      dealType: isLandlordMode ? "Landlord Rep" : "Tenant Rep",
-      stage: dealStages.includes(prev.stage) ? prev.stage : dealStages[0] || prev.stage,
-    }));
     setCompanyForm((prev) => ({
       ...prev,
       type: isLandlordMode ? (prev.type === "prospect" ? "tenant" : prev.type) : prev.type,
@@ -1957,60 +1931,6 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     setSelectedDealId(created.id);
     setStatus(`Created deal for ${selectedCompany.name}.`);
   }, [clientId, createDeal, dealStages, isLandlordMode, selectedCompany, selectedCompanyBuilding]);
-
-  const createDealFromForm = useCallback(() => {
-    if (!asText(form.dealName)) {
-      setError("Deal name is required.");
-      return;
-    }
-    const created = createDeal({
-      clientId,
-      companyId: selectedCompany?.id,
-      dealName: form.dealName,
-      requirementName: form.requirementName,
-      dealType: form.dealType,
-      stage: form.stage,
-      status: form.status,
-      priority: form.priority,
-      targetMarket: form.targetMarket,
-      submarket: form.submarket,
-      city: form.city,
-      squareFootageMin: asNumber(form.squareFootageMin),
-      squareFootageMax: asNumber(form.squareFootageMax),
-      budget: asNumber(form.budget),
-      occupancyDateGoal: form.occupancyDateGoal,
-      expirationDate: form.expirationDate,
-      selectedProperty: form.selectedProperty,
-      selectedSuite: form.selectedSuite,
-      selectedLandlord: form.selectedLandlord,
-      tenantRepBroker: form.tenantRepBroker,
-      notes: form.notes,
-    });
-    if (!created) {
-      setError("Unable to create deal.");
-      return;
-    }
-    setError("");
-    setStatus(`Created deal ${created.dealName}.`);
-    setSelectedDealId(created.id);
-    setForm((prev) => ({
-      ...prev,
-      dealName: "",
-      requirementName: "",
-      targetMarket: "",
-      submarket: "",
-      city: "",
-      squareFootageMin: "",
-      squareFootageMax: "",
-      budget: "",
-      occupancyDateGoal: "",
-      expirationDate: "",
-      selectedProperty: "",
-      selectedSuite: "",
-      selectedLandlord: "",
-      notes: "",
-    }));
-  }, [clientId, createDeal, form, selectedCompany?.id]);
 
   const moveDealToStage = useCallback((deal: ClientWorkspaceDeal, nextStage: string, sourceLabel: string) => {
     const target = asText(nextStage);
@@ -3736,42 +3656,6 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           </div>
         </PlatformPanel>
             </div>
-
-        <PlatformPanel kicker="Create Deal" title="Quick Deal Intake" className="order-3 xl:col-span-12">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <input className="input-premium sm:col-span-2" placeholder="Deal name*" value={form.dealName} onChange={(event) => setForm((prev) => ({ ...prev, dealName: event.target.value }))} />
-            <input className="input-premium sm:col-span-2" placeholder={representationProfile.crm.quickDealRequirementPlaceholder} value={form.requirementName} onChange={(event) => setForm((prev) => ({ ...prev, requirementName: event.target.value }))} />
-            <select className="input-premium" value={form.stage} onChange={(event) => setForm((prev) => ({ ...prev, stage: event.target.value }))}>{dealStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select>
-            <select className="input-premium" value={form.priority} onChange={(event) => setForm((prev) => ({ ...prev, priority: event.target.value as ClientWorkspaceDeal["priority"] }))}>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="critical">Critical</option>
-            </select>
-            <input className="input-premium" placeholder="City" value={form.city} onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))} />
-            <input className="input-premium" placeholder="Target market" value={form.targetMarket} onChange={(event) => setForm((prev) => ({ ...prev, targetMarket: event.target.value }))} />
-            <input className="input-premium" placeholder="Min SF" value={form.squareFootageMin} onChange={(event) => setForm((prev) => ({ ...prev, squareFootageMin: event.target.value }))} />
-            <input className="input-premium" placeholder="Max SF" value={form.squareFootageMax} onChange={(event) => setForm((prev) => ({ ...prev, squareFootageMax: event.target.value }))} />
-            <input className="input-premium sm:col-span-2" placeholder="Budget" value={form.budget} onChange={(event) => setForm((prev) => ({ ...prev, budget: event.target.value }))} />
-          </div>
-          <details className="mt-3 border border-white/15 bg-black/20 p-2">
-            <summary className="cursor-pointer text-xs text-slate-300 tracking-[0.12em] uppercase">Advanced Fields</summary>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-              <input className="input-premium" placeholder="Submarket" value={form.submarket} onChange={(event) => setForm((prev) => ({ ...prev, submarket: event.target.value }))} />
-              <input className="input-premium" placeholder="Deal type" value={form.dealType} onChange={(event) => setForm((prev) => ({ ...prev, dealType: event.target.value }))} />
-              <input className="input-premium" placeholder={representationProfile.crm.quickDealBrokerPlaceholder} value={form.tenantRepBroker} onChange={(event) => setForm((prev) => ({ ...prev, tenantRepBroker: event.target.value }))} />
-              <input className="input-premium" placeholder="Selected property" value={form.selectedProperty} onChange={(event) => setForm((prev) => ({ ...prev, selectedProperty: event.target.value }))} />
-              <input className="input-premium" placeholder="Selected suite" value={form.selectedSuite} onChange={(event) => setForm((prev) => ({ ...prev, selectedSuite: event.target.value }))} />
-              <input className="input-premium" placeholder={representationProfile.crm.quickDealCounterpartyPlaceholder} value={form.selectedLandlord} onChange={(event) => setForm((prev) => ({ ...prev, selectedLandlord: event.target.value }))} />
-              <input type="date" className="input-premium" value={form.occupancyDateGoal} onChange={(event) => setForm((prev) => ({ ...prev, occupancyDateGoal: event.target.value }))} />
-              <input type="date" className="input-premium" value={form.expirationDate} onChange={(event) => setForm((prev) => ({ ...prev, expirationDate: event.target.value }))} />
-              <textarea className="input-premium sm:col-span-2 min-h-[70px]" placeholder="Notes" value={form.notes} onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))} />
-            </div>
-          </details>
-          <div className="mt-3 flex justify-end">
-            <button type="button" className="btn-premium btn-premium-primary" onClick={createDealFromForm}>Create Deal</button>
-          </div>
-        </PlatformPanel>
 
             <div ref={pipelineViewsRef} className="order-4 xl:col-span-12 scroll-mt-28">
         <PlatformPanel kicker="Pipeline Views" title={isLandlordMode ? "Leasing Flow" : "Deal Flow"}>
