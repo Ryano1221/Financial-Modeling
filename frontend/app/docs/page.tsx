@@ -23,6 +23,10 @@ const FAQ_ITEMS = [
     a: "Signed-in workspaces and module state are saved under that user account in cloud storage, so switching accounts does not reuse another user’s active client, documents, analyses, surveys, or saved report settings, and the same user can restore that data on another device after signing back in.",
   },
   {
+    q: "Can I sign in without my password?",
+    a: "Yes. The account screen supports password sign-in and an emailed sign-in link, so you can open a secure login link on the device you are using and restore that account there.",
+  },
+  {
     q: "Can I upload more than one proposal at a time?",
     a: "Yes. Financial Analyses and the document library support batch uploads, and browser-side source caching now prefers browser-managed document storage while keeping only lightweight metadata in local fallback storage so larger batches do not fail on the second proposal.",
   },
@@ -36,7 +40,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "How do I contact support?",
-    a: "Use the Contact page for support guidance or email info@thecremodel.com directly.",
+    a: "Use the Contact page for support guidance or email info@thecremodel.com directly, especially if a sign-in link does not arrive or a device-specific login issue needs to be traced.",
   },
   {
     q: "Do Survey and Lease Abstract exports match the Financial Analysis presentation style?",

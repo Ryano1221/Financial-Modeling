@@ -26,7 +26,7 @@ export default function SecurityPage() {
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="surface-card p-5">
               <p className="heading-kicker">Authentication</p>
-              <p className="mt-2 text-sm text-slate-300">Protected workflows, storage actions, and client-facing exports run with authenticated user context, including account-scoped cloud workspace persistence that restores saved workspace state only inside that signed-in user account across devices.</p>
+              <p className="mt-2 text-sm text-slate-300">Protected workflows, storage actions, and client-facing exports run with authenticated user context, including account-scoped cloud workspace persistence that restores saved workspace state only inside that signed-in user account across devices. Users can authenticate with a password or a secure emailed sign-in link.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Workspace Isolation</p>

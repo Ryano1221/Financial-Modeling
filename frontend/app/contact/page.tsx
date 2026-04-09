@@ -32,6 +32,12 @@ export default function ContactPage() {
             <p className="text-sm sm:text-base text-slate-300">
               If a scanned PDF spent a long time processing before failing, mention that it was image-only or non-searchable so we can trace the OCR path directly.
             </p>
+            <p className="text-sm sm:text-base text-slate-300">
+              If a batch upload failed after the first file or after the page had already saved the documents, include how many files were in the batch and whether the page showed a browser storage or quota error.
+            </p>
+            <p className="text-sm sm:text-base text-slate-300">
+              If sign-in failed, include whether you used a password or emailed sign-in link, which device you were on, and whether the link opened the account page or showed an error.
+            </p>
           </div>
 
           <section className="grid gap-4 md:grid-cols-2">
@@ -45,6 +51,7 @@ export default function ContactPage() {
                 <li>How many files were in the upload batch when it failed</li>
                 <li>Whether the editor was open or still in review mode</li>
                 <li>What you clicked or uploaded</li>
+                <li>Whether sign-in used password or an emailed sign-in link</li>
                 <li>What you expected to happen</li>
                 <li>What happened instead</li>
               </ul>

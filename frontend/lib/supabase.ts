@@ -3,8 +3,21 @@ import { clearAccessToken, getAccessToken, setAccessToken } from "./auth-token";
 const REFRESH_TOKEN_KEY = "thecremodel_supabase_refresh_token";
 const USER_KEY = "thecremodel_supabase_user";
 const SESSION_LAST_ACTIVE_AT_KEY = "thecremodel_supabase_session_last_active_at";
+const AUTH_NOTICE_KEY = "thecremodel_supabase_auth_notice";
 const MAX_PERSIST_DAYS = 30;
 const MAX_PERSIST_AGE_MS = MAX_PERSIST_DAYS * 24 * 60 * 60 * 1000;
+const AUTH_CALLBACK_KEYS = [
+  "access_token",
+  "refresh_token",
+  "expires_at",
+  "expires_in",
+  "token_type",
+  "type",
+  "token_hash",
+  "error",
+  "error_code",
+  "error_description",
+] as const;
 
 export interface SupabaseAuthUser {
   id: string;
@@ -58,6 +71,10 @@ function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
+function canUseHistory(): boolean {
+  return typeof window !== "undefined" && typeof window.history !== "undefined";
+}
+
 function setStoredRefreshToken(token: string | undefined): void {
   if (!canUseStorage()) return;
   const clean = (token || "").trim();
@@ -68,6 +85,23 @@ function setStoredRefreshToken(token: string | undefined): void {
 function getStoredRefreshToken(): string | null {
   if (!canUseStorage()) return null;
   const raw = window.localStorage.getItem(REFRESH_TOKEN_KEY);
+  return raw?.trim() || null;
+}
+
+function setStoredAuthNotice(message: string | null): void {
+  if (!canUseStorage()) return;
+  const clean = String(message || "").trim();
+  if (clean) {
+    window.localStorage.setItem(AUTH_NOTICE_KEY, clean);
+    return;
+  }
+  window.localStorage.removeItem(AUTH_NOTICE_KEY);
+}
+
+export function consumeStoredAuthNotice(): string | null {
+  if (!canUseStorage()) return null;
+  const raw = window.localStorage.getItem(AUTH_NOTICE_KEY);
+  if (raw) window.localStorage.removeItem(AUTH_NOTICE_KEY);
   return raw?.trim() || null;
 }
 
@@ -103,6 +137,11 @@ function isPersistedSessionExpired(): boolean {
   return (Date.now() - ts) > MAX_PERSIST_AGE_MS;
 }
 
+function shouldDropPersistedSession(): boolean {
+  if (!isPersistedSessionExpired()) return false;
+  return !getStoredRefreshToken();
+}
+
 function getStoredUser(): SupabaseAuthUser | null {
   if (!canUseStorage()) return null;
   const raw = window.localStorage.getItem(USER_KEY);
@@ -133,16 +172,14 @@ async function requestSupabase(
   });
 }
 
-function toSession(payload: Record<string, unknown>): SupabaseAuthSession {
-  const access_token = String(payload.access_token || "").trim();
-  const user = (payload.user as Record<string, unknown> | undefined) || {};
-  const userId = String(user.id || "").trim();
-  if (!access_token || !userId) {
-    throw new Error("Supabase auth response did not include a valid session.");
+function toUser(payload: Record<string, unknown>): SupabaseAuthUser {
+  const userId = String(payload.id || "").trim();
+  if (!userId) {
+    throw new Error("Supabase auth response did not include a valid user.");
   }
   const metadata =
-    user.user_metadata && typeof user.user_metadata === "object"
-      ? (user.user_metadata as Record<string, unknown>)
+    payload.user_metadata && typeof payload.user_metadata === "object"
+      ? (payload.user_metadata as Record<string, unknown>)
       : {};
   const nameCandidate = [
     metadata.full_name,
@@ -162,17 +199,182 @@ function toSession(payload: Record<string, unknown>): SupabaseAuthSession {
   ].find((value) => typeof value === "string" && String(value).trim().length > 0);
 
   return {
+    id: userId,
+    email: typeof payload.email === "string" ? payload.email : null,
+    name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
+    role: typeof roleCandidate === "string" ? roleCandidate.trim() : null,
+    team: typeof teamCandidate === "string" ? teamCandidate.trim() : null,
+  };
+}
+
+async function fetchUserForAccessToken(token: string): Promise<SupabaseAuthUser> {
+  const clean = String(token || "").trim();
+  if (!clean) {
+    throw new Error("Missing access token.");
+  }
+  const userRes = await requestSupabase("/auth/v1/user", { method: "GET", token: clean });
+  const text = await userRes.text();
+  const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  if (!userRes.ok) {
+    const msg =
+      (typeof payload.msg === "string" && payload.msg) ||
+      (typeof payload.error_description === "string" && payload.error_description) ||
+      (typeof payload.error === "string" && payload.error) ||
+      "Unable to restore authenticated session.";
+    throw new Error(msg);
+  }
+  return toUser(payload);
+}
+
+function toSession(payload: Record<string, unknown>): SupabaseAuthSession {
+  const access_token = String(payload.access_token || "").trim();
+  const userPayload = (payload.user as Record<string, unknown> | undefined) || {};
+  if (!access_token || !userPayload.id) {
+    throw new Error("Supabase auth response did not include a valid session.");
+  }
+
+  return {
     access_token,
     refresh_token: typeof payload.refresh_token === "string" ? payload.refresh_token : undefined,
     expires_at: typeof payload.expires_at === "number" ? payload.expires_at : undefined,
-    user: {
-      id: userId,
-      email: typeof user.email === "string" ? user.email : null,
-      name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
-      role: typeof roleCandidate === "string" ? roleCandidate.trim() : null,
-      team: typeof teamCandidate === "string" ? teamCandidate.trim() : null,
-    },
+    user: toUser(userPayload),
   };
+}
+
+function buildAuthRedirectUrl(): string {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim() || "";
+  const base = siteUrl || (typeof window !== "undefined" ? window.location.origin : "");
+  if (!base) {
+    throw new Error("Auth redirect URL is not configured.");
+  }
+  return new URL("/account?mode=signin", base).toString();
+}
+
+function normalizeAuthRedirectType(raw: string | null): string | null {
+  const value = String(raw || "").trim().toLowerCase();
+  if (!value) return null;
+  if (value === "magiclink" || value === "signup") return "email";
+  return value;
+}
+
+function clearAuthParamsFromUrl(): void {
+  if (!canUseHistory()) return;
+  const url = new URL(window.location.href);
+  AUTH_CALLBACK_KEYS.forEach((key) => {
+    url.searchParams.delete(key);
+  });
+  const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  AUTH_CALLBACK_KEYS.forEach((key) => {
+    hashParams.delete(key);
+  });
+  const nextHash = hashParams.toString();
+  const nextUrl = `${url.pathname}${url.search}${nextHash ? `#${nextHash}` : ""}`;
+  window.history.replaceState({}, document.title, nextUrl);
+}
+
+export async function sendMagicLink(email: string): Promise<void> {
+  const cleanEmail = String(email || "").trim();
+  if (!cleanEmail) {
+    throw new Error("Enter your email address to receive a sign-in link.");
+  }
+  const redirectTo = buildAuthRedirectUrl();
+  const res = await requestSupabase("/auth/v1/otp", {
+    method: "POST",
+    body: JSON.stringify({
+      email: cleanEmail,
+      create_user: true,
+      email_redirect_to: redirectTo,
+      options: {
+        email_redirect_to: redirectTo,
+      },
+    }),
+  });
+  const text = await res.text();
+  const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  if (!res.ok) {
+    const msg =
+      (typeof payload.msg === "string" && payload.msg) ||
+      (typeof payload.error_description === "string" && payload.error_description) ||
+      (typeof payload.error === "string" && payload.error) ||
+      "Unable to send a sign-in link right now.";
+    throw new Error(msg);
+  }
+}
+
+export async function consumeAuthRedirectSession(): Promise<SupabaseAuthSession | null> {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  const queryParams = url.searchParams;
+  const errorMessage =
+    hashParams.get("error_description") ||
+    queryParams.get("error_description") ||
+    hashParams.get("error") ||
+    queryParams.get("error");
+
+  if (errorMessage) {
+    setStoredAuthNotice(errorMessage);
+    clearAuthParamsFromUrl();
+    return null;
+  }
+
+  const accessToken = hashParams.get("access_token") || queryParams.get("access_token");
+  const refreshToken = hashParams.get("refresh_token") || queryParams.get("refresh_token") || undefined;
+  const expiresAtRaw = hashParams.get("expires_at") || queryParams.get("expires_at");
+
+  if (accessToken) {
+    try {
+      const user = await fetchUserForAccessToken(accessToken);
+      const expiresAt = Number(expiresAtRaw);
+      const session: SupabaseAuthSession = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_at: Number.isFinite(expiresAt) ? expiresAt : undefined,
+        user,
+      };
+      persistSession(session);
+      clearAuthParamsFromUrl();
+      setStoredAuthNotice(null);
+      return session;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "That sign-in link is invalid or expired.";
+      setStoredAuthNotice(message);
+      clearAuthParamsFromUrl();
+      persistSession(null);
+      return null;
+    }
+  }
+
+  const tokenHash = queryParams.get("token_hash") || hashParams.get("token_hash");
+  const type = normalizeAuthRedirectType(queryParams.get("type") || hashParams.get("type"));
+  if (tokenHash && type) {
+    const res = await requestSupabase("/auth/v1/verify", {
+      method: "POST",
+      body: JSON.stringify({
+        token_hash: tokenHash,
+        type,
+      }),
+    });
+    const text = await res.text();
+    const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    if (!res.ok) {
+      const msg =
+        (typeof payload.msg === "string" && payload.msg) ||
+        (typeof payload.error_description === "string" && payload.error_description) ||
+        (typeof payload.error === "string" && payload.error) ||
+        "That sign-in link is invalid or expired.";
+      setStoredAuthNotice(msg);
+      clearAuthParamsFromUrl();
+      return null;
+    }
+    const session = toSession(payload);
+    persistSession(session);
+    clearAuthParamsFromUrl();
+    setStoredAuthNotice(null);
+    return session;
+  }
+
+  return null;
 }
 
 function persistSession(session: SupabaseAuthSession | null): void {
@@ -195,7 +397,7 @@ export function getSessionFromStorage(): SupabaseAuthSession | null {
   const token = getAccessToken();
   const user = getStoredUser();
   if (!token || !user) return null;
-  if (isPersistedSessionExpired()) return null;
+  if (shouldDropPersistedSession()) return null;
   const refresh = getStoredRefreshToken() || undefined;
   return {
     access_token: token,
@@ -285,7 +487,11 @@ export async function refreshSession(refreshToken: string): Promise<SupabaseAuth
 }
 
 export async function getSession(): Promise<SupabaseAuthSession | null> {
-  if (isPersistedSessionExpired()) {
+  const redirected = await consumeAuthRedirectSession();
+  if (redirected) {
+    return redirected;
+  }
+  if (shouldDropPersistedSession()) {
     persistSession(null);
     return null;
   }
@@ -298,35 +504,8 @@ export async function getSession(): Promise<SupabaseAuthSession | null> {
       const userRes = await requestSupabase("/auth/v1/user", { method: "GET", token });
       if (userRes.ok) {
         const userPayload = (await userRes.json()) as Record<string, unknown>;
-        const userId = String(userPayload.id || "").trim();
-        if (userId) {
-          const metadata =
-            userPayload.user_metadata && typeof userPayload.user_metadata === "object"
-              ? (userPayload.user_metadata as Record<string, unknown>)
-              : {};
-          const nameCandidate = [
-            metadata.full_name,
-            metadata.name,
-            metadata.display_name,
-          ].find((value) => typeof value === "string" && String(value).trim().length > 0);
-          const roleCandidate = [
-            metadata.role,
-            metadata.user_role,
-            metadata.org_role,
-          ].find((value) => typeof value === "string" && String(value).trim().length > 0);
-          const teamCandidate = [
-            metadata.team,
-            metadata.team_name,
-            metadata.broker_team,
-            metadata.org_name,
-          ].find((value) => typeof value === "string" && String(value).trim().length > 0);
-          const user: SupabaseAuthUser = {
-            id: userId,
-            email: typeof userPayload.email === "string" ? userPayload.email : null,
-            name: typeof nameCandidate === "string" ? nameCandidate.trim() : null,
-            role: typeof roleCandidate === "string" ? roleCandidate.trim() : null,
-            team: typeof teamCandidate === "string" ? teamCandidate.trim() : null,
-          };
+        if (userPayload.id) {
+          const user = toUser(userPayload);
           const refresh = getStoredRefreshToken() || undefined;
           const session: SupabaseAuthSession = { access_token: token, refresh_token: refresh, user };
           setStoredUser(user);
