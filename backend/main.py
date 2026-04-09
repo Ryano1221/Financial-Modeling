@@ -6857,6 +6857,16 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 score -= 8
             if re.search(r"(?i)\bbasic\s+rent\b", low) and any(k in low for k in ("with respect to", "abated", "abatement period", "partial abatement")):
                 score -= 8
+            if any(
+                k in low
+                for k in (
+                    "percentage obtained by dividing",
+                    "as stated above by (b)",
+                    "rentable square feet in the project",
+                    "rentable square feet in the building",
+                )
+            ):
+                score -= 14
             if any(k in low for k in ("parking", "spaces per", "density", "work station", "workstation", "cam", "opex", "operating expenses", "taxes", "insurance")):
                 score -= 4
             if any(

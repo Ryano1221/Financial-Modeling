@@ -188,6 +188,19 @@ def test_extract_hints_prefers_subject_premises_rsf_over_abatement_carveout() ->
     assert int(hints["_rsf_score"]) >= 12
 
 
+def test_extract_hints_ignores_project_rsf_denominator_in_pro_rata_clause() -> None:
+    text = (
+        "THERMON, INC., a Texas corporation Suite No. 200 (cast wing), containing approximately 26,996 rentable square feet "
+        "on the second floor of the building commonly known as B300. "
+        "Tenant's Proportionate Share, 3.30%, which is the percentage obtained by dividing (a) the number of rentable "
+        "square feet in the Premises as stated above by (b) the 818,254 rentable square feet in the Project."
+    )
+    hints = main._extract_lease_hints(text, "thermon-executed-lease.pdf", "test-rid")
+
+    assert hints["rsf"] == 26996.0
+    assert int(hints["_rsf_score"]) > 0
+
+
 def test_extract_hints_parses_commencement_and_expiration_from_term_clause() -> None:
     text = (
         "Term. Sublessor hereby sublets to Sublessee for the term commencing on the later to occur of "
