@@ -534,11 +534,11 @@ export function ClientDocumentCenter({
                         <p className="text-slate-400 col-span-2">Building: <span className="text-slate-200">{doc.building || "-"}</span></p>
                         <p className="text-slate-400 col-span-2">Uploaded: <span className="text-slate-200">{formatDateTime(doc.uploadedAt)}</span></p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="grid grid-cols-2 gap-2">
                         {canRunContextualAction(doc) ? (
                           <button
                             type="button"
-                            className="btn-premium btn-premium-primary text-xs"
+                            className="btn-premium btn-premium-primary w-full justify-center text-xs"
                             onClick={() => {
                               void onContextualAction?.(doc);
                             }}
@@ -548,7 +548,7 @@ export function ClientDocumentCenter({
                         ) : null}
                         <button
                           type="button"
-                          className="btn-premium btn-premium-secondary text-xs"
+                          className="btn-premium btn-premium-secondary w-full justify-center text-xs"
                           onClick={() => {
                             void openDocument(doc.id);
                           }}
@@ -557,14 +557,14 @@ export function ClientDocumentCenter({
                         </button>
                         <button
                           type="button"
-                          className="btn-premium btn-premium-secondary text-xs"
+                          className="btn-premium btn-premium-secondary w-full justify-center text-xs"
                           onClick={() => startEditing(doc)}
                         >
                           Edit
                         </button>
                         <button
                           type="button"
-                          className="btn-premium btn-premium-danger text-xs"
+                          className={`btn-premium btn-premium-danger w-full justify-center text-xs${canRunContextualAction(doc) ? "" : " col-span-2"}`}
                           onClick={() => deleteDocument(doc)}
                         >
                           Delete
@@ -609,11 +609,11 @@ export function ClientDocumentCenter({
                             <td className="hidden sm:table-cell py-3 pr-2 sm:pr-3 text-slate-300 align-top truncate" title={doc.suite || "-"}>{doc.suite || "-"}</td>
                             <td className="py-3 pr-2 sm:pr-3 text-slate-300 break-words align-top">{formatDateTime(doc.uploadedAt)}</td>
                             <td className="sticky right-0 border-l border-white/10 bg-black/90 py-3 pl-2 pr-2 sm:pr-3 text-slate-300 align-top whitespace-nowrap">
-                              <div className="flex flex-wrap items-center gap-2">
+                              <div className="grid w-full max-w-[272px] grid-cols-2 gap-2">
                                 {canRunContextualAction(doc) ? (
                                   <button
                                     type="button"
-                                    className="btn-premium btn-premium-primary !h-8 !min-h-8 !w-32 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                    className="btn-premium btn-premium-primary !h-8 !min-h-8 !w-full !px-0 !py-0 text-[11px] inline-flex items-center justify-center"
                                     onClick={() => {
                                       void onContextualAction?.(doc);
                                     }}
@@ -623,7 +623,7 @@ export function ClientDocumentCenter({
                                 ) : null}
                                 <button
                                   type="button"
-                                  className="btn-premium btn-premium-secondary !h-8 !min-h-8 !w-20 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                  className="btn-premium btn-premium-secondary !h-8 !min-h-8 !w-full !px-0 !py-0 text-[11px] inline-flex items-center justify-center"
                                   onClick={() => {
                                     void openDocument(doc.id);
                                   }}
@@ -632,14 +632,14 @@ export function ClientDocumentCenter({
                                 </button>
                                 <button
                                   type="button"
-                                  className="btn-premium btn-premium-secondary !h-8 !min-h-8 !w-20 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                  className="btn-premium btn-premium-secondary !h-8 !min-h-8 !w-full !px-0 !py-0 text-[11px] inline-flex items-center justify-center"
                                   onClick={() => startEditing(doc)}
                                 >
                                   Edit
                                 </button>
                                 <button
                                   type="button"
-                                  className="btn-premium btn-premium-danger !h-8 !min-h-8 !w-20 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                  className={`btn-premium btn-premium-danger !h-8 !min-h-8 !w-full !px-0 !py-0 text-[11px] inline-flex items-center justify-center${canRunContextualAction(doc) ? "" : " col-span-2"}`}
                                   onClick={() => deleteDocument(doc)}
                                 >
                                   Delete

@@ -158,6 +158,11 @@ SUPABASE_WORKSPACE_BUCKET = (
 ).strip() or "logos"
 DEFAULT_CREMODEL_BRAND_NAME = "The CRE Model"
 SHARED_MARKET_INVENTORY_OBJECT_PATH = "shared/market_inventory/costar_buildings.json"
+SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_SECONDS = int(
+    os.environ.get("SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_SECONDS", "300")
+)
+_SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL = 0.0
+_SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_REASON = ""
 
 
 def _public_branding_path() -> Path:
@@ -763,9 +768,49 @@ def _read_shared_market_inventory_local() -> tuple[dict[str, Any], bool]:
     return (payload if isinstance(payload, dict) else {"records": []}), True
 
 
+def _shared_market_inventory_storage_available() -> bool:
+    global _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL
+    if _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL <= 0:
+        return True
+    if time.monotonic() >= _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL:
+        _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL = 0.0
+        return True
+    return False
+
+
+def _mark_shared_market_inventory_storage_failure(status: int, body: bytes | None, *, operation: str) -> None:
+    global _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL, _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_REASON
+    detail = (body or b"").decode("utf-8", errors="ignore").strip()
+    detail = re.sub(r"\s+", " ", detail)[:240]
+    reason = f"{operation}:{status}:{detail}"
+    should_log = reason != _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_REASON or not _shared_market_inventory_storage_available()
+    _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_REASON = reason
+    _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL = time.monotonic() + max(
+        0,
+        SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_SECONDS,
+    )
+    if should_log:
+        logging.warning(
+            "Shared market inventory storage %s failed; using local fallback for %ss (status=%s, detail=%s).",
+            operation,
+            SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_SECONDS,
+            status,
+            detail or "no response body",
+        )
+
+
+def _clear_shared_market_inventory_storage_backoff() -> None:
+    global _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL, _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_REASON
+    _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL = 0.0
+    _SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_REASON = ""
+
+
 def _save_shared_market_inventory(envelope: dict[str, Any]) -> None:
     body = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY:
+        if not _shared_market_inventory_storage_available():
+            _write_shared_market_inventory_local(envelope)
+            return
         encoded = urllib_parse.quote(SHARED_MARKET_INVENTORY_OBJECT_PATH, safe="/")
         status, resp_body = _http_bytes_request(
             f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
@@ -779,10 +824,10 @@ def _save_shared_market_inventory(envelope: dict[str, Any]) -> None:
             timeout=30.0,
         )
         if status >= 400:
-            msg = resp_body.decode("utf-8", errors="ignore")[:300]
-            logging.warning("Shared market inventory storage upload failed; falling back to local storage: %s", msg)
+            _mark_shared_market_inventory_storage_failure(status, resp_body, operation="upload")
             _write_shared_market_inventory_local(envelope)
             return
+        _clear_shared_market_inventory_storage_backoff()
         return
 
     _write_shared_market_inventory_local(envelope)
@@ -790,6 +835,8 @@ def _save_shared_market_inventory(envelope: dict[str, Any]) -> None:
 
 def _load_shared_market_inventory() -> tuple[dict[str, Any], bool]:
     if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY:
+        if not _shared_market_inventory_storage_available():
+            return _read_shared_market_inventory_local()
         encoded = urllib_parse.quote(SHARED_MARKET_INVENTORY_OBJECT_PATH, safe="/")
         status, body = _http_bytes_request(
             f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
@@ -798,14 +845,16 @@ def _load_shared_market_inventory() -> tuple[dict[str, Any], bool]:
             timeout=30.0,
         )
         if status == 404:
+            _clear_shared_market_inventory_storage_backoff()
             return {"records": []}, False
         if status >= 400:
-            logging.warning("Shared market inventory storage download failed; falling back to local storage (status=%s).", status)
+            _mark_shared_market_inventory_storage_failure(status, body, operation="download")
             return _read_shared_market_inventory_local()
         try:
             payload = json.loads(body.decode("utf-8", errors="ignore"))
         except Exception:
             payload = {}
+        _clear_shared_market_inventory_storage_backoff()
         return (payload if isinstance(payload, dict) else {"records": []}), True
 
     return _read_shared_market_inventory_local()

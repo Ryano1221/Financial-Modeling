@@ -18,10 +18,10 @@ export default function ContactPage() {
               <a className="brand-link underline" href="mailto:info@thecremodel.com">
                 info@thecremodel.com
               </a>{" "}
-              for support.
+              for support with any part of your leasing portfolio workspace.
             </p>
             <p className="text-sm sm:text-base text-slate-300">
-              Include the active client, the module you were in, and the exact action you expected to happen so we can trace the issue quickly.
+              Include the active client, the module you were in, and the exact action you expected to happen so we can trace the issue quickly across the connected portfolio workflow.
             </p>
             <p className="text-sm sm:text-base text-slate-300">
               If the issue was in the document library, include whether you clicked Open, Edit, Delete, or the module-specific Apply action so we can reproduce the exact workspace handoff.
@@ -31,6 +31,9 @@ export default function ContactPage() {
             </p>
             <p className="text-sm sm:text-base text-slate-300">
               If the issue involved a lease, amendment, sublease, or landlord consent, include the document name and whether the problem was extraction, import, or obligation mapping.
+            </p>
+            <p className="text-sm sm:text-base text-slate-300">
+              If the problem affected how multiple leases, proposals, or survey options appeared together, mention that it was a portfolio-level issue so we can inspect the full workspace state.
             </p>
             <p className="text-sm sm:text-base text-slate-300">
               If a scanned PDF spent a long time processing before failing, mention that it was image-only or non-searchable and include the exact file name so we can trace the OCR-bounded intake path directly.

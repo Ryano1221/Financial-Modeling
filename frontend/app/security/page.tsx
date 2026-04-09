@@ -14,7 +14,7 @@ export default function SecurityPage() {
             <p className="heading-kicker">Security</p>
             <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Security overview</h1>
             <p className="body-lead max-w-4xl">
-              theCREmodel keeps the product simple at the surface while maintaining one shared security boundary underneath every module.
+              theCREmodel keeps the product simple at the surface while maintaining one shared security boundary underneath the full leasing portfolio workspace across every module.
             </p>
             <div className="flex flex-wrap gap-3 pt-2">
               <div className="brand-badge">Client-scoped workspace isolation</div>
@@ -30,7 +30,7 @@ export default function SecurityPage() {
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Workspace Isolation</p>
-              <p className="mt-2 text-sm text-slate-300">Documents, deals, surveys, obligations, and linked records stay attached to the active client workspace, including executed subleases and attached consent packages.</p>
+              <p className="mt-2 text-sm text-slate-300">Documents, deals, surveys, obligations, financial analyses, and linked leasing records stay attached to the active client workspace, including executed subleases and attached consent packages.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Controlled Deletion</p>
@@ -59,7 +59,7 @@ export default function SecurityPage() {
               </div>
               <div className="surface-card p-5">
                 <p className="heading-kicker">Integrated workflows</p>
-                <p className="mt-2 text-sm text-slate-300">Cross-module handoffs still stay inside the same client workspace, so surveys, analyses, CRM records, lease abstracts, obligations, and their exported client deliverables remain connected without weakening isolation or crossing between signed-in accounts. Context-aware document actions reuse that same scoped workspace instead of creating a second import path.</p>
+                <p className="mt-2 text-sm text-slate-300">Cross-module handoffs still stay inside the same client workspace, so surveys, analyses, CRM records, lease abstracts, obligations, and the broader leasing portfolio remain connected without weakening isolation or crossing between signed-in accounts. Context-aware document actions reuse that same scoped workspace instead of creating a second import path.</p>
               </div>
             </div>
           </section>

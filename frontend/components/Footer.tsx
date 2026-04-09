@@ -21,6 +21,12 @@ export function Footer() {
 
             <nav className="ml-auto flex flex-wrap items-center justify-end gap-2 sm:gap-3">
               <Link
+                href="/about"
+                className="inline-flex items-center justify-center min-h-[34px] px-3.5 text-xs sm:text-sm font-medium text-slate-200 border border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:text-white transition-colors focus:outline-none focus-ring"
+              >
+                About
+              </Link>
+              <Link
                 href="/docs"
                 className="inline-flex items-center justify-center min-h-[34px] px-3.5 text-xs sm:text-sm font-medium text-slate-200 border border-slate-300/35 bg-slate-900/60 hover:bg-slate-800/70 hover:text-white transition-colors focus:outline-none focus-ring"
               >

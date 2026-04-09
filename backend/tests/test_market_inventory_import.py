@@ -167,3 +167,35 @@ def test_post_market_inventory_import_falls_back_to_local_save_when_storage_erro
     assert payload["count"] == 1
     saved = local_path.read_text(encoding="utf-8")
     assert "Tower One" in saved
+
+
+def test_get_market_inventory_throttles_repeated_storage_failures(monkeypatch, tmp_path: Path) -> None:
+    local_path = tmp_path / "shared_market_inventory.json"
+    local_path.write_text(
+        '{"source":"local_fallback","updated_at":"2026-03-23T11:00:00Z","records":[{"id":"costar_local","name":"Fallback Tower"}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(main, "SUPABASE_ANON_KEY", "anon")
+    monkeypatch.setattr(main, "SUPABASE_SERVICE_ROLE_KEY", "service")
+    monkeypatch.setattr(main, "_SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_UNTIL", 0.0)
+    monkeypatch.setattr(main, "_SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_REASON", "")
+    monkeypatch.setattr(main, "SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_SECONDS", 300)
+    monkeypatch.setenv("SHARED_MARKET_INVENTORY_PATH", str(local_path))
+
+    calls = {"count": 0}
+
+    def _fake_http_bytes_request(*args, **kwargs):
+        calls["count"] += 1
+        return (400, b'{"message":"bucket misconfigured"}')
+
+    monkeypatch.setattr(main, "_http_bytes_request", _fake_http_bytes_request)
+
+    client = TestClient(main.app)
+    first = client.get("/market-inventory")
+    second = client.get("/market-inventory")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls["count"] == 1
+    assert second.json()["source"] == "local_fallback"

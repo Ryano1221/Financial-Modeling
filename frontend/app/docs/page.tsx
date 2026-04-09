@@ -8,7 +8,11 @@ const profiles = [
 const FAQ_ITEMS = [
   {
     q: "Is this one platform or separate tools?",
-    a: "One platform. Documents, CRM, financial analyses, surveys, lease abstracts, buildings, and obligations all stay tied to the same client workspace.",
+    a: "One platform. Documents, CRM, financial analyses, surveys, lease abstracts, buildings, obligations, and related leasing records all stay tied to the same client workspace so the full portfolio lives in one place.",
+  },
+  {
+    q: "Can one client workspace hold the full leasing portfolio?",
+    a: "Yes. theCREmodel is meant to centralize current leases, proposals, amendments, subleases, landlord consents, survey options, analyses, obligations, and follow-up work under the same active client record.",
   },
   {
     q: "Where should a new user start?",
@@ -65,7 +69,7 @@ export default function DocsPage() {
             <p className="heading-kicker">Docs</p>
             <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">How theCREmodel works</h1>
             <p className="body-lead max-w-4xl">
-              theCREmodel is built to feel simple on first use: pick the active client, open the right module, complete the task, and keep everything connected without re-entering data.
+              theCREmodel is built to feel simple on first use while still holding the full leasing portfolio in one place: pick the active client, open the right module, complete the task, and keep every document, analysis, and follow-up connected without re-entering data.
             </p>
             <div className="flex flex-wrap gap-3 pt-2">
               <div className="brand-badge">One connected workspace</div>
@@ -78,17 +82,17 @@ export default function DocsPage() {
             <div className="surface-card p-5">
               <p className="heading-kicker">Step 1</p>
               <h2 className="mt-2 text-xl font-semibold text-white">Start with the source record</h2>
-              <p className="mt-2 text-sm text-slate-300">Open the active client, building, deal, lease, or survey document first so the rest of the workflow stays in context.</p>
+              <p className="mt-2 text-sm text-slate-300">Open the active client, building, deal, lease, or survey document first so the rest of the portfolio workflow stays in context.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Step 2</p>
               <h2 className="mt-2 text-xl font-semibold text-white">Work in one module at a time</h2>
-              <p className="mt-2 text-sm text-slate-300">Each section is now trimmed to its clearest primary use so a new user can move through the platform without hunting for the next action.</p>
+              <p className="mt-2 text-sm text-slate-300">Each section is now trimmed to its clearest primary use so a new user can move through the platform without hunting for the next action, even when the workspace holds many leasing records.</p>
             </div>
             <div className="surface-card p-5">
               <p className="heading-kicker">Step 3</p>
               <h2 className="mt-2 text-xl font-semibold text-white">Deliver from the same workspace</h2>
-              <p className="mt-2 text-sm text-slate-300">Exports, sharing, and follow-up stay tied to the same underlying records, so the workflow remains easy to understand.</p>
+              <p className="mt-2 text-sm text-slate-300">Exports, sharing, and follow-up stay tied to the same underlying records, so the workflow remains easy to understand from first intake through the broader leasing portfolio.</p>
             </div>
           </section>
 
@@ -101,7 +105,7 @@ export default function DocsPage() {
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">CRM</p>
-                <p className="mt-2 text-sm text-slate-300">Manage the active client, deal pipeline, reminders, and next follow-up without exposing the whole operating layer at once.</p>
+                <p className="mt-2 text-sm text-slate-300">Manage the active client, deal pipeline, reminders, and next follow-up without exposing the whole operating layer at once, while keeping the relationship tied to the same portfolio workspace.</p>
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">Buildings</p>
@@ -117,7 +121,7 @@ export default function DocsPage() {
               </article>
               <article className="surface-card p-5">
                 <p className="heading-kicker">Obligations</p>
-                <p className="mt-2 text-sm text-slate-300">Track deadlines, notices, current leases, amendments, signed subleases, and scanned executed lease packages from the same connected client record.</p>
+                <p className="mt-2 text-sm text-slate-300">Track deadlines, notices, current leases, amendments, signed subleases, and scanned executed lease packages from the same connected client record so the full leasing portfolio stays visible over time.</p>
               </article>
             </div>
           </section>

@@ -598,6 +598,58 @@
   z-index: 0;
 }
 
+.number-rain-overlay {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 1;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 1) 10%, rgba(0, 0, 0, 1) 90%, rgba(0, 0, 0, 0.08));
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 1) 10%, rgba(0, 0, 0, 1) 90%, rgba(0, 0, 0, 0.08));
+}
+
+.number-rain-stream {
+  position: absolute;
+  top: 0;
+  display: block;
+  white-space: pre;
+  font-size: 0.62rem;
+  line-height: 0.78rem;
+  letter-spacing: 0.12em;
+  color: rgba(0, 0, 0, 0.72);
+  text-shadow: none;
+  user-select: none;
+  mix-blend-mode: normal;
+  animation-name: number-rain-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+  --number-rain-scale: 1;
+  --number-rain-drift-a: 0vw;
+  --number-rain-drift-b: 0vw;
+  --number-rain-drift-c: 0vw;
+  --number-rain-start-y: -30vh;
+}
+
+@keyframes number-rain-fall {
+  from {
+    transform: translate3d(0, var(--number-rain-start-y), 0) scale(var(--number-rain-scale));
+  }
+  24% {
+    transform: translate3d(var(--number-rain-drift-a), 12vh, 0) scale(var(--number-rain-scale));
+  }
+  53% {
+    transform: translate3d(var(--number-rain-drift-b), 46vh, 0) scale(var(--number-rain-scale));
+  }
+  79% {
+    transform: translate3d(var(--number-rain-drift-c), 84vh, 0) scale(var(--number-rain-scale));
+  }
+  to {
+    transform: translate3d(calc(var(--number-rain-drift-c) * 0.45), 132vh, 0) scale(var(--number-rain-scale));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
