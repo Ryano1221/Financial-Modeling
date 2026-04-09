@@ -8,6 +8,7 @@ import {
   getPlatformModulesForMode,
   resolveActivePlatformModule,
 } from "@/lib/platform/module-registry";
+import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { representationModeLabel } from "@/lib/workspace/representation-mode";
 
@@ -36,15 +37,17 @@ export function TopNav() {
     cloudSyncMessage,
     cloudLastSyncedAt,
   } = useClientWorkspace();
+  const { graph } = useBrokerOs();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const searchParamsSnapshot = searchParams?.toString() || "";
+  const selectedCrmCompanyId = asText(searchParams?.get("crm_company"));
 
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [pathname, searchParamsSnapshot]);
 
   // Keep exported report and share routes presentation-only (no app chrome).
-  if (pathname?.startsWith("/report") || pathname?.endsWith("/share")) return null;
+  const hideAppChrome = pathname?.startsWith("/report") || pathname?.endsWith("/share");
 
   const rawModule = String(searchParams?.get("module") || "").trim().toLowerCase();
   const hasExplicitModule = rawModule.length > 0;
@@ -70,14 +73,40 @@ export function TopNav() {
     : cloudSyncStatus === "saving" || cloudSyncStatus === "local"
       ? "text-amber-200"
       : "text-emerald-300";
+  const actualClientNameKeys = new Set(clients.map((client) => asText(client.name).toLowerCase()).filter(Boolean));
+  const crmClientOptions = graph.companies
+    .filter((company) => company.type === "active_client")
+    .filter((company, index, list) => list.findIndex((item) => item.id === company.id) === index)
+    .filter((company) => !actualClientNameKeys.has(asText(company.name).toLowerCase()))
+    .sort((left, right) => asText(left.name).localeCompare(asText(right.name)));
+  const clientDropdownValue = selectedCrmCompanyId
+    ? `crm:${selectedCrmCompanyId}`
+    : (activeClientId ? `client:${activeClientId}` : "");
   const switchWorkspaceClient = useCallback((clientId: string) => {
     const nextClientId = asText(clientId);
     if (!nextClientId) return;
     setActiveClient(nextClientId);
+    const params = new URLSearchParams(searchParamsSnapshot);
+    params.delete("crm_company");
     if (pathname === "/client" || pathname?.startsWith("/client/")) {
       router.push(`/client/${encodeURIComponent(nextClientId)}`);
+      return;
     }
-  }, [pathname, router, setActiveClient]);
+    const nextQuery = params.toString();
+    if (nextQuery !== searchParamsSnapshot) {
+      router.push(nextQuery ? `${pathname || "/"}?${nextQuery}` : (pathname || "/"));
+    }
+  }, [pathname, router, searchParamsSnapshot, setActiveClient]);
+  const focusCrmClient = useCallback((companyId: string) => {
+    const nextCompanyId = asText(companyId);
+    if (!nextCompanyId) return;
+    const params = new URLSearchParams(searchParamsSnapshot);
+    params.set("module", "deals");
+    params.set("crm_company", nextCompanyId);
+    router.push(`/?${params.toString()}`);
+  }, [router, searchParamsSnapshot]);
+
+  if (hideAppChrome) return null;
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 print:hidden border-b border-white/20 bg-black/95 backdrop-blur-sm">
@@ -163,19 +192,30 @@ export function TopNav() {
                 <select
                   aria-label="Active client workspace"
                   className="input-premium shrink-0 !h-8 !py-1 !text-[11px] w-[120px] lg:w-[132px] xl:w-[148px] 2xl:w-[190px]"
-                  value={activeClientId || ""}
+                  value={clientDropdownValue}
                   onChange={(event) => {
-                    const clientId = asText(event.target.value);
-                    if (!clientId) return;
-                    switchWorkspaceClient(clientId);
+                    const rawValue = asText(event.target.value);
+                    if (!rawValue) return;
+                    if (rawValue.startsWith("crm:")) {
+                      focusCrmClient(rawValue.slice(4));
+                      return;
+                    }
+                    if (rawValue.startsWith("client:")) {
+                      switchWorkspaceClient(rawValue.slice(7));
+                    }
                   }}
                 >
                   <option value="" disabled>
                     Select client
                   </option>
                   {clients.map((client) => (
-                    <option key={client.id} value={client.id}>
+                    <option key={client.id} value={`client:${client.id}`}>
                       {truncateLabel(client.name, 30)}
+                    </option>
+                  ))}
+                  {crmClientOptions.map((company) => (
+                    <option key={`crm_${company.id}`} value={`crm:${company.id}`}>
+                      {truncateLabel(company.name, 30)}
                     </option>
                   ))}
                 </select>
@@ -229,19 +269,30 @@ export function TopNav() {
                 <select
                   aria-label="Active client workspace"
                   className="input-premium !text-xs"
-                  value={activeClientId || ""}
+                  value={clientDropdownValue}
                   onChange={(event) => {
-                    const clientId = asText(event.target.value);
-                    if (!clientId) return;
-                    switchWorkspaceClient(clientId);
+                    const rawValue = asText(event.target.value);
+                    if (!rawValue) return;
+                    if (rawValue.startsWith("crm:")) {
+                      focusCrmClient(rawValue.slice(4));
+                      return;
+                    }
+                    if (rawValue.startsWith("client:")) {
+                      switchWorkspaceClient(rawValue.slice(7));
+                    }
                   }}
                 >
                   <option value="" disabled>
                     Select client
                   </option>
                   {clients.map((client) => (
-                    <option key={client.id} value={client.id}>
+                    <option key={client.id} value={`client:${client.id}`}>
                       {truncateLabel(client.name, 36)}
+                    </option>
+                  ))}
+                  {crmClientOptions.map((company) => (
+                    <option key={`crm_mobile_${company.id}`} value={`crm:${company.id}`}>
+                      {truncateLabel(company.name, 36)}
                     </option>
                   ))}
                 </select>
