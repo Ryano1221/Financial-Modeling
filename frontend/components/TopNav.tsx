@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -70,11 +70,19 @@ export function TopNav() {
     : cloudSyncStatus === "saving" || cloudSyncStatus === "local"
       ? "text-amber-200"
       : "text-emerald-300";
+  const switchWorkspaceClient = useCallback((clientId: string) => {
+    const nextClientId = asText(clientId);
+    if (!nextClientId) return;
+    setActiveClient(nextClientId);
+    if (pathname === "/client" || pathname?.startsWith("/client/")) {
+      router.push(`/client/${encodeURIComponent(nextClientId)}`);
+    }
+  }, [pathname, router, setActiveClient]);
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 print:hidden border-b border-white/20 bg-black/95 backdrop-blur-sm">
-      <div className="app-container py-3">
-        <div className="flex items-center justify-between gap-3 sm:gap-4 min-w-0">
+      <div className="app-container box-border max-w-full py-3">
+        <div className="flex items-center justify-between gap-2 sm:gap-3 min-w-0">
           <Link
             href="/"
             className="flex items-center gap-3 shrink-0 min-w-0 rounded px-1 py-1 transition-colors"
@@ -85,12 +93,12 @@ export function TopNav() {
               alt="The Commercial Real Estate Model logo"
               width={140}
               height={32}
-              className="h-7 sm:h-8 w-auto object-contain"
+              className="h-6 sm:h-7 xl:h-8 w-auto object-contain"
               priority
               sizes="(max-width: 640px) 112px, 140px"
             />
           </Link>
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
             <button
               type="button"
               className="sm:hidden btn-premium btn-premium-secondary text-xs"
@@ -100,7 +108,7 @@ export function TopNav() {
             >
               {mobileMenuOpen ? "Close" : "Menu"}
             </button>
-            <div className="hidden sm:flex flex-nowrap items-center gap-2 min-w-0 ml-auto whitespace-nowrap [&>*]:shrink-0">
+            <div className="hidden sm:flex items-center gap-2 min-w-0 flex-1 justify-end">
               {ready && session ? (
                 <span
                   className={`hidden 2xl:inline-flex text-[11px] uppercase tracking-[0.08em] ${cloudSyncClass}`}
@@ -114,7 +122,7 @@ export function TopNav() {
                   {representationMode ? representationModeLabel(representationMode) : "Mode Required"}
                 </span>
               ) : null}
-              <div className="lg:hidden min-w-[190px]">
+              <div className="2xl:hidden min-w-[170px] max-w-[230px] shrink">
                 <select
                   aria-label="Module navigation"
                   className="input-premium !h-9 !py-1.5 !text-xs"
@@ -133,31 +141,33 @@ export function TopNav() {
                   ))}
                 </select>
               </div>
-              <div className="hidden lg:flex items-center gap-2">
-                {platformModules.map((tab) => {
-                  const isActive = tab.id === activeModule;
-                  return (
-                    <Link
-                      key={tab.id}
-                      href={`/?module=${tab.id}`}
-                      className={`btn-premium !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
-                        isActive ? "btn-premium-primary" : "btn-premium-secondary"
-                      }`}
-                    >
-                      {tab.label}
-                    </Link>
-                  );
-                })}
+              <div className="hidden 2xl:flex min-w-0 flex-1 justify-end">
+                <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 overflow-x-auto whitespace-nowrap pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {platformModules.map((tab) => {
+                    const isActive = tab.id === activeModule;
+                    return (
+                      <Link
+                        key={tab.id}
+                        href={`/?module=${tab.id}`}
+                        className={`btn-premium shrink-0 !min-h-8 !px-2 !py-1.5 text-[10px] xl:text-[11px] ${
+                          isActive ? "btn-premium-primary" : "btn-premium-secondary"
+                        }`}
+                      >
+                        {tab.label}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
               {ready && session ? (
                 <select
                   aria-label="Active client workspace"
-                  className="input-premium !h-8 !py-1 !text-[11px] max-w-[160px] xl:max-w-[190px]"
+                  className="input-premium shrink-0 !h-8 !py-1 !text-[11px] w-[120px] lg:w-[132px] xl:w-[148px] 2xl:w-[190px]"
                   value={activeClientId || ""}
                   onChange={(event) => {
                     const clientId = asText(event.target.value);
                     if (!clientId) return;
-                    setActiveClient(clientId);
+                    switchWorkspaceClient(clientId);
                   }}
                 >
                   <option value="" disabled>
@@ -173,7 +183,7 @@ export function TopNav() {
               {!ready ? null : session ? (
                 <Link
                   href="/account"
-                  className={`btn-premium !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
+                  className={`btn-premium shrink-0 !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
                     accountTabActive ? "btn-premium-primary" : "btn-premium-secondary"
                   }`}
                 >
@@ -223,7 +233,7 @@ export function TopNav() {
                   onChange={(event) => {
                     const clientId = asText(event.target.value);
                     if (!clientId) return;
-                    setActiveClient(clientId);
+                    switchWorkspaceClient(clientId);
                   }}
                 >
                   <option value="" disabled>

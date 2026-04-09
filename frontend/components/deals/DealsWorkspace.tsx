@@ -335,12 +335,14 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   const {
     session,
     activeClient,
+    activeClientId,
     deals,
     dealStages,
     crmSettings,
     documents,
     representationMode,
     isAuthenticated,
+    setActiveClient,
     createDeal,
     updateDeal,
     removeDeal,
@@ -2421,6 +2423,26 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     scrollToWorkspaceSection(input.ref);
   }, []);
 
+  const focusCompanyWorkspace = useCallback((companyId: string, options?: {
+    ref?: MutableRefObject<HTMLDivElement | null>;
+    nextView?: DealsViewMode;
+  }) => {
+    const targetCompany = crmState.companies.find((company) => company.id === companyId) || null;
+    const targetClientId = asText(targetCompany?.clientId);
+    if (targetClientId && targetClientId !== activeClientId) {
+      setActiveClient(targetClientId);
+    }
+    if (options?.ref || options?.nextView) {
+      openDrillDownView({
+        ref: options?.ref || profileWorkspaceRef,
+        nextView: options?.nextView,
+        companyId,
+      });
+      return;
+    }
+    setSelectedCompanyId(companyId);
+  }, [activeClientId, crmState.companies, openDrillDownView, setActiveClient]);
+
   const commandMetricCards = useMemo(() => {
     if (isLandlordMode) {
       return [
@@ -2697,7 +2719,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                   <button
                     key={company.id}
                     type="button"
-                    onClick={() => openDrillDownView({ ref: profileWorkspaceRef, companyId: company.id })}
+                    onClick={() => focusCompanyWorkspace(company.id, { ref: profileWorkspaceRef })}
                     className={`w-full border p-3 text-left transition ${
                       selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"
                     }`}
@@ -2897,7 +2919,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                     <p className="heading-kicker mb-2">Relationship Queue</p>
                     <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
                       {dashboard.relationshipQueue.map((company) => (
-                        <button key={company.id} type="button" onClick={() => setSelectedCompanyId(company.id)} className={`w-full border p-2 text-left ${selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/25 hover:bg-white/5"}`}>
+                        <button key={company.id} type="button" onClick={() => focusCompanyWorkspace(company.id)} className={`w-full border p-2 text-left ${selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/25 hover:bg-white/5"}`}>
                           <div className="flex items-start justify-between gap-2">
                             <p className="text-sm text-white">{company.name}</p>
                             <span className={`border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${companyTypeBadgeClass(company.type)}`}>{company.type.replace(/_/g, " ")}</span>
@@ -3332,7 +3354,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
               const prospecting = crmState.prospectingRecords.find((record) => record.companyId === company.id);
               const companyBuilding = crmState.buildings.find((building) => building.id === company.buildingId);
               return (
-                <button key={company.id} type="button" onClick={() => setSelectedCompanyId(company.id)} className={`w-full border p-3 text-left ${selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"}`}>
+                <button key={company.id} type="button" onClick={() => focusCompanyWorkspace(company.id)} className={`w-full border p-3 text-left ${selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"}`}>
                   <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -3381,7 +3403,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                                     <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Floor {floorGroup.floor}</p>
                                     <div className="mt-1 space-y-1">
                                       {floorGroup.suites.map((suite) => (
-                                        <button key={`${suite.companyId}-${suite.suite}`} type="button" onClick={() => setSelectedCompanyId(suite.companyId)} className="w-full border border-white/10 bg-black/25 px-2 py-1 text-left text-xs hover:bg-white/5">
+                                        <button key={`${suite.companyId}-${suite.suite}`} type="button" onClick={() => focusCompanyWorkspace(suite.companyId)} className="w-full border border-white/10 bg-black/25 px-2 py-1 text-left text-xs hover:bg-white/5">
                                           <div className="flex items-center justify-between gap-2">
                                             <span className="text-slate-100">Suite {suite.suite} · {suite.companyName}</span>
                                             <span className="text-slate-400">{formatDate(suite.expirationDate)}</span>
@@ -3877,7 +3899,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
           {view === "client_grouped" ? (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
               {[...crmState.companies].sort(compareByCriticalDate).slice(0, 9).map((company) => (
-                <button key={company.id} type="button" onClick={() => setSelectedCompanyId(company.id)} className={`border p-3 text-left ${selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"}`}>
+                <button key={company.id} type="button" onClick={() => focusCompanyWorkspace(company.id)} className={`border p-3 text-left ${selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="text-white">{company.name}</p>
