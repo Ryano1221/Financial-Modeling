@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   PlatformDashboardTier,
   PlatformInsightCard,
@@ -332,6 +333,8 @@ function scrollToWorkspaceSection(ref: MutableRefObject<HTMLDivElement | null>) 
 }
 
 export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     session,
     activeClient,
@@ -350,6 +353,8 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   } = useClientWorkspace();
   const { graph, runAiCommand, createTaskForDeal, transitionDealStage } = useBrokerOs();
   const isLandlordMode = representationMode === LANDLORD_REP_MODE;
+  const searchParamsSnapshot = searchParams?.toString() || "";
+  const selectedCrmCompanyFromQuery = asText(searchParams?.get("crm_company"));
   const representationProfile = useMemo(
     () => getRepresentationModeProfile(representationMode),
     [representationMode],
@@ -992,11 +997,15 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   );
 
   useEffect(() => {
+    if (selectedCrmCompanyFromQuery && crmState.companies.some((company) => company.id === selectedCrmCompanyFromQuery)) {
+      setSelectedCompanyId((current) => (current === selectedCrmCompanyFromQuery ? current : selectedCrmCompanyFromQuery));
+      return;
+    }
     if (!selectedCompany && crmState.companies.length > 0) {
       const nextDefault = [...crmState.companies].sort(compareByCriticalDate)[0];
       if (nextDefault) setSelectedCompanyId(nextDefault.id);
     }
-  }, [crmState.companies, selectedCompany]);
+  }, [crmState.companies, selectedCompany, selectedCrmCompanyFromQuery]);
 
   useEffect(() => {
     const companyByName = new Map(crmState.companies.map((company) => [normalizeText(company.name), company.id]));
@@ -2427,21 +2436,27 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     ref?: MutableRefObject<HTMLDivElement | null>;
     nextView?: DealsViewMode;
   }) => {
+    const nextCompanyId = asText(companyId);
+    if (!nextCompanyId) return;
     const targetCompany = crmState.companies.find((company) => company.id === companyId) || null;
     const targetClientId = asText(targetCompany?.clientId);
     if (targetClientId && targetClientId !== activeClientId) {
       setActiveClient(targetClientId);
     }
+    const params = new URLSearchParams(searchParamsSnapshot);
+    params.set("module", "deals");
+    params.set("crm_company", nextCompanyId);
+    router.replace(`/?${params.toString()}`, { scroll: false });
     if (options?.ref || options?.nextView) {
       openDrillDownView({
         ref: options?.ref || profileWorkspaceRef,
         nextView: options?.nextView,
-        companyId,
+        companyId: nextCompanyId,
       });
       return;
     }
-    setSelectedCompanyId(companyId);
-  }, [activeClientId, crmState.companies, openDrillDownView, setActiveClient]);
+    setSelectedCompanyId(nextCompanyId);
+  }, [activeClientId, crmState.companies, openDrillDownView, router, searchParamsSnapshot, setActiveClient]);
 
   const commandMetricCards = useMemo(() => {
     if (isLandlordMode) {
