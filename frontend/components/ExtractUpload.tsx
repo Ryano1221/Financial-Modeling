@@ -49,14 +49,14 @@ function formatNormalizeError(res: Response, body: unknown): string {
 function classifyFailureReason(raw: unknown): string | null {
   const msg = String(raw ?? "").toLowerCase();
   if (!msg) return null;
-  if (msg.includes("openai_api_key") || (msg.includes("api key") && msg.includes("openai"))) {
-    return "Backend AI key is missing (`OPENAI_API_KEY`) on Render.";
+  if (msg.includes("openai_api_key") || msg.includes("anthropic_api_key") || (msg.includes("api key") && (msg.includes("openai") || msg.includes("anthropic"))) || msg.includes("api key missing") || msg.includes("api provider api key not configured")) {
+    return "Backend AI key is not configured on Render (OPENAI_API_KEY or ANTHROPIC_API_KEY missing).";
   }
   if (msg.includes("invalid api key") || msg.includes("incorrect api key") || msg.includes("authentication")) {
-    return "Backend OpenAI key is invalid.";
+    return "Backend AI provider key is invalid.";
   }
   if (msg.includes("model") && (msg.includes("not found") || msg.includes("does not exist") || msg.includes("not have access"))) {
-    return "Configured OpenAI model is not available for this key.";
+    return "Configured AI model is not available for this key.";
   }
   if (msg.includes("quota") || msg.includes("rate limit") || msg.includes("429")) {
     return "AI provider quota/rate limit was hit.";
