@@ -75,7 +75,6 @@ export function TopNav() {
       : "text-emerald-300";
   const actualClientNameKeys = new Set(clients.map((client) => asText(client.name).toLowerCase()).filter(Boolean));
   const crmClientOptions = graph.companies
-    .filter((company) => company.type === "active_client")
     .filter((company, index, list) => list.findIndex((item) => item.id === company.id) === index)
     .filter((company) => !actualClientNameKeys.has(asText(company.name).toLowerCase()))
     .sort((left, right) => asText(left.name).localeCompare(asText(right.name)));
