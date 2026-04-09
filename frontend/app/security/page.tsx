@@ -59,7 +59,7 @@ export default function SecurityPage() {
               </div>
               <div className="surface-card p-5">
                 <p className="heading-kicker">Integrated workflows</p>
-                <p className="mt-2 text-sm text-slate-300">Cross-module handoffs still stay inside the same client workspace, so surveys, analyses, CRM records, lease abstracts, obligations, and their exported client deliverables remain connected without weakening isolation or crossing between signed-in accounts.</p>
+                <p className="mt-2 text-sm text-slate-300">Cross-module handoffs still stay inside the same client workspace, so surveys, analyses, CRM records, lease abstracts, obligations, and their exported client deliverables remain connected without weakening isolation or crossing between signed-in accounts. Context-aware document actions reuse that same scoped workspace instead of creating a second import path.</p>
               </div>
             </div>
           </section>

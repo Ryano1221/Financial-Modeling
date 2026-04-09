@@ -24,6 +24,9 @@ export default function ContactPage() {
               Include the active client, the module you were in, and the exact action you expected to happen so we can trace the issue quickly.
             </p>
             <p className="text-sm sm:text-base text-slate-300">
+              If the issue was in the document library, include whether you clicked Open, Edit, Delete, or the module-specific Apply action so we can reproduce the exact workspace handoff.
+            </p>
+            <p className="text-sm sm:text-base text-slate-300">
               If the issue was with an export, include whether it was Excel or PDF and whether it came from Financial Analyses, Surveys, or Lease Abstracts.
             </p>
             <p className="text-sm sm:text-base text-slate-300">

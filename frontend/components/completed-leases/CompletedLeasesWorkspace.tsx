@@ -28,6 +28,8 @@ import type {
 interface CompletedLeasesWorkspaceProps {
   clientId: string;
   exportBranding?: CompletedLeaseExportBranding;
+  pendingDocumentImport?: ClientWorkspaceDocument | null;
+  onPendingDocumentImportHandled?: () => void;
 }
 
 const STORAGE_KEY = "completed_leases_module_v1";
@@ -251,7 +253,12 @@ function buildControllingAbstract(
   };
 }
 
-export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: CompletedLeasesWorkspaceProps) {
+export function CompletedLeasesWorkspace({
+  clientId,
+  exportBranding = {},
+  pendingDocumentImport = null,
+  onPendingDocumentImportHandled,
+}: CompletedLeasesWorkspaceProps) {
   const { isAuthenticated, documents: clientDocuments } = useClientWorkspace();
   const [documents, setDocuments] = useState<CompletedLeaseDocumentRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -419,6 +426,13 @@ export function CompletedLeasesWorkspace({ clientId, exportBranding = {} }: Comp
     });
     setStatus(`Imported ${document.name} from client document library.`);
   }, [addDocumentFromNormalize]);
+
+  useEffect(() => {
+    if (!pendingDocumentImport) return;
+    void onSelectExistingDocument(pendingDocumentImport).finally(() => {
+      onPendingDocumentImportHandled?.();
+    });
+  }, [onPendingDocumentImportHandled, onSelectExistingDocument, pendingDocumentImport]);
 
   useEffect(() => {
     if (!storageHydrated) return;

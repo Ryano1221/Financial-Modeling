@@ -8,6 +8,7 @@ import { isParseableWorkspaceDocument, normalizeWorkspaceDocument } from "@/lib/
 import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
 import {
   CLIENT_DOCUMENT_TYPES,
+  type ClientDocumentType,
   type ClientDocumentSourceModule,
   type ClientWorkspaceDocument,
 } from "@/lib/workspace/types";
@@ -41,6 +42,9 @@ interface ClientDocumentCenterProps {
   showDropZone?: boolean;
   sourceModule?: ClientDocumentSourceModule;
   globalDropLabel?: string;
+  contextualActionLabel?: string;
+  contextualActionAllowedTypes?: readonly ClientDocumentType[];
+  onContextualAction?: (document: ClientWorkspaceDocument) => void | Promise<void>;
   onDocumentIngested?: (payload: {
     document: ClientWorkspaceDocument;
     file: File;
@@ -52,6 +56,9 @@ export function ClientDocumentCenter({
   showDropZone = true,
   sourceModule = "document-center",
   globalDropLabel = "Drop files anywhere to save into this client and update the active workflow",
+  contextualActionLabel,
+  contextualActionAllowedTypes,
+  onContextualAction,
   onDocumentIngested,
 }: ClientDocumentCenterProps) {
   const { activeClient, documents, registerDocument, updateDocument, removeDocument } = useClientWorkspace();
@@ -77,6 +84,10 @@ export function ClientDocumentCenter({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const globalDragDepthRef = useRef(0);
   const isModuleScopedIntake = sourceModule !== "document-center";
+  const contextualActionTypes = useMemo(
+    () => new Set(contextualActionAllowedTypes || []),
+    [contextualActionAllowedTypes],
+  );
 
   const triggerDownloadFromDataUrl = useCallback(async (fileName: string, dataUrl: string): Promise<void> => {
     const safeName = asText(fileName) || "document";
@@ -170,6 +181,12 @@ export function ClientDocumentCenter({
     setError("");
     setStatus(`Deleted ${doc.name}.`);
   }, [editingId, removeDocument]);
+
+  const canRunContextualAction = useCallback((doc: ClientWorkspaceDocument) => {
+    if (!onContextualAction || !contextualActionLabel) return false;
+    if (contextualActionTypes.size === 0) return true;
+    return contextualActionTypes.has(doc.type);
+  }, [contextualActionLabel, contextualActionTypes, onContextualAction]);
 
   const renderEditFields = useCallback(() => (
     <>
@@ -518,6 +535,17 @@ export function ClientDocumentCenter({
                         <p className="text-slate-400 col-span-2">Uploaded: <span className="text-slate-200">{formatDateTime(doc.uploadedAt)}</span></p>
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        {canRunContextualAction(doc) ? (
+                          <button
+                            type="button"
+                            className="btn-premium btn-premium-primary text-xs"
+                            onClick={() => {
+                              void onContextualAction?.(doc);
+                            }}
+                          >
+                            {contextualActionLabel}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="btn-premium btn-premium-secondary text-xs"
@@ -561,7 +589,7 @@ export function ClientDocumentCenter({
                     <th className="hidden md:table-cell w-[23%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Building</th>
                     <th className="hidden sm:table-cell w-[10%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Suite</th>
                     <th className="w-[13%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Uploaded</th>
-                    <th className="sticky right-0 z-10 border-l border-white/10 bg-black/90 w-[276px] text-left py-2 pl-2 pr-2 sm:pr-3 text-slate-300 font-medium">Actions</th>
+                    <th className="sticky right-0 z-10 border-l border-white/10 bg-black/90 w-[372px] text-left py-2 pl-2 pr-2 sm:pr-3 text-slate-300 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -581,7 +609,18 @@ export function ClientDocumentCenter({
                             <td className="hidden sm:table-cell py-3 pr-2 sm:pr-3 text-slate-300 align-top truncate" title={doc.suite || "-"}>{doc.suite || "-"}</td>
                             <td className="py-3 pr-2 sm:pr-3 text-slate-300 break-words align-top">{formatDateTime(doc.uploadedAt)}</td>
                             <td className="sticky right-0 border-l border-white/10 bg-black/90 py-3 pl-2 pr-2 sm:pr-3 text-slate-300 align-top whitespace-nowrap">
-                              <div className="flex flex-nowrap items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                {canRunContextualAction(doc) ? (
+                                  <button
+                                    type="button"
+                                    className="btn-premium btn-premium-primary !h-8 !min-h-8 !w-32 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"
+                                    onClick={() => {
+                                      void onContextualAction?.(doc);
+                                    }}
+                                  >
+                                    {contextualActionLabel}
+                                  </button>
+                                ) : null}
                                 <button
                                   type="button"
                                   className="btn-premium btn-premium-secondary !h-8 !min-h-8 !w-20 !px-0 !py-0 text-[11px] inline-flex items-center justify-center shrink-0"

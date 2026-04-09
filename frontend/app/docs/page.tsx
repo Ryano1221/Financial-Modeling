@@ -39,6 +39,10 @@ const FAQ_ITEMS = [
     a: "Scanned executed leases now prioritize the responsive intake path first, and deeper extraction checks are bounded for OCR-heavy PDFs so large image-only files do not get stuck in a long secondary processing pass before the lease record is created.",
   },
   {
+    q: "Can I apply a saved document directly from the document library?",
+    a: "Yes. The document library now exposes a module-aware primary action so the same saved file can be applied directly to the current Financial Analysis, Survey, or Lease Abstract workflow from the row actions without leaving the page.",
+  },
+  {
     q: "How do I contact support?",
     a: "Use the Contact page for support guidance or email info@thecremodel.com directly, especially if a sign-in link does not arrive or a device-specific login issue needs to be traced.",
   },

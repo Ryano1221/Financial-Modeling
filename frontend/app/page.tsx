@@ -683,6 +683,8 @@ function HomeContent() {
   const [brandingLoading, setBrandingLoading] = useState(false);
   const [clientLogoDataUrl, setClientLogoDataUrl] = useState<string | null>(null);
   const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
+  const [pendingSurveyDocument, setPendingSurveyDocument] = useState<ClientWorkspaceDocument | null>(null);
+  const [pendingLeaseAbstractDocument, setPendingLeaseAbstractDocument] = useState<ClientWorkspaceDocument | null>(null);
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
   const computeRequestEpochRef = useRef<Record<string, number>>({});
   const autoImportedAnalysisDocumentIdsRef = useRef<Record<string, true>>({});
@@ -2484,6 +2486,9 @@ function HomeContent() {
         <ClientDocumentCenter
           sourceModule={activeDocumentDropSourceModule}
           globalDropLabel={activeDocumentDropLabel}
+          contextualActionLabel="Apply to Analysis"
+          contextualActionAllowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
+          onContextualAction={handleExistingDocumentSelection}
           onDocumentIngested={handleFinancialAnalysisDocumentIngested}
         />
         <section id="extract" className="scroll-mt-24 bg-grid">
@@ -2929,9 +2934,21 @@ function HomeContent() {
         if (activePlatformModule === "completed-leases") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+          <ClientDocumentCenter
+            sourceModule={activeDocumentDropSourceModule}
+            globalDropLabel={activeDocumentDropLabel}
+            contextualActionLabel="Apply to Lease Abstract"
+            contextualActionAllowedTypes={["leases", "amendments", "redlines", "other"]}
+            onContextualAction={(document) => {
+              setPendingLeaseAbstractDocument(document);
+            }}
+          />
           <CompletedLeasesWorkspace
             clientId={workspaceScopeId}
+            pendingDocumentImport={pendingLeaseAbstractDocument}
+            onPendingDocumentImportHandled={() => {
+              setPendingLeaseAbstractDocument(null);
+            }}
             exportBranding={{
               brokerageName: authSession
                 ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
@@ -2956,9 +2973,21 @@ function HomeContent() {
         if (activePlatformModule === "surveys") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-          <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
+          <ClientDocumentCenter
+            sourceModule={activeDocumentDropSourceModule}
+            globalDropLabel={activeDocumentDropLabel}
+            contextualActionLabel="Apply to Survey"
+            contextualActionAllowedTypes={["surveys", "flyers", "floorplans", "other"]}
+            onContextualAction={(document) => {
+              setPendingSurveyDocument(document);
+            }}
+          />
           <SurveysWorkspace
             clientId={workspaceScopeId}
+            pendingDocumentImport={pendingSurveyDocument}
+            onPendingDocumentImportHandled={() => {
+              setPendingSurveyDocument(null);
+            }}
             exportBranding={{
               brokerageName: authSession
                 ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)

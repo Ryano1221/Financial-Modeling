@@ -27,6 +27,8 @@ const STORAGE_KEY = "surveys_module_entries_v1";
 interface SurveysWorkspaceProps {
   clientId: string;
   exportBranding?: SurveysExportBranding;
+  pendingDocumentImport?: ClientWorkspaceDocument | null;
+  onPendingDocumentImportHandled?: () => void;
 }
 
 function asNumber(value: unknown): number {
@@ -44,7 +46,12 @@ function formatIsoDate(iso: string): string {
   return `${m[2]}.${m[3]}.${m[1]}`;
 }
 
-export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorkspaceProps) {
+export function SurveysWorkspace({
+  clientId,
+  exportBranding = {},
+  pendingDocumentImport = null,
+  onPendingDocumentImportHandled,
+}: SurveysWorkspaceProps) {
   const { isAuthenticated, documents } = useClientWorkspace();
   const [entries, setEntries] = useState<SurveyEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -169,6 +176,15 @@ export function SurveysWorkspace({ clientId, exportBranding = {} }: SurveysWorks
       setError(getDisplayErrorMessage(err));
     }
   }, [addEntry, clientId]);
+
+  useEffect(() => {
+    if (!pendingDocumentImport) return;
+    try {
+      onSelectExistingDocument(pendingDocumentImport);
+    } finally {
+      onPendingDocumentImportHandled?.();
+    }
+  }, [onPendingDocumentImportHandled, onSelectExistingDocument, pendingDocumentImport]);
 
   useEffect(() => {
     if (!storageHydrated) return;
