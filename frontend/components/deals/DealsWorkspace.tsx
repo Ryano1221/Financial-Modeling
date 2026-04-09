@@ -3935,6 +3935,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </PlatformPanel>
             </div>
 
+        {false ? (
         <PlatformPanel kicker="Workflow Boards" title={selectedDeal ? `${selectedDeal.dealName} Shortlist + Tours` : "Shortlist + Tours"} className="xl:col-span-12">
           {!selectedDeal ? (
             <p className="text-sm text-slate-400">Select a deal to manage shortlisted suites and tours in a dedicated CRM board.</p>
@@ -4452,6 +4453,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
             </div>
           )}
         </PlatformPanel>
+        ) : null}
 
         <PlatformPanel kicker="Deal Room" title={selectedDeal ? selectedDeal.dealName : "Select a deal"} className="xl:col-span-12">
           {!selectedDeal ? <p className="text-sm text-slate-400">Create a deal or select one from the CRM views.</p> : (
