@@ -12037,12 +12037,93 @@ def _normalize_impl(
                     warnings.append(safe_warning)
             else:
                 if extraction and extraction.scenario:
-                    canonical = _scenario_to_canonical(extraction.scenario, "", "")
-                    field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
-                    confidence_score = max((sum(field_confidence.values()) / max(1, len(field_confidence))), 0.82) if field_confidence else 0.82
-                    warnings.extend(extraction.warnings or [])
-                    if any("fallback" in str(w).lower() for w in (extraction.warnings or [])):
+                    try:
+                        canonical = _scenario_to_canonical(extraction.scenario, "", "")
+                        field_confidence = _extraction_confidence_to_field_confidence(extraction.confidence)
+                        confidence_score = max((sum(field_confidence.values()) / max(1, len(field_confidence))), 0.82) if field_confidence else 0.82
+                        warnings.extend(extraction.warnings or [])
+                        if any("fallback" in str(w).lower() for w in (extraction.warnings or [])):
+                            used_fallback = True
+                    except Exception as scenario_err:
+                        fallback_comm = extracted_hints.get("commencement_date") or date(2026, 1, 1)
+                        fallback_exp = extracted_hints.get("expiration_date") or date(2031, 1, 31)
+                        fallback_term = _coerce_int_token(extracted_hints.get("term_months"), 0) or _month_diff(fallback_comm, fallback_exp)
+                        fallback_term = max(12, fallback_term)
+                        fallback_suite = str(extracted_hints.get("suite") or "").strip()
+                        fallback_floor = str(extracted_hints.get("floor") or "").strip()
+                        fallback_building = str(extracted_hints.get("building_name") or "").strip() or _fallback_building_from_filename(file.filename or "")
+                        fallback_address = str(extracted_hints.get("address") or "").strip()
+                        fallback_rsf = _coerce_float_token(extracted_hints.get("rsf"), 0.0) or 0.0
+                        fallback_loc = f"Suite {fallback_suite}" if fallback_suite else (f"Floor {fallback_floor}" if fallback_floor else "")
+                        fallback_name = f"{fallback_building} {fallback_loc}".strip() if (fallback_building or fallback_loc) else "Extracted lease"
+                        hinted_rent_schedule = extracted_hints.get("rent_schedule") if isinstance(extracted_hints.get("rent_schedule"), list) else []
+                        fallback_rent_schedule: list[dict[str, Any]] = []
+                        for step in hinted_rent_schedule:
+                            if not isinstance(step, dict):
+                                continue
+                            start_m = _coerce_int_token(step.get("start_month"), None)
+                            end_m = _coerce_int_token(step.get("end_month"), start_m)
+                            rate = _coerce_float_token(step.get("rent_psf_annual"), 0.0)
+                            if start_m is None or end_m is None:
+                                continue
+                            fallback_rent_schedule.append(
+                                {
+                                    "start_month": max(0, int(start_m)),
+                                    "end_month": max(max(0, int(start_m)), int(end_m)),
+                                    "rent_psf_annual": max(0.0, float(rate)),
+                                }
+                            )
+                        if not fallback_rent_schedule:
+                            fallback_rent_schedule = [
+                                {
+                                    "start_month": 0,
+                                    "end_month": max(0, fallback_term - 1),
+                                    "rent_psf_annual": 0.0,
+                                }
+                            ]
+                        fallback_lease_type = _canonicalize_lease_type_label(extracted_hints.get("lease_type"))
+                        hinted_opex_fallback = _coerce_float_token(extracted_hints.get("opex_psf_year_1"), 0.0) or 0.0
+                        if not fallback_lease_type:
+                            fallback_lease_type = "NNN" if hinted_opex_fallback > 0 else "Full Service"
+                        fallback_is_full_service = _is_full_service_lease_type(fallback_lease_type)
+                        fallback_payload = {
+                            "scenario_name": fallback_name,
+                            "building_name": fallback_building,
+                            "suite": fallback_suite,
+                            "floor": fallback_floor,
+                            "address": fallback_address,
+                            "premises_name": fallback_name,
+                            "rsf": fallback_rsf,
+                            "commencement_date": fallback_comm,
+                            "expiration_date": fallback_exp,
+                            "term_months": fallback_term,
+                            "rent_schedule": fallback_rent_schedule,
+                            "lease_type": fallback_lease_type,
+                            "expense_structure_type": "nnn",
+                            "opex_psf_year_1": 0.0 if fallback_is_full_service else float(hinted_opex_fallback),
+                            "expense_stop_psf": 0.0,
+                            "opex_growth_rate": 0.0,
+                            "discount_rate_annual": 0.08,
+                        }
+                        if isinstance(extracted_hints.get("phase_in_schedule"), list) and extracted_hints["phase_in_schedule"]:
+                            fallback_payload["phase_in_schedule"] = extracted_hints["phase_in_schedule"]
+                        canonical = _dict_to_canonical(fallback_payload, "", "")
+                        field_confidence = {
+                            "rsf": 0.75 if extracted_hints.get("rsf") else 0.25,
+                            "commencement_date": 0.75 if extracted_hints.get("commencement_date") else 0.25,
+                            "expiration_date": 0.75 if extracted_hints.get("expiration_date") else 0.25,
+                            "rent_schedule": 0.75 if hinted_rent_schedule else 0.25,
+                            "building_name": 0.8 if fallback_building else 0.2,
+                            "suite": 0.8 if fallback_suite else 0.2,
+                            "floor": 0.8 if fallback_floor else 0.2,
+                        }
+                        confidence_score = 0.7
                         used_fallback = True
+                        warnings.extend(extraction.warnings or [])
+                        warnings.append("Deterministic lease hints were used because the AI rent schedule was incomplete.")
+                        safe_warning = _safe_extraction_warning(scenario_err)
+                        if safe_warning and safe_warning != "Automatic extraction failed due to a backend processing issue.":
+                            warnings.append(safe_warning)
                 else:
                     canonical = _dict_to_canonical({}, "", "")
                     confidence_score = 0.4

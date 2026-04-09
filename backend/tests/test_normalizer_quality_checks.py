@@ -1534,6 +1534,92 @@ def test_normalize_impl_uses_direct_basic_lease_info_for_scanned_lease(monkeypat
     assert abs(float(canonical.rent_abatements[0].percent_abated) - 25.915) < 0.01
 
 
+def test_normalize_impl_falls_back_to_deterministic_hints_when_ai_schedule_is_invalid(monkeypatch) -> None:
+    text = (
+        "LEASE AGREEMENT BETWEEN 7171 SW PARKWAY ASSOCIATES, LP, AS LANDLORD, AND THERMON, INC., AS TENANT\n"
+        "BASIC LEASE INFORMATION\n"
+        "April 17, 2018\n"
+        "7171 SW PARKWAY ASSOCIATES, LP, a Delaware limited partnership\n"
+        "THERMON, INC., a Texas corporation\n"
+        "Suite No. 200 (east wing), containing approximately 26,996 rentable square feet, on the second floor of the "
+        "building commonly known as B300 (the “Building”) in the multi-building office complex known as Summit at Lantana, "
+        "and whose street address is 7171 Southwest Parkway, Austin, TX 78735. The Premises are outlined on the plan attached to the Lease as Exhibit A.\n"
+        "132 full calendar months, plus any partial month from the Commencement Date to the end of the month in which the Commencement Date falls.\n"
+        "The earlier of (a) the date on which Tenant occupies any portion of the Premises and begins conducting business therein, or (b) December 1, 2018.\n"
+        "Subject to the partial abatement of Basic Rent provided below, Basic Rent shall be the following amounts for the following periods of time:\n"
+        "Lease Months Annual Basic Rent Rate Per Rentable Square Foot in the Premises Monthly Basic Rent\n"
+        "1-12 $26.00 $58,491.33\n"
+        "13-24 26.75 $60,178.58\n"
+        "25-36 27.50 $61,865.83\n"
+        "37-48 28.25 $63,553.08\n"
+        "49-60 29.00 $65,240.33\n"
+        "61-72 29.75 $66,927.58\n"
+        "73-84 30.50 $68,614.83\n"
+        "85-96 31.25 $70,302.08\n"
+        "97-108 32.00 $71,989.33\n"
+        "109-120 32.75 $73,676.58\n"
+        "121-132 33.50 $75,363.83\n"
+        "Basic Rent with respect to 6,996 rentable square feet of the Premises shall be abated during the first 24 months of the Term.\n"
+        "Additional Rent: Tenant Electric, Tenant's Separate Chilled Water Costs, and Tenant's Proportionate Share of Operating Costs and Taxes.\n"
+        "Tenant's Proportionate Share: 3.30%.\n"
+        "The foregoing Basic Lease Information is incorporated into and made a part of the Lease identified above.\n"
+    )
+    monkeypatch.setattr(main, "extract_text_from_pdf", lambda _buf: "")
+    monkeypatch.setattr(main, "extract_text_from_pdf_with_ocr", lambda _buf, force_ocr=True, ocr_pages=3: (text, "ocr"))
+    monkeypatch.setattr(main, "_looks_like_generated_report_document", lambda _text: False)
+    monkeypatch.setattr(main, "_detect_document_type", lambda _text, _filename: "lease")
+    monkeypatch.setattr(
+        main,
+        "extract_scenario_from_text",
+        lambda _text, _source: ExtractionResponse(
+            scenario=Scenario(
+                name="Broken AI scenario",
+                rsf=26996.0,
+                commencement=date(2018, 12, 1),
+                expiration=date(2029, 11, 30),
+                rent_steps=[RentStep(start=24, end=131, rate_psf_yr=26.75)],
+                free_rent_months=0,
+                ti_allowance_psf=0.0,
+                opex_mode=OpexMode.NNN,
+                base_opex_psf_yr=0.0,
+                base_year_opex_psf_yr=0.0,
+                opex_growth=0.0,
+                discount_rate_annual=0.08,
+            ),
+            confidence={"rsf": 0.7, "rent_steps": 0.3},
+            warnings=[],
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_scenario_to_canonical",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("rent_schedule must be contiguous starting at month 0")),
+    )
+    monkeypatch.setattr(
+        main,
+        "_run_extraction_artifacts",
+        lambda **_kwargs: {
+            "provenance": {},
+            "review_tasks": [],
+            "export_allowed": True,
+            "extraction_confidence": {"overall": 0.94, "status": "green", "export_allowed": True},
+            "canonical_extraction": {},
+        },
+    )
+
+    upload = UploadFile(filename="thermon-executed-lease.pdf", file=BytesIO(b"pdf-bytes"))
+    result, processed_ok = main._normalize_impl("rid", "PDF", None, None, upload)
+    canonical = result.canonical_lease
+
+    assert processed_ok is True
+    assert canonical.rsf == 26996.0
+    assert canonical.suite == "200"
+    assert canonical.commencement_date == date(2018, 12, 1)
+    assert canonical.expiration_date == date(2029, 11, 30)
+    assert canonical.rent_schedule[0].start_month == 0
+    assert result.confidence_score >= 0.7
+
+
 CENTRE_ONE_SUITE_201_TEXT = """
 Preamble Building: Centre One Office Building
 3103 Bee Caves Rd.
