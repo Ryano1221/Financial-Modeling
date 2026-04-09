@@ -64,6 +64,23 @@ def test_run_extraction_artifacts_primary_pass_omits_canonical_backfill(monkeypa
     assert artifacts["extraction_confidence"]["status"] == "green"
 
 
+def test_dict_to_canonical_normalizes_fragmentary_rent_schedule() -> None:
+    canonical = main._dict_to_canonical(
+        {
+            "building_name": "Summit at Lantana - B300",
+            "suite": "200",
+            "rsf": 26996,
+            "commencement_date": "2018-12-01",
+            "expiration_date": "2029-11-30",
+            "term_months": 132,
+            "rent_schedule": [{"start_month": 24, "end_month": 131, "rent_psf_annual": 26.75}],
+        }
+    )
+
+    assert canonical.rent_schedule[0].start_month == 0
+    assert canonical.rent_schedule[0].end_month == 131
+
+
 def test_run_extraction_artifacts_uses_canonical_only_fallback_when_pipeline_errors(monkeypatch) -> None:
     monkeypatch.setattr(main, "build_extract_response", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     canonical = main._dict_to_canonical(

@@ -98,10 +98,63 @@ def _date_from_iso(s: str) -> date:
     return datetime.fromisoformat(s.replace("Z", "+00:00").split("T")[0]).date()
 
 
+def _normalize_rent_schedule_steps(
+    steps: List[RentScheduleStep],
+    *,
+    term_months: int = 0,
+) -> List[RentScheduleStep]:
+    if not steps:
+        return []
+
+    ordered = sorted(
+        steps,
+        key=lambda step: (int(step.start_month), int(step.end_month), float(step.rent_psf_annual)),
+    )
+    normalized: List[RentScheduleStep] = []
+    expected = 0
+    for step in ordered:
+        start = max(0, int(step.start_month))
+        end = max(start, int(step.end_month))
+        if not normalized and start > 0:
+            start = 0
+        if normalized and start > expected:
+            normalized[-1] = normalized[-1].model_copy(update={"end_month": start - 1})
+        if start < expected:
+            start = expected
+        if end < start:
+            end = start
+        normalized.append(
+            step.model_copy(
+                update={
+                    "start_month": start,
+                    "end_month": end,
+                }
+            )
+        )
+        expected = end + 1
+
+    if term_months > 0 and normalized and int(normalized[-1].end_month) < (int(term_months) - 1):
+        normalized[-1] = normalized[-1].model_copy(update={"end_month": int(term_months) - 1})
+
+    merged: List[RentScheduleStep] = []
+    for step in normalized:
+        if (
+            merged
+            and int(step.start_month) <= int(merged[-1].end_month) + 1
+            and round(float(step.rent_psf_annual), 6) == round(float(merged[-1].rent_psf_annual), 6)
+            and str(step.escalation_type) == str(merged[-1].escalation_type)
+            and round(float(step.escalation_value), 6) == round(float(merged[-1].escalation_value), 6)
+        ):
+            merged[-1] = merged[-1].model_copy(update={"end_month": max(int(merged[-1].end_month), int(step.end_month))})
+        else:
+            merged.append(step)
+    return merged
+
+
 def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_name: str = "") -> CanonicalLease:
     """Convert legacy Scenario to CanonicalLease."""
     term = scenario.term_months
-    rent_schedule = [
+    rent_schedule = _normalize_rent_schedule_steps([
         RentScheduleStep(
             start_month=s.start,
             end_month=s.end,
@@ -110,7 +163,7 @@ def _scenario_to_canonical(scenario: Scenario, scenario_id: str = "", scenario_n
             escalation_value=0.0,
         )
         for s in scenario.rent_steps
-    ]
+    ], term_months=term)
     if scenario.opex_mode.value == "base_year":
         expense_type = ExpenseStructureType.BASE_YEAR
         lease_type = LeaseType.MODIFIED_GROSS
@@ -196,6 +249,7 @@ def _dict_to_canonical(data: Dict[str, Any], scenario_id: str = "", scenario_nam
         term = int(get("term_months", 60))
         rate = float(get("rate_psf_yr") or get("rent_psf_annual", 0))
         rent_schedule = [RentScheduleStep(start_month=0, end_month=max(0, term - 1), rent_psf_annual=rate)]
+    rent_schedule = _normalize_rent_schedule_steps(rent_schedule, term_months=int(get("term_months", 0) or 0))
 
     free_rent_months = int(get("free_rent_months", 0) or 0)
     free_rent_start = int(get("free_rent_start_month", 0) or 0)
