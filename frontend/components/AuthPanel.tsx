@@ -26,7 +26,7 @@ export function AuthPanel({ onAuthed, initialMode = "signin" }: AuthPanelProps) 
   const canSubmit = useMemo(() => {
     const hasPassword = mode === "signin" ? password.length > 0 : password.length >= 8;
     return !loading && !magicLinkLoading && email.trim().length > 3 && hasPassword;
-  }, [email, password, loading, magicLinkLoading]);
+  }, [email, password, loading, magicLinkLoading, mode]);
 
   const canSendMagicLink = useMemo(() => {
     return !loading && !magicLinkLoading && email.trim().length > 3;
