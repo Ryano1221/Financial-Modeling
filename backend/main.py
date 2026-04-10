@@ -148,6 +148,7 @@ SKIP_EXTRACTION_ARTIFACTS_FOR_OCR_HEAVY_PDFS = str(
     os.environ.get("SKIP_EXTRACTION_ARTIFACTS_FOR_OCR_HEAVY_PDFS", "true")
 ).strip().lower() in {"1", "true", "yes", "on"}
 MAX_WORKSPACE_STATE_BYTES = int(os.environ.get("MAX_WORKSPACE_STATE_BYTES", str(5 * 1024 * 1024)))
+MAX_WORKSPACE_SECTION_BYTES = int(os.environ.get("MAX_WORKSPACE_SECTION_BYTES", str(25 * 1024 * 1024)))
 MAX_MARKET_INVENTORY_UPLOAD_BYTES = int(os.environ.get("MAX_MARKET_INVENTORY_UPLOAD_BYTES", str(25 * 1024 * 1024)))
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip().rstrip("/")
 SUPABASE_ANON_KEY = (os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY") or "").strip()
@@ -158,6 +159,14 @@ SUPABASE_WORKSPACE_BUCKET = (
 ).strip() or "logos"
 DEFAULT_CREMODEL_BRAND_NAME = "The CRE Model"
 SHARED_MARKET_INVENTORY_OBJECT_PATH = "shared/market_inventory/costar_buildings.json"
+WORKSPACE_EXTERNAL_SECTION_KEYS = frozenset({
+    "clients",
+    "deals",
+    "dealStageMap",
+    "crmSettingsMap",
+    "documents",
+    "deletedDocumentIds",
+})
 SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_SECONDS = int(
     os.environ.get("SHARED_MARKET_INVENTORY_STORAGE_BACKOFF_SECONDS", "300")
 )
@@ -676,6 +685,18 @@ def _workspace_state_object_path(user_id: str) -> str:
     return f"workspace/{user_id}/state.json"
 
 
+def _should_externalize_workspace_key(key: str) -> bool:
+    clean = str(key or "").strip()
+    return clean in WORKSPACE_EXTERNAL_SECTION_KEYS or "::" in clean
+
+
+def _workspace_section_object_path(user_id: str, section_key: str) -> str:
+    clean = str(section_key or "").strip()
+    safe_name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", clean).strip("._")[:80] or "section"
+    digest = hashlib.sha256(clean.encode("utf-8")).hexdigest()[:16]
+    return f"workspace/{user_id}/sections/{safe_name}__{digest}.json"
+
+
 def _sanitize_workspace_section_key(section_key: str) -> str:
     key = str(section_key or "").strip()
     if not key or len(key) > 120 or not re.fullmatch(r"[a-zA-Z0-9_.:-]+", key):
@@ -714,7 +735,78 @@ def _storage_upload_workspace_state(user_id: str, workspace_state: dict) -> dict
     return {"object_path": object_path, "bytes": len(body)}
 
 
-def _storage_download_workspace_state(user_id: str) -> tuple[dict | None, str | None]:
+def _storage_upload_workspace_section(
+    user_id: str,
+    section_key: str,
+    value: Any,
+) -> dict[str, str | int]:
+    try:
+        body = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Workspace section payload must be valid JSON.") from exc
+
+    if len(body) > MAX_WORKSPACE_SECTION_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Workspace section exceeds size limit ({MAX_WORKSPACE_SECTION_BYTES} bytes).",
+        )
+
+    object_path = _workspace_section_object_path(user_id, section_key)
+    encoded = urllib_parse.quote(object_path, safe="/")
+    status, resp_body = _http_bytes_request(
+        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+        method="POST",
+        headers={
+            **_admin_headers(),
+            "content-type": "application/json",
+            "x-upsert": "true",
+        },
+        body=body,
+        timeout=30.0,
+    )
+    if status >= 400:
+        msg = resp_body.decode("utf-8", errors="ignore")[:300]
+        raise HTTPException(status_code=503, detail=f"Failed to save workspace section: {msg}")
+    return {"object_path": object_path, "bytes": len(body)}
+
+
+def _storage_download_workspace_section_by_path(object_path: str) -> tuple[bool, Any]:
+    clean_path = str(object_path or "").strip()
+    if not clean_path:
+        return False, None
+    encoded = urllib_parse.quote(clean_path, safe="/")
+    status, body = _http_bytes_request(
+        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+        method="GET",
+        headers=_admin_headers(),
+        timeout=30.0,
+    )
+    if status == 404:
+        return False, None
+    if status >= 400:
+        raise HTTPException(status_code=503, detail="Failed to load workspace section from cloud storage.")
+    if not body:
+        return True, None
+    try:
+        return True, json.loads(body.decode("utf-8", errors="ignore"))
+    except Exception:
+        return False, None
+
+
+def _extract_workspace_envelope_sections(payload: dict[str, Any]) -> dict[str, str]:
+    raw = payload.get("external_sections")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        section_key = str(key or "").strip()
+        object_path = str(value or "").strip()
+        if section_key and object_path:
+            out[section_key] = object_path
+    return out
+
+
+def _storage_download_workspace_envelope(user_id: str) -> tuple[dict | None, str | None]:
     object_path = _workspace_state_object_path(user_id)
     encoded = urllib_parse.quote(object_path, safe="/")
     status, body = _http_bytes_request(
@@ -735,11 +827,50 @@ def _storage_download_workspace_state(user_id: str) -> tuple[dict | None, str | 
         return None, None
     if not isinstance(payload, dict):
         return None, None
+    updated_at = str(payload.get("updated_at") or "").strip() or None
+    return payload, updated_at
+
+
+def _storage_build_workspace_envelope(
+    user_id: str,
+    workspace_state: dict,
+    updated_at: str,
+) -> dict[str, Any]:
+    inline_state: dict[str, Any] = {}
+    external_sections: dict[str, str] = {}
+
+    for key, value in workspace_state.items():
+        section_key = str(key or "").strip()
+        if not section_key:
+            continue
+        if _should_externalize_workspace_key(section_key):
+            upload = _storage_upload_workspace_section(user_id, section_key, value)
+            external_sections[section_key] = str(upload.get("object_path") or "").strip()
+            continue
+        inline_state[section_key] = value
+
+    envelope: dict[str, Any] = {
+        "version": 2,
+        "updated_at": updated_at,
+        "workspace_state": inline_state,
+    }
+    if external_sections:
+        envelope["external_sections"] = external_sections
+    return envelope
+
+
+def _storage_download_workspace_state(user_id: str) -> tuple[dict | None, str | None]:
+    payload, updated_at = _storage_download_workspace_envelope(user_id)
+    if not isinstance(payload, dict):
+        return None, updated_at
 
     # Backward compatibility: support raw state dict and enveloped shape.
     raw_state = payload.get("workspace_state") if isinstance(payload.get("workspace_state"), dict) else payload
     workspace_state = raw_state if isinstance(raw_state, dict) else {}
-    updated_at = str(payload.get("updated_at") or "").strip() or None
+    for section_key, object_path in _extract_workspace_envelope_sections(payload).items():
+        found, value = _storage_download_workspace_section_by_path(object_path)
+        if found:
+            workspace_state[section_key] = value
     return workspace_state, updated_at
 
 
@@ -1329,11 +1460,7 @@ def put_user_workspace_state(body: UserWorkspaceStateUpdateRequest, request: Req
     user = _require_supabase_user(request)
     workspace_state = body.workspace_state if isinstance(body.workspace_state, dict) else {}
     updated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    envelope = {
-        "version": 1,
-        "updated_at": updated_at,
-        "workspace_state": workspace_state,
-    }
+    envelope = _storage_build_workspace_envelope(user["id"], workspace_state, updated_at)
     _storage_upload_workspace_state(user["id"], envelope)
     return {
         "user_id": user["id"],
@@ -1346,12 +1473,20 @@ def put_user_workspace_state(body: UserWorkspaceStateUpdateRequest, request: Req
 def get_user_workspace_state_section(section_key: str, request: Request):
     user = _require_supabase_user(request)
     key = _sanitize_workspace_section_key(section_key)
-    workspace_state, updated_at = _storage_download_workspace_state(user["id"])
-    state = workspace_state if isinstance(workspace_state, dict) else {}
+    payload, updated_at = _storage_download_workspace_envelope(user["id"])
+    raw_state = payload.get("workspace_state") if isinstance(payload, dict) and isinstance(payload.get("workspace_state"), dict) else payload
+    state = raw_state if isinstance(raw_state, dict) else {}
+    external_sections = _extract_workspace_envelope_sections(payload if isinstance(payload, dict) else {})
+    value = state.get(key)
+    object_path = external_sections.get(key)
+    if object_path:
+        found, section_value = _storage_download_workspace_section_by_path(object_path)
+        if found:
+            value = section_value
     return {
         "user_id": user["id"],
         "section_key": key,
-        "value": state.get(key),
+        "value": value,
         "updated_at": updated_at,
     }
 
@@ -1360,15 +1495,27 @@ def get_user_workspace_state_section(section_key: str, request: Request):
 def put_user_workspace_state_section(section_key: str, body: UserWorkspaceSectionUpdateRequest, request: Request):
     user = _require_supabase_user(request)
     key = _sanitize_workspace_section_key(section_key)
-    workspace_state, _ = _storage_download_workspace_state(user["id"])
-    state = workspace_state if isinstance(workspace_state, dict) else {}
-    state[key] = body.value
+    payload, _ = _storage_download_workspace_envelope(user["id"])
+    raw_state = payload.get("workspace_state") if isinstance(payload, dict) and isinstance(payload.get("workspace_state"), dict) else payload
+    state = dict(raw_state) if isinstance(raw_state, dict) else {}
+    external_sections = _extract_workspace_envelope_sections(payload if isinstance(payload, dict) else {})
+
+    if _should_externalize_workspace_key(key):
+        upload = _storage_upload_workspace_section(user["id"], key, body.value)
+        external_sections[key] = str(upload.get("object_path") or "").strip()
+        state.pop(key, None)
+    else:
+        state[key] = body.value
+        external_sections.pop(key, None)
+
     updated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     envelope = {
-        "version": 1,
+        "version": 2,
         "updated_at": updated_at,
         "workspace_state": state,
     }
+    if external_sections:
+        envelope["external_sections"] = external_sections
     _storage_upload_workspace_state(user["id"], envelope)
     return {
         "user_id": user["id"],
