@@ -666,7 +666,7 @@ def _storage_download_logo_bytes(object_path: str) -> tuple[bytes | None, str | 
         return None, None
     encoded = urllib_parse.quote(clean, safe="/")
     status, body = _http_bytes_request(
-        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_LOGOS_BUCKET}/{encoded}",
+        f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_LOGOS_BUCKET}/{encoded}",
         method="GET",
         headers=_admin_headers(),
         timeout=30.0,
@@ -776,7 +776,7 @@ def _storage_download_workspace_section_by_path(object_path: str) -> tuple[bool,
         return False, None
     encoded = urllib_parse.quote(clean_path, safe="/")
     status, body = _http_bytes_request(
-        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+        f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
         method="GET",
         headers=_admin_headers(),
         timeout=30.0,
@@ -810,7 +810,7 @@ def _storage_download_workspace_envelope(user_id: str) -> tuple[dict | None, str
     object_path = _workspace_state_object_path(user_id)
     encoded = urllib_parse.quote(object_path, safe="/")
     status, body = _http_bytes_request(
-        f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+        f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
         method="GET",
         headers=_admin_headers(),
         timeout=30.0,
@@ -970,7 +970,7 @@ def _load_shared_market_inventory() -> tuple[dict[str, Any], bool]:
             return _read_shared_market_inventory_local()
         encoded = urllib_parse.quote(SHARED_MARKET_INVENTORY_OBJECT_PATH, safe="/")
         status, body = _http_bytes_request(
-            f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
+            f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
             method="GET",
             headers=_admin_headers(),
             timeout=30.0,
