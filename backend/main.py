@@ -640,12 +640,17 @@ def _storage_delete_logo(object_path: str) -> None:
 
 
 def _storage_signed_logo_url(object_path: str, expires_seconds: int = 3600) -> str | None:
+    return _storage_signed_object_url(SUPABASE_LOGOS_BUCKET, object_path, expires_seconds=expires_seconds)
+
+
+def _storage_signed_object_url(bucket: str, object_path: str, expires_seconds: int = 3600) -> str | None:
     clean = (object_path or "").strip().lstrip("/")
-    if not clean:
+    clean_bucket = (bucket or "").strip()
+    if not clean or not clean_bucket:
         return None
     encoded = urllib_parse.quote(clean, safe="/")
     status, payload = _http_json_request(
-        f"{SUPABASE_URL}/storage/v1/object/sign/{SUPABASE_LOGOS_BUCKET}/{encoded}",
+        f"{SUPABASE_URL}/storage/v1/object/sign/{clean_bucket}/{encoded}",
         method="POST",
         headers=_admin_headers(),
         payload={"expiresIn": max(60, int(expires_seconds))},
@@ -660,17 +665,44 @@ def _storage_signed_logo_url(object_path: str, expires_seconds: int = 3600) -> s
     return f"{SUPABASE_URL}/storage/v1{signed_path}"
 
 
+def _storage_download_object_bytes(bucket: str, object_path: str) -> tuple[int, bytes]:
+    clean = (object_path or "").strip().lstrip("/")
+    clean_bucket = (bucket or "").strip()
+    if not clean or not clean_bucket:
+        return 404, b""
+    encoded = urllib_parse.quote(clean, safe="/")
+    attempts = [
+        f"{SUPABASE_URL}/storage/v1/object/authenticated/{clean_bucket}/{encoded}",
+        f"{SUPABASE_URL}/storage/v1/object/{clean_bucket}/{encoded}",
+    ]
+    last_status = 404
+    last_body = b""
+    for url in attempts:
+        status, body = _http_bytes_request(
+            url,
+            method="GET",
+            headers=_admin_headers(),
+            timeout=30.0,
+        )
+        if status < 400:
+            return status, body
+        last_status, last_body = status, body
+
+    signed_url = _storage_signed_object_url(clean_bucket, clean, expires_seconds=60)
+    if signed_url:
+        status, body = _http_bytes_request(signed_url, method="GET", timeout=30.0)
+        if status < 400:
+            return status, body
+        last_status, last_body = status, body
+
+    return last_status, last_body
+
+
 def _storage_download_logo_bytes(object_path: str) -> tuple[bytes | None, str | None]:
     clean = (object_path or "").strip().lstrip("/")
     if not clean:
         return None, None
-    encoded = urllib_parse.quote(clean, safe="/")
-    status, body = _http_bytes_request(
-        f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_LOGOS_BUCKET}/{encoded}",
-        method="GET",
-        headers=_admin_headers(),
-        timeout=30.0,
-    )
+    status, body = _storage_download_object_bytes(SUPABASE_LOGOS_BUCKET, clean)
     if status >= 400 or not body:
         return None, None
     content_type = "image/png"
@@ -774,17 +806,12 @@ def _storage_download_workspace_section_by_path(object_path: str) -> tuple[bool,
     clean_path = str(object_path or "").strip()
     if not clean_path:
         return False, None
-    encoded = urllib_parse.quote(clean_path, safe="/")
-    status, body = _http_bytes_request(
-        f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
-        method="GET",
-        headers=_admin_headers(),
-        timeout=30.0,
-    )
+    status, body = _storage_download_object_bytes(SUPABASE_WORKSPACE_BUCKET, clean_path)
     if status == 404:
         return False, None
     if status >= 400:
-        raise HTTPException(status_code=503, detail="Failed to load workspace section from cloud storage.")
+        msg = body.decode("utf-8", errors="ignore")[:300]
+        raise HTTPException(status_code=503, detail=f"Failed to load workspace section from cloud storage: {msg}")
     if not body:
         return True, None
     try:
@@ -808,17 +835,12 @@ def _extract_workspace_envelope_sections(payload: dict[str, Any]) -> dict[str, s
 
 def _storage_download_workspace_envelope(user_id: str) -> tuple[dict | None, str | None]:
     object_path = _workspace_state_object_path(user_id)
-    encoded = urllib_parse.quote(object_path, safe="/")
-    status, body = _http_bytes_request(
-        f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
-        method="GET",
-        headers=_admin_headers(),
-        timeout=30.0,
-    )
+    status, body = _storage_download_object_bytes(SUPABASE_WORKSPACE_BUCKET, object_path)
     if status == 404:
         return None, None
     if status >= 400:
-        raise HTTPException(status_code=503, detail="Failed to load workspace state from cloud storage.")
+        msg = body.decode("utf-8", errors="ignore")[:300]
+        raise HTTPException(status_code=503, detail=f"Failed to load workspace state from cloud storage: {msg}")
     if not body:
         return None, None
     try:
@@ -968,12 +990,9 @@ def _load_shared_market_inventory() -> tuple[dict[str, Any], bool]:
     if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY:
         if not _shared_market_inventory_storage_available():
             return _read_shared_market_inventory_local()
-        encoded = urllib_parse.quote(SHARED_MARKET_INVENTORY_OBJECT_PATH, safe="/")
-        status, body = _http_bytes_request(
-            f"{SUPABASE_URL}/storage/v1/object/authenticated/{SUPABASE_WORKSPACE_BUCKET}/{encoded}",
-            method="GET",
-            headers=_admin_headers(),
-            timeout=30.0,
+        status, body = _storage_download_object_bytes(
+            SUPABASE_WORKSPACE_BUCKET,
+            SHARED_MARKET_INVENTORY_OBJECT_PATH,
         )
         if status == 404:
             _clear_shared_market_inventory_storage_backoff()
@@ -1441,20 +1460,7 @@ def patch_user_settings(body: UserSettingsUpdateRequest, request: Request):
 @app.get("/user-settings/workspace")
 def get_user_workspace_state(request: Request):
     user = _require_supabase_user(request)
-    recovered_from_load_error = False
-    try:
-        workspace_state, updated_at = _storage_download_workspace_state(user["id"])
-    except HTTPException as exc:
-        detail = str(exc.detail or "")
-        if exc.status_code != 503 or "workspace" not in detail.lower():
-            raise
-        logging.getLogger("uvicorn.error").warning(
-            "workspace_cloud_load_recovered user_id=%s detail=%s",
-            user["id"],
-            detail[:240],
-        )
-        workspace_state, updated_at = None, None
-        recovered_from_load_error = True
+    workspace_state, updated_at = _storage_download_workspace_state(user["id"])
     if not isinstance(workspace_state, dict):
         workspace_state = {
             "clients": [],
@@ -1465,7 +1471,6 @@ def get_user_workspace_state(request: Request):
         "user_id": user["id"],
         "workspace_state": workspace_state,
         "updated_at": updated_at,
-        "recovered_from_load_error": recovered_from_load_error,
     }
 
 

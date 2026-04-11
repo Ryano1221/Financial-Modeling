@@ -31,34 +31,6 @@ def test_get_user_workspace_state_returns_cloud_payload(monkeypatch) -> None:
     assert payload["workspace_state"]["activeClientId"] == "c1"
     assert len(payload["workspace_state"]["clients"]) == 1
     assert payload["updated_at"] == "2026-03-11T12:00:00Z"
-    assert payload["recovered_from_load_error"] is False
-
-
-def test_get_user_workspace_state_recovers_from_cloud_load_failure(monkeypatch) -> None:
-    monkeypatch.setattr(
-        main,
-        "_require_supabase_user",
-        lambda request: {"id": "user_123", "email": "user@example.com"},
-    )
-
-    def _raise_load_error(user_id: str):
-        raise main.HTTPException(status_code=503, detail="Failed to load workspace state from cloud storage.")
-
-    monkeypatch.setattr(main, "_storage_download_workspace_state", _raise_load_error)
-
-    client = TestClient(main.app)
-    response = client.get("/user-settings/workspace")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["user_id"] == "user_123"
-    assert payload["workspace_state"] == {
-        "clients": [],
-        "documents": [],
-        "activeClientId": None,
-    }
-    assert payload["updated_at"] is None
-    assert payload["recovered_from_load_error"] is True
 
 
 def test_put_user_workspace_state_uploads_envelope(monkeypatch) -> None:
@@ -261,11 +233,12 @@ def test_storage_download_workspace_envelope_uses_authenticated_storage_endpoint
     monkeypatch.setattr(main, "SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setattr(main, "SUPABASE_WORKSPACE_BUCKET", "workspace-bucket")
     monkeypatch.setattr(main, "_admin_headers", lambda: {"authorization": "Bearer service"})
+    monkeypatch.setattr(main, "_storage_signed_object_url", lambda bucket, object_path, expires_seconds=3600: None)
 
-    captured: dict[str, str] = {}
+    captured_urls: list[str] = []
 
     def _capture_request(url: str, **kwargs):
-        captured["url"] = url
+        captured_urls.append(url)
         return 404, b""
 
     monkeypatch.setattr(main, "_http_bytes_request", _capture_request)
@@ -274,7 +247,37 @@ def test_storage_download_workspace_envelope_uses_authenticated_storage_endpoint
 
     assert payload is None
     assert updated_at is None
-    assert captured["url"] == (
+    assert captured_urls[0] == (
         "https://example.supabase.co/storage/v1/object/authenticated/"
         "workspace-bucket/workspace/user_123/state.json"
     )
+
+
+def test_storage_download_object_bytes_uses_signed_url_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(main, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(main, "_admin_headers", lambda: {"authorization": "Bearer service"})
+    monkeypatch.setattr(
+        main,
+        "_storage_signed_object_url",
+        lambda bucket, object_path, expires_seconds=3600: "https://signed.example.test/object",
+    )
+
+    requested_urls: list[str] = []
+
+    def _capture_request(url: str, **kwargs):
+        requested_urls.append(url)
+        if url == "https://signed.example.test/object":
+            return 200, b'{"ok":true}'
+        return 403, b'{"message":"private bucket"}'
+
+    monkeypatch.setattr(main, "_http_bytes_request", _capture_request)
+
+    status, body = main._storage_download_object_bytes("workspace-bucket", "workspace/user_123/state.json")
+
+    assert status == 200
+    assert body == b'{"ok":true}'
+    assert requested_urls == [
+        "https://example.supabase.co/storage/v1/object/authenticated/workspace-bucket/workspace/user_123/state.json",
+        "https://example.supabase.co/storage/v1/object/workspace-bucket/workspace/user_123/state.json",
+        "https://signed.example.test/object",
+    ]
