@@ -31,6 +31,34 @@ def test_get_user_workspace_state_returns_cloud_payload(monkeypatch) -> None:
     assert payload["workspace_state"]["activeClientId"] == "c1"
     assert len(payload["workspace_state"]["clients"]) == 1
     assert payload["updated_at"] == "2026-03-11T12:00:00Z"
+    assert payload["recovered_from_load_error"] is False
+
+
+def test_get_user_workspace_state_recovers_from_cloud_load_failure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main,
+        "_require_supabase_user",
+        lambda request: {"id": "user_123", "email": "user@example.com"},
+    )
+
+    def _raise_load_error(user_id: str):
+        raise main.HTTPException(status_code=503, detail="Failed to load workspace state from cloud storage.")
+
+    monkeypatch.setattr(main, "_storage_download_workspace_state", _raise_load_error)
+
+    client = TestClient(main.app)
+    response = client.get("/user-settings/workspace")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_id"] == "user_123"
+    assert payload["workspace_state"] == {
+        "clients": [],
+        "documents": [],
+        "activeClientId": None,
+    }
+    assert payload["updated_at"] is None
+    assert payload["recovered_from_load_error"] is True
 
 
 def test_put_user_workspace_state_uploads_envelope(monkeypatch) -> None:

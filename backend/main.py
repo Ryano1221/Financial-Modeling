@@ -1441,7 +1441,20 @@ def patch_user_settings(body: UserSettingsUpdateRequest, request: Request):
 @app.get("/user-settings/workspace")
 def get_user_workspace_state(request: Request):
     user = _require_supabase_user(request)
-    workspace_state, updated_at = _storage_download_workspace_state(user["id"])
+    recovered_from_load_error = False
+    try:
+        workspace_state, updated_at = _storage_download_workspace_state(user["id"])
+    except HTTPException as exc:
+        detail = str(exc.detail or "")
+        if exc.status_code != 503 or "workspace" not in detail.lower():
+            raise
+        logging.getLogger("uvicorn.error").warning(
+            "workspace_cloud_load_recovered user_id=%s detail=%s",
+            user["id"],
+            detail[:240],
+        )
+        workspace_state, updated_at = None, None
+        recovered_from_load_error = True
     if not isinstance(workspace_state, dict):
         workspace_state = {
             "clients": [],
@@ -1452,6 +1465,7 @@ def get_user_workspace_state(request: Request):
         "user_id": user["id"],
         "workspace_state": workspace_state,
         "updated_at": updated_at,
+        "recovered_from_load_error": recovered_from_load_error,
     }
 
 
