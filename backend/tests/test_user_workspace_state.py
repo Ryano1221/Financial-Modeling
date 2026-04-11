@@ -281,3 +281,25 @@ def test_storage_download_object_bytes_uses_signed_url_fallback(monkeypatch) -> 
         "https://example.supabase.co/storage/v1/object/workspace-bucket/workspace/user_123/state.json",
         "https://signed.example.test/object",
     ]
+
+
+def test_storage_download_object_bytes_normalizes_signed_object_not_found(monkeypatch) -> None:
+    monkeypatch.setattr(main, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(main, "_admin_headers", lambda: {"authorization": "Bearer service"})
+    monkeypatch.setattr(
+        main,
+        "_storage_signed_object_url",
+        lambda bucket, object_path, expires_seconds=3600: "https://signed.example.test/missing",
+    )
+
+    def _capture_request(url: str, **kwargs):
+        if url == "https://signed.example.test/missing":
+            return 400, b'{"statusCode":"404","error":"not_found","message":"Object not found"}'
+        return 404, b'{"statusCode":"404","error":"not_found","message":"Object not found"}'
+
+    monkeypatch.setattr(main, "_http_bytes_request", _capture_request)
+
+    status, body = main._storage_download_object_bytes("workspace-bucket", "workspace/user_123/state.json")
+
+    assert status == 404
+    assert b"Object not found" in body

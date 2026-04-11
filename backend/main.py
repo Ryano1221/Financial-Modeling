@@ -695,7 +695,26 @@ def _storage_download_object_bytes(bucket: str, object_path: str) -> tuple[int, 
             return status, body
         last_status, last_body = status, body
 
-    return last_status, last_body
+    return _normalize_storage_missing_object_status(last_status, last_body), last_body
+
+
+def _normalize_storage_missing_object_status(status: int, body: bytes) -> int:
+    if status == 404:
+        return 404
+    if not body:
+        return status
+    try:
+        payload = json.loads(body.decode("utf-8", errors="ignore"))
+    except Exception:
+        return status
+    if not isinstance(payload, dict):
+        return status
+    code = str(payload.get("statusCode") or payload.get("status_code") or "").strip()
+    error = str(payload.get("error") or "").strip().lower()
+    message = str(payload.get("message") or "").strip().lower()
+    if code == "404" or error in {"not_found", "not found"} or "object not found" in message:
+        return 404
+    return status
 
 
 def _storage_download_logo_bytes(object_path: str) -> tuple[bytes | None, str | None]:
