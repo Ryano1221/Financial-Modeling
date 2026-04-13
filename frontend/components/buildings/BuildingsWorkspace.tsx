@@ -789,10 +789,10 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
         });
       }
       persistBuildingFocus(clientId, activeInventoryBuilding);
-      setStatus(duplicate ? `${displayBuildingName(activeInventoryBuilding)} is already available in Surveys.` : `Added ${displayBuildingName(activeInventoryBuilding)} to Surveys as a manual building row.`);
+      setStatus(duplicate ? `${displayBuildingName(activeInventoryBuilding)} is already available for Marketing.` : `Added ${displayBuildingName(activeInventoryBuilding)} to Marketing as a manual building row.`);
       setError("");
     } catch (err) {
-      setError(String((err as Error)?.message || "Unable to add this building to Surveys."));
+      setError(String((err as Error)?.message || "Unable to add this building to Marketing."));
     }
   }, [activeInventoryBuilding, clientId, isAuthenticated, surveysStorageKey]);
 
@@ -860,12 +860,12 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
       }
       setStatus(
         createdCount > 0
-          ? `Added ${createdCount} suite${createdCount === 1 ? "" : "s"} to Surveys${duplicateCount > 0 ? ` and skipped ${duplicateCount} existing row${duplicateCount === 1 ? "" : "s"}` : ""}.`
-          : `All selected suites are already available in Surveys.`,
+          ? `Added ${createdCount} suite${createdCount === 1 ? "" : "s"} to Marketing${duplicateCount > 0 ? ` and skipped ${duplicateCount} existing row${duplicateCount === 1 ? "" : "s"}` : ""}.`
+          : `All selected suites are already available in Marketing.`,
       );
       setError("");
     } catch (err) {
-      setError(String((err as Error)?.message || "Unable to add the selected suites to Surveys."));
+      setError(String((err as Error)?.message || "Unable to add the selected suites to Marketing."));
     }
   }, [activeInventoryBuilding, clientId, isAuthenticated, selectedSuites, surveysStorageKey]);
 
@@ -952,11 +952,11 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
     <PlatformSection
       kicker="Buildings"
       title="Buildings"
-      description="Start with one building, review the best suites, and send the right options into Surveys, CRM, or Financial Analyses."
+      description="Start with one building, review the best suites, and send the right options into Marketing, CRM, or Financial Analyses."
       actions={activeInventoryBuilding ? (
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-premium btn-premium-secondary" onClick={queueBuildingForSurveys}>
-            Add Building To Surveys
+            Add Building To Marketing
           </button>
           <button
             type="button"
@@ -1136,13 +1136,13 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
                   <div className="flex flex-wrap gap-2">
                     <button type="button" className="btn-premium btn-premium-secondary" onClick={() => {
                       persistBuildingFocus(clientId, activeInventoryBuilding);
-                      router.push("/?module=surveys");
-                    }}>Open Surveys</button>
+                      router.push("/?module=marketing");
+                    }}>Open Marketing</button>
                     <button type="button" className="btn-premium btn-premium-secondary" onClick={() => {
                       persistBuildingFocus(clientId, activeInventoryBuilding);
                       router.push("/?module=deals");
                     }}>Open CRM</button>
-                    <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={queueSelectedSuitesForSurveys} disabled={selectedSuites.length === 0}>Add Selected Suites To Surveys</button>
+                    <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={queueSelectedSuitesForSurveys} disabled={selectedSuites.length === 0}>Add Selected Suites To Marketing</button>
                   </div>
                 ) : null}
                 {error ? <p className="text-xs text-red-300">{error}</p> : null}
@@ -1348,7 +1348,7 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
                     Clear Suite Selection
                   </button>
                   <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={queueSelectedSuitesForSurveys} disabled={selectedSuites.length === 0}>
-                    Add Selected Suites To Surveys
+                    Add Selected Suites To Marketing
                   </button>
                   <button type="button" className="btn-premium btn-premium-secondary disabled:opacity-50" onClick={queueSelectedSuitesForAnalyses} disabled={selectedSuites.length === 0}>
                     Add Selected Suites To Analyses

@@ -25,8 +25,12 @@ const SECURITY_PILLARS = [
     body: "Protected actions and saved workspace state run under authenticated user context so connected records remain scoped to the signed-in account.",
   },
   {
+    title: "User-controlled credentials",
+    body: "Signed-in users can update their account name, email, and password from Personal Info while changes continue through the authenticated Supabase user endpoint.",
+  },
+  {
     title: "Connected data without cross-account bleed",
-    body: "Documents, analyses, CRM records, surveys, lease abstracts, and obligations stay tied to the same workspace graph without leaking across users or clients.",
+    body: "Documents, analyses, CRM records, marketing flyers, lease abstracts, and obligations stay tied to the same workspace graph without leaking across users or clients.",
   },
   {
     title: "CRM pipeline linkage",
@@ -39,6 +43,10 @@ const SECURITY_PILLARS = [
   {
     title: "Controlled sync and recovery",
     body: "Signed-in workspace state is persisted in cloud-backed storage and can be restored from any device without silently reviving stale or deleted records.",
+  },
+  {
+    title: "Deletion-aware obligations",
+    body: "When a saved source document is deleted, linked obligation repository records are pruned with it so removed lease files do not keep stale deadline records alive.",
   },
   {
     title: "Cross-device parsed document payloads",
@@ -57,8 +65,16 @@ const SECURITY_PILLARS = [
     body: "OCR-heavy and image-only documents use bounded intake behavior so extraction remains responsive while still protecting the broader workflow and downstream exports.",
   },
   {
+    title: "Reviewable obligation events",
+    body: "Notice, renewal, and termination dates pulled from lease rights clauses stay attached to the client-scoped obligation record and saved document snapshot so teams can review deadlines before relying on the timeline.",
+  },
+  {
     title: "Review-aware client outputs",
-    body: "Survey and lease abstract exports preserve analyst review status and source-document context so client-ready packages do not silently hide unresolved extraction issues.",
+    body: "Marketing flyers and lease abstract exports preserve analyst review status and source-document context so client-ready packages do not silently hide unresolved extraction issues.",
+  },
+  {
+    title: "White-label marketing output",
+    body: "Generated lease and sublease flyers use account branding and saved workspace context instead of hardcoded brokerage identity, keeping public share links reusable across teams.",
   },
   {
     title: "Canonical production host",
@@ -79,7 +95,7 @@ export default function SecurityPage() {
             <p className="heading-kicker">Security</p>
             <h1 className="heading-display !text-[clamp(2.4rem,5vw,4.7rem)]">Protected by design, not added as an afterthought.</h1>
             <p className="body-lead max-w-4xl text-[var(--muted)]">
-              theCREmodel keeps the public experience clean while preserving authenticated workspace boundaries, cross-device cloud persistence, and a single connected security model across documents, analytics, CRM, surveys, abstracts, and obligations.
+              theCREmodel keeps the public experience clean while preserving authenticated workspace boundaries, cross-device cloud persistence, and a single connected security model across documents, analytics, CRM, marketing flyers, abstracts, and obligations.
             </p>
             <div className="flex flex-wrap gap-3">
               <div className="brand-badge">Authenticated protected actions</div>

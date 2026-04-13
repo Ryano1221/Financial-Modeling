@@ -55,6 +55,7 @@ export function classifyDocument(input: {
     buildings: "floorplans",
     "financial-analyses": "financial analyses",
     "completed-leases": "leases",
+    marketing: "flyers",
     surveys: "surveys",
     obligations: "leases",
     deals: "other",

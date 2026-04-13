@@ -4,7 +4,7 @@ import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-pro
 export const metadata: Metadata = {
   title: "Commercial Real Estate CRM Docs",
   description:
-    "The CRE Model docs for commercial real estate CRM, document intake, lease analysis, proposal workflows, surveys, lease abstracts, obligations, and cross-device workspace sync.",
+    "The CRE Model docs for commercial real estate CRM, document intake, lease analysis, proposal workflows, marketing flyers, lease abstracts, obligations, and cross-device workspace sync.",
   alternates: { canonical: "/docs" },
   openGraph: {
     title: "The CRE Model Docs",
@@ -22,7 +22,7 @@ const profiles = [
 const FAQ_ITEMS = [
   {
     q: "What lives in the connected workspace?",
-    a: "Documents, financial analyses, CRM records, surveys, lease abstracts, obligations, and deal movement all stay tied to the same workspace instead of being split across separate tools.",
+    a: "Documents, financial analyses, CRM records, marketing flyers, lease abstracts, obligations, and deal movement all stay tied to the same workspace instead of being split across separate tools.",
   },
   {
     q: "What changes when I sign in?",
@@ -46,19 +46,19 @@ const FAQ_ITEMS = [
   },
   {
     q: "How long do I stay signed in?",
-    a: "A device stays signed in for up to 30 days of workspace use unless you choose Sign out from the account page first.",
+    a: "A device stays signed in for up to 30 days of workspace use unless you choose Sign out from the account page first. Personal Info settings let signed-in users update their name, email, and password.",
   },
   {
     q: "Can I move from documents into analyses, CRM, or obligations?",
-    a: "Yes. Module handoffs are designed around one active workspace so saved parsed records can keep moving forward from any signed-in device without re-uploading the source document.",
+    a: "Yes. Module handoffs are designed around one active workspace so saved parsed records can keep moving forward from any signed-in device without re-uploading the source document. Lease obligation intake carries critical notice, renewal, and termination dates from parsed rights clauses into the obligation timeline, including when the lease is applied from the saved document library. Deleting a source lease document also removes its single-source obligation record, or detaches the deleted file when other source documents still support the obligation.",
   },
   {
     q: "Do new CRM clients and prospects enter the pipeline?",
     a: "Yes. Creating a CRM client, tenant, or prospect profile also creates the first linked pipeline deal and keeps the profile visible in the CRM selector, account client settings, board, table, and grouped CRM views. The profile Prospect Stage uses the same stage list as the pipeline and moves the linked deal when it changes.",
   },
   {
-    q: "Are survey and lease abstract exports client-ready?",
-    a: "Yes. Survey and lease abstract exports are generated as branded presentation outputs with structured summary sections, detail views, and review visibility so they stay aligned with the financial analysis export standard.",
+    q: "Are marketing flyer and lease abstract exports client-ready?",
+    a: "Yes. Marketing flyers and lease abstract exports are generated as branded presentation outputs with structured summary sections, detail views, and review visibility so they stay aligned with the financial analysis export standard.",
   },
   {
     q: "Does each client need more than one logo?",
@@ -77,7 +77,7 @@ export default function DocsPage() {
               One workspace for the full commercial real estate workflow.
             </h1>
             <p className="body-lead max-w-4xl text-[var(--muted)]">
-              theCREmodel is built around a single connected workspace so source documents, analyses, CRM context, surveys, lease abstracts, and obligations stay aligned from intake through execution.
+              theCREmodel is built around a single connected workspace so source documents, analyses, CRM context, marketing flyers, lease abstracts, and obligations stay aligned from intake through execution.
             </p>
             <div className="flex flex-wrap gap-3">
               <div className="brand-badge">Connected workspace</div>
@@ -91,14 +91,14 @@ export default function DocsPage() {
               <p className="heading-kicker">Capture</p>
               <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Start from the source record</h2>
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                Bring in leases, proposals, surveys, flyers, amendments, and related files so the rest of the workflow inherits real workspace context and keeps both the source file and parsed Apply payload available across signed-in devices.
+                Bring in leases, proposals, flyers, amendments, and related files so the rest of the workflow inherits real workspace context and keeps both the source file and parsed Apply payload available across signed-in devices. Lease uploads and saved document Apply actions surface expiration, notice, renewal, and termination rights for obligation tracking, while marketing intake can generate branded lease or sublease flyers.
               </p>
             </article>
             <article className="marketing-card">
               <p className="heading-kicker">Connect</p>
               <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Keep every module in sync</h2>
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                Documents, parsed terms, CRM records, profile selectors, newly created pipeline deals, surveys, lease abstracts, and obligations stay associated with the same active workspace and sync through account-backed cloud storage instead of branching into device-local copies.
+                Documents, parsed terms, CRM records, profile selectors, newly created pipeline deals, marketing flyers, lease abstracts, and obligations stay associated with the same active workspace and sync through account-backed cloud storage instead of branching into device-local copies. Deleted source documents are also pruned from linked obligation records so stale repository items do not reappear.
               </p>
             </article>
             <article className="marketing-card">

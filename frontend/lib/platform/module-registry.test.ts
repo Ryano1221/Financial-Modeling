@@ -19,8 +19,9 @@ describe("platform/module-registry", () => {
   });
 
   it("resolves module with auth-aware fallback and mode defaults", () => {
-    expect(resolveActivePlatformModule("surveys", true, TENANT_REP_MODE)).toBe("surveys");
-    expect(resolveActivePlatformModule("surveys", false, TENANT_REP_MODE)).toBe(
+    expect(resolveActivePlatformModule("marketing", true, TENANT_REP_MODE)).toBe("marketing");
+    expect(resolveActivePlatformModule("surveys", true, TENANT_REP_MODE)).toBe("marketing");
+    expect(resolveActivePlatformModule("marketing", false, TENANT_REP_MODE)).toBe(
       DEFAULT_PLATFORM_MODULE_ID_BY_MODE[TENANT_REP_MODE],
     );
     expect(resolveActivePlatformModule("unknown-module", true, TENANT_REP_MODE)).toBe(
@@ -47,11 +48,12 @@ describe("platform/module-registry", () => {
       "deals",
       "buildings",
       "financial-analyses",
-      "surveys",
+      "marketing",
       "completed-leases",
       "obligations",
     ]);
     expect(landlordModules.find((module) => module.id === "financial-analyses")?.label).toBe("Availabilities");
+    expect(landlordModules.find((module) => module.id === "marketing")?.label).toBe("Marketing");
     expect(landlordModules.find((module) => module.id === "obligations")?.label).toBe("Reporting");
   });
 });

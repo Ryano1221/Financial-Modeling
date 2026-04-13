@@ -6,7 +6,7 @@ import {
 } from "@/lib/workspace/representation-mode";
 
 type PlatformModuleDefinition = {
-  id: "deals" | "buildings" | "financial-analyses" | "surveys" | "completed-leases" | "obligations";
+  id: "deals" | "buildings" | "financial-analyses" | "marketing" | "surveys" | "completed-leases" | "obligations";
   label: string;
   description: string;
   requiresAuth: boolean;
@@ -27,6 +27,11 @@ const MODULE_DEFINITION_BY_ID: Record<PlatformModuleDefinition["id"], Omit<Platf
     label: "Financial Analyses",
     description: "Financial modeling and side-by-side lease comparisons.",
     requiresAuth: false,
+  },
+  marketing: {
+    label: "Marketing",
+    description: "Generate branded lease and sublease flyers from documents or suite details.",
+    requiresAuth: true,
   },
   surveys: {
     label: "Surveys",
@@ -49,7 +54,7 @@ const TENANT_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
   "deals",
   "buildings",
   "financial-analyses",
-  "surveys",
+  "marketing",
   "completed-leases",
   "obligations",
 ];
@@ -58,7 +63,7 @@ const LANDLORD_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
   "deals",
   "buildings",
   "financial-analyses",
-  "surveys",
+  "marketing",
   "completed-leases",
   "obligations",
 ];
@@ -66,7 +71,7 @@ const LANDLORD_MODULE_ORDER: readonly PlatformModuleDefinition["id"][] = [
 const LANDLORD_MODULE_LABEL_OVERRIDES: Partial<Record<PlatformModuleDefinition["id"], string>> = {
   buildings: "Buildings",
   "financial-analyses": "Availabilities",
-  surveys: "Marketing",
+  marketing: "Marketing",
   "completed-leases": "Lease Tracking",
   obligations: "Reporting",
 };
@@ -75,7 +80,7 @@ const LANDLORD_MODULE_DESCRIPTION_OVERRIDES: Partial<Record<PlatformModuleDefini
   deals: "Inquiry-to-execution pipeline for suites and listing opportunities.",
   buildings: "Portfolio map, suite stack plans, and building-first leasing workflows.",
   "financial-analyses": "Availability inventory, suite economics, and listing positioning.",
-  surveys: "Marketing package workflows, flyers, and listing collateral.",
+  marketing: "Marketing package workflows, flyers, and listing collateral.",
   "completed-leases": "Lease execution tracking and closed package records.",
   obligations: "Property performance, expirations, and landlord reporting.",
 };
@@ -167,8 +172,10 @@ export function resolveActivePlatformModule(
   mode: RepresentationMode | null | undefined = DEFAULT_REPRESENTATION_MODE,
 ): PlatformModuleId {
   const fallback = getDefaultPlatformModuleId(mode);
-  if (!isPlatformModuleId(rawValue)) return fallback;
-  const resolved = getPlatformModuleById(rawValue, mode);
+  const requested = String(rawValue || "").trim().toLowerCase();
+  const normalizedValue = requested === "surveys" ? "marketing" : requested;
+  if (!isPlatformModuleId(normalizedValue)) return fallback;
+  const resolved = getPlatformModuleById(normalizedValue, mode);
   if (!isAuthenticated && resolved.requiresAuth) return fallback;
   return resolved.id;
 }

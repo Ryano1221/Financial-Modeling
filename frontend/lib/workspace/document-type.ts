@@ -32,6 +32,7 @@ export function inferWorkspaceDocumentType(
   if (haystack.includes("lease")) return "leases";
 
   if (sourceModule === "sublease-recovery") return "sublease documents";
+  if (sourceModule === "marketing") return "flyers";
   if (sourceModule === "surveys") return "surveys";
   if (sourceModule === "completed-leases" || sourceModule === "obligations" || sourceModule === "upload") return "leases";
   if (sourceModule === "financial-analyses") return "financial analyses";

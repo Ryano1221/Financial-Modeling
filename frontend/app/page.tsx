@@ -82,7 +82,7 @@ import {
 } from "@/lib/user-settings";
 import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/SubleaseRecoveryAnalysis";
 import { CompletedLeasesWorkspace } from "@/components/completed-leases/CompletedLeasesWorkspace";
-import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
+import { MarketingWorkspace } from "@/components/marketing/MarketingWorkspace";
 import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
 import { DealsWorkspace } from "@/components/deals/DealsWorkspace";
 import { BuildingsWorkspace } from "@/components/buildings/BuildingsWorkspace";
@@ -737,7 +737,7 @@ function HomeContent() {
   const [brandingLoading, setBrandingLoading] = useState(false);
   const [clientLogoDataUrl, setClientLogoDataUrl] = useState<string | null>(null);
   const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
-  const [pendingSurveyDocument, setPendingSurveyDocument] = useState<ClientWorkspaceDocument | null>(null);
+  const [pendingMarketingDocument, setPendingMarketingDocument] = useState<ClientWorkspaceDocument | null>(null);
   const [pendingLeaseAbstractDocument, setPendingLeaseAbstractDocument] = useState<ClientWorkspaceDocument | null>(null);
   const [pendingObligationDocument, setPendingObligationDocument] = useState<ClientWorkspaceDocument | null>(null);
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
@@ -767,8 +767,8 @@ function HomeContent() {
     if (activePlatformModule === "completed-leases") {
       return "Drop files anywhere to save into this client and load Lease Abstract documents";
     }
-    if (activePlatformModule === "surveys") {
-      return "Drop files anywhere to save into this client and create Survey entries";
+    if (activePlatformModule === "marketing") {
+      return "Drop files anywhere to save into this client and generate a Marketing flyer";
     }
     if (activePlatformModule === "buildings") {
       return "Drop files anywhere to save into this client and attach building flyers, floorplans, and stack plans";
@@ -2365,7 +2365,7 @@ function HomeContent() {
       || (
         activeClient
           ? `${scopedDocuments.length} saved documents, ${activeDealsCount} active deals, and ${scenarios.length} parsed options live in this connected workspace.`
-          : "Choose an active workspace to restore your documents, analyses, CRM records, surveys, lease abstracts, and obligations."
+          : "Choose an active workspace to restore your documents, analyses, CRM records, marketing flyers, lease abstracts, and obligations."
       )
     )
     : "Sign in to pick up where you left off.";
@@ -2963,39 +2963,39 @@ function HomeContent() {
         </main>
           );
         }
-        if (activePlatformModule === "surveys") {
+        if (activePlatformModule === "marketing") {
           return (
         <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
           <ClientDocumentCenter
             sourceModule={activeDocumentDropSourceModule}
             globalDropLabel={activeDocumentDropLabel}
             contextualActionLabel="Apply"
-            contextualActionAllowedTypes={["surveys", "flyers", "floorplans", "other"]}
+            contextualActionAllowedTypes={["leases", "sublease documents", "proposals", "flyers", "floorplans", "other"]}
             onContextualAction={(document) => {
-              setPendingSurveyDocument(document);
+              setPendingMarketingDocument(document);
             }}
           />
-          <SurveysWorkspace
+          <MarketingWorkspace
             clientId={workspaceScopeId}
-            pendingDocumentImport={pendingSurveyDocument}
+            clientName={activeClient?.name || null}
+            representationMode={representationMode}
+            pendingDocumentImport={pendingMarketingDocument}
             onPendingDocumentImportHandled={() => {
-              setPendingSurveyDocument(null);
+              setPendingMarketingDocument(null);
             }}
             exportBranding={{
-              brokerageName: authSession
-                ? ((organizationBranding?.brokerage_name || "").trim() || CRE_DEFAULT_BROKERAGE_NAME)
-                : CRE_DEFAULT_BROKERAGE_NAME,
+              brokerageName: authSession ? ((organizationBranding?.brokerage_name || "").trim() || undefined) : undefined,
               clientName: reportMeta.prepared_for.trim() || "Client",
               reportDate: normalizeDateMmDdYyyy(reportMeta.report_date) || formatDateMmDdYyyy(new Date()),
-              preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || CRE_DEFAULT_PREPARED_BY,
+              preparedBy: reportMeta.prepared_by.trim() || defaultPreparedByFromAuth || "",
               brokerageLogoDataUrl: authSession
                 ? (
                   organizationBranding?.logo_data_url
                   || (organizationBranding?.logo_asset_bytes
                     ? `data:${organizationBranding.logo_content_type || "image/png"};base64,${organizationBranding.logo_asset_bytes}`
-                    : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`)
+                    : null)
                 )
-                : `${typeof window !== "undefined" ? window.location.origin : ""}${CRE_DEFAULT_LOGO_PUBLIC_PATH}`,
+                : null,
               clientLogoDataUrl: authSession ? clientLogoDataUrl : null,
             }}
           />

@@ -4,7 +4,7 @@ import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-pro
 export const metadata: Metadata = {
   title: "Contact The CRE Model",
   description:
-    "Contact The CRE Model for support with commercial real estate CRM workflows, lease analysis, document intake, surveys, lease abstracts, obligations, branded exports, and workspace sync.",
+    "Contact The CRE Model for support with commercial real estate CRM workflows, lease analysis, document intake, marketing flyers, lease abstracts, obligations, branded exports, and workspace sync.",
   alternates: { canonical: "/contact" },
   openGraph: {
     title: "Contact The CRE Model",
@@ -26,11 +26,15 @@ const SUPPORT_CHECKLIST = [
   "What you expected to happen",
   "What happened instead",
   "Whether you were signed in or had signed out manually",
+  "Whether a Personal Info name, email, or password change failed",
   "Whether the footer sync state said Online, Sign in to sync, or Local",
   "Any file names, deal names, or timestamps involved",
   "Whether Open or Apply failed on a different signed-in device after the document appeared in the workspace",
+  "Whether deleting a source document left a linked obligation visible in the obligation repository",
   "Whether a CRM client or prospect appeared in the CRM selector, account settings, linked pipeline deal, and expected pipeline stage",
-  "Whether the issue affected documents, analyses, CRM, surveys, abstracts, or obligations",
+  "Whether the issue affected documents, analyses, CRM, marketing flyers, abstracts, or obligations",
+  "Whether Marketing generated the right lease or sublease wording for tenant rep or landlord rep mode",
+  "For obligation imports, whether the missing item was an expiration, notice deadline, renewal option, termination right, or saved document Apply result",
   "Whether the problem appeared in Excel export, PDF export, or both",
   "Whether the shared client logo or branding asset appeared incorrectly",
 ] as const;
@@ -78,7 +82,7 @@ export default function ContactPage() {
             <article className="marketing-card">
               <p className="heading-kicker">CRM, Exports, And Security</p>
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                For CRM pipeline regressions, prospect stage movement, client selector issues, export regressions, or security concerns, use the same inbox and clearly mark whether the issue affected a newly created client or prospect, survey output, lease abstract output, the shared client logo, or account security so it can be prioritized with the right internal context.
+                For CRM pipeline regressions, prospect stage movement, client selector issues, obligation timeline dates, export regressions, marketing flyer generation, or security concerns, use the same inbox and clearly mark whether the issue affected a newly created client or prospect, flyer output, lease abstract output, the shared client logo, or account security so it can be prioritized with the right internal context.
               </p>
             </article>
           </section>

@@ -68,6 +68,7 @@ from scenario_extract import (
 from reports_store import load_report, save_report, REPORTS_DIR
 from routes.api import router as api_router
 from extraction.tables import classify_rent_currency_signal
+from llm_provider import get_anthropic_model, make_anthropic_client
 try:
     from routes.extract_lease import build_extract_response
 except Exception:  # noqa: BLE001
@@ -12009,6 +12010,133 @@ def normalize_endpoint(
             status_code=500,
             content={"error": "normalize_failed", "rid": rid, "details": err_msg},
         )
+
+
+MARKETING_EXTRACT_PROMPT = """You are a commercial real estate document parser. Extract the following fields from the attached document and return only a valid JSON object. If a field is not found, return null for that value.
+
+Fields to extract:
+- building_name
+- address
+- suite_number
+- rsf (rentable square feet, number only)
+- floor
+- availability (date string or "Immediately")
+- lease_type ("Direct Lease" or "Sublease")
+- rate (e.g. "$42.00/SF NNN")
+- opex (e.g. "$30.22")
+- term_expiration (date string)
+- suite_features (raw text or bullet list)
+- building_features (raw text or bullet list)
+- broker_names (array of strings)
+- broker_emails (array of strings)
+- broker_phones (array of strings)
+
+Return only valid JSON. No preamble, no markdown, no explanation.
+
+Rules:
+- If confidence is low on any field, return null for that field.
+- If document is a flyer, extract whatever fields are visible.
+- If document is a full lease, focus on key business terms in the first 5 pages.
+- Photos are never extracted from documents."""
+
+
+def _parse_marketing_json(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        raise HTTPException(status_code=502, detail="Marketing extraction returned an empty response.")
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            raise HTTPException(status_code=502, detail="Marketing extraction did not return JSON.")
+        parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="Marketing extraction returned a non-object payload.")
+    return parsed
+
+
+def _first_pdf_pages_text(contents: bytes, max_pages: int = 5) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="pypdf is not installed.") from exc
+    reader = PdfReader(BytesIO(contents))
+    parts: list[str] = []
+    for page in list(reader.pages)[:max_pages]:
+        text = page.extract_text() or ""
+        if text.strip():
+            parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+@app.post("/marketing/extract")
+def marketing_extract_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    rid = (request.headers.get("x-request-id") or "").strip() or "no-rid"
+    filename = (file.filename or "").strip()
+    content_type = (file.content_type or "").strip().lower()
+    try:
+        contents = file.file.read()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {exc}") from exc
+    if not filename or not contents:
+        raise HTTPException(status_code=400, detail="File required.")
+    if len(contents) > MAX_NORMALIZE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large for marketing extraction ({len(contents)} bytes).")
+
+    lower_name = filename.lower()
+    prompt = MARKETING_EXTRACT_PROMPT
+    content: list[dict[str, Any]]
+    if content_type.startswith("image/") or lower_name.endswith((".png", ".jpg", ".jpeg")):
+        media_type = "image/png" if lower_name.endswith(".png") else "image/jpeg"
+        content = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": base64.b64encode(contents).decode("ascii"),
+                },
+            },
+        ]
+    else:
+        if lower_name.endswith(".pdf"):
+            text = _first_pdf_pages_text(contents, max_pages=5)
+        elif lower_name.endswith((".docx", ".doc")):
+            text, _source = extract_text_from_word(BytesIO(contents), filename=filename)
+        else:
+            raise HTTPException(status_code=400, detail="Marketing extraction accepts PDF, DOCX, DOC, PNG, JPG, or JPEG.")
+        if not text.strip():
+            raise HTTPException(status_code=422, detail="No readable text found in document.")
+        content = [{"type": "text", "text": f"{prompt}\n\nDocument text:\n{text[:28000]}"}]
+
+    try:
+        client = make_anthropic_client()
+        message = client.messages.create(
+            model=get_anthropic_model(),
+            max_tokens=1800,
+            temperature=0,
+            messages=[{"role": "user", "content": content}],
+        )
+        response_text = "\n".join(
+            str(getattr(block, "text", "") or "")
+            for block in (getattr(message, "content", None) or [])
+            if getattr(block, "type", "") == "text"
+        ).strip()
+        parsed = _parse_marketing_json(response_text)
+        _LOG.info("MARKETING_EXTRACT_DONE rid=%s filename=%s keys=%s", rid, filename, sorted(parsed.keys()))
+        return parsed
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _LOG.info("MARKETING_EXTRACT_ERR rid=%s filename=%s err=%s", rid, filename, str(exc)[:300])
+        raise HTTPException(status_code=502, detail=f"Marketing extraction failed: {str(exc)[:200]}") from exc
 
 
 def _normalize_impl(

@@ -9,7 +9,7 @@ export type RepresentationProfileModuleId =
   | "deals"
   | "buildings"
   | "financial-analyses"
-  | "surveys"
+  | "marketing"
   | "completed-leases"
   | "obligations";
 
@@ -159,9 +159,9 @@ const SHARED_MODULES: Record<RepresentationProfileModuleId, Omit<RepresentationM
     description: "Financial modeling and side-by-side lease comparisons.",
     requiresAuth: false,
   },
-  surveys: {
-    label: "Surveys",
-    description: "Structure market surveys and publish branded client views.",
+  marketing: {
+    label: "Marketing",
+    description: "Generate branded lease and sublease flyers from documents or suite details.",
     requiresAuth: true,
   },
   "completed-leases": {
@@ -194,12 +194,12 @@ const TENANT_PROFILE: RepresentationModeProfile = {
   navigation: {
     defaultModule: "deals",
     modules: modulesForConfig({
-      order: ["deals", "buildings", "financial-analyses", "surveys", "completed-leases", "obligations"],
+      order: ["deals", "buildings", "financial-analyses", "marketing", "completed-leases", "obligations"],
     }),
   },
   onboarding: {
     title: "Set up your tenant representation workspace",
-    description: "Launch a company-first operating system for prospects, expirations, surveys, analyses, and follow-up cadence.",
+    description: "Launch a company-first operating system for prospects, expirations, marketing flyers, analyses, and follow-up cadence.",
     steps: [
       {
         id: "companies",
@@ -225,7 +225,7 @@ const TENANT_PROFILE: RepresentationModeProfile = {
   },
   hero: {
     defaultPrompt: "Run a sublease recovery using the Austin obligation and these three proposals.",
-    capabilitiesLabel: "CRM • Financial Analyses • Surveys • Lease Abstracts • Obligations • AI Workflows",
+    capabilitiesLabel: "CRM • Financial Analyses • Marketing • Lease Abstracts • Obligations • AI Workflows",
     workflowFooterPrefix: "client workflows active",
     featureTiles: [
       {
@@ -240,7 +240,7 @@ const TENANT_PROFILE: RepresentationModeProfile = {
       {
         step: "Step 2",
         title: "Run Relationship Workflows",
-        description: "Coordinate requirements, surveys, proposal comparisons, analyses, obligations, and relationship touchpoints in one company hub.",
+        description: "Coordinate requirements, marketing flyers, proposal comparisons, analyses, obligations, and relationship touchpoints in one company hub.",
         ctaLabel: "Open CRM",
         href: "/?module=deals",
         metricNoun: "workflow",
@@ -268,7 +268,7 @@ const TENANT_PROFILE: RepresentationModeProfile = {
       stacking_plan: "Stacking Plan",
     },
     commandCenterTitle: "Tenant Representation CRM Command Center",
-    commandCenterDescription: "Operate a polished tenant-side CRM across prospects, active clients, expirations, requirements, surveys, analyses, obligations, reminders, and AI-guided follow up.",
+    commandCenterDescription: "Operate a polished tenant-side CRM across prospects, active clients, expirations, requirements, marketing flyers, analyses, obligations, reminders, and AI-guided follow up.",
     operatingLayerTitle: "Company + Relationship Dashboard",
     operatingLayerFocus: "Expiring clients, expiring prospects, stale relationships, touchpoint cadence, and linked record momentum.",
     intakeTitle: "Prospect + Client Intake",
@@ -411,7 +411,7 @@ const LANDLORD_PROFILE: RepresentationModeProfile = {
   navigation: {
     defaultModule: "deals",
     modules: modulesForConfig({
-      order: ["deals", "buildings", "financial-analyses", "surveys", "completed-leases", "obligations"],
+      order: ["deals", "buildings", "financial-analyses", "marketing", "completed-leases", "obligations"],
       overrides: {
         deals: {
           label: "Leasing Console",
@@ -425,7 +425,7 @@ const LANDLORD_PROFILE: RepresentationModeProfile = {
           label: "Availabilities",
           description: "Availability inventory, suite economics, and listing positioning.",
         },
-        surveys: {
+        marketing: {
           label: "Marketing",
           description: "Marketing package workflows, flyers, and listing collateral.",
         },

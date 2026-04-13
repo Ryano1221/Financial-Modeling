@@ -106,6 +106,7 @@ export function buildWorkflowTransitionLabel(payload: WorkflowTransitionPayload)
 export function inferWorkflowStageFromDocumentType(type: string): string | null {
   const normalized = normalize(type);
   if (!normalized) return null;
+  if (normalized === "marketing") return "Survey";
   if (normalized === "surveys" || normalized === "flyers" || normalized === "floorplans") return "Survey";
   if (normalized === "proposals") return "Proposal Received";
   if (normalized === "lois" || normalized === "counters" || normalized === "redlines") return "Negotiation";
