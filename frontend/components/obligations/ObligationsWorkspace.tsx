@@ -7,10 +7,10 @@ import { normalizerResponseFromSnapshot } from "@/lib/lease-extraction-repair";
 import type { NormalizerResponse } from "@/lib/types";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
+import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
 import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
-import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
 import {
   buildTimelineBuckets,
   computeObligationCompleteness,
@@ -165,7 +165,19 @@ const TIMELINE_EVENT_STYLES = {
   },
 } as const;
 
-export function ObligationsWorkspace({ clientId, clientName }: { clientId: string; clientName?: string | null }) {
+interface ObligationsWorkspaceProps {
+  clientId: string;
+  clientName?: string | null;
+  pendingDocumentImport?: ClientWorkspaceDocument | null;
+  onPendingDocumentImportHandled?: () => void;
+}
+
+export function ObligationsWorkspace({
+  clientId,
+  clientName,
+  pendingDocumentImport = null,
+  onPendingDocumentImportHandled,
+}: ObligationsWorkspaceProps) {
   const { isAuthenticated, documents: clientDocuments } = useClientWorkspace();
   const resolvedClientName = asText(clientName);
   const defaultCompanyName = resolvedClientName || "Default Portfolio";
@@ -443,7 +455,7 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
   const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
     const normalize = toNormalizerResponseFromSnapshot(document);
     if (!normalize) {
-      setError("Selected document has no parsed payload. Upload this file through this client workspace first.");
+      setError("Selected document has no parsed cloud payload yet. Keep the upload device online, then refresh and try Apply again.");
       return;
     }
 
@@ -459,6 +471,13 @@ export function ObligationsWorkspace({ clientId, clientName }: { clientId: strin
       setLoading(false);
     }
   }, [ingestNormalize]);
+
+  useEffect(() => {
+    if (!pendingDocumentImport) return;
+    void onSelectExistingDocument(pendingDocumentImport).finally(() => {
+      onPendingDocumentImportHandled?.();
+    });
+  }, [onPendingDocumentImportHandled, onSelectExistingDocument, pendingDocumentImport]);
 
   useEffect(() => {
     if (!storageHydrated || !activeCompanyId || loading) return;

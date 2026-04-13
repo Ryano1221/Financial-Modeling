@@ -4,11 +4,9 @@ import { isPublicAppPath, shouldRedirectSignedOutVisitor } from "@/lib/auth-acce
 describe("auth-access", () => {
   it("keeps public pages reachable while signed out", () => {
     expect(isPublicAppPath("/")).toBe(true);
-    expect(isPublicAppPath("/docs")).toBe(true);
-    expect(isPublicAppPath("/security")).toBe(true);
-    expect(isPublicAppPath("/contact")).toBe(true);
-    expect(isPublicAppPath("/financial-analyses/share")).toBe(true);
-    expect(isPublicAppPath("/report")).toBe(true);
+    expect(isPublicAppPath("/sign-in")).toBe(true);
+    expect(isPublicAppPath("/sign-up")).toBe(true);
+    expect(isPublicAppPath("/docs")).toBe(false);
   });
 
   it("redirects signed-out visitors away from protected app routes", () => {
@@ -17,6 +15,6 @@ describe("auth-access", () => {
     expect(shouldRedirectSignedOutVisitor("/upload", null)).toBe(true);
     expect(shouldRedirectSignedOutVisitor("/", "financial-analyses")).toBe(true);
     expect(shouldRedirectSignedOutVisitor("/", null)).toBe(false);
-    expect(shouldRedirectSignedOutVisitor("/docs", null)).toBe(false);
+    expect(shouldRedirectSignedOutVisitor("/docs", null)).toBe(true);
   });
 });

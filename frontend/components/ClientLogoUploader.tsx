@@ -31,8 +31,8 @@ export function ClientLogoUploader({
   const hasLogo = !!logoDataUrl;
 
   const helperText = useMemo(() => {
-    if (fileName) return `Client logo loaded: ${fileName}`;
-    return "Optional. PNG, SVG, or JPG. Used on PDF cover.";
+    if (fileName) return `Shared client logo loaded: ${fileName}`;
+    return "Optional. PNG, SVG, or JPG. Reused across PDF covers and branded exports.";
   }, [fileName]);
 
   const processFiles = useCallback(
@@ -91,7 +91,7 @@ export function ClientLogoUploader({
 
   return (
     <div className="border border-slate-300/20 p-3">
-      <p className="text-xs text-slate-400 mb-2">Client logo (PDF cover)</p>
+      <p className="text-xs text-slate-400 mb-2">Client logo</p>
       <div
         onDrop={onDrop}
         onDragOver={onDragOver}
@@ -143,7 +143,7 @@ export function ClientLogoUploader({
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3 justify-between">
-            <p className="text-sm text-slate-200">Drag and drop client logo here, or click to upload.</p>
+            <p className="text-sm text-slate-200">Drag and drop the shared client logo here, or click to upload.</p>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}

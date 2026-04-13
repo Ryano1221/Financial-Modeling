@@ -651,6 +651,7 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   const today = todayIso();
 
   const companyByNormalizedName = new Map(existingCompanies.map((company) => [normalize(company.name), company]));
+  const companyById = new Map(existingCompanies.map((company) => [asText(company.id), company]));
   const buildingById = new Map<string, CrmBuilding>();
   const occupancyRecordMap = new Map<string, CrmOccupancyRecord>();
   const stackingPlanEntryMap = new Map<string, CrmStackingPlanEntry>();
@@ -850,6 +851,7 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
 
   const companyMap = new Map<string, CrmCompany>([[workspaceCompany.id, workspaceCompany]]);
   companyByNormalizedName.set(normalize(workspaceCompany.name), workspaceCompany);
+  companyById.set(workspaceCompany.id, workspaceCompany);
 
   const documentsById = new Map(input.documents.map((doc) => [doc.id, doc]));
   const propertyByNormalized = new Map<string, CrmBuilding>();
@@ -871,7 +873,8 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
 
   const ensureCompany = (seed: Partial<CrmCompany> & { name: string }): CrmCompany => {
     const normalizedName = normalize(seed.name);
-    const existingCompany = companyByNormalizedName.get(normalizedName);
+    const seedId = asText(seed.id);
+    const existingCompany = (seedId ? companyById.get(seedId) : undefined) || companyByNormalizedName.get(normalizedName);
     if (existingCompany) {
       const merged: CrmCompany = {
         ...existingCompany,
@@ -896,6 +899,8 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
       };
       companyMap.set(merged.id, merged);
       companyByNormalizedName.set(normalizedName, merged);
+      companyByNormalizedName.set(normalize(merged.name), merged);
+      companyById.set(merged.id, merged);
       return merged;
     }
     const created: CrmCompany = {
@@ -932,6 +937,7 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
     };
     companyMap.set(created.id, created);
     companyByNormalizedName.set(normalizedName, created);
+    companyById.set(created.id, created);
     return created;
   };
 
@@ -971,13 +977,16 @@ export function buildCrmWorkspaceState(input: CrmBuildInput): CrmWorkspaceState 
   }
 
   for (const deal of input.deals) {
+    const linkedCompany = asText(deal.companyId)
+      ? (companyById.get(asText(deal.companyId)) || companyMap.get(asText(deal.companyId)))
+      : undefined;
     const companyName = asText(deal.companyId)
-      ? (companyMap.get(asText(deal.companyId))?.name || workspaceCompany.name)
+      ? (linkedCompany?.name || workspaceCompany.name)
       : workspaceCompany.name;
     const company = ensureCompany({
       id: asText(deal.companyId),
       name: companyName,
-      type: normalize(companyName) === normalize(workspaceCompany.name) ? workspaceCompany.type : "prospect",
+      type: linkedCompany?.type || (normalize(companyName) === normalize(workspaceCompany.name) ? workspaceCompany.type : "prospect"),
       market: deal.targetMarket,
       submarket: deal.submarket,
       floor: "",

@@ -1,6 +1,5 @@
 import { fetchApiProxy, getAuthHeaders } from "./api";
 import { getAccessToken } from "./auth-token";
-import { signOut } from "./supabase";
 
 export interface UserBrandingResponse {
   organization_id: string;
@@ -42,24 +41,6 @@ function toBrandingError(message: string): string {
   return msg;
 }
 
-let brandingAuthExpirySignOutPromise: Promise<void> | null = null;
-
-function hasBrandingAuthExpired(status: number, message: string): boolean {
-  const normalized = String(message || "").trim().toLowerCase();
-  return status === 401
-    || status === 403
-    || normalized.includes("not authenticated")
-    || normalized.includes("invalid or expired");
-}
-
-function queueBrandingSignOutOnAuthFailure(status: number, message: string): void {
-  if (!hasBrandingAuthExpired(status, message)) return;
-  if (brandingAuthExpirySignOutPromise) return;
-  brandingAuthExpirySignOutPromise = signOut().finally(() => {
-    brandingAuthExpirySignOutPromise = null;
-  });
-}
-
 export async function fetchUserBranding(): Promise<UserBrandingResponse> {
   if (!getAccessToken()) {
     throw new Error("Session expired. Please sign in again.");
@@ -70,7 +51,6 @@ export async function fetchUserBranding(): Promise<UserBrandingResponse> {
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text()) || `Branding request failed (${res.status})`;
-    queueBrandingSignOutOnAuthFailure(res.status, body);
     throw new Error(toBrandingError(body));
   }
   return (await res.json()) as UserBrandingResponse;
@@ -88,7 +68,6 @@ export async function uploadUserBrandingLogo(file: File): Promise<UserBrandingRe
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text()) || `Logo upload failed (${res.status})`;
-    queueBrandingSignOutOnAuthFailure(res.status, body);
     throw new Error(toBrandingError(body));
   }
   return (await res.json()) as UserBrandingResponse;
@@ -104,7 +83,6 @@ export async function deleteUserBrandingLogo(): Promise<UserBrandingResponse> {
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text()) || `Logo delete failed (${res.status})`;
-    queueBrandingSignOutOnAuthFailure(res.status, body);
     throw new Error(toBrandingError(body));
   }
   return (await res.json()) as UserBrandingResponse;
@@ -123,7 +101,6 @@ export async function updateBrokerageName(brokerageName: string): Promise<{ brok
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text()) || `Brokerage update failed (${res.status})`;
-    queueBrandingSignOutOnAuthFailure(res.status, body);
     throw new Error(toBrandingError(body));
   }
   return (await res.json()) as { brokerage_name: string | null };

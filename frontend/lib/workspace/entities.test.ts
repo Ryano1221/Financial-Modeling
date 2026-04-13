@@ -9,6 +9,7 @@ const sampleClient: ClientWorkspaceClient = {
   industry: "",
   contactName: "",
   contactEmail: "",
+  website: "",
   brokerage: "JLL",
   notes: "",
   createdAt: "2026-03-10T00:00:00.000Z",

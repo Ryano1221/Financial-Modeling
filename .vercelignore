@@ -1,19 +1,47 @@
-# Local virtual environments and modules
-.venv
-node_modules
-frontend/node_modules_corrupt_*
+# Keep Vercel uploads focused on the Next.js app in /frontend.
 
-# Local caches and generated artifacts
-backend/cache
+# Repo metadata and local workspaces
+.git
+.github
+.claude
+.cursor
+.vscode
+.pytest_cache
+.DS_Store
+
+# Local virtual environments and Python artifacts
+.venv
+backend/.venv
+backend/__pycache__
+scripts/__pycache__
+
+# Non-frontend app code and docs not needed for the Vercel site build
+backend
+/docs
+prisma
+render.yaml
+Dockerfile
+requirements.txt
+RENDER_DEPLOY_CHECKLIST.md
+DEPLOY_CHECK_AND_TEST_PLAN.md
+SUPABASE_PHASE1_CHECKLIST.md
+CLAUDE.md
+
+# Local caches, build outputs, and generated artifacts
+.vercel/output
+frontend/.next
+frontend/.vercel/output
+frontend/node_modules
+frontend/node_modules_corrupt_*
+node_modules
 tmp
 *.tsbuildinfo
 
 # Local scratch/test documents
 tmp-*.docx
 tmp-*.pdf
+tmp-*.jpeg
+tmp-*.jpg
+tmp-*.png
 lease-comparison (*.xlsx)
 lease-comparison*.xlsx
-
-# Editor and OS artifacts
-.cursor
-.DS_Store

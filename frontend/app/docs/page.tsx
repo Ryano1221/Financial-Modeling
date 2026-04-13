@@ -1,4 +1,18 @@
+import type { Metadata } from "next";
 import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-profile";
+
+export const metadata: Metadata = {
+  title: "Commercial Real Estate CRM Docs",
+  description:
+    "The CRE Model docs for commercial real estate CRM, document intake, lease analysis, proposal workflows, surveys, lease abstracts, obligations, and cross-device workspace sync.",
+  alternates: { canonical: "/docs" },
+  openGraph: {
+    title: "The CRE Model Docs",
+    description:
+      "Commercial real estate CRM and lease analysis documentation for connected brokerage workflows.",
+    url: "https://thecremodel.com/docs",
+  },
+};
 
 const profiles = [
   REPRESENTATION_MODE_PROFILES.tenant_rep,
@@ -7,142 +21,112 @@ const profiles = [
 
 const FAQ_ITEMS = [
   {
-    q: "Is this one platform or separate tools?",
-    a: "One platform. Documents, CRM, financial analyses, surveys, lease abstracts, buildings, obligations, and related leasing records all stay tied to the same client workspace so the full portfolio lives in one place.",
+    q: "What lives in the connected workspace?",
+    a: "Documents, financial analyses, CRM records, surveys, lease abstracts, obligations, and deal movement all stay tied to the same workspace instead of being split across separate tools.",
   },
   {
-    q: "Can one client workspace hold the full leasing portfolio?",
-    a: "Yes. theCREmodel is meant to centralize current leases, proposals, amendments, subleases, landlord consents, survey options, analyses, obligations, and follow-up work under the same active client record.",
+    q: "What changes when I sign in?",
+    a: "The structure stays the same, but the workspace card, stats, pipeline, and saved progress hydrate from your authenticated account and sync to cloud-backed storage so you can resume on another device.",
   },
   {
-    q: "Where should a new user start?",
-    a: "Start with the active client, then open the module that matches the task at hand. The product now emphasizes one primary action per workspace instead of multiple competing panels.",
+    q: "Can one workspace hold the full deal lifecycle?",
+    a: "Yes. The platform is designed to keep intake, comparison, negotiation, abstracting, obligation tracking, and follow-up connected inside one operating surface.",
   },
   {
-    q: "Does the scenario editor open automatically in Financial Analyses?",
-    a: "No. The selected option stays in review mode until you explicitly open the scenario editor, so you can compare options without the full edit panel taking over by default.",
+    q: "How do I get into the live workspace?",
+    a: "Use Get Started if you are new, or Open Workspace once you are signed in. The demo remains available from the same landing page without changing the overall layout.",
   },
   {
-    q: "Where does my workspace save when I am signed in?",
-    a: "Signed-in workspaces and module state are saved under that user account in cloud storage, so switching accounts does not reuse another user’s active client, documents, analyses, surveys, or saved report settings, and the same user can restore that data on another device after signing back in.",
+    q: "Where does saved progress live?",
+    a: "Signed-in workspace state persists in cloud-backed account storage so document records, original file payloads, parsed Apply payloads, connected records, and module progress restore after you sign in from any phone, tablet, or computer.",
   },
   {
-    q: "Can I sign in without my password?",
-    a: "Yes. The account screen supports password sign-in and an emailed sign-in link, so you can open a secure login link on the device you are using and restore that account there.",
+    q: "How do I know sync is working?",
+    a: "The footer shows a small live state: Online means the signed-in workspace is using cloud sync, Sign in to sync means the browser is signed out, and Local means the signed-in browser could not reach cloud storage.",
   },
   {
-    q: "Can I upload more than one proposal at a time?",
-    a: "Yes. Financial Analyses and the document library support batch uploads, and browser-side source caching now prefers browser-managed document storage while keeping only lightweight metadata in local fallback storage so larger batches do not fail on the second proposal.",
+    q: "How long do I stay signed in?",
+    a: "A device stays signed in for up to 30 days of workspace use unless you choose Sign out from the account page first.",
   },
   {
-    q: "Can Obligations parse signed subleases and landlord consents?",
-    a: "Yes. Obligations now treats executed subleases, landlord consents, and attached backup lease exhibits as one intake flow, while prioritizing the controlling sublease terms for dates, rent, and obligation tracking.",
+    q: "Can I move from documents into analyses, CRM, or obligations?",
+    a: "Yes. Module handoffs are designed around one active workspace so saved parsed records can keep moving forward from any signed-in device without re-uploading the source document.",
   },
   {
-    q: "What happens with scanned executed leases that do not have selectable text?",
-    a: "Scanned executed leases now prioritize the responsive intake path first, and deeper extraction checks are bounded for OCR-heavy PDFs so large image-only files do not get stuck in a long secondary processing pass before the lease record is created.",
+    q: "Do new CRM clients and prospects enter the pipeline?",
+    a: "Yes. Creating a CRM client, tenant, or prospect profile also creates the first linked pipeline deal and keeps the profile visible in the CRM selector, account client settings, board, table, and grouped CRM views. The profile Prospect Stage uses the same stage list as the pipeline and moves the linked deal when it changes.",
   },
   {
-    q: "Can I apply a saved document directly from the document library?",
-    a: "Yes. The document library now exposes a module-aware primary action so the same saved file can be applied directly to the current Financial Analysis, Survey, or Lease Abstract workflow from the row actions without leaving the page.",
+    q: "Are survey and lease abstract exports client-ready?",
+    a: "Yes. Survey and lease abstract exports are generated as branded presentation outputs with structured summary sections, detail views, and review visibility so they stay aligned with the financial analysis export standard.",
   },
   {
-    q: "How do I contact support?",
-    a: "Use the Contact page for support guidance or email info@thecremodel.com directly, especially if a sign-in link does not arrive or a device-specific login issue needs to be traced.",
+    q: "Does each client need more than one logo?",
+    a: "No. Each client uses one shared logo asset that carries through PDF covers and branded client-facing exports so branding stays consistent instead of diverging by output type.",
   },
-  {
-    q: "Do Survey and Lease Abstract exports match the Financial Analysis presentation style?",
-    a: "Yes. Survey and Lease Abstract exports now use the same branded hierarchy, logo treatment, print formatting, and client-ready finish as the Financial Analysis design system, while staying labeled as survey and lease abstract deliverables.",
-  },
-  {
-    q: "What changes when I switch representation mode?",
-    a: "The product language, defaults, and workflow emphasis change. The underlying records, security boundary, and connected data model do not.",
-  },
-];
+] as const;
 
 export default function DocsPage() {
   return (
-    <main className="relative z-10 section-shell">
-      <div className="app-container max-w-6xl">
-        <section className="section-panel space-y-8 p-6 sm:p-10">
-          <div className="space-y-3">
+    <main className="marketing-page-shell">
+      <div className="app-container">
+        <section className="marketing-page-panel mx-auto max-w-[1200px] space-y-8">
+          <div className="space-y-4">
             <p className="heading-kicker">Docs</p>
-            <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">How theCREmodel works</h1>
-            <p className="body-lead max-w-4xl">
-              theCREmodel is built to feel simple on first use while still holding the full leasing portfolio in one place: pick the active client, open the right module, complete the task, and keep every document, analysis, and follow-up connected without re-entering data.
+            <h1 className="heading-display !text-[clamp(2.4rem,5vw,4.9rem)]">
+              One workspace for the full commercial real estate workflow.
+            </h1>
+            <p className="body-lead max-w-4xl text-[var(--muted)]">
+              theCREmodel is built around a single connected workspace so source documents, analyses, CRM context, surveys, lease abstracts, and obligations stay aligned from intake through execution.
             </p>
-            <div className="flex flex-wrap gap-3 pt-2">
-              <div className="brand-badge">One connected workspace</div>
-              <div className="brand-badge">Simplified first-time flow</div>
+            <div className="flex flex-wrap gap-3">
+              <div className="brand-badge">Connected workspace</div>
+              <div className="brand-badge">Auth-aware landing</div>
               <div className="brand-badge">Live on thecremodel.com</div>
             </div>
           </div>
 
           <section className="grid gap-4 lg:grid-cols-3">
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Step 1</p>
-              <h2 className="mt-2 text-xl font-semibold text-white">Start with the source record</h2>
-              <p className="mt-2 text-sm text-slate-300">Open the active client, building, deal, lease, or survey document first so the rest of the portfolio workflow stays in context.</p>
-            </div>
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Step 2</p>
-              <h2 className="mt-2 text-xl font-semibold text-white">Work in one module at a time</h2>
-              <p className="mt-2 text-sm text-slate-300">Each section is now trimmed to its clearest primary use so a new user can move through the platform without hunting for the next action, even when the workspace holds many leasing records.</p>
-            </div>
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Step 3</p>
-              <h2 className="mt-2 text-xl font-semibold text-white">Deliver from the same workspace</h2>
-              <p className="mt-2 text-sm text-slate-300">Exports, sharing, and follow-up stay tied to the same underlying records, so the workflow remains easy to understand from first intake through the broader leasing portfolio.</p>
-            </div>
-          </section>
-
-          <section className="space-y-4">
-            <h2 className="heading-section">Core Modules</h2>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <article className="surface-card p-5">
-                <p className="heading-kicker">Financial Analyses</p>
-                <p className="mt-2 text-sm text-slate-300">Upload the source lease or proposal, review the strongest options, and export the comparison from one workspace.</p>
-              </article>
-              <article className="surface-card p-5">
-                <p className="heading-kicker">CRM</p>
-                <p className="mt-2 text-sm text-slate-300">Manage the active client, deal pipeline, reminders, and next follow-up without exposing the whole operating layer at once, while keeping the relationship tied to the same portfolio workspace.</p>
-              </article>
-              <article className="surface-card p-5">
-                <p className="heading-kicker">Buildings</p>
-                <p className="mt-2 text-sm text-slate-300">Browse buildings, review suites, and push good options into Surveys, CRM, or Financial Analyses from one active building context.</p>
-              </article>
-              <article className="surface-card p-5">
-                <p className="heading-kicker">Surveys</p>
-                <p className="mt-2 text-sm text-slate-300">Keep the survey table, map, editor, and occupancy cost view together so market options are easy to compare, then export branded Excel and PDF packages that use the same presentation standards as Financial Analysis while remaining clearly labeled as survey deliverables.</p>
-              </article>
-              <article className="surface-card p-5">
-                <p className="heading-kicker">Lease Abstracts</p>
-                <p className="mt-2 text-sm text-slate-300">Parse the controlling lease terms and produce a clean abstract from the saved document set, including institutional-grade workbook and PDF deliverables for client-facing review.</p>
-              </article>
-              <article className="surface-card p-5">
-                <p className="heading-kicker">Obligations</p>
-                <p className="mt-2 text-sm text-slate-300">Track deadlines, notices, current leases, amendments, signed subleases, and scanned executed lease packages from the same connected client record so the full leasing portfolio stays visible over time.</p>
-              </article>
-            </div>
+            <article className="marketing-card">
+              <p className="heading-kicker">Capture</p>
+              <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Start from the source record</h2>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                Bring in leases, proposals, surveys, flyers, amendments, and related files so the rest of the workflow inherits real workspace context and keeps both the source file and parsed Apply payload available across signed-in devices.
+              </p>
+            </article>
+            <article className="marketing-card">
+              <p className="heading-kicker">Connect</p>
+              <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Keep every module in sync</h2>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                Documents, parsed terms, CRM records, profile selectors, newly created pipeline deals, surveys, lease abstracts, and obligations stay associated with the same active workspace and sync through account-backed cloud storage instead of branching into device-local copies.
+              </p>
+            </article>
+            <article className="marketing-card">
+              <p className="heading-kicker">Deliver</p>
+              <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Move the next action clearly</h2>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                The landing screen surfaces current workspace context, core counts, pipeline movement, recent activity, and branded export paths so teams know what to do next without interface clutter.
+              </p>
+            </article>
           </section>
 
           <section className="space-y-4">
             <h2 className="heading-section">Representation Modes</h2>
             <div className="grid gap-4 xl:grid-cols-2">
               {profiles.map((profile) => (
-                <article key={profile.mode} className="surface-card space-y-4 p-5 sm:p-6">
-                  <div>
-                    <p className="heading-kicker">{profile.label}</p>
-                    <p className="mt-2 text-sm text-slate-300 sm:text-base">{profile.summary}</p>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="brand-panel p-3">
-                      <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Default Module</p>
-                      <p className="mt-1 text-sm text-white">{profile.navigation.modules.find((module) => module.id === profile.navigation.defaultModule)?.label || profile.navigation.defaultModule}</p>
+                <article key={profile.mode} className="marketing-card">
+                  <p className="heading-kicker">{profile.label}</p>
+                  <p className="mt-3 text-sm leading-7 text-[var(--muted)]">{profile.summary}</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="brand-panel p-4">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">Default Module</p>
+                      <p className="mt-2 text-sm text-[var(--text)]">
+                        {profile.navigation.modules.find((module) => module.id === profile.navigation.defaultModule)?.label || profile.navigation.defaultModule}
+                      </p>
                     </div>
-                    <div className="brand-panel p-3">
-                      <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Default CRM View</p>
-                      <p className="mt-1 text-sm text-white">{profile.crm.viewLabels[profile.crm.defaultDealsView]}</p>
+                    <div className="brand-panel p-4">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">Operating Focus</p>
+                      <p className="mt-2 text-sm text-[var(--text)]">{profile.crm.operatingLayerFocus}</p>
                     </div>
                   </div>
                 </article>
@@ -150,13 +134,13 @@ export default function DocsPage() {
             </div>
           </section>
 
-          <section className="space-y-3">
+          <section className="space-y-4">
             <h2 className="heading-section">FAQ</h2>
-            <div className="space-y-3">
+            <div className="grid gap-4">
               {FAQ_ITEMS.map((item) => (
-                <article key={item.q} className="surface-card p-4 sm:p-5">
-                  <h3 className="text-base font-semibold text-white sm:text-lg">{item.q}</h3>
-                  <p className="mt-2 text-sm text-slate-300 sm:text-base">{item.a}</p>
+                <article key={item.q} className="marketing-card">
+                  <h3 className="text-xl font-bold tracking-[-0.03em] text-[var(--text)]">{item.q}</h3>
+                  <p className="mt-3 text-sm leading-7 text-[var(--muted)]">{item.a}</p>
                 </article>
               ))}
             </div>

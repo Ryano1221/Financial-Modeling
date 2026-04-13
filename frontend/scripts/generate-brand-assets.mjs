@@ -65,7 +65,7 @@ async function main() {
 <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${W}" height="${H}" fill="${BG}"/>
   <image href="data:image/png;base64,${logoBase64}" x="${logoX}" y="${logoY}" width="${outLw}" height="${outLh}"/>
-  <text x="${W / 2}" y="${taglineY}" text-anchor="middle" fill="#e5e5e5" font-family="system-ui, sans-serif" font-size="32" font-weight="400">${escapeXml("Commercial Real Estate Financial Modeling")}</text>
+  <text x="${W / 2}" y="${taglineY}" text-anchor="middle" fill="#e5e5e5" font-family="DM Mono" font-size="32" font-weight="400">${escapeXml("Commercial Real Estate Financial Modeling")}</text>
 </svg>`;
   const ogPng = await sharp(Buffer.from(svg)).png().toBuffer();
   writeFileSync(path.join(brandDir, "og.png"), ogPng);

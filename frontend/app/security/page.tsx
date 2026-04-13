@@ -1,92 +1,122 @@
+import type { Metadata } from "next";
 import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-profile";
+
+export const metadata: Metadata = {
+  title: "Security For Commercial Real Estate Workspaces",
+  description:
+    "Security details for The CRE Model, including authenticated commercial real estate CRM workspace boundaries, cloud document sync, parsed lease payloads, and client-scoped records.",
+  alternates: { canonical: "/security" },
+  openGraph: {
+    title: "The CRE Model Security",
+    description:
+      "Authenticated workspace boundaries and cloud sync controls for commercial real estate CRM and lease analysis workflows.",
+    url: "https://thecremodel.com/security",
+  },
+};
 
 const profiles = [
   REPRESENTATION_MODE_PROFILES.tenant_rep,
   REPRESENTATION_MODE_PROFILES.landlord_rep,
 ];
 
+const SECURITY_PILLARS = [
+  {
+    title: "Authenticated workspace boundaries",
+    body: "Protected actions and saved workspace state run under authenticated user context so connected records remain scoped to the signed-in account.",
+  },
+  {
+    title: "Connected data without cross-account bleed",
+    body: "Documents, analyses, CRM records, surveys, lease abstracts, and obligations stay tied to the same workspace graph without leaking across users or clients.",
+  },
+  {
+    title: "CRM pipeline linkage",
+    body: "New CRM client, tenant, and prospect profiles create linked pipeline deals, stay available in CRM selectors and account client settings, and use controlled stage changes to keep profile status aligned with pipeline movement.",
+  },
+  {
+    title: "Client-scoped branding assets",
+    body: "Each client logo is stored once under that client workspace and reused across presentation outputs so branding changes do not fork into mismatched copies.",
+  },
+  {
+    title: "Controlled sync and recovery",
+    body: "Signed-in workspace state is persisted in cloud-backed storage and can be restored from any device without silently reviving stale or deleted records.",
+  },
+  {
+    title: "Cross-device parsed document payloads",
+    body: "Original file payloads and parsed document snapshots sync separately from the main workspace record so Open and Apply can work on another signed-in device without relying on browser-only file caches.",
+  },
+  {
+    title: "Thirty day device sessions",
+    body: "Signed-in devices keep their workspace session for up to 30 days of use unless the user signs out, while backend requests still require authenticated tokens.",
+  },
+  {
+    title: "Visible sync state",
+    body: "The footer keeps sync visibility compact with Online, Sign in to sync, and Local states so users can confirm whether the workspace is cloud-connected before switching devices.",
+  },
+  {
+    title: "Bounded document processing",
+    body: "OCR-heavy and image-only documents use bounded intake behavior so extraction remains responsive while still protecting the broader workflow and downstream exports.",
+  },
+  {
+    title: "Review-aware client outputs",
+    body: "Survey and lease abstract exports preserve analyst review status and source-document context so client-ready packages do not silently hide unresolved extraction issues.",
+  },
+  {
+    title: "Canonical production host",
+    body: "Production traffic is served from thecremodel.com so public pages, authenticated pages, and support flows stay aligned on the same origin.",
+  },
+  {
+    title: "Support visibility for incidents",
+    body: "Security questions and operational issues flow through the same monitored support channel so reports can be triaged quickly with workspace context.",
+  },
+] as const;
+
 export default function SecurityPage() {
   return (
-    <main className="relative z-10 section-shell">
-      <div className="app-container max-w-6xl">
-        <section className="section-panel space-y-8 p-6 sm:p-10">
-          <div className="space-y-3">
+    <main className="marketing-page-shell">
+      <div className="app-container">
+        <section className="marketing-page-panel mx-auto max-w-[1200px] space-y-8">
+          <div className="space-y-4">
             <p className="heading-kicker">Security</p>
-            <h1 className="heading-display !text-[clamp(2rem,5vw,3.75rem)]">Security overview</h1>
-            <p className="body-lead max-w-4xl">
-              theCREmodel keeps the product simple at the surface while maintaining one shared security boundary underneath the full leasing portfolio workspace across every module.
+            <h1 className="heading-display !text-[clamp(2.4rem,5vw,4.7rem)]">Protected by design, not added as an afterthought.</h1>
+            <p className="body-lead max-w-4xl text-[var(--muted)]">
+              theCREmodel keeps the public experience clean while preserving authenticated workspace boundaries, cross-device cloud persistence, and a single connected security model across documents, analytics, CRM, surveys, abstracts, and obligations.
             </p>
-            <div className="flex flex-wrap gap-3 pt-2">
-              <div className="brand-badge">Client-scoped workspace isolation</div>
+            <div className="flex flex-wrap gap-3">
               <div className="brand-badge">Authenticated protected actions</div>
-              <div className="brand-badge">Canonical production host</div>
+              <div className="brand-badge">Workspace isolation</div>
+              <div className="brand-badge">thecremodel.com</div>
             </div>
           </div>
 
           <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Authentication</p>
-              <p className="mt-2 text-sm text-slate-300">Protected workflows, storage actions, and client-facing exports run with authenticated user context, including account-scoped cloud workspace persistence that restores saved workspace state only inside that signed-in user account across devices. Users can authenticate with a password or a secure emailed sign-in link.</p>
-            </div>
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Workspace Isolation</p>
-              <p className="mt-2 text-sm text-slate-300">Documents, deals, surveys, obligations, financial analyses, and linked leasing records stay attached to the active client workspace, including executed subleases and attached consent packages.</p>
-            </div>
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Controlled Deletion</p>
-              <p className="mt-2 text-sm text-slate-300">Intentional document and building deletions persist so removed records do not silently reappear from stale sync state.</p>
-            </div>
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Browser Storage</p>
-              <p className="mt-2 text-sm text-slate-300">Large source-file payloads are cached in browser-managed document storage instead of relying on one oversized localStorage entry, and local fallback now acts as a recovery cache for the same signed-in account while cloud sync remains the source used to restore records on another device.</p>
-            </div>
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Bounded OCR</p>
-              <p className="mt-2 text-sm text-slate-300">Image-only lease PDFs use a bounded OCR-aware intake path so authenticated lease submission stays responsive, while deeper extraction checks are intentionally capped for OCR-heavy files instead of scanning every page synchronously.</p>
-            </div>
-            <div className="surface-card p-5">
-              <p className="heading-kicker">Production Host</p>
-              <p className="mt-2 text-sm text-slate-300">Production traffic is served from <strong>thecremodel.com</strong> with same-origin support and proof routes.</p>
-            </div>
+            {SECURITY_PILLARS.map((pillar) => (
+              <article key={pillar.title} className="marketing-card">
+                <p className="heading-kicker">Security Pillar</p>
+                <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">{pillar.title}</h2>
+                <p className="mt-3 text-sm leading-7 text-[var(--muted)]">{pillar.body}</p>
+              </article>
+            ))}
           </section>
 
           <section className="space-y-4">
-            <h2 className="heading-section">How simplification affects security</h2>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="surface-card p-5">
-                <p className="heading-kicker">Presentation changes</p>
-                <p className="mt-2 text-sm text-slate-300">The cleaner landing pages, simpler module shells, and on-demand editors are presentation changes only. They do not expand data access or introduce a second storage path.</p>
-              </div>
-              <div className="surface-card p-5">
-                <p className="heading-kicker">Integrated workflows</p>
-                <p className="mt-2 text-sm text-slate-300">Cross-module handoffs still stay inside the same client workspace, so surveys, analyses, CRM records, lease abstracts, obligations, and the broader leasing portfolio remain connected without weakening isolation or crossing between signed-in accounts. Context-aware document actions reuse that same scoped workspace instead of creating a second import path.</p>
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-4">
-            <h2 className="heading-section">Representation modes</h2>
+            <h2 className="heading-section">Representation Mode Coverage</h2>
             <div className="grid gap-4 xl:grid-cols-2">
               {profiles.map((profile) => (
-                <article key={profile.mode} className="surface-card brand-panel p-5">
+                <article key={profile.mode} className="marketing-card">
                   <p className="heading-kicker">{profile.label}</p>
-                  <p className="mt-2 text-sm text-slate-300">{profile.docs.securitySummary}</p>
+                  <p className="mt-3 text-sm leading-7 text-[var(--muted)]">{profile.docs.securitySummary}</p>
                 </article>
               ))}
             </div>
           </section>
 
-          <section className="space-y-3">
-            <h2 className="heading-section">Report a concern</h2>
-            <p className="text-sm text-slate-300 sm:text-base">
-              Email{" "}
-              <a className="brand-link underline" href="mailto:info@thecremodel.com">
-                info@thecremodel.com
-              </a>{" "}
-              for security questions or vulnerability reports.
+          <section className="marketing-card">
+            <p className="heading-kicker">Report A Concern</p>
+            <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+              Email <a className="brand-link underline" href="mailto:info@thecremodel.com">info@thecremodel.com</a> for security questions, suspicious behavior, or vulnerability reports.
             </p>
-            <p className="text-sm text-slate-300 sm:text-base">
-              The Contact page points users to the same inbox, so operational issues and security follow-up both stay centered on the core support channel.
+            <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+              Include the workspace or client name, the page involved, the action you took, and any timestamps or screenshots that will help reproduce the issue quickly.
             </p>
           </section>
         </section>

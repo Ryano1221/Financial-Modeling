@@ -1,4 +1,4 @@
-type StreamConfig = {
+type DigitConfig = {
   id: number;
   left: string;
   duration: string;
@@ -10,7 +10,7 @@ type StreamConfig = {
   driftB: string;
   driftC: string;
   startY: string;
-  digits: string;
+  digit: string;
 };
 
 function seededFraction(seed: number): number {
@@ -18,41 +18,36 @@ function seededFraction(seed: number): number {
   return value - Math.floor(value);
 }
 
-function buildDigits(seed: number, length = 44): string {
-  const values: string[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const next = Math.floor(seededFraction(seed * 101 + index * 17 + 3) * 10);
-    values.push(String(next));
-  }
-  return values.join("\n");
+function buildDigit(seed: number): string {
+  return String(Math.floor(seededFraction(seed * 101 + 3) * 10));
 }
 
-function buildStreams(count = 40): StreamConfig[] {
+function buildDigits(count = 180): DigitConfig[] {
   return Array.from({ length: count }, (_, index) => {
     const seed = index + 1;
     return {
       id: seed,
-      left: `${4 + seededFraction(seed * 7) * 92}%`,
-      duration: `${12 + seededFraction(seed * 11) * 12}s`,
-      delay: `${-1 * (seededFraction(seed * 19) * 22)}s`,
-      opacity: `${0.28 + seededFraction(seed * 23) * 0.34}`,
-      scale: `${0.84 + seededFraction(seed * 29) * 0.58}`,
+      left: `${seededFraction(seed * 7) * 100}%`,
+      duration: `${7 + seededFraction(seed * 11) * 10}s`,
+      delay: `${-1 * (seededFraction(seed * 19) * 18)}s`,
+      opacity: `${0.24 + seededFraction(seed * 23) * 0.36}`,
+      scale: `${0.78 + seededFraction(seed * 29) * 0.72}`,
       blur: `${seededFraction(seed * 31) > 0.76 ? 0.4 : 0}px`,
-      driftA: `${(-10 + seededFraction(seed * 41) * 20).toFixed(2)}vw`,
-      driftB: `${(-14 + seededFraction(seed * 43) * 28).toFixed(2)}vw`,
-      driftC: `${(-9 + seededFraction(seed * 47) * 18).toFixed(2)}vw`,
-      startY: `${(-34 - seededFraction(seed * 53) * 26).toFixed(2)}vh`,
-      digits: buildDigits(seed * 37),
+      driftA: `${(-8 + seededFraction(seed * 41) * 16).toFixed(2)}vw`,
+      driftB: `${(-12 + seededFraction(seed * 43) * 24).toFixed(2)}vw`,
+      driftC: `${(-10 + seededFraction(seed * 47) * 20).toFixed(2)}vw`,
+      startY: `${(-12 - seededFraction(seed * 53) * 108).toFixed(2)}vh`,
+      digit: buildDigit(seed * 37),
     };
   });
 }
 
-const STREAMS = buildStreams();
+const DIGITS = buildDigits();
 
 export function BackgroundNumberRain() {
   return (
     <div className="number-rain-overlay" aria-hidden="true">
-      {STREAMS.map((stream) => (
+      {DIGITS.map((stream) => (
         <span
           key={stream.id}
           className="number-rain-stream"
@@ -69,7 +64,7 @@ export function BackgroundNumberRain() {
             filter: `blur(${stream.blur})`,
           }}
         >
-          {stream.digits}
+          {stream.digit}
         </span>
       ))}
     </div>

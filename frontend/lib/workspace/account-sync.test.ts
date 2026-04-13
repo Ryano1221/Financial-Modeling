@@ -20,7 +20,7 @@ describe("workspace/account-sync", () => {
     const merged = mergeHydratedWorkspaceState(
       buildState(),
       buildState({
-        clients: [{ id: "client-1", name: "Acme", companyType: "", industry: "", contactName: "", contactEmail: "", brokerage: "", notes: "", createdAt: "2026-04-08T00:00:00.000Z" }],
+        clients: [{ id: "client-1", name: "Acme", companyType: "", industry: "", contactName: "", contactEmail: "", website: "", brokerage: "", notes: "", createdAt: "2026-04-08T00:00:00.000Z" }],
         deals: [{ id: "deal-1", clientId: "client-1", dealName: "HQ", requirementName: "", dealType: "", stage: "Prospecting", status: "open", priority: "medium", targetMarket: "", submarket: "", city: "", squareFootageMin: 0, squareFootageMax: 0, budget: 0, occupancyDateGoal: "", expirationDate: "", selectedProperty: "", selectedSuite: "", selectedLandlord: "", tenantRepBroker: "", notes: "", linkedSurveyIds: [], linkedAnalysisIds: [], linkedDocumentIds: [], linkedObligationIds: [], linkedLeaseAbstractIds: [], timeline: [], tasks: [], createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
         activeClientId: "client-1",
       }),
@@ -35,7 +35,7 @@ describe("workspace/account-sync", () => {
   it("preserves remote records while appending local-only documents and deleted ids", () => {
     const merged = mergeHydratedWorkspaceState(
       buildState({
-        clients: [{ id: "client-1", name: "Remote", companyType: "", industry: "", contactName: "", contactEmail: "", brokerage: "", notes: "", createdAt: "2026-04-08T00:00:00.000Z" }],
+        clients: [{ id: "client-1", name: "Remote", companyType: "", industry: "", contactName: "", contactEmail: "", website: "", brokerage: "", notes: "", createdAt: "2026-04-08T00:00:00.000Z" }],
         documents: [{ id: "doc-1", clientId: "client-1", name: "Remote PDF", type: "leases", building: "", address: "", suite: "", parsed: true, uploadedBy: "User", uploadedAt: "2026-04-08T00:00:00.000Z", sourceModule: "document-center" }],
         deletedDocumentIds: ["doc-3"],
         activeClientId: "client-1",

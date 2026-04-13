@@ -1,11 +1,12 @@
 import { clearAccessToken, getAccessToken, setAccessToken } from "./auth-token";
+import { AUTH_SESSION_COOKIE } from "./auth-access";
 
 const REFRESH_TOKEN_KEY = "thecremodel_supabase_refresh_token";
 const USER_KEY = "thecremodel_supabase_user";
 const SESSION_LAST_ACTIVE_AT_KEY = "thecremodel_supabase_session_last_active_at";
 const AUTH_NOTICE_KEY = "thecremodel_supabase_auth_notice";
-const MAX_PERSIST_DAYS = 30;
-const MAX_PERSIST_AGE_MS = MAX_PERSIST_DAYS * 24 * 60 * 60 * 1000;
+export const AUTH_SESSION_MAX_AGE_DAYS = 30;
+const MAX_PERSIST_AGE_MS = AUTH_SESSION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 const AUTH_CALLBACK_KEYS = [
   "access_token",
   "refresh_token",
@@ -75,6 +76,16 @@ function canUseHistory(): boolean {
   return typeof window !== "undefined" && typeof window.history !== "undefined";
 }
 
+function syncAuthSessionCookie(isAuthenticated: boolean): void {
+  if (typeof document === "undefined") return;
+  const secure = typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : "";
+  if (isAuthenticated) {
+    document.cookie = `${AUTH_SESSION_COOKIE}=1; Path=/; Max-Age=${60 * 60 * 24 * 30}; SameSite=Lax${secure}`;
+    return;
+  }
+  document.cookie = `${AUTH_SESSION_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+}
+
 function setStoredRefreshToken(token: string | undefined): void {
   if (!canUseStorage()) return;
   const clean = (token || "").trim();
@@ -138,8 +149,7 @@ function isPersistedSessionExpired(): boolean {
 }
 
 function shouldDropPersistedSession(): boolean {
-  if (!isPersistedSessionExpired()) return false;
-  return !getStoredRefreshToken();
+  return isPersistedSessionExpired();
 }
 
 function getStoredUser(): SupabaseAuthUser | null {
@@ -247,7 +257,7 @@ function buildAuthRedirectUrl(): string {
   if (!base) {
     throw new Error("Auth redirect URL is not configured.");
   }
-  return new URL("/account?mode=signin", base).toString();
+  return new URL("/sign-in", base).toString();
 }
 
 function normalizeAuthRedirectType(raw: string | null): string | null {
@@ -383,6 +393,7 @@ function persistSession(session: SupabaseAuthSession | null): void {
     setStoredRefreshToken(undefined);
     setStoredUser(null);
     setStoredSessionLastActiveAt(null);
+    syncAuthSessionCookie(false);
     emitSession(null);
     return;
   }
@@ -390,6 +401,7 @@ function persistSession(session: SupabaseAuthSession | null): void {
   setStoredRefreshToken(session.refresh_token);
   setStoredUser(session.user);
   setStoredSessionLastActiveAt(Date.now());
+  syncAuthSessionCookie(true);
   emitSession(session);
 }
 
@@ -399,6 +411,7 @@ export function getSessionFromStorage(): SupabaseAuthSession | null {
   if (!token || !user) return null;
   if (shouldDropPersistedSession()) return null;
   const refresh = getStoredRefreshToken() || undefined;
+  syncAuthSessionCookie(true);
   return {
     access_token: token,
     refresh_token: refresh,
@@ -475,6 +488,10 @@ export async function signOut(): Promise<void> {
 export async function refreshSession(refreshToken: string): Promise<SupabaseAuthSession | null> {
   const clean = (refreshToken || "").trim();
   if (!clean) return null;
+  if (shouldDropPersistedSession()) {
+    persistSession(null);
+    return null;
+  }
   const res = await requestSupabase("/auth/v1/token?grant_type=refresh_token", {
     method: "POST",
     body: JSON.stringify({ refresh_token: clean }),
@@ -484,6 +501,16 @@ export async function refreshSession(refreshToken: string): Promise<SupabaseAuth
   const session = toSession(payload);
   persistSession(session);
   return session;
+}
+
+export async function refreshPersistedSession(): Promise<SupabaseAuthSession | null> {
+  if (shouldDropPersistedSession()) {
+    persistSession(null);
+    return null;
+  }
+  const refresh = getStoredRefreshToken();
+  if (!refresh) return null;
+  return refreshSession(refresh);
 }
 
 export async function getSession(): Promise<SupabaseAuthSession | null> {
@@ -510,6 +537,7 @@ export async function getSession(): Promise<SupabaseAuthSession | null> {
           const session: SupabaseAuthSession = { access_token: token, refresh_token: refresh, user };
           setStoredUser(user);
           setStoredSessionLastActiveAt(Date.now());
+          syncAuthSessionCookie(true);
           return session;
         }
       }
@@ -532,6 +560,12 @@ export async function getSession(): Promise<SupabaseAuthSession | null> {
   const storedUser = getStoredUser();
   if (storedUser && token && userLookupFailed && !tokenRejected) {
     setStoredSessionLastActiveAt(Date.now());
+    syncAuthSessionCookie(true);
+    return { access_token: token, refresh_token: refresh || undefined, user: storedUser };
+  }
+  if (storedUser && token && !shouldDropPersistedSession()) {
+    setStoredSessionLastActiveAt(Date.now());
+    syncAuthSessionCookie(true);
     return { access_token: token, refresh_token: refresh || undefined, user: storedUser };
   }
   persistSession(null);

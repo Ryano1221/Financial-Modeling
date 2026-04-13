@@ -10,7 +10,7 @@ import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
 import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
-import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
+import type { ClientDocumentType, ClientWorkspaceDocument, DocumentNormalizeSnapshot } from "@/lib/workspace/types";
 import {
   buildCompletedLeaseAbstractFileName,
   buildCompletedLeaseShareLink,
@@ -107,6 +107,10 @@ function inferKind(fileName: string, normalize: NormalizerResponse): CompletedLe
     return "amendment";
   }
   return "lease";
+}
+
+function workspaceTypeForKind(kind: CompletedLeaseDocumentKind): ClientDocumentType {
+  return kind === "amendment" ? "amendments" : "leases";
 }
 
 function mergeRentSchedules(
@@ -259,13 +263,14 @@ export function CompletedLeasesWorkspace({
   pendingDocumentImport = null,
   onPendingDocumentImportHandled,
 }: CompletedLeasesWorkspaceProps) {
-  const { isAuthenticated, documents: clientDocuments } = useClientWorkspace();
+  const { isAuthenticated, documents: clientDocuments, updateDocument } = useClientWorkspace();
   const [documents, setDocuments] = useState<CompletedLeaseDocumentRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [storageHydrated, setStorageHydrated] = useState(false);
   const [error, setError] = useState<string>("");
   const [status, setStatus] = useState("No files uploaded");
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
+  const [saveReviewLoading, setSaveReviewLoading] = useState(false);
   const scopedStorageKey = useMemo(
     () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
     [clientId],
@@ -390,12 +395,14 @@ export function CompletedLeasesWorkspace({
       fileName: string;
       normalize: NormalizerResponse;
       uploadedAtIso?: string;
+      sourceDocumentId?: string;
     },
   ) => {
     const kind = inferKind(input.fileName, input.normalize);
     const record: CompletedLeaseDocumentRecord = {
       id: nextId(),
       clientId,
+      sourceDocumentId: input.sourceDocumentId,
       fileName: input.fileName,
       uploadedAtIso: input.uploadedAtIso || toIsoDate(new Date()),
       kind,
@@ -415,7 +422,7 @@ export function CompletedLeasesWorkspace({
   const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
     const normalized = normalizerResponseFromSnapshot(document.normalizeSnapshot);
     if (!normalized?.canonical_lease) {
-      setError("Selected document has no parsed payload. Upload this file through this client workspace first.");
+      setError("Selected document has no parsed cloud payload yet. Keep the upload device online, then refresh and try Apply again.");
       return;
     }
     setError("");
@@ -423,9 +430,75 @@ export function CompletedLeasesWorkspace({
       fileName: document.name,
       normalize: normalized,
       uploadedAtIso: toIsoDate(new Date()),
+      sourceDocumentId: document.id,
     });
     setStatus(`Imported ${document.name} from client document library.`);
   }, [addDocumentFromNormalize]);
+
+  const saveSelectedReview = useCallback(async () => {
+    if (!selected) return;
+    setSaveReviewLoading(true);
+    setError("");
+    try {
+      const repairedSnapshot: DocumentNormalizeSnapshot = {
+        canonical_lease: selected.canonical,
+        extraction_summary: selected.extractionSummary,
+        review_tasks: selected.reviewTasks,
+        field_confidence: selected.fieldConfidence,
+        warnings: selected.warnings,
+        confidence_score: selected.source?.confidence_score,
+        option_variants: selected.source?.option_variants || [],
+      };
+      const repairedNormalize = normalizerResponseFromSnapshot(repairedSnapshot);
+      if (!repairedNormalize?.canonical_lease) {
+        throw new Error("Unable to save reviewed extraction details.");
+      }
+
+      const nextSnapshot: DocumentNormalizeSnapshot = {
+        canonical_lease: repairedNormalize.canonical_lease,
+        extraction_summary: repairedNormalize.extraction_summary,
+        review_tasks: repairedNormalize.review_tasks || [],
+        field_confidence: repairedNormalize.field_confidence || {},
+        warnings: repairedNormalize.warnings || [],
+        confidence_score: repairedNormalize.confidence_score,
+        option_variants: repairedNormalize.option_variants || [],
+      };
+
+      setDocuments((prev) =>
+        prev.map((doc) =>
+          doc.id !== selected.id
+            ? doc
+            : {
+                ...doc,
+                canonical: nextSnapshot.canonical_lease,
+                fieldConfidence: nextSnapshot.field_confidence || {},
+                warnings: nextSnapshot.warnings || [],
+                extractionSummary: nextSnapshot.extraction_summary,
+                reviewTasks: nextSnapshot.review_tasks || [],
+                source: repairedNormalize,
+              },
+        ),
+      );
+
+      if (selected.sourceDocumentId) {
+        updateDocument(selected.sourceDocumentId, {
+          type: workspaceTypeForKind(selected.kind),
+          building: asText(nextSnapshot.canonical_lease.building_name || nextSnapshot.canonical_lease.premises_name),
+          address: asText(nextSnapshot.canonical_lease.address),
+          suite: asText(nextSnapshot.canonical_lease.suite),
+          parsed: true,
+          normalizeSnapshot: nextSnapshot,
+        });
+        setStatus(`Saved reviewed details for ${selected.fileName}. Future imports will reuse these corrections.`);
+      } else {
+        setStatus(`Saved reviewed details for ${selected.fileName} in the lease abstract stack. Re-import from the client document library to sync globally.`);
+      }
+    } catch (err) {
+      setError(getDisplayErrorMessage(err));
+    } finally {
+      setSaveReviewLoading(false);
+    }
+  }, [selected, updateDocument]);
 
   useEffect(() => {
     if (!pendingDocumentImport) return;
@@ -932,6 +1005,20 @@ export function CompletedLeasesWorkspace({
                   </ul>
                 </div>
               ) : null}
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { void saveSelectedReview(); }}
+                  disabled={saveReviewLoading}
+                  className="btn-premium btn-premium-primary disabled:opacity-50"
+                >
+                  {saveReviewLoading ? "Saving..." : "Save Reviewed Details"}
+                </button>
+                <p className="text-xs text-slate-400">
+                  Saved review changes will carry over when this document is used elsewhere in the workspace.
+                </p>
+              </div>
             </div>
           )}
         </PlatformPanel>

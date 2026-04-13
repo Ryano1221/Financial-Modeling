@@ -4,6 +4,7 @@
  */
 import { getBackendBaseUrl } from "./backend";
 import { getAccessToken } from "./auth-token";
+import { refreshPersistedSession } from "./supabase";
 
 const DEFAULT_TIMEOUT_MS = 300000; // 5 min for Render cold start + extraction
 const NORMALIZE_TIMEOUT_MS = 300000; // 5 min for /normalize to handle large/scanned lease docs
@@ -118,10 +119,23 @@ function attachAuthHeader(init: RequestInit): RequestInit {
   if (!token) return init;
 
   const headers = new Headers(init.headers || undefined);
-  if (!headers.has("authorization")) {
-    headers.set("authorization", `Bearer ${token}`);
-  }
+  headers.set("authorization", `Bearer ${token}`);
   return { ...init, headers };
+}
+
+function isAuthFailure(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+async function retryWithFreshSession(
+  fetcher: (init: RequestInit) => Promise<Response>,
+  init: RequestInit,
+  firstResponse: Response,
+): Promise<Response> {
+  if (!isAuthFailure(firstResponse.status)) return firstResponse;
+  const refreshed = await refreshPersistedSession();
+  if (!refreshed) return firstResponse;
+  return fetcher(attachAuthHeader(init));
 }
 
 function withTimeoutSignal(timeoutMs: number): { signal: AbortSignal; clear: () => void } {
@@ -145,9 +159,11 @@ export async function fetchApi(
   const { signal, clear } = withTimeoutSignal(timeout);
   const initWithAuth = attachAuthHeader(init);
   try {
-    const res = await fetch(url, { ...initWithAuth, signal });
+    const doFetch = (nextInit: RequestInit) => fetch(url, { ...nextInit, signal });
+    const res = await doFetch(initWithAuth);
+    const finalRes = await retryWithFreshSession(doFetch, init, res);
     clear();
-    return res;
+    return finalRes;
   } catch (e) {
     clear();
     if (isNormalize && e instanceof Error && (e.name === "AbortError" || e.message.toLowerCase().includes("abort"))) {
@@ -169,9 +185,11 @@ export async function fetchApiProxy(
   const { signal, clear } = withTimeoutSignal(timeout);
   const initWithAuth = attachAuthHeader(init);
   try {
-    const res = await fetch(url, { ...initWithAuth, signal });
+    const doFetch = (nextInit: RequestInit) => fetch(url, { ...nextInit, signal });
+    const res = await doFetch(initWithAuth);
+    const finalRes = await retryWithFreshSession(doFetch, init, res);
     clear();
-    return res;
+    return finalRes;
   } catch (e) {
     clear();
     if (isNormalize && e instanceof Error && (e.name === "AbortError" || e.message.toLowerCase().includes("abort"))) {

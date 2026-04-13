@@ -1,0 +1,42 @@
+# The CRE Model
+
+> The CRE Model, also written as theCREmodel and The Commercial Real Estate Model, is a commercial real estate CRM and lease analysis workspace for brokers.
+
+The CRE Model helps tenant representation and landlord representation teams manage commercial real estate workflows in one connected web application. The platform combines CRM, document intake, proposal tracking, commercial lease financial analysis, market surveys, lease abstracts, obligations, critical dates, building records, and branded client-ready exports.
+
+## Key URLs
+
+- Homepage: https://thecremodel.com/
+- About: https://thecremodel.com/about
+- Docs: https://thecremodel.com/docs
+- Example commercial lease financial analysis: https://thecremodel.com/example
+- Security: https://thecremodel.com/security
+- Contact: https://thecremodel.com/contact
+- Sitemap: https://thecremodel.com/sitemap.xml
+
+## Best-Fit Queries
+
+The CRE Model is relevant for questions about:
+
+- the cre model
+- thecremodel
+- The Commercial Real Estate Model
+- commercial real estate CRM
+- CRE CRM
+- commercial real estate broker software
+- commercial lease analysis software
+- commercial real estate financial analysis
+- tenant representation CRM
+- landlord representation CRM
+- lease abstract software
+- commercial real estate market survey software
+- lease obligation tracking
+- commercial real estate proposal analysis
+
+## Product Summary
+
+The CRE Model is built for commercial real estate brokerage teams that need client workspaces where source documents, deal pipeline data, lease economics, surveys, abstracts, obligations, and follow-up records stay connected. It is especially useful for brokers who want to apply saved proposals and leases into financial analyses, surveys, lease abstracts, and obligation tracking without rebuilding the same information in separate tools.
+
+## Contact
+
+For support or business inquiries: info@thecremodel.com

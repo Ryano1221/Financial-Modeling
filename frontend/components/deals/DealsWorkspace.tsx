@@ -22,6 +22,7 @@ import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/wor
 import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
 import { loadBuildingFocus, persistBuildingFocus } from "@/lib/workspace/building-focus";
 import { fetchSharedMarketInventory, type SharedMarketInventoryResponse } from "@/lib/workspace/market-inventory";
+import { CRM_PROFILE_STATE_EVENT } from "@/lib/workspace/crm-profile-options";
 import {
   CRM_OS_STORAGE_KEY,
   buildCrmDashboard,
@@ -200,6 +201,10 @@ function companyTypeBadgeClass(type: string): string {
   return "border-white/25 bg-white/5 text-slate-200";
 }
 
+function shouldCreatePipelineDealForCompany(type: string): boolean {
+  return ["active_client", "prospect", "tenant", "other"].includes(asText(type));
+}
+
 function shortlistStatusBadgeClass(status: CrmShortlistEntry["status"]): string {
   if (status === "proposal_requested") return "border-cyan-300/60 bg-cyan-500/10 text-cyan-100";
   if (status === "touring") return "border-indigo-300/60 bg-indigo-500/10 text-indigo-100";
@@ -360,6 +365,13 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     [representationMode],
   );
   const storageKey = useMemo(() => makeClientScopedStorageKey(CRM_OS_STORAGE_KEY, clientId), [clientId]);
+  const intakePipelineStageOptions = useMemo(
+    () => {
+      const stages = dealStages.filter((stage) => asText(stage).length > 0);
+      return stages.length > 0 ? stages : ["Prospecting", "Touring", "Proposal", "Negotiating", "Executing"];
+    },
+    [dealStages],
+  );
 
   const [view, setView] = useState<DealsViewMode>(() => crmSettings.defaultDealsView);
   const [selectedDealId, setSelectedDealId] = useState("");
@@ -378,6 +390,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   const [companyForm, setCompanyForm] = useState({
     name: "",
     type: isLandlordMode ? "tenant" : "prospect",
+    prospectStage: dealStages[0] || "Prospecting",
     industry: "",
     market: "",
     submarket: "",
@@ -565,11 +578,12 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   useEffect(() => {
     if (!storageHydrated || typeof window === "undefined") return;
     window.localStorage.setItem(storageKey, JSON.stringify(crmState));
+    window.dispatchEvent(new CustomEvent(CRM_PROFILE_STATE_EVENT, { detail: { clientId, storageKey } }));
     if (!isAuthenticated) return;
     void saveWorkspaceCloudSection(storageKey, crmState).catch(() => {
       // local fallback already saved
     });
-  }, [crmState, isAuthenticated, storageHydrated, storageKey]);
+  }, [clientId, crmState, isAuthenticated, storageHydrated, storageKey]);
 
   const sortedDeals = useMemo(() => [...deals].sort(dealSortByRecent), [deals]);
   const filteredDeals = useMemo(() => {
@@ -629,6 +643,19 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
   const selectedCompanyDeals = useMemo(
     () => deals.filter((deal) => selectedCompany?.linkedDealIds.includes(deal.id) || deal.companyId === selectedCompany?.id),
     [deals, selectedCompany?.id, selectedCompany?.linkedDealIds],
+  );
+  const selectedCompanyStageValue = asText(selectedCompanyProspecting?.prospectStage)
+    || asText(selectedCompany?.prospectStatus)
+    || asText(selectedCompanyDeals[0]?.stage)
+    || intakePipelineStageOptions[0]
+    || "";
+  const selectedCompanyStageOptions = useMemo(
+    () => Array.from(new Set([
+      selectedCompanyStageValue,
+      ...intakePipelineStageOptions,
+      ...selectedCompanyDeals.map((deal) => asText(deal.stage)).filter(Boolean),
+    ].filter(Boolean))),
+    [intakePipelineStageOptions, selectedCompanyDeals, selectedCompanyStageValue],
   );
   const selectedCompanyReminders = useMemo(
     () => crmState.reminders.filter((reminder) => reminder.companyId === selectedCompany?.id && reminder.status === "open"),
@@ -1081,11 +1108,13 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       return;
     }
     const linkedBuilding = intakeResolvedBuilding;
+    const companyType = companyForm.type as CrmCompany["type"];
+    const pipelineStage = asText(companyForm.prospectStage) || dealStages[0] || (companyType === "prospect" ? "Targeted" : "Managed");
     const nextCompany: CrmCompany = {
       id: makeId("crm_company"),
       clientId,
       name,
-      type: companyForm.type as CrmCompany["type"],
+      type: companyType,
       industry: asText(companyForm.industry),
       market: asText(companyForm.market) || linkedBuilding?.market || "",
       submarket: asText(companyForm.submarket) || linkedBuilding?.submarket || "",
@@ -1096,7 +1125,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       currentLeaseExpiration: asText(companyForm.expirationDate),
       noticeDeadline: "",
       renewalProbability: 0.5,
-      prospectStatus: companyForm.type === "prospect" ? "Targeted" : "Managed",
+      prospectStatus: pipelineStage,
       relationshipOwner: asText(companyForm.relationshipOwner) || "Broker Team",
       source: "manual",
       notes: asText(companyForm.notes),
@@ -1113,11 +1142,38 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       landlordName: "",
       brokerRelationship: "",
     };
-    patchCrmDraft((current) => ({ ...current, companies: [nextCompany, ...current.companies] }));
+    const createdDeal = shouldCreatePipelineDealForCompany(nextCompany.type)
+      ? createDeal({
+        clientId,
+        companyId: nextCompany.id,
+        dealName: isLandlordMode ? `${nextCompany.name} Pursuit` : `${nextCompany.name} Requirement`,
+        requirementName: isLandlordMode ? `${nextCompany.name} occupancy / suite strategy` : `${nextCompany.name} requirement`,
+        dealType: isLandlordMode ? "Landlord Rep" : "Tenant Rep",
+        stage: pipelineStage,
+        targetMarket: nextCompany.market,
+        submarket: nextCompany.submarket,
+        selectedProperty: linkedBuilding?.name || "",
+        selectedSuite: nextCompany.suite,
+        selectedLandlord: nextCompany.landlordName,
+        tenantRepBroker: nextCompany.relationshipOwner,
+        expirationDate: nextCompany.currentLeaseExpiration,
+        notes: nextCompany.notes,
+      })
+      : null;
+    const companyWithDeal: CrmCompany = {
+      ...nextCompany,
+      linkedDealIds: createdDeal ? [createdDeal.id] : [],
+    };
+    patchCrmDraft((current) => ({ ...current, companies: [companyWithDeal, ...current.companies] }));
     setSelectedCompanyId(nextCompany.id);
+    if (createdDeal) {
+      setSelectedDealId(createdDeal.id);
+      setView("board");
+    }
     setCompanyForm({
       name: "",
       type: isLandlordMode ? "tenant" : "prospect",
+      prospectStage: dealStages[0] || "Prospecting",
       industry: "",
       market: "",
       submarket: "",
@@ -1131,9 +1187,11 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
       relationshipOwner: "",
       notes: "",
     });
-    setStatus(linkedBuilding ? `Created CRM profile for ${name} and linked ${displayBuildingName(linkedBuilding)}.` : `Created CRM profile for ${name}.`);
+    const locationMessage = linkedBuilding ? ` and linked ${displayBuildingName(linkedBuilding)}` : "";
+    const pipelineMessage = createdDeal ? " Added it to the pipeline." : "";
+    setStatus(`Created CRM profile for ${name}${locationMessage}.${pipelineMessage}`);
     setError("");
-  }, [clientId, companyForm, intakeResolvedBuilding, isLandlordMode, patchCrmDraft]);
+  }, [clientId, companyForm, createDeal, dealStages, intakeResolvedBuilding, isLandlordMode, patchCrmDraft]);
 
   const applyIntakeBuildingSelection = useCallback((building: CrmBuilding) => {
     setCompanyForm((prev) => ({
@@ -1956,6 +2014,60 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     setStatus(`Moved ${deal.dealName} to ${target}.`);
   }, [updateDeal]);
 
+  const handleSelectedCompanyStageChange = useCallback((nextStage: string) => {
+    const target = asText(nextStage) || intakePipelineStageOptions[0] || "";
+    if (!selectedCompany || !target) return;
+    const primaryDeal = selectedCompanyDeals.find((deal) => deal.id === selectedDeal?.id)
+      || selectedCompanyDeals.find((deal) => deal.status === "open")
+      || selectedCompanyDeals[0]
+      || null;
+    let linkedDealIds = selectedCompany.linkedDealIds;
+    if (primaryDeal) {
+      linkedDealIds = Array.from(new Set([...linkedDealIds, primaryDeal.id]));
+      moveDealToStage(primaryDeal, target, "profile stage dropdown");
+      setSelectedDealId(primaryDeal.id);
+      if (primaryDeal.stage === target) {
+        setStatus(`${selectedCompany.name} is already in ${target}.`);
+      }
+    } else if (shouldCreatePipelineDealForCompany(selectedCompany.type)) {
+      const createdDeal = createDeal({
+        clientId,
+        companyId: selectedCompany.id,
+        dealName: isLandlordMode ? `${selectedCompany.name} Pursuit` : `${selectedCompany.name} Requirement`,
+        requirementName: isLandlordMode ? `${selectedCompany.name} occupancy / suite strategy` : `${selectedCompany.name} requirement`,
+        dealType: isLandlordMode ? "Landlord Rep" : "Tenant Rep",
+        stage: target,
+        targetMarket: selectedCompany.market,
+        submarket: selectedCompany.submarket,
+        selectedProperty: selectedCompanyBuilding?.name || "",
+        selectedSuite: selectedCompany.suite,
+        selectedLandlord: selectedCompany.landlordName,
+        tenantRepBroker: selectedCompany.relationshipOwner,
+        expirationDate: selectedCompany.currentLeaseExpiration,
+        notes: selectedCompany.notes,
+      });
+      if (createdDeal) {
+        linkedDealIds = Array.from(new Set([...linkedDealIds, createdDeal.id]));
+        setSelectedDealId(createdDeal.id);
+        setStatus(`Created a linked pipeline deal for ${selectedCompany.name} in ${target}.`);
+      }
+    }
+    patchProspectingRecord({ prospectStage: target });
+    patchSelectedCompany({ prospectStatus: target, linkedDealIds });
+  }, [
+    clientId,
+    createDeal,
+    intakePipelineStageOptions,
+    isLandlordMode,
+    moveDealToStage,
+    patchProspectingRecord,
+    patchSelectedCompany,
+    selectedCompany,
+    selectedCompanyBuilding?.name,
+    selectedCompanyDeals,
+    selectedDeal?.id,
+  ]);
+
   const handleDropToStage = useCallback((stage: string) => {
     const draggedDeal = sortedDeals.find((deal) => deal.id === draggingDealId);
     setDragOverStage("");
@@ -2461,6 +2573,182 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
     totalVacantSuites,
   ]);
 
+  const pipelineWorkspacePanels = (
+    <>
+      <div ref={pipelineOverviewRef} className="scroll-mt-28">
+        <PlatformPanel kicker="Pipeline Overview" title={`${asText(clientName) || "Active Workspace"} Brokerage Pipeline`}>
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
+            <div className="border border-white/15 bg-black/25 p-3"><p className="text-xs text-slate-400">Total deals</p><p className="text-2xl text-white">{pipelineMetrics.total}</p></div>
+            <div className="border border-white/15 bg-black/25 p-3"><p className="text-xs text-slate-400">Open</p><p className="text-2xl text-white">{pipelineMetrics.open}</p></div>
+            <div className="border border-white/15 bg-black/25 p-3"><p className="text-xs text-slate-400">Won</p><p className="text-2xl text-white">{pipelineMetrics.won}</p></div>
+            <div className="border border-white/15 bg-black/25 p-3"><p className="text-xs text-slate-400">Open pipeline value</p><p className="text-2xl text-white">{formatCurrency(pipelineMetrics.pipelineValue)}</p></div>
+            <div className="border border-cyan-300/30 bg-cyan-500/5 p-3"><p className="heading-kicker mb-1">Workflow Sync</p><p className="text-xs text-slate-200">{representationProfile.crm.pipelineSyncText}</p></div>
+          </div>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <input className="input-premium sm:max-w-md" placeholder="Search deals by name, market, property, city" value={pipelineQuery} onChange={(event) => setPipelineQuery(event.target.value)} />
+            <p className="text-xs text-slate-400">Drag any deal card and drop into a stage column to move it.</p>
+          </div>
+        </PlatformPanel>
+      </div>
+
+      <div ref={pipelineViewsRef} className="scroll-mt-28">
+        <PlatformPanel kicker="Pipeline Views" title={isLandlordMode ? "Leasing Flow" : "Deal Flow"}>
+          {view === "stacking_plan" ? (
+            <div className="space-y-4">
+              {stackingPlanRows.length === 0 ? <p className="text-sm text-slate-400">No suite or occupancy records match the current building filters.</p> : stackingPlanRows.map((buildingRow) => (
+                <div key={buildingRow.buildingId} className={`border p-3 ${activeStackingBuildingRow?.buildingId === buildingRow.buildingId ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20"}`}>
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-sm text-white">{buildingRow.buildingName}</p>
+                      <p className="mt-1 text-xs text-slate-400">{[buildingRow.market, buildingRow.submarket].filter(Boolean).join(" / ") || "Austin portfolio"}</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-3 xl:grid-cols-5">
+                      <div className="border border-white/10 bg-black/25 px-2 py-1 text-slate-300">Occ <span className="text-white">{formatInt(buildingRow.summary.occupied)}</span></div>
+                      <div className="border border-white/10 bg-black/25 px-2 py-1 text-slate-300">Vac <span className="text-white">{formatInt(buildingRow.summary.vacant)}</span></div>
+                      <div className="border border-white/10 bg-black/25 px-2 py-1 text-slate-300">Exp <span className="text-white">{formatInt(buildingRow.summary.expiring)}</span></div>
+                      <div className="border border-white/10 bg-black/25 px-2 py-1 text-slate-300">Prop <span className="text-white">{formatInt(buildingRow.summary.proposalActive)}</span></div>
+                      <div className="border border-white/10 bg-black/25 px-2 py-1 text-slate-300">Tours <span className="text-white">{formatInt(buildingRow.summary.toured)}</span></div>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {buildingRow.floors.map((floorGroup) => (
+                      <div key={`${buildingRow.buildingId}-${floorGroup.floor}`} className="border border-white/10 bg-black/25 p-3">
+                        <p className="text-xs uppercase tracking-[0.12em] text-slate-300">Floor {floorGroup.floor}</p>
+                        <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-3 xl:grid-cols-4">
+                          {floorGroup.suites.map((suite) => (
+                            <div key={`${buildingRow.buildingId}-${floorGroup.floor}-${suite.suite}`} className="border border-white/10 bg-black/25 p-2 text-xs">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-white">Suite {suite.suite}</p>
+                                <span className={`border px-2 py-0.5 uppercase tracking-[0.12em] ${
+                                  suite.status === "vacant" ? "border-amber-300/50 text-amber-100" :
+                                    suite.status === "proposal_active" ? "border-cyan-300/50 text-cyan-100" :
+                                      suite.status === "toured" ? "border-indigo-300/50 text-indigo-100" :
+                                        suite.status === "expiring" ? "border-rose-300/50 text-rose-100" :
+                                          "border-emerald-300/50 text-emerald-100"
+                                }`}>
+                                  {suite.status.replace(/_/g, " ")}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-slate-300">{suite.companyName || "Vacant / unassigned"}</p>
+                              <p className="mt-1 text-slate-400">{formatInt(suite.rsf)} RSF {suite.expirationDate ? `· Exp ${formatDate(suite.expirationDate)}` : ""}</p>
+                              <p className="mt-1 text-slate-400">Proposals {suite.proposalCount} · {suite.toured ? "Toured" : "No tour logged"}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {view === "board" ? (
+            <div>
+              <div className="grid grid-cols-1 gap-3 pb-2 md:grid-cols-2 xl:grid-cols-5">
+                {dealStages.map((stage) => {
+                  const stageDeals = filteredDeals.filter((deal) => asText(deal.stage) === stage);
+                  const isDropActive = dragOverStage === stage;
+                  return (
+                    <div key={stage} className={`min-h-[420px] border p-3 transition-colors ${isDropActive ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20"}`} onDragEnter={(event) => { event.preventDefault(); setDragOverStage(stage); }} onDragOver={(event) => { event.preventDefault(); setDragOverStage(stage); }} onDragLeave={(event) => { event.preventDefault(); if (dragOverStage === stage) setDragOverStage(""); }} onDrop={(event) => { event.preventDefault(); handleDropToStage(stage); }}>
+                      <div className="mb-3 flex items-center justify-between border-b border-white/15 pb-2"><p className="text-sm text-white">{stage}</p><span className="text-xs text-slate-300">{stageCounts.get(stage) || 0}</span></div>
+                      <div className="space-y-2">
+                        {stageDeals.length === 0 ? <p className="text-xs text-slate-500">Drop a deal here.</p> : stageDeals.map((deal) => {
+                          const linkedDocs = linkedDocumentMap.get(deal.id) || [];
+                          const stageIndex = stageOrder.get(deal.stage) ?? 0;
+                          const previousStage = dealStages[Math.max(0, stageIndex - 1)] || "";
+                          const nextStage = dealStages[Math.min(dealStages.length - 1, stageIndex + 1)] || "";
+                          return (
+                            <div key={deal.id} draggable onDragStart={() => { setDraggingDealId(deal.id); setSelectedDealId(deal.id); }} onDragEnd={() => { setDraggingDealId(""); setDragOverStage(""); }} className={`cursor-grab border p-2 transition-colors active:cursor-grabbing ${selectedDeal?.id === deal.id ? "border-cyan-300 bg-cyan-500/15" : "border-white/20 bg-black/30 hover:bg-white/5"} ${draggingDealId === deal.id ? "opacity-60" : "opacity-100"}`} onClick={() => setSelectedDealId(deal.id)}>
+                              <div className="flex items-start justify-between gap-2"><p className="text-sm text-white leading-5">{deal.dealName}</p><span className={`border px-1 py-[2px] text-[10px] uppercase tracking-[0.12em] ${priorityBadgeClass(deal.priority)}`}>{deal.priority}</span></div>
+                              <p className="text-xs text-slate-300 mt-1">{deal.requirementName || "No requirement summary"}</p>
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                <span className={`border px-1 py-[2px] text-[10px] uppercase tracking-[0.12em] ${statusBadgeClass(deal.status)}`}>{deal.status.replace("_", " ")}</span>
+                                <span className="border border-white/20 px-1 py-[2px] text-[10px] text-slate-300">Docs {linkedDocs.length}</span>
+                              </div>
+                              <p className="mt-2 text-[11px] text-slate-400">{[deal.city, deal.submarket].filter(Boolean).join(" - ") || "Location pending"}</p>
+                              <p className="text-[11px] text-slate-400">{deal.squareFootageMin || 0}-{deal.squareFootageMax || 0} SF | {formatCurrency(deal.budget)}</p>
+                              <div className="mt-2 flex items-center justify-between">
+                                <button type="button" className="border border-white/25 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 disabled:opacity-30" disabled={!previousStage || previousStage === deal.stage} onClick={(event) => { event.stopPropagation(); if (previousStage) moveDealToStage(deal, previousStage, "quick back"); }}>Back</button>
+                                <p className="text-[10px] text-slate-400">Updated {formatDate(deal.updatedAt)}</p>
+                                <button type="button" className="border border-white/25 px-2 py-1 text-[10px] uppercase tracking-[0.1em] text-slate-200 disabled:opacity-30" disabled={!nextStage || nextStage === deal.stage} onClick={(event) => { event.stopPropagation(); if (nextStage) moveDealToStage(deal, nextStage, "quick advance"); }}>Next</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {view === "table" ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1080px] border-collapse text-sm">
+                <thead><tr className="border-b border-white/20"><th className="text-left py-2 pr-3 text-slate-300 font-medium">Deal</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Stage</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Status</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Priority</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Location</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Budget</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Company</th><th className="text-left py-2 text-slate-300 font-medium">Updated</th></tr></thead>
+                <tbody>
+                  {filteredDeals.length === 0 ? <tr><td colSpan={8} className="py-6 text-slate-400">No deals found — create one to start tracking a client engagement.</td></tr> : filteredDeals.map((deal) => (
+                    <tr key={deal.id} className={`border-b border-white/10 cursor-pointer ${selectedDeal?.id === deal.id ? "bg-cyan-500/10" : "hover:bg-white/5"}`} onClick={() => setSelectedDealId(deal.id)}>
+                      <td className="py-2 pr-3 text-white">{deal.dealName}</td>
+                      <td className="py-2 pr-3 text-slate-200">{deal.stage}</td>
+                      <td className="py-2 pr-3 text-slate-200">{deal.status.replace("_", " ")}</td>
+                      <td className="py-2 pr-3 text-slate-200">{deal.priority}</td>
+                      <td className="py-2 pr-3 text-slate-200">{[deal.city, deal.submarket].filter(Boolean).join(", ") || "-"}</td>
+                      <td className="py-2 pr-3 text-slate-200">{formatCurrency(deal.budget)}</td>
+                      <td className="py-2 pr-3 text-slate-200">{crmState.companies.find((company) => company.id === deal.companyId)?.name || asText(clientName) || "Workspace"}</td>
+                      <td className="py-2 text-slate-200">{formatDate(deal.updatedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          {view === "timeline" ? (
+            <div className="space-y-2">
+              {filteredDeals.length === 0 ? <p className="text-sm text-slate-400">No timeline entries yet.</p> : filteredDeals.map((deal) => (
+                <button key={deal.id} type="button" className={`w-full border px-3 py-3 text-left ${selectedDeal?.id === deal.id ? "border-cyan-300 bg-cyan-500/15" : "border-white/20 bg-black/20 hover:bg-white/5"}`} onClick={() => setSelectedDealId(deal.id)}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm text-white">{deal.dealName}</p>
+                      <p className="text-xs text-slate-300 mt-1">{deal.stage} - {deal.status.replace("_", " ")}</p>
+                      <p className="text-xs text-slate-400 mt-1">{deal.timeline[0]?.description || "No activity logged yet."}</p>
+                    </div>
+                    <p className="text-xs text-slate-400">{formatDate(deal.updatedAt)}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {view === "client_grouped" ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              {[...crmState.companies].sort(compareByCriticalDate).slice(0, 9).map((company) => (
+                <button key={company.id} type="button" onClick={() => focusCompanyWorkspace(company.id)} className={`border p-3 text-left ${selectedCompany?.id === company.id ? "border-cyan-300 bg-cyan-500/10" : "border-white/15 bg-black/20 hover:bg-white/5"}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-white">{company.name}</p>
+                      <p className="mt-1 text-xs text-slate-400">{[company.market, company.submarket].filter(Boolean).join(" / ") || "Unassigned"}</p>
+                    </div>
+                    <span className={`border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] ${companyTypeBadgeClass(company.type)}`}>{company.type.replace(/_/g, " ")}</span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <p className="text-slate-400">Deals <span className="text-white">{company.linkedDealIds.length}</span></p>
+                    <p className="text-slate-400">Docs <span className="text-white">{company.linkedDocumentIds.length}</span></p>
+                    <p className="text-slate-400">Expiration <span className="text-white">{formatDate(company.currentLeaseExpiration)}</span></p>
+                    <p className="text-slate-400">Follow up <span className="text-white">{formatDate(company.nextFollowUpDate)}</span></p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </PlatformPanel>
+      </div>
+    </>
+  );
+
   return (
     <PlatformSection
       kicker="Deals"
@@ -2624,6 +2912,10 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
             ))}
           </PlatformMetricStrip>
         </PlatformDashboardTier>
+
+        <div className="grid grid-cols-1 gap-4">
+          {pipelineWorkspacePanels}
+        </div>
 
         <div className="grid grid-cols-1 gap-4">
           <PlatformPanel kicker="Priority Queue" title={isLandlordMode ? "Buildings to review" : "Relationships to review"}>
@@ -2904,6 +3196,13 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
               <option value="tenant">Tenant</option>
               <option value="ownership_group">Ownership Group</option>
               <option value="other">Other</option>
+            </select>
+            <select className="input-premium" value={companyForm.prospectStage} onChange={(event) => setCompanyForm((prev) => ({ ...prev, prospectStage: event.target.value }))}>
+              {intakePipelineStageOptions.map((stage) => (
+                <option key={stage} value={stage}>
+                  {stage}
+                </option>
+              ))}
             </select>
             <input className="input-premium" placeholder="Industry" value={companyForm.industry} onChange={(event) => setCompanyForm((prev) => ({ ...prev, industry: event.target.value }))} />
             <input className="input-premium" placeholder="Market" value={companyForm.market} onChange={(event) => setCompanyForm((prev) => ({ ...prev, market: event.target.value }))} />
@@ -3222,7 +3521,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                 </div>
               </div>
               <div className="mt-3 space-y-2 max-h-[420px] overflow-y-auto pr-1">
-                {displayedBuildings.length === 0 ? <p className="text-sm text-slate-400">No buildings match the current inventory filters.</p> : displayedBuildings.map((building, index) => (
+                {displayedBuildings.length === 0 ? <p className="text-sm text-slate-400">No buildings found — adjust filters or create a new building.</p> : displayedBuildings.map((building, index) => (
                   <button
                     key={building.id}
                     type="button"
@@ -3544,10 +3843,13 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
                   <p>Churn Risk: <span className="text-white">{selectedCompanyRelationship?.churnRisk || "Monitor"}</span></p>
                   <p>Expansion Potential: <span className="text-white">{selectedCompanyRelationship?.expansionPotential || "Monitor"}</span></p>
                   <label className="block text-slate-400">Prospect Stage
-                    <input className="input-premium mt-1 !py-2" value={selectedCompanyProspecting?.prospectStage || selectedCompany.prospectStatus} onChange={(event) => {
-                      patchProspectingRecord({ prospectStage: event.target.value });
-                      patchSelectedCompany({ prospectStatus: event.target.value });
-                    }} />
+                    <select className="input-premium mt-1 !py-2" value={selectedCompanyStageValue} onChange={(event) => handleSelectedCompanyStageChange(event.target.value)}>
+                      {selectedCompanyStageOptions.map((stage) => (
+                        <option key={stage} value={stage}>
+                          {stage}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
               </div>
@@ -3641,7 +3943,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </PlatformPanel>
             </div>
 
-            <div ref={pipelineOverviewRef} className="xl:col-span-12 scroll-mt-28">
+            <div className="hidden">
         <PlatformPanel kicker="Pipeline Overview" title={`${asText(clientName) || "Active Workspace"} Brokerage Pipeline`}>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
             <div className="border border-white/15 bg-black/25 p-3"><p className="text-xs text-slate-400">Total deals</p><p className="text-2xl text-white">{pipelineMetrics.total}</p></div>
@@ -3657,7 +3959,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
         </PlatformPanel>
             </div>
 
-            <div ref={pipelineViewsRef} className="order-4 xl:col-span-12 scroll-mt-28">
+            <div className="hidden">
         <PlatformPanel kicker="Pipeline Views" title={isLandlordMode ? "Leasing Flow" : "Deal Flow"}>
           {view === "stacking_plan" ? (
             <div className="space-y-4">
@@ -3755,7 +4057,7 @@ export function DealsWorkspace({ clientId, clientName }: DealsWorkspaceProps) {
               <table className="w-full min-w-[1080px] border-collapse text-sm">
                 <thead><tr className="border-b border-white/20"><th className="text-left py-2 pr-3 text-slate-300 font-medium">Deal</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Stage</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Status</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Priority</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Location</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Budget</th><th className="text-left py-2 pr-3 text-slate-300 font-medium">Company</th><th className="text-left py-2 text-slate-300 font-medium">Updated</th></tr></thead>
                 <tbody>
-                  {filteredDeals.length === 0 ? <tr><td colSpan={8} className="py-6 text-slate-400">No deals match the current search.</td></tr> : filteredDeals.map((deal) => (
+                  {filteredDeals.length === 0 ? <tr><td colSpan={8} className="py-6 text-slate-400">No deals found — create one to start tracking a client engagement.</td></tr> : filteredDeals.map((deal) => (
                     <tr key={deal.id} className={`border-b border-white/10 cursor-pointer ${selectedDeal?.id === deal.id ? "bg-cyan-500/10" : "hover:bg-white/5"}`} onClick={() => setSelectedDealId(deal.id)}>
                       <td className="py-2 pr-3 text-white">{deal.dealName}</td>
                       <td className="py-2 pr-3 text-slate-200">{deal.stage}</td>

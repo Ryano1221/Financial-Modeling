@@ -8,18 +8,13 @@ function normalizePathname(pathname: string | null | undefined): string {
 
 const PUBLIC_PATHS = new Set([
   "/",
-  "/account",
-  "/contact",
-  "/docs",
-  "/example",
-  "/security",
+  "/sign-in",
+  "/sign-up",
 ]);
 
 export function isPublicAppPath(pathname: string | null | undefined): boolean {
   const normalized = normalizePathname(pathname);
   if (PUBLIC_PATHS.has(normalized)) return true;
-  if (normalized.startsWith("/report")) return true;
-  if (normalized.endsWith("/share")) return true;
   return false;
 }
 

@@ -1,17 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import Image from "next/image";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   getPlatformModulesForMode,
   resolveActivePlatformModule,
 } from "@/lib/platform/module-registry";
-import { useBrokerOs } from "@/components/workspace/BrokerOsProvider";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { representationModeLabel } from "@/lib/workspace/representation-mode";
-import type { CrmCompany } from "@/lib/workspace/crm";
+import { useCrmProfileOptions } from "@/lib/workspace/crm-profile-options";
 
 function truncateLabel(value: string, maxChars: number): string {
   const clean = String(value || "").trim();
@@ -21,12 +20,6 @@ function truncateLabel(value: string, maxChars: number): string {
 
 function asText(value: unknown): string {
   return String(value || "").trim();
-}
-
-function formatCrmCompanyOptionLabel(company: CrmCompany, maxChars: number): string {
-  const name = truncateLabel(asText(company.name) || "Unnamed company", maxChars);
-  const type = asText(company.type).replace(/_/g, " ");
-  return type ? `${name} (${type})` : name;
 }
 
 export function TopNav() {
@@ -40,14 +33,10 @@ export function TopNav() {
     clients,
     activeClientId,
     setActiveClient,
-    cloudSyncStatus,
-    cloudSyncMessage,
-    cloudLastSyncedAt,
   } = useClientWorkspace();
-  const { graph } = useBrokerOs();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const searchParamsSnapshot = searchParams?.toString() || "";
-  const selectedCrmCompanyId = asText(searchParams?.get("crm_company"));
+  const navLocked = !session;
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -62,29 +51,12 @@ export function TopNav() {
   const activeModule = hasExplicitModule
     ? resolveActivePlatformModule(rawModule, Boolean(session), representationMode)
     : null;
+  const isCrmModule = activeModule === "deals";
+  const crmProfileOptions = useCrmProfileOptions(activeClientId, Boolean(ready && session && isCrmModule));
+  const selectedCrmCompanyId = asText(searchParams?.get("crm_company"));
   const accountTabActive = pathname?.startsWith("/account");
-  const syncTime =
-    cloudLastSyncedAt && Number.isFinite(new Date(cloudLastSyncedAt).getTime())
-      ? new Date(cloudLastSyncedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : "";
-  const cloudSyncLabel = (() => {
-    if (!session) return "";
-    if (cloudSyncStatus === "saving") return "Syncing...";
-    if (cloudSyncStatus === "error") return "Sync error";
-    if (cloudSyncStatus === "local") return "Local mode";
-    if (cloudSyncStatus === "synced") return syncTime ? `Synced ${syncTime}` : "Synced";
-    return "Cloud ready";
-  })();
-  const cloudSyncClass = cloudSyncStatus === "error"
-    ? "text-red-300"
-    : cloudSyncStatus === "saving" || cloudSyncStatus === "local"
-      ? "text-amber-200"
-      : "text-emerald-300";
-  const crmClientOptions = graph.crmCompanies
-    .filter((company, index, list) => list.findIndex((item) => item.id === company.id) === index)
-    .sort((left, right) => asText(left.name).localeCompare(asText(right.name)));
-  const clientDropdownValue = selectedCrmCompanyId
-    ? `crm:${selectedCrmCompanyId}`
+  const clientDropdownValue = isCrmModule && crmProfileOptions.length > 0
+    ? `crm:${selectedCrmCompanyId && crmProfileOptions.some((company) => company.id === selectedCrmCompanyId) ? selectedCrmCompanyId : crmProfileOptions[0]?.id || ""}`
     : (activeClientId ? `client:${activeClientId}` : "");
   const switchWorkspaceClient = useCallback((clientId: string) => {
     const nextClientId = asText(clientId);
@@ -101,7 +73,8 @@ export function TopNav() {
       router.push(nextQuery ? `${pathname || "/"}?${nextQuery}` : (pathname || "/"));
     }
   }, [pathname, router, searchParamsSnapshot, setActiveClient]);
-  const focusCrmClient = useCallback((companyId: string) => {
+
+  const focusCrmCompany = useCallback((companyId: string) => {
     const nextCompanyId = asText(companyId);
     if (!nextCompanyId) return;
     const params = new URLSearchParams(searchParamsSnapshot);
@@ -109,6 +82,18 @@ export function TopNav() {
     params.set("crm_company", nextCompanyId);
     router.push(`/?${params.toString()}`);
   }, [router, searchParamsSnapshot]);
+
+  const handleClientDropdownChange = useCallback((rawValue: string) => {
+    const value = asText(rawValue);
+    if (!value) return;
+    if (value.startsWith("crm:")) {
+      focusCrmCompany(value.slice(4));
+      return;
+    }
+    if (value.startsWith("client:")) {
+      switchWorkspaceClient(value.slice(7));
+    }
+  }, [focusCrmCompany, switchWorkspaceClient]);
 
   if (hideAppChrome) return null;
 
@@ -118,18 +103,22 @@ export function TopNav() {
         <div className="flex items-center justify-between gap-2 sm:gap-3 min-w-0">
           <Link
             href="/"
-            className="flex items-center gap-3 shrink-0 min-w-0 rounded px-1 py-1 transition-colors"
+            className="flex min-w-0 shrink-0 items-center rounded px-1 py-1 transition-colors"
             aria-label="TheCREmodel home"
           >
-            <Image
-              src="/brand/logo-white.svg"
-              alt="The Commercial Real Estate Model logo"
-              width={140}
-              height={32}
-              className="h-6 sm:h-7 xl:h-8 w-auto object-contain"
-              priority
-              sizes="(max-width: 640px) 112px, 140px"
-            />
+            <div className="brand-lockup">
+              <Image
+                src="/brand/logo-white.svg"
+                alt="TheCREmodel"
+                width={148}
+                height={31}
+                className="brand-wordmark"
+                priority
+              />
+              <span className="brand-subtext truncate">
+                Commercial Real Estate Intelligence
+              </span>
+            </div>
           </Link>
           <div className="flex items-center gap-2 min-w-0 flex-1 justify-end">
             <button
@@ -143,22 +132,15 @@ export function TopNav() {
             </button>
             <div className="hidden sm:flex items-center gap-2 min-w-0 flex-1 justify-end">
               {ready && session ? (
-                <span
-                  className={`hidden 2xl:inline-flex text-[11px] uppercase tracking-[0.08em] ${cloudSyncClass}`}
-                  title={cloudSyncMessage}
-                >
-                  {cloudSyncLabel}
-                </span>
-              ) : null}
-              {ready && session ? (
                 <span className="hidden 2xl:inline-flex text-[11px] uppercase tracking-[0.08em] text-slate-300">
                   {representationMode ? representationModeLabel(representationMode) : "Mode Required"}
                 </span>
               ) : null}
-              <div className="2xl:hidden min-w-[170px] max-w-[230px] shrink">
+              <div className={`2xl:hidden min-w-[170px] max-w-[230px] shrink ${navLocked ? "pointer-events-none opacity-40" : ""}`}>
                 <select
                   aria-label="Module navigation"
                   className="input-premium !h-9 !py-1.5 !text-xs"
+                  disabled={navLocked}
                   value={activeModule || ""}
                   onChange={(event) => {
                     const moduleId = asText(event.target.value);
@@ -174,7 +156,7 @@ export function TopNav() {
                   ))}
                 </select>
               </div>
-              <div className="hidden 2xl:flex min-w-0 flex-1 justify-end">
+              <div className={`hidden 2xl:flex min-w-0 flex-1 justify-end ${navLocked ? "pointer-events-none opacity-40" : ""}`}>
                 <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 overflow-x-auto whitespace-nowrap pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {platformModules.map((tab) => {
                     const isActive = tab.id === activeModule;
@@ -197,31 +179,22 @@ export function TopNav() {
                   aria-label="Active client workspace"
                   className="input-premium shrink-0 !h-8 !py-1 !text-[11px] w-[120px] lg:w-[132px] xl:w-[148px] 2xl:w-[190px]"
                   value={clientDropdownValue}
-                  onChange={(event) => {
-                    const rawValue = asText(event.target.value);
-                    if (!rawValue) return;
-                    if (rawValue.startsWith("crm:")) {
-                      focusCrmClient(rawValue.slice(4));
-                      return;
-                    }
-                    if (rawValue.startsWith("client:")) {
-                      switchWorkspaceClient(rawValue.slice(7));
-                    }
-                  }}
+                  onChange={(event) => handleClientDropdownChange(event.target.value)}
                 >
                   <option value="" disabled>
                     Select client
                   </option>
-                  {clients.map((client) => (
-                    <option key={client.id} value={`client:${client.id}`}>
-                      {truncateLabel(client.name, 30)}
-                    </option>
-                  ))}
-                  {crmClientOptions.map((company) => (
-                    <option key={`crm_${company.id}`} value={`crm:${company.id}`}>
-                      {formatCrmCompanyOptionLabel(company, 30)}
-                    </option>
-                  ))}
+                  {isCrmModule && crmProfileOptions.length > 0
+                    ? crmProfileOptions.map((company) => (
+                      <option key={company.id} value={`crm:${company.id}`}>
+                        {truncateLabel(company.name, 30)}
+                      </option>
+                    ))
+                    : clients.map((client) => (
+                      <option key={client.id} value={`client:${client.id}`}>
+                        {truncateLabel(client.name, 30)}
+                      </option>
+                    ))}
                 </select>
               ) : null}
               {!ready ? null : session ? (
@@ -235,10 +208,10 @@ export function TopNav() {
                 </Link>
               ) : (
                 <>
-                  <Link href="/account?mode=signin" className="btn-premium btn-premium-secondary !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm">
+                  <Link href="/sign-in" className="btn-premium btn-premium-secondary !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm">
                     Sign in
                   </Link>
-                  <Link href="/account?mode=signup" className="btn-premium btn-premium-primary !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm">
+                  <Link href="/sign-up" className="btn-premium btn-premium-primary !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm">
                     Create account
                   </Link>
                 </>
@@ -249,56 +222,44 @@ export function TopNav() {
         {mobileMenuOpen ? (
           <div id="top-nav-mobile-menu" className="sm:hidden mt-3 border border-white/20 bg-black/95 p-2">
             <div className="grid grid-cols-1 gap-2">
-              {ready && session ? (
-                <div className={`px-2 py-1 text-[11px] uppercase tracking-[0.08em] ${cloudSyncClass}`} title={cloudSyncMessage}>
-                  {cloudSyncLabel}
-                </div>
-              ) : null}
-              {platformModules.map((tab) => {
-                const isActive = tab.id === activeModule;
-                return (
-                  <Link
-                    key={tab.id}
-                    href={`/?module=${tab.id}`}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={`btn-premium text-xs ${
-                      isActive ? "btn-premium-primary" : "btn-premium-secondary"
-                    }`}
-                  >
-                    {tab.label}
-                  </Link>
-                );
-              })}
+              <div className={navLocked ? "pointer-events-none opacity-40" : ""}>
+                {platformModules.map((tab) => {
+                  const isActive = tab.id === activeModule;
+                  return (
+                    <Link
+                      key={tab.id}
+                      href={`/?module=${tab.id}`}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={`btn-premium text-xs ${
+                        isActive ? "btn-premium-primary" : "btn-premium-secondary"
+                      }`}
+                    >
+                      {tab.label}
+                    </Link>
+                  );
+                })}
+              </div>
               {ready && session ? (
                 <select
                   aria-label="Active client workspace"
                   className="input-premium !text-xs"
                   value={clientDropdownValue}
-                  onChange={(event) => {
-                    const rawValue = asText(event.target.value);
-                    if (!rawValue) return;
-                    if (rawValue.startsWith("crm:")) {
-                      focusCrmClient(rawValue.slice(4));
-                      return;
-                    }
-                    if (rawValue.startsWith("client:")) {
-                      switchWorkspaceClient(rawValue.slice(7));
-                    }
-                  }}
+                  onChange={(event) => handleClientDropdownChange(event.target.value)}
                 >
                   <option value="" disabled>
                     Select client
                   </option>
-                  {clients.map((client) => (
-                    <option key={client.id} value={`client:${client.id}`}>
-                      {truncateLabel(client.name, 36)}
-                    </option>
-                  ))}
-                  {crmClientOptions.map((company) => (
-                    <option key={`crm_mobile_${company.id}`} value={`crm:${company.id}`}>
-                      {formatCrmCompanyOptionLabel(company, 36)}
-                    </option>
-                  ))}
+                  {isCrmModule && crmProfileOptions.length > 0
+                    ? crmProfileOptions.map((company) => (
+                      <option key={company.id} value={`crm:${company.id}`}>
+                        {truncateLabel(company.name, 36)}
+                      </option>
+                    ))
+                    : clients.map((client) => (
+                      <option key={client.id} value={`client:${client.id}`}>
+                        {truncateLabel(client.name, 36)}
+                      </option>
+                    ))}
                 </select>
               ) : null}
               {!ready ? null : session ? (
@@ -314,14 +275,14 @@ export function TopNav() {
               ) : (
                 <>
                   <Link
-                    href="/account?mode=signin"
+                    href="/sign-in"
                     onClick={() => setMobileMenuOpen(false)}
                     className="btn-premium btn-premium-secondary text-xs"
                   >
                     Sign in
                   </Link>
                   <Link
-                    href="/account?mode=signup"
+                    href="/sign-up"
                     onClick={() => setMobileMenuOpen(false)}
                     className="btn-premium btn-premium-primary text-xs"
                   >

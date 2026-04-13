@@ -2,7 +2,6 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ScenarioList } from "@/components/ScenarioList";
 import { ScenarioForm, defaultScenarioInput } from "@/components/ScenarioForm";
@@ -14,7 +13,6 @@ import {
 import {
   FINANCIAL_ANALYSES_TOOL_TABS,
   getDefaultPlatformModuleId,
-  getPlatformModulesForMode,
   isFinancialAnalysesToolId,
   resolveActivePlatformModule,
   type FinancialAnalysesToolId,
@@ -88,6 +86,7 @@ import { SurveysWorkspace } from "@/components/surveys/SurveysWorkspace";
 import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
 import { DealsWorkspace } from "@/components/deals/DealsWorkspace";
 import { BuildingsWorkspace } from "@/components/buildings/BuildingsWorkspace";
+import { HomeLanding } from "@/components/home/HomeLanding";
 import { buildPlatformExportFileName } from "@/lib/export-design";
 import { downloadBlob as downloadBlobFile } from "@/lib/export-runtime";
 import {
@@ -257,6 +256,65 @@ function derivePreparedByFromSession(session: SupabaseAuthSession | null): strin
   if (!localPart) return "";
   const spaced = localPart.replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
   return titleCaseWords(spaced);
+}
+
+function normalizeStageValue(value: unknown): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function classifyLandingPipelineStage(stage: string, status: string): "touring" | "proposals" | "negotiating" | "executing" | null {
+  const normalizedStage = normalizeStageValue(stage);
+  const normalizedStatus = normalizeStageValue(status);
+  if (normalizedStatus === "won" || normalizedStage.includes("execut") || normalizedStage.includes("lease drafting") || normalizedStage.includes("lease review")) {
+    return "executing";
+  }
+  if (normalizedStage.includes("negoti") || normalizedStage.includes("counter")) {
+    return "negotiating";
+  }
+  if (normalizedStage.includes("proposal") || normalizedStage.includes("loi")) {
+    return "proposals";
+  }
+  if (normalizedStage.includes("tour")) {
+    return "touring";
+  }
+  return null;
+}
+
+function formatLandingTimestamp(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Recently";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+function inferLandingActivityTone(label: string): "cyan" | "purple" | "amber" | "green" {
+  const normalized = normalizeStageValue(label);
+  if (normalized.includes("tour")) return "purple";
+  if (normalized.includes("proposal") || normalized.includes("loi") || normalized.includes("counter")) return "amber";
+  if (normalized.includes("execut") || normalized.includes("signed") || normalized.includes("lease")) return "green";
+  return "cyan";
+}
+
+function inferLandingActivityIcon(label: string): string {
+  const normalized = normalizeStageValue(label);
+  if (normalized.includes("tour")) return "🏢";
+  if (normalized.includes("proposal") || normalized.includes("loi") || normalized.includes("counter")) return "✉️";
+  if (normalized.includes("execut") || normalized.includes("signed")) return "✅";
+  if (normalized.includes("analysis")) return "📊";
+  return "📄";
+}
+
+function humanizeDocumentType(value: string): string {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "Document";
+  return normalized
+    .split(" ")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function inferMarketFromAddress(address: string): string {
@@ -641,10 +699,6 @@ function HomeContent() {
     () => getDefaultPlatformModuleId(representationMode),
     [representationMode],
   );
-  const platformModules = useMemo(
-    () => getPlatformModulesForMode(representationMode),
-    [representationMode],
-  );
   const [activePlatformModule, setActivePlatformModule] = useState<PlatformModuleId>(defaultPlatformModuleId);
   const [activeTopTab, setActiveTopTab] = useState<FinancialAnalysesToolId>("lease-comparison");
   const [scenarios, setScenarios] = useState<ScenarioWithId[]>([]);
@@ -685,6 +739,7 @@ function HomeContent() {
   const [clientLogoFileName, setClientLogoFileName] = useState<string | null>(null);
   const [pendingSurveyDocument, setPendingSurveyDocument] = useState<ClientWorkspaceDocument | null>(null);
   const [pendingLeaseAbstractDocument, setPendingLeaseAbstractDocument] = useState<ClientWorkspaceDocument | null>(null);
+  const [pendingObligationDocument, setPendingObligationDocument] = useState<ClientWorkspaceDocument | null>(null);
   const defaultBrokerageLogoPromiseRef = useRef<Promise<string | null> | null>(null);
   const computeRequestEpochRef = useRef<Record<string, number>>({});
   const autoImportedAnalysisDocumentIdsRef = useRef<Record<string, true>>({});
@@ -749,7 +804,7 @@ function HomeContent() {
   }, []);
 
   const [hasRestored, setHasRestored] = useState(false);
-  const [isScenarioEditorOpen, setIsScenarioEditorOpen] = useState(true);
+  const [isScenarioEditorOpen, setIsScenarioEditorOpen] = useState(false);
   useEffect(() => {
     if (!workspaceReady) return;
     setScenarios([]);
@@ -757,7 +812,7 @@ function HomeContent() {
     setResults({});
     setCanonicalComputeCache({});
     setIncludedInSummary({});
-    setIsScenarioEditorOpen(true);
+    setIsScenarioEditorOpen(false);
     computeRequestEpochRef.current = {};
     autoImportedAnalysisDocumentIdsRef.current = {};
     analysisImportInFlightRef.current = {};
@@ -1218,8 +1273,9 @@ function HomeContent() {
       });
 
       if (validationError || !scenarioWithId) {
-        setExtractError(validationError);
-        return { added: false, error: validationError || undefined };
+        const prefixedError = validationError ? `We extracted data from your document, but some fields need review: ${validationError}` : undefined;
+        setExtractError(prefixedError || null);
+        return { added: false, error: prefixedError || undefined };
       }
 
       setSelectedId(scenarioWithId.id);
@@ -1441,12 +1497,12 @@ function HomeContent() {
       }
     }
     if (!snapshot?.canonical_lease) {
-      setExtractError("Selected document has no parsed payload. Re-upload it on this tab and it will open the comparison summary automatically.");
+      setExtractError("Selected document has no parsed payload in cloud yet. Keep this workspace online on the device where it was uploaded, then refresh and try Apply again. Try re-uploading the document if this persists beyond 60 seconds.");
       return;
     }
     const payload = normalizerResponseFromSnapshot(snapshot);
     if (!payload?.canonical_lease) {
-      setExtractError("Selected document could not be repaired into a valid comparison scenario. Re-upload the source document on this tab.");
+      setExtractError("Selected document could not be repaired into a valid comparison scenario. Keep the original upload device online so the parsed cloud payload can sync, then try Apply again.");
       return;
     }
     void routeNormalizedLease(payload, {
@@ -1546,7 +1602,7 @@ function HomeContent() {
       delete next[newScenario.id];
       return next;
     });
-    setIsScenarioEditorOpen(true);
+    setIsScenarioEditorOpen(false);
   }, [globalDiscountRate, workspaceScopeId]);
 
   const duplicateScenario = useCallback(() => {
@@ -1563,7 +1619,7 @@ function HomeContent() {
       delete next[copy.id];
       return next;
     });
-    setIsScenarioEditorOpen(true);
+    setIsScenarioEditorOpen(false);
   }, [selectedScenario]);
 
   const deleteScenario = useCallback((id: string) => {
@@ -1614,7 +1670,7 @@ function HomeContent() {
       delete next[copy.id];
       return next;
     });
-    setIsScenarioEditorOpen(true);
+    setIsScenarioEditorOpen(false);
   }, [scenarios]);
 
   const updateScenario = useCallback((updated: ScenarioWithId) => {
@@ -1776,7 +1832,7 @@ function HomeContent() {
     };
   }, [reportMeta, defaultPreparedByFromAuth, inferredReportLocation.market, inferredReportLocation.submarket]);
 
-  const settingsHref = authSession ? "/account" : "/account?mode=signin";
+  const settingsHref = authSession ? "/account" : "/sign-in";
   const settingsCtaLabel = authSession ? "Open Settings" : "Sign In To Open Settings";
 
   const buildExportFileName = useCallback(
@@ -2281,30 +2337,10 @@ function HomeContent() {
     () => scopedDeals.filter((deal) => deal.status !== "won" && deal.status !== "lost").length,
     [scopedDeals],
   );
-  const isLandlordMode = representationMode === LANDLORD_REP_MODE;
   const parsedDocumentsCount = useMemo(
     () => scopedDocuments.filter((doc) => doc.parsed).length,
     [scopedDocuments],
   );
-  const landlordPropertyCount = useMemo(() => {
-    return new Set(
-      scopedDocuments
-        .map((doc) => `${String(doc.building || "").trim()}::${String(doc.address || "").trim()}`.toLowerCase())
-        .filter((key) => key !== "::"),
-    ).size;
-  }, [scopedDocuments]);
-  const landlordActiveToursCount = useMemo(() => {
-    return scopedDeals.filter((deal) => {
-      const stage = String(deal.stage || "").toLowerCase();
-      return stage.includes("tour");
-    }).length;
-  }, [scopedDeals]);
-  const landlordSignedDealsCount = useMemo(() => {
-    return scopedDeals.filter((deal) => {
-      const stage = String(deal.stage || "").toLowerCase();
-      return deal.status === "won" || stage.includes("executed");
-    }).length;
-  }, [scopedDeals]);
   const resultErrors = useMemo(() => {
     const computeErrors = scenarios
       .map((s) => {
@@ -2317,57 +2353,81 @@ function HomeContent() {
     return [...computeErrors, ...runtimeErrors];
   }, [results, scenarioRuntimeHealth.errors, scenarios]);
   const coverMetaPreview = buildReportMeta();
-  const openWorkspaceHref = authSession ? `/?module=${defaultPlatformModuleId}` : "/account?mode=signin";
-  const homeClientName = activeClient?.name || coverMetaPreview.prepared_for || "Client Workspace";
-  const homeOverviewCards = isLandlordMode
-    ? [
-        { label: "Properties", value: landlordPropertyCount, detail: "tracked in this workspace" },
-        { label: "Open inquiries", value: activeDealsCount, detail: "live deal flow" },
-        { label: "Active tours", value: landlordActiveToursCount, detail: "next actions ready" },
-        { label: "Signed deals", value: landlordSignedDealsCount, detail: "closed in workspace" },
-      ]
-    : [
-        { label: "Saved documents", value: scopedDocuments.length, detail: "client-ready source files" },
-        { label: "Parsed options", value: scenarios.length, detail: "analysis scenarios built" },
-        { label: "Active deals", value: activeDealsCount, detail: "current client workflows" },
-        { label: "Parsed leases", value: parsedDocumentsCount, detail: "trusted extraction outputs" },
-      ];
-  const homeSteps = isLandlordMode
-    ? [
-        {
-          title: "Add a record",
-          description: "Start with the property, inquiry, or client you are actively managing.",
-        },
-        {
-          title: "Open the live workspace",
-          description: "Use deals, buildings, and reporting as one connected operating layer.",
-        },
-        {
-          title: "Move the next action",
-          description: "Advance tours, proposals, and signed deals without leaving the platform.",
-        },
-      ]
-    : [
-        {
-          title: "Upload the source document",
-          description: "Start with the lease, proposal, counter, flyer, or floorplan that matters.",
-        },
-        {
-          title: "Work from the active record",
-          description: "Analyses, surveys, abstracts, CRM, and obligations stay linked to the same client.",
-        },
-        {
-          title: "Deliver the output",
-          description: "Edit the live result, then export or share from the same workspace.",
-        },
-      ];
   const showHomeHero = rawModuleParam.length === 0;
+  const openWorkspaceHref = isAuthenticated ? `/?module=${defaultPlatformModuleId}` : "/sign-up";
+  const viewDemoHref = isAuthenticated ? "/example" : "/sign-in";
+  const homeWorkspaceName = isAuthenticated
+    ? (activeClient?.name || "Your Workspace")
+    : "Your Workspace";
+  const homeWorkspaceDescription = isAuthenticated
+    ? (
+      activeClient?.notes?.trim()
+      || (
+        activeClient
+          ? `${scopedDocuments.length} saved documents, ${activeDealsCount} active deals, and ${scenarios.length} parsed options live in this connected workspace.`
+          : "Choose an active workspace to restore your documents, analyses, CRM records, surveys, lease abstracts, and obligations."
+      )
+    )
+    : "Sign in to pick up where you left off.";
+  const homeStats = [
+    {
+      label: "Saved Documents",
+      value: isAuthenticated && activeClient ? String(scopedDocuments.length) : "14",
+      detail: "client-ready source files",
+    },
+    {
+      label: "Parsed Options",
+      value: isAuthenticated && activeClient ? String(scenarios.length) : "8",
+      detail: "analysis scenarios built",
+    },
+    {
+      label: "Active Deals",
+      value: isAuthenticated && activeClient ? String(activeDealsCount) : "6",
+      detail: "current client workflows",
+    },
+    {
+      label: "Parsed Leases",
+      value: isAuthenticated && activeClient ? String(parsedDocumentsCount) : "11",
+      detail: "trusted extraction outputs",
+    },
+  ] as const;
+  const homePipeline = useMemo(() => {
+    if (!isAuthenticated || !activeClient) {
+      return [
+        { label: "Touring", count: 9, width: 90, tone: "touring" as const },
+        { label: "Proposals", count: 6, width: 60, tone: "proposals" as const },
+        { label: "Negotiating", count: 4, width: 40, tone: "negotiating" as const },
+        { label: "Executing", count: 2, width: 20, tone: "executing" as const },
+      ];
+    }
+    const counts = {
+      touring: 0,
+      proposals: 0,
+      negotiating: 0,
+      executing: 0,
+    };
+    scopedDeals.forEach((deal) => {
+      const bucket = classifyLandingPipelineStage(deal.stage, deal.status);
+      if (bucket) counts[bucket] += 1;
+    });
+    const maxCount = Math.max(counts.touring, counts.proposals, counts.negotiating, counts.executing, 0);
+    const widthFor = (count: number): number => {
+      if (count <= 0 || maxCount <= 0) return 0;
+      return Math.max(14, Math.round((count / maxCount) * 100));
+    };
+    return [
+      { label: "Touring", count: counts.touring, width: widthFor(counts.touring), tone: "touring" as const },
+      { label: "Proposals", count: counts.proposals, width: widthFor(counts.proposals), tone: "proposals" as const },
+      { label: "Negotiating", count: counts.negotiating, width: widthFor(counts.negotiating), tone: "negotiating" as const },
+      { label: "Executing", count: counts.executing, width: widthFor(counts.executing), tone: "executing" as const },
+    ];
+  }, [activeClient, isAuthenticated, scopedDeals]);
   const topNavOffsetClass = "pt-24 sm:pt-28";
   const moduleHasDedicatedTopTabs = Boolean(authSession) && activePlatformModule === "financial-analyses";
   const mainTopOffsetClass = !showHomeHero && !moduleHasDedicatedTopTabs ? topNavOffsetClass : "";
   const tabTopOffsetClass = !showHomeHero ? topNavOffsetClass : "mt-8";
 
-  if (Boolean(authSession) && (!representationMode || !activeClient)) {
+  if (!showHomeHero && Boolean(authSession) && (!representationMode || !activeClient)) {
     return (
       <main className={`relative z-10 app-container ${topNavOffsetClass} pb-14 md:pb-20`}>
         <section className="scroll-mt-24 bg-grid mt-6">
@@ -2382,86 +2442,15 @@ function HomeContent() {
   return (
     <>
       {showHomeHero ? (
-        <section className="relative z-10 section-shell pt-28 sm:pt-32 bg-grid">
-          <div className="app-container space-y-6">
-            <div className="overflow-hidden rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(6,16,31,0.95),rgba(8,22,42,0.88))] shadow-[0_24px_70px_rgba(2,12,27,0.28)]">
-              <div className="grid gap-0 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
-                <div className="p-6 sm:p-8 lg:p-10">
-                  <p className="heading-kicker mb-3">Platform</p>
-                  <h1 className="heading-display max-w-3xl !text-[clamp(2.3rem,5vw,4.5rem)] leading-[0.96]">
-                    Commercial real estate workflows, without the clutter.
-                  </h1>
-                  <p className="body-lead mt-5 max-w-2xl text-slate-200">
-                    theCREmodel keeps documents, analyses, CRM, surveys, lease abstracts, buildings, and obligations in one connected client workspace so the next step is always obvious.
-                  </p>
-
-                  <div className="mt-7 flex flex-wrap gap-3">
-                    <Link href={openWorkspaceHref} className="btn-premium btn-premium-primary px-7">
-                      {authSession ? "Open Workspace" : "Sign In To Start"}
-                    </Link>
-                    <Link href="/example" className="btn-premium btn-premium-secondary px-7">
-                      View Demo
-                    </Link>
-                  </div>
-
-                  <div className="mt-8 grid gap-3 md:grid-cols-3">
-                    {homeSteps.map((step, index) => (
-                      <div key={step.title} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                        <p className="text-[11px] uppercase tracking-[0.16em] text-cyan-100/70">Step {index + 1}</p>
-                        <h2 className="mt-2 text-lg font-semibold text-white">{step.title}</h2>
-                        <p className="mt-2 text-sm leading-6 text-slate-300">{step.description}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="border-t border-white/10 bg-white/[0.03] p-6 sm:p-8 lg:border-l lg:border-t-0">
-                  <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                    <p className="heading-kicker">Current Workspace</p>
-                    <h2 className="mt-2 text-2xl font-semibold text-white">{homeClientName}</h2>
-                    <p className="mt-2 text-sm leading-6 text-slate-300">
-                      {authSession
-                        ? "Everything stays tied to the active client, so uploads, workflows, and exports remain easy to follow."
-                        : "Sign in to work from a live client workspace with connected records and saved progress."}
-                    </p>
-                  </div>
-
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    {homeOverviewCards.map((card) => (
-                      <div key={card.label} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                        <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">{card.label}</p>
-                        <p className="mt-2 text-3xl font-semibold tracking-tight text-white">{card.value}</p>
-                        <p className="mt-1 text-sm text-slate-400">{card.detail}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <section className="grid gap-4 lg:grid-cols-3">
-              {platformModules.map((module) => {
-                const href = !module.requiresAuth || authSession
-                  ? `/?module=${module.id}`
-                  : "/account?mode=signin";
-                return (
-                  <Link
-                    key={module.id}
-                    href={href}
-                    className="group rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(8,18,34,0.82),rgba(7,16,29,0.92))] p-5 transition hover:border-cyan-300/30 hover:bg-cyan-500/[0.05]"
-                  >
-                    <p className="heading-kicker">{module.requiresAuth ? "Workspace" : "Open Access"}</p>
-                    <h2 className="mt-2 text-2xl font-semibold text-white">{module.label}</h2>
-                    <p className="mt-3 text-sm leading-6 text-slate-300">{module.description}</p>
-                    <p className="mt-5 text-[11px] uppercase tracking-[0.16em] text-cyan-100/80">
-                      {module.requiresAuth && !authSession ? "Sign in to open" : "Open module"}
-                    </p>
-                  </Link>
-                );
-              })}
-            </section>
-          </div>
-        </section>
+        <HomeLanding
+          isAuthenticated={isAuthenticated}
+          primaryCtaHref={openWorkspaceHref}
+          secondaryCtaHref={viewDemoHref}
+          workspaceName={homeWorkspaceName}
+          workspaceDescription={homeWorkspaceDescription}
+          stats={[...homeStats]}
+          pipeline={homePipeline}
+        />
       ) : null}
 
       {!showHomeHero && moduleHasDedicatedTopTabs ? (
@@ -2486,7 +2475,7 @@ function HomeContent() {
         <ClientDocumentCenter
           sourceModule={activeDocumentDropSourceModule}
           globalDropLabel={activeDocumentDropLabel}
-          contextualActionLabel="Apply to Analysis"
+          contextualActionLabel="Apply"
           contextualActionAllowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
           onContextualAction={handleExistingDocumentSelection}
           onDocumentIngested={handleFinancialAnalysisDocumentIngested}
@@ -2579,7 +2568,11 @@ function HomeContent() {
               </div>
 
               {extractError ? (
-                <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                <div className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
+                  /error|failed|invalid|couldn't/i.test(extractError)
+                    ? "border-red-500/30 bg-red-500/10 text-red-200"
+                    : "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
+                }`}>
                   {extractError}
                 </div>
               ) : null}
@@ -2706,10 +2699,10 @@ function HomeContent() {
                       <div className="border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
                         <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
                         <div className="flex flex-wrap gap-2">
-                          <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+                          <a href="/sign-in" className="btn-premium btn-premium-secondary">
                             Sign in
                           </a>
-                          <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
+                          <a href="/sign-up" className="btn-premium btn-premium-primary">
                             Create account
                           </a>
                         </div>
@@ -2878,10 +2871,10 @@ function HomeContent() {
                 <div className="border border-white/20 bg-slate-950/50 p-4 text-sm text-slate-200">
                   <p className="mb-3">Sign in or create an account to save brokerage branding and export PDF reports.</p>
                   <div className="flex flex-wrap gap-2">
-                    <a href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+                    <a href="/sign-in" className="btn-premium btn-premium-secondary">
                       Sign in
                     </a>
-                    <a href="/account?mode=signup" className="btn-premium btn-premium-primary">
+                    <a href="/sign-up" className="btn-premium btn-premium-primary">
                       Create account
                     </a>
                   </div>
@@ -2937,7 +2930,7 @@ function HomeContent() {
           <ClientDocumentCenter
             sourceModule={activeDocumentDropSourceModule}
             globalDropLabel={activeDocumentDropLabel}
-            contextualActionLabel="Apply to Lease Abstract"
+            contextualActionLabel="Apply"
             contextualActionAllowedTypes={["leases", "amendments", "redlines", "other"]}
             onContextualAction={(document) => {
               setPendingLeaseAbstractDocument(document);
@@ -2976,7 +2969,7 @@ function HomeContent() {
           <ClientDocumentCenter
             sourceModule={activeDocumentDropSourceModule}
             globalDropLabel={activeDocumentDropLabel}
-            contextualActionLabel="Apply to Survey"
+            contextualActionLabel="Apply"
             contextualActionAllowedTypes={["surveys", "flyers", "floorplans", "other"]}
             onContextualAction={(document) => {
               setPendingSurveyDocument(document);
@@ -3027,8 +3020,23 @@ function HomeContent() {
         }
         return (
           <main className={`relative z-10 app-container ${mainTopOffsetClass} pb-14 md:pb-20`}>
-            <ClientDocumentCenter sourceModule={activeDocumentDropSourceModule} globalDropLabel={activeDocumentDropLabel} />
-            <ObligationsWorkspace clientId={workspaceScopeId} clientName={activeClient?.name || null} />
+            <ClientDocumentCenter
+              sourceModule={activeDocumentDropSourceModule}
+              globalDropLabel={activeDocumentDropLabel}
+              contextualActionLabel="Apply"
+              contextualActionAllowedTypes={["leases", "amendments", "proposals", "lois", "counters", "redlines", "sublease documents", "other"]}
+              onContextualAction={(document) => {
+                setPendingObligationDocument(document);
+              }}
+            />
+            <ObligationsWorkspace
+              clientId={workspaceScopeId}
+              clientName={activeClient?.name || null}
+              pendingDocumentImport={pendingObligationDocument}
+              onPendingDocumentImportHandled={() => {
+                setPendingObligationDocument(null);
+              }}
+            />
           </main>
         );
       })() : null}

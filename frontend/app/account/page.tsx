@@ -16,6 +16,7 @@ import {
   uploadCostarMarketInventory,
   type SharedMarketInventoryResponse,
 } from "@/lib/workspace/market-inventory";
+import { useCrmProfileOptions } from "@/lib/workspace/crm-profile-options";
 import {
   LANDLORD_REP_DEAL_STAGES,
   TENANT_REP_DEAL_STAGES,
@@ -48,6 +49,7 @@ export default function AccountPage() {
     setDealStages,
     setCrmSettings,
     createClient,
+    removeClient,
     getDocumentsForClient,
   } = useClientWorkspace();
   const [createError, setCreateError] = useState("");
@@ -57,6 +59,7 @@ export default function AccountPage() {
     industry: "",
     contactName: "",
     contactEmail: "",
+    website: "",
     notes: "",
   });
   const [stageDraftList, setStageDraftList] = useState<string[]>([]);
@@ -144,6 +147,18 @@ export default function AccountPage() {
     () => clients.find((client) => client.id === activeClientId) || null,
     [clients, activeClientId],
   );
+  const crmProfileOptions = useCrmProfileOptions(activeClientId, isAuthenticated);
+  const crmProfilesByCreatedAt = useMemo(() => {
+    const workspaceClientNames = new Set(clients.map((client) => asText(client.name).toLowerCase()).filter(Boolean));
+    return crmProfileOptions
+      .filter((company) => !workspaceClientNames.has(asText(company.name).toLowerCase()))
+      .sort((a, b) => {
+        const aTime = Date.parse(a.updatedAt || a.createdAt || "");
+        const bTime = Date.parse(b.updatedAt || b.createdAt || "");
+        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+      });
+  }, [clients, crmProfileOptions]);
+  const displayedClientCount = clients.length + crmProfilesByCreatedAt.length;
   const defaultModeStages = useMemo(
     () => [...getDefaultDealStagesForMode(representationMode)],
     [representationMode],
@@ -295,7 +310,7 @@ export default function AccountPage() {
             className="btn-premium btn-premium-secondary"
             onClick={() =>
               void signOut().then(() => {
-                router.push("/account");
+                router.push("/");
               })
             }
           >
@@ -328,15 +343,16 @@ export default function AccountPage() {
               <h2 className="text-xl font-semibold text-white">Clients in your account</h2>
             </div>
             <p className="text-sm text-slate-300">
-              {clients.length} client{clients.length === 1 ? "" : "s"}
+              {displayedClientCount} client{displayedClientCount === 1 ? "" : "s"}
             </p>
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3">
-            {clientsByCreatedAt.length === 0 ? (
+            {clientsByCreatedAt.length === 0 && crmProfilesByCreatedAt.length === 0 ? (
               <p className="text-sm text-slate-400">No clients yet. Create one below.</p>
             ) : (
-              clientsByCreatedAt.map((client) => {
+              <>
+              {clientsByCreatedAt.map((client) => {
                 const selected = client.id === activeClientId;
                 const docCount = getDocumentsForClient(client.id).length;
                 return (
@@ -367,11 +383,57 @@ export default function AccountPage() {
                         <Link href={`/client/${client.id}`} className="btn-premium btn-premium-secondary text-xs">
                           Open client
                         </Link>
+                        <button
+                          type="button"
+                          className="btn-premium btn-premium-secondary border-red-400/50 text-xs text-red-200 hover:border-red-300 hover:text-red-100"
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Delete ${client.name}? This removes the client workspace and its linked deals/documents from this account.`,
+                            );
+                            if (!confirmed) return;
+                            removeClient(client.id);
+                          }}
+                        >
+                          Delete
+                        </button>
                       </div>
                     </div>
                   </div>
                 );
-              })
+              })}
+              {crmProfilesByCreatedAt.map((company) => (
+                <div
+                  key={company.id}
+                  className="border border-white/20 bg-black/25 px-4 py-3"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-base font-medium text-white">{company.name}</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {company.type.replace(/_/g, " ")}{company.industry ? ` • ${company.industry}` : ""}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {company.linkedDocumentIds.length} linked document{company.linkedDocumentIds.length === 1 ? "" : "s"} • {company.linkedDealIds.length} linked deal{company.linkedDealIds.length === 1 ? "" : "s"}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="btn-premium btn-premium-secondary text-xs"
+                        onClick={() => {
+                          const params = new URLSearchParams();
+                          params.set("module", "deals");
+                          params.set("crm_company", company.id);
+                          router.push(`/?${params.toString()}`);
+                        }}
+                      >
+                        Open in CRM
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              </>
             )}
           </div>
 
@@ -413,6 +475,13 @@ export default function AccountPage() {
                 value={createForm.contactEmail}
                 onChange={(event) => setCreateForm((prev) => ({ ...prev, contactEmail: event.target.value }))}
               />
+              <input
+                type="url"
+                className="input-premium"
+                placeholder="Website (optional)"
+                value={createForm.website}
+                onChange={(event) => setCreateForm((prev) => ({ ...prev, website: event.target.value }))}
+              />
               <textarea
                 className="input-premium min-h-[84px] sm:col-span-2"
                 placeholder="Notes"
@@ -442,6 +511,7 @@ export default function AccountPage() {
                     industry: "",
                     contactName: "",
                     contactEmail: "",
+                    website: "",
                     notes: "",
                   });
                 }}

@@ -47,6 +47,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     setRepresentationMode,
     createClient,
     updateClient,
+    removeClient,
   } = useClientWorkspace();
 
   const [query, setQuery] = useState("");
@@ -55,6 +56,15 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     companyType: "",
     contactName: "",
     contactEmail: "",
+    website: "",
+    notes: "",
+  });
+  const [editForm, setEditForm] = useState({
+    name: "",
+    companyType: "",
+    contactName: "",
+    contactEmail: "",
+    website: "",
     notes: "",
   });
   const [createLogoDataUrl, setCreateLogoDataUrl] = useState<string | null>(null);
@@ -64,6 +74,9 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
   const [clientLogoUploading, setClientLogoUploading] = useState(false);
   const [clientLogoError, setClientLogoError] = useState<string | null>(null);
   const [createError, setCreateError] = useState("");
+  const [editStatus, setEditStatus] = useState("");
+  const [editError, setEditError] = useState("");
+  const [showCreateClientForm, setShowCreateClientForm] = useState(false);
 
   const requestedClientId = asText(routeClientId);
 
@@ -72,6 +85,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     [clients, requestedClientId],
   );
   const currentClient = requestedClient ?? activeClient;
+  const currentClientId = currentClient?.id ?? null;
   const routeClientMissing = Boolean(requestedClientId) && !requestedClient;
 
   useEffect(() => {
@@ -80,6 +94,28 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
       setActiveClient(requestedClient.id);
     }
   }, [ready, requestedClientId, requestedClient, activeClientId, setActiveClient]);
+
+  useEffect(() => {
+    if (!currentClientId) {
+      setShowCreateClientForm(true);
+      return;
+    }
+    setShowCreateClientForm(false);
+  }, [currentClientId]);
+
+  useEffect(() => {
+    if (!currentClient) return;
+    setEditForm({
+      name: currentClient.name,
+      companyType: currentClient.companyType,
+      contactName: currentClient.contactName,
+      contactEmail: currentClient.contactEmail,
+      website: currentClient.website || "",
+      notes: currentClient.notes,
+    });
+    setEditStatus("");
+    setEditError("");
+  }, [currentClient]);
 
   const validateLogoFile = useCallback((file: File): string | null => {
     const mime = (file.type || "").toLowerCase();
@@ -141,14 +177,46 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
     setClientLogoError(null);
   }, [currentClient, updateClient]);
 
+  const saveSelectedClientDetails = useCallback(() => {
+    if (!currentClient) return;
+    const name = asText(editForm.name);
+    if (!name) {
+      setEditError("Client name is required.");
+      setEditStatus("");
+      return;
+    }
+    updateClient(currentClient.id, {
+      name,
+      companyType: editForm.companyType,
+      contactName: editForm.contactName,
+      contactEmail: editForm.contactEmail,
+      website: editForm.website,
+      notes: editForm.notes,
+    });
+    setEditError("");
+    setEditStatus("Client details saved.");
+  }, [currentClient, editForm, updateClient]);
+
+  const deleteSelectedClient = useCallback(() => {
+    if (!currentClient) return;
+    const confirmed = window.confirm(
+      `Delete ${currentClient.name}? This removes the client workspace and its linked deals/documents from this account.`,
+    );
+    if (!confirmed) return;
+    removeClient(currentClient.id);
+    router.push("/client");
+  }, [currentClient, removeClient, router]);
+
   const filteredClients = useMemo(() => {
     const needle = asText(query).toLowerCase();
     if (!needle) return clients;
     return clients.filter((client) => {
-      const haystack = `${client.name} ${client.companyType} ${client.industry} ${client.contactName} ${client.contactEmail} ${client.brokerage}`.toLowerCase();
+      const haystack = `${client.name} ${client.companyType} ${client.industry} ${client.contactName} ${client.contactEmail} ${client.website || ""} ${client.brokerage}`.toLowerCase();
       return haystack.includes(needle);
     });
   }, [clients, query]);
+
+  const showingCreateClientForm = showCreateClientForm || !currentClient;
 
   if (!ready) {
     return (
@@ -168,10 +236,10 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
             Client workspaces are available for authenticated accounts.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Link href="/account?mode=signin" className="btn-premium btn-premium-secondary">
+            <Link href="/sign-in" className="btn-premium btn-premium-secondary">
               Sign in
             </Link>
-            <Link href="/account?mode=signup" className="btn-premium btn-premium-primary">
+            <Link href="/sign-up" className="btn-premium btn-premium-primary">
               Create account
             </Link>
           </div>
@@ -258,6 +326,7 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
                         <p className="text-xs text-slate-500 mt-1">
                           {client.contactName || "No contact"}
                           {client.contactEmail ? ` · ${client.contactEmail}` : ""}
+                          {client.website ? ` · ${client.website}` : ""}
                         </p>
                       </div>
                       <p className="text-[11px] text-slate-500 shrink-0">
@@ -272,10 +341,208 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
         </div>
 
         <div className="lg:col-span-5 border border-white/15 bg-black/25 p-4 sm:p-5">
-          <p className="heading-kicker mb-2">Create Client</p>
-          {currentClient ? (
-            <div className="mb-3">
-              <p className="text-xs text-slate-300 mb-2">Selected client logo</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="heading-kicker mb-2">{showingCreateClientForm ? "Create Client" : "Client Branding"}</p>
+              <p className="text-sm text-slate-300">
+                {showingCreateClientForm
+                  ? "Set one shared client logo that carries into PDF covers and branded export output."
+                  : "This client uses one shared logo across PDF covers and branded export output."}
+              </p>
+            </div>
+            {currentClient ? (
+              <button
+                type="button"
+                className="btn-premium btn-premium-secondary text-xs"
+                onClick={() => {
+                  setCreateError("");
+                  setClientLogoError(null);
+                  setShowCreateClientForm((prev) => !prev);
+                }}
+              >
+                {showingCreateClientForm ? "Back To Selected Client" : "Create Another Client"}
+              </button>
+            ) : null}
+          </div>
+
+          {showingCreateClientForm ? (
+            <>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={createForm.name}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="Client name*"
+                  className="input-premium"
+                />
+                <input
+                  type="text"
+                  value={createForm.companyType}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, companyType: event.target.value }))}
+                  placeholder="Company type"
+                  className="input-premium"
+                />
+                <input
+                  type="text"
+                  value={createForm.contactName}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, contactName: event.target.value }))}
+                  placeholder="Contact name"
+                  className="input-premium"
+                />
+                <input
+                  type="email"
+                  value={createForm.contactEmail}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, contactEmail: event.target.value }))}
+                  placeholder="Contact email"
+                  className="input-premium"
+                />
+                <input
+                  type="url"
+                  value={createForm.website}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, website: event.target.value }))}
+                  placeholder="Website (optional)"
+                  className="input-premium sm:col-span-2"
+                />
+                <textarea
+                  value={createForm.notes}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, notes: event.target.value }))}
+                  placeholder="Notes"
+                  className="input-premium min-h-[84px] sm:col-span-2"
+                />
+              </div>
+              <div className="mt-3">
+                <ClientLogoUploader
+                  logoDataUrl={createLogoDataUrl}
+                  fileName={createLogoFileName}
+                  uploading={createLogoUploading}
+                  error={createLogoError}
+                  onUpload={uploadCreateClientLogo}
+                  onClear={clearCreateClientLogo}
+                />
+              </div>
+              {createError ? <p className="mt-2 text-xs text-red-300">{createError}</p> : null}
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  className="btn-premium btn-premium-primary"
+                  onClick={() => {
+                    const name = asText(createForm.name);
+                    if (!name) {
+                      setCreateError("Client name is required.");
+                      return;
+                    }
+                    const created = createClient({
+                      name,
+                      companyType: createForm.companyType,
+                      contactName: createForm.contactName,
+                      contactEmail: createForm.contactEmail,
+                      website: createForm.website,
+                      notes: createForm.notes,
+                      logoDataUrl: createLogoDataUrl || undefined,
+                      logoFileName: createLogoFileName || undefined,
+                    });
+                    if (!created) {
+                      setCreateError("Unable to create client.");
+                      return;
+                    }
+                    setCreateError("");
+                    setCreateForm({
+                      name: "",
+                      companyType: "",
+                      contactName: "",
+                      contactEmail: "",
+                      website: "",
+                      notes: "",
+                    });
+                    clearCreateClientLogo();
+                    setShowCreateClientForm(false);
+                    router.push(`/client/${encodeURIComponent(created.id)}`);
+                  }}
+                >
+                  Create Client
+                </button>
+              </div>
+            </>
+          ) : currentClient ? (
+            <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Selected Client</span>
+                  <input
+                    type="text"
+                    value={editForm.name}
+                    onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))}
+                    className="input-premium mt-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Company Type</span>
+                  <input
+                    type="text"
+                    value={editForm.companyType}
+                    onChange={(event) => setEditForm((prev) => ({ ...prev, companyType: event.target.value }))}
+                    className="input-premium mt-2"
+                    placeholder="Company type"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Contact</span>
+                  <input
+                    type="text"
+                    value={editForm.contactName}
+                    onChange={(event) => setEditForm((prev) => ({ ...prev, contactName: event.target.value }))}
+                    className="input-premium mt-2"
+                    placeholder="Contact name"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Email</span>
+                  <input
+                    type="email"
+                    value={editForm.contactEmail}
+                    onChange={(event) => setEditForm((prev) => ({ ...prev, contactEmail: event.target.value }))}
+                    className="input-premium mt-2"
+                    placeholder="Contact email"
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Website</span>
+                  <input
+                    type="url"
+                    value={editForm.website}
+                    onChange={(event) => setEditForm((prev) => ({ ...prev, website: event.target.value }))}
+                    className="input-premium mt-2"
+                    placeholder="Website (optional)"
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Notes</span>
+                  <textarea
+                    value={editForm.notes}
+                    onChange={(event) => setEditForm((prev) => ({ ...prev, notes: event.target.value }))}
+                    className="input-premium mt-2 min-h-[84px]"
+                    placeholder="Notes"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  {editStatus ? <p className="text-xs text-cyan-200">{editStatus}</p> : null}
+                  {editError ? <p className="text-xs text-red-300">{editError}</p> : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-premium btn-premium-secondary border-red-400/50 text-red-200 hover:border-red-300 hover:text-red-100"
+                    onClick={deleteSelectedClient}
+                  >
+                    Delete Client
+                  </button>
+                  <button type="button" className="btn-premium btn-premium-primary" onClick={saveSelectedClientDetails}>
+                    Save Client Details
+                  </button>
+                </div>
+              </div>
               <ClientLogoUploader
                 logoDataUrl={currentClient.logoDataUrl || null}
                 fileName={currentClient.logoFileName || null}
@@ -286,91 +553,6 @@ export function ClientWorkspacePage({ routeClientId = null }: ClientWorkspacePag
               />
             </div>
           ) : null}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <input
-              type="text"
-              value={createForm.name}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
-              placeholder="Client name*"
-              className="input-premium"
-            />
-            <input
-              type="text"
-              value={createForm.companyType}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, companyType: event.target.value }))}
-              placeholder="Company type"
-              className="input-premium"
-            />
-            <input
-              type="text"
-              value={createForm.contactName}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, contactName: event.target.value }))}
-              placeholder="Contact name"
-              className="input-premium"
-            />
-            <input
-              type="email"
-              value={createForm.contactEmail}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, contactEmail: event.target.value }))}
-              placeholder="Contact email"
-              className="input-premium"
-            />
-            <textarea
-              value={createForm.notes}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, notes: event.target.value }))}
-              placeholder="Notes"
-              className="input-premium min-h-[84px] sm:col-span-2"
-            />
-          </div>
-          <div className="mt-3">
-            <ClientLogoUploader
-              logoDataUrl={createLogoDataUrl}
-              fileName={createLogoFileName}
-              uploading={createLogoUploading}
-              error={createLogoError}
-              onUpload={uploadCreateClientLogo}
-              onClear={clearCreateClientLogo}
-            />
-          </div>
-          {createError ? <p className="mt-2 text-xs text-red-300">{createError}</p> : null}
-          <div className="mt-3 flex justify-end">
-            <button
-              type="button"
-              className="btn-premium btn-premium-primary"
-              onClick={() => {
-                const name = asText(createForm.name);
-                if (!name) {
-                  setCreateError("Client name is required.");
-                  return;
-                }
-                const created = createClient({
-                  name,
-                  companyType: createForm.companyType,
-                  contactName: createForm.contactName,
-                  contactEmail: createForm.contactEmail,
-                  notes: createForm.notes,
-                  logoDataUrl: createLogoDataUrl || undefined,
-                  logoFileName: createLogoFileName || undefined,
-                });
-                if (!created) {
-                  setCreateError("Unable to create client.");
-                  return;
-                }
-                setCreateError("");
-                setCreateForm({
-                  name: "",
-                  companyType: "",
-                  contactName: "",
-                  contactEmail: "",
-                  notes: "",
-                });
-                clearCreateClientLogo();
-                router.push(`/client/${encodeURIComponent(created.id)}`);
-              }}
-            >
-              Create Client
-            </button>
-          </div>
         </div>
       </section>
 

@@ -5,6 +5,7 @@ import {
   applyExcelPageSetup,
   buildExportMetaLine,
   buildPlatformExportFileName,
+  resolveExportBranding,
 } from "@/lib/export-design";
 import { downloadArrayBuffer as downloadArrayBufferShared, escapeHtml, openPrintWindow } from "@/lib/export-runtime";
 import {
@@ -22,12 +23,17 @@ import type {
 
 const COLORS = EXPORT_BRAND.excel.colors;
 const NUM_FMT = EXPORT_BRAND.excel.numberFormats;
-const LEASE_CLOSEOUT_TEMPLATE_PATH = "/templates/lease-closeout-template.xlsx";
-const LEASE_CLOSEOUT_ADDRESS_SHEET = "ADDRESS";
-const LEASE_CLOSEOUT_REFERENCE_SHEET = "Reference Sheet";
-const LEASE_CLOSEOUT_MAX_SCHEDULE_ROWS = 14;
 
 export type CompletedLeaseShareEnvelope = PlatformShareEnvelope<CompletedLeaseSharePayload>;
+
+interface ResolvedCompletedLeaseBranding {
+  brokerageName: string;
+  clientName: string;
+  reportDate: string;
+  preparedBy: string;
+  brokerageLogoDataUrl: string;
+  clientLogoDataUrl: string;
+}
 
 function toDateLabel(value: string): string {
   const raw = String(value || "").trim();
@@ -36,11 +42,12 @@ function toDateLabel(value: string): string {
   return `${m[2]}.${m[3]}.${m[1]}`;
 }
 
-function toCurrency(value: number): string {
+function toCurrency(value: number, digits = 0): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
   }).format(Number(value || 0));
 }
 
@@ -74,6 +81,11 @@ function getEscalationPct(canonical: BackendCanonicalLease): number {
 
 function asText(value: unknown): string {
   return String(value || "").trim();
+}
+
+function asDisplayText(value: unknown, fallback = "-"): string {
+  const text = asText(value);
+  return text || fallback;
 }
 
 function valueOrNa(value: unknown): string {
@@ -318,10 +330,6 @@ function summarizeAmendmentTerms(doc: CompletedLeaseDocumentRecord): string {
   return joinMatches([...parts, ...noteMatches]);
 }
 
-function setCellValue(sheet: ExcelJS.Worksheet, address: string, value: string | number): void {
-  sheet.getCell(address).value = value;
-}
-
 function safeImageExtension(dataUrl: string): "png" | "jpeg" | "gif" | null {
   const match = dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,/);
   if (!match) return null;
@@ -367,21 +375,6 @@ async function normalizeLogoForExcel(
     if (pngDataUrl && pngExt) return { base64: pngDataUrl, extension: pngExt };
   }
   return null;
-}
-
-function writeLookupPairs(referenceSheet: ExcelJS.Worksheet, pairs: Array<[string, string | number]>): number {
-  for (let row = 1; row <= 160; row += 1) {
-    referenceSheet.getCell(`A${row}`).value = null;
-    referenceSheet.getCell(`B${row}`).value = null;
-    referenceSheet.getCell(`C${row}`).value = null;
-  }
-  let row = 1;
-  pairs.forEach(([key, value]) => {
-    referenceSheet.getCell(`A${row}`).value = key;
-    referenceSheet.getCell(`B${row}`).value = value;
-    row += 1;
-  });
-  return row;
 }
 
 function rentScheduleSummary(canonical: BackendCanonicalLease): string {
@@ -442,218 +435,604 @@ export function buildCompletedLeaseAbstractFileName(
     brokerageName: branding.brokerageName,
     clientName: branding.clientName,
     reportDate: branding.reportDate,
-    excelDescriptor: "Lease Closeout",
-    pdfDescriptor: "Lease Closeout Presentation",
+    excelDescriptor: "Lease Abstract",
+    pdfDescriptor: "Lease Abstract Presentation",
   });
 }
 
-function styleWorkbookHeader(
-  sheet: ExcelJS.Worksheet,
-  title: string,
-  branding: CompletedLeaseExportBranding,
-  totalCols: number,
-): number {
+function resolveCompletedLeaseBranding(branding: CompletedLeaseExportBranding = {}): ResolvedCompletedLeaseBranding {
+  const resolved = resolveExportBranding(branding);
+  return {
+    ...resolved,
+    brokerageLogoDataUrl: String(branding.brokerageLogoDataUrl || "").trim(),
+    clientLogoDataUrl: String(branding.clientLogoDataUrl || "").trim(),
+  };
+}
+
+function styleHeaderBand(sheet: ExcelJS.Worksheet, title: string, subtitle: string, totalCols: number): number {
   sheet.mergeCells(1, 1, 2, totalCols);
-  const titleCell = sheet.getCell(1, 1);
-  titleCell.value = title;
-  titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
-  titleCell.font = { name: EXCEL_THEME.font.family, size: EXCEL_THEME.font.subtitleSize, bold: true, color: { argb: COLORS.white } };
-  titleCell.alignment = { horizontal: "center", vertical: "middle" };
+  const band = sheet.getCell(1, 1);
+  band.value = subtitle ? `${title}\n${subtitle}` : title;
+  band.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.black } };
+  band.font = {
+    name: EXCEL_THEME.font.family,
+    size: EXCEL_THEME.font.subtitleSize,
+    bold: true,
+    color: { argb: COLORS.white },
+  };
+  band.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   sheet.getRow(1).height = 20;
   sheet.getRow(2).height = 20;
+  return 3;
+}
 
-  sheet.mergeCells(3, 1, 3, totalCols);
-  const metaCell = sheet.getCell(3, 1);
-  metaCell.value = buildExportMetaLine(branding);
-  metaCell.font = {
+function styleMetaRow(
+  sheet: ExcelJS.Worksheet,
+  row: number,
+  totalCols: number,
+  branding: ResolvedCompletedLeaseBranding,
+): number {
+  sheet.mergeCells(row, 1, row, totalCols);
+  const cell = sheet.getCell(row, 1);
+  cell.value = buildExportMetaLine(branding);
+  cell.font = {
     name: EXCEL_THEME.font.family,
     size: EXCEL_THEME.font.labelSize,
     color: { argb: COLORS.secondaryText },
     bold: true,
   };
-  metaCell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
-  sheet.getRow(3).height = 18;
-  return 5;
+  cell.alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+  sheet.getRow(row).height = 18;
+
+  for (let c = 1; c <= totalCols; c += 1) {
+    const borderCell = sheet.getCell(row, c);
+    borderCell.border = {
+      ...(borderCell.border ?? {}),
+      bottom: { style: "thin", color: { argb: COLORS.border } },
+    };
+  }
+  return row + 2;
+}
+
+async function addBrandedHeader(
+  workbook: ExcelJS.Workbook,
+  sheet: ExcelJS.Worksheet,
+  title: string,
+  subtitle: string,
+  totalCols: number,
+  branding: ResolvedCompletedLeaseBranding,
+): Promise<number> {
+  const rowAfterBand = styleHeaderBand(sheet, title, subtitle, totalCols);
+  const brokerageLogo = await normalizeLogoForExcel(branding.brokerageLogoDataUrl);
+  if (brokerageLogo) {
+    const imageId = workbook.addImage(brokerageLogo);
+    sheet.addImage(imageId, {
+      tl: { col: 0.2, row: 0.15 },
+      ext: { width: 112, height: 28 },
+      editAs: "oneCell",
+    });
+  }
+  const clientLogo = await normalizeLogoForExcel(branding.clientLogoDataUrl);
+  if (clientLogo) {
+    const imageId = workbook.addImage(clientLogo);
+    sheet.addImage(imageId, {
+      tl: { col: Math.max(1.2, totalCols - 1.7), row: 0.15 },
+      ext: { width: 102, height: 28 },
+      editAs: "oneCell",
+    });
+  }
+  return styleMetaRow(sheet, rowAfterBand, totalCols, branding);
+}
+
+function styleTableHeader(sheet: ExcelJS.Worksheet, row: number, startCol: number, endCol: number): void {
+  sheet.getRow(row).height = EXCEL_THEME.rowHeights.tableHeader;
+  for (let c = startCol; c <= endCol; c += 1) {
+    const cell = sheet.getCell(row, c);
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.accent } };
+    cell.font = {
+      name: EXCEL_THEME.font.family,
+      size: EXCEL_THEME.font.sectionSize,
+      bold: true,
+      color: { argb: COLORS.white },
+    };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = {
+      top: { style: "thin", color: { argb: COLORS.border } },
+      bottom: { style: "thin", color: { argb: COLORS.border } },
+      left: { style: "thin", color: { argb: COLORS.border } },
+      right: { style: "thin", color: { argb: COLORS.border } },
+    };
+  }
+}
+
+function styleTableBodyRow(sheet: ExcelJS.Worksheet, row: number, startCol: number, endCol: number, striped = false): void {
+  sheet.getRow(row).height = EXCEL_THEME.rowHeights.body;
+  for (let c = startCol; c <= endCol; c += 1) {
+    const cell = sheet.getCell(row, c);
+    cell.fill = striped
+      ? { type: "pattern", pattern: "solid", fgColor: { argb: COLORS.mutedFill } }
+      : { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } };
+    cell.font = {
+      ...(cell.font ?? {}),
+      name: EXCEL_THEME.font.family,
+      size: EXCEL_THEME.font.bodySize,
+      color: { argb: COLORS.text },
+    };
+    cell.border = {
+      top: { style: "thin", color: { argb: COLORS.border } },
+      bottom: { style: "thin", color: { argb: COLORS.border } },
+      left: { style: "thin", color: { argb: COLORS.border } },
+      right: { style: "thin", color: { argb: COLORS.border } },
+    };
+  }
+}
+
+function buildClauseSummaryRows(canonical: BackendCanonicalLease, notes: string): Array<[string, string]> {
+  return [
+    ["Concessions", summarizeConcessions(canonical, notes)],
+    ["Improvement Allowance", summarizeImprovementAllowance(canonical)],
+    ["Operating Expenses", summarizeOperatingExpenses(canonical)],
+    ["Parking", summarizeParking(canonical, notes)],
+    ["Parking Charges", summarizeParkingCharges(canonical, notes)],
+    ["Security Deposit", summarizeSecurityDeposit(canonical)],
+    ["Renewal", summarizeRenewal(canonical, notes)],
+    ["ROFR", summarizeRofr(canonical, notes)],
+    ["ROFO / Expansion", summarizeRofo(canonical, notes)],
+    ["Early Termination", summarizeTermination(canonical, notes)],
+    ["Assignment / Sublease", summarizeAssignment(canonical, notes)],
+    ["Signage", summarizeSignage(notes)],
+    ["Furniture", summarizeFurniture(notes)],
+    ["Holdover", summarizeHoldover(notes)],
+    ["HVAC / After Hours", summarizeHvac(notes)],
+    ["Notes", formatCloseoutNotes(notes)],
+  ];
+}
+
+function buildAbstractSections(canonical: BackendCanonicalLease): Array<{ title: string; rows: Array<{ label: string; value: string }> }> {
+  const rowMap = new Map(abstractRows(canonical).map((row) => [row.label, row.value]));
+  const pick = (label: string) => ({ label, value: rowMap.get(label) || "-" });
+  return [
+    {
+      title: "Parties and Premises",
+      rows: [
+        pick("Tenant"),
+        pick("Landlord"),
+        pick("Premises"),
+        pick("Building"),
+        pick("Address"),
+        pick("Suite / Floor"),
+        pick("RSF"),
+        pick("Lease Type"),
+      ],
+    },
+    {
+      title: "Dates and Term",
+      rows: [
+        pick("Commencement"),
+        pick("Rent Commencement"),
+        pick("Expiration"),
+        pick("Term (Months)"),
+        pick("Discount Rate"),
+      ],
+    },
+    {
+      title: "Economics",
+      rows: [
+        pick("Base Rent ($/SF/YR)"),
+        pick("Base Rent Schedule"),
+        pick("Annual Base Rent Escalation"),
+        pick("Free Rent (Months)"),
+        pick("OpEx Structure"),
+        pick("Base OpEx ($/SF/YR)"),
+        pick("OpEx Escalation"),
+        pick("Parking Spaces"),
+        pick("Parking Rate (Monthly)"),
+        pick("TI Allowance ($/SF)"),
+      ],
+    },
+    {
+      title: "Options and Protections",
+      rows: [
+        pick("Deposit"),
+        pick("Guaranty"),
+        pick("Options"),
+        pick("Notice Dates"),
+        pick("Notes"),
+      ],
+    },
+  ];
+}
+
+async function writeSummarySheet(
+  workbook: ExcelJS.Workbook,
+  abstract: CompletedLeaseAbstractView,
+  branding: ResolvedCompletedLeaseBranding,
+): Promise<void> {
+  const canonical = abstract.controllingCanonical;
+  const notes = [asText(canonical.notes), asText(canonical.options), asText(canonical.notice_dates)].filter(Boolean).join("\n");
+  const sheet = workbook.addWorksheet("Summary", { views: [{ state: "frozen", ySplit: 8, showGridLines: false }] });
+  sheet.columns = [
+    { width: 30 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+  ];
+  const totalCols = 6;
+  let row = await addBrandedHeader(
+    workbook,
+    sheet,
+    "Lease Abstract Presentation",
+    "Client-ready summary of controlling lease terms, economics, and amendment impact",
+    totalCols,
+    branding,
+  );
+
+  sheet.mergeCells(row, 1, row, totalCols);
+  sheet.getCell(row, 1).value = "Executive Snapshot";
+  styleTableHeader(sheet, row, 1, totalCols);
+  row += 1;
+
+  const kpis: Array<[string, string, string, string]> = [
+    ["Tenant", asDisplayText(canonical.tenant_name), "Premises", asDisplayText(canonical.premises_name || canonical.building_name)],
+    ["RSF", formatTemplateNumber(toNumber(canonical.rsf), 0), "Term", `${toNumber(canonical.term_months) || monthDiffInclusive(canonical.commencement_date, canonical.expiration_date)} months`],
+    ["Commencement", formatTemplateDate(canonical.commencement_date), "Expiration", formatTemplateDate(canonical.expiration_date)],
+    ["Year 1 Base Rent", formatTemplateRatePerSf(getBaseRentYearOne(canonical)), "Escalation", getEscalationPct(canonical) > 0 ? `${(getEscalationPct(canonical) * 100).toFixed(2)}%` : "N/A"],
+    ["Monthly Base Rent", formatTemplateMonthlyRent(canonical), "Operating Expenses", summarizeOperatingExpenses(canonical)],
+    ["TI Package", summarizeImprovementAllowance(canonical), "Parking", summarizeParking(canonical, notes)],
+  ];
+
+  kpis.forEach(([leftLabel, leftValue, rightLabel, rightValue]) => {
+    sheet.getCell(row, 1).value = leftLabel;
+    sheet.getCell(row, 2).value = leftValue;
+    sheet.getCell(row, 3).value = rightLabel;
+    sheet.mergeCells(row, 4, row, 6);
+    sheet.getCell(row, 4).value = rightValue;
+    sheet.getCell(row, 2).font = { name: EXCEL_THEME.font.family, bold: true, size: 11, color: { argb: COLORS.text } };
+    sheet.getCell(row, 4).font = { name: EXCEL_THEME.font.family, bold: true, size: 11, color: { argb: COLORS.text } };
+    styleTableBodyRow(sheet, row, 1, totalCols, row % 2 === 0);
+    row += 1;
+  });
+
+  row += 1;
+  sheet.mergeCells(row, 1, row, totalCols);
+  sheet.getCell(row, 1).value = "Key Clauses";
+  styleTableHeader(sheet, row, 1, totalCols);
+  row += 1;
+
+  const clauseRows = buildClauseSummaryRows(canonical, notes);
+  clauseRows.forEach(([label, value]) => {
+    sheet.getCell(row, 1).value = label;
+    sheet.mergeCells(row, 2, row, totalCols);
+    sheet.getCell(row, 2).value = value;
+    sheet.getCell(row, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    styleTableBodyRow(sheet, row, 1, totalCols, row % 2 === 0);
+    row += 1;
+  });
+
+  applyExcelPageSetup(sheet, {
+    landscape: false,
+    lastRow: row,
+    lastCol: totalCols,
+    fitToHeight: 1,
+  });
+}
+
+async function writeAbstractSheet(
+  workbook: ExcelJS.Workbook,
+  abstract: CompletedLeaseAbstractView,
+  branding: ResolvedCompletedLeaseBranding,
+): Promise<void> {
+  const canonical = abstract.controllingCanonical;
+  const sheet = workbook.addWorksheet("Lease Abstract", { views: [{ showGridLines: false }] });
+  sheet.columns = [
+    { width: 28 },
+    { width: 34 },
+    { width: 24 },
+    { width: 24 },
+  ];
+  const totalCols = 4;
+  let row = await addBrandedHeader(
+    workbook,
+    sheet,
+    "Lease Abstract",
+    "Controlling terms grouped for client delivery and internal verification",
+    totalCols,
+    branding,
+  );
+
+  buildAbstractSections(canonical).forEach((section) => {
+    sheet.mergeCells(row, 1, row, totalCols);
+    sheet.getCell(row, 1).value = section.title;
+    styleTableHeader(sheet, row, 1, totalCols);
+    row += 1;
+
+    section.rows.forEach((item) => {
+      sheet.getCell(row, 1).value = item.label;
+      sheet.getCell(row, 2).value = item.value;
+      sheet.getCell(row, 3).value = "";
+      sheet.getCell(row, 4).value = "";
+      sheet.mergeCells(row, 2, row, 4);
+      sheet.getCell(row, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+      styleTableBodyRow(sheet, row, 1, totalCols, row % 2 === 0);
+      row += 1;
+    });
+
+    row += 1;
+  });
+
+  applyExcelPageSetup(sheet, {
+    landscape: false,
+    lastRow: row,
+    lastCol: totalCols,
+  });
+}
+
+async function writeRentScheduleSheet(
+  workbook: ExcelJS.Workbook,
+  abstract: CompletedLeaseAbstractView,
+  branding: ResolvedCompletedLeaseBranding,
+): Promise<void> {
+  const canonical = abstract.controllingCanonical;
+  const sheet = workbook.addWorksheet("Rent Schedule", { views: [{ state: "frozen", ySplit: 6, showGridLines: false }] });
+  sheet.columns = [
+    { width: 18 },
+    { width: 14 },
+    { width: 14 },
+    { width: 20 },
+    { width: 22 },
+    { width: 28 },
+  ];
+  const totalCols = 6;
+  let row = await addBrandedHeader(
+    workbook,
+    sheet,
+    "Rent Schedule",
+    "Controlling base rent schedule translated into monthly and annual outputs",
+    totalCols,
+    branding,
+  );
+
+  const headers = ["Period", "Start Month", "End Month", "Annual Rate / SF", "Monthly Base Rent", "Commentary"];
+  headers.forEach((header, idx) => {
+    sheet.getCell(row, idx + 1).value = header;
+  });
+  styleTableHeader(sheet, row, 1, totalCols);
+  const headerRow = row;
+  row += 1;
+
+  const rsf = toNumber(canonical.rsf);
+  const steps = Array.isArray(canonical.rent_schedule) ? canonical.rent_schedule : [];
+  if (steps.length === 0) {
+    sheet.mergeCells(row, 1, row + 1, totalCols);
+    const cell = sheet.getCell(row, 1);
+    cell.value = "No rent schedule is available on the controlling abstract.";
+    cell.font = { name: EXCEL_THEME.font.family, size: 12, bold: true, color: { argb: COLORS.text } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    styleTableBodyRow(sheet, row, 1, totalCols, false);
+    row += 2;
+  } else {
+    steps.forEach((step) => {
+      const annualRate = toNumber(step.rent_psf_annual);
+      const monthlyRent = annualRate > 0 && rsf > 0 ? (annualRate * rsf) / 12 : 0;
+      sheet.getCell(row, 1).value = schedulePeriodLabel(toNumber(step.start_month), toNumber(step.end_month));
+      sheet.getCell(row, 2).value = toNumber(step.start_month) + 1;
+      sheet.getCell(row, 3).value = toNumber(step.end_month) + 1;
+      sheet.getCell(row, 4).value = annualRate;
+      sheet.getCell(row, 5).value = monthlyRent;
+      sheet.getCell(row, 6).value = annualRate > 0 ? `${formatTemplateCurrency(annualRate)} / RSF / YR` : "Rate unavailable";
+      sheet.getCell(row, 2).numFmt = NUM_FMT.integer;
+      sheet.getCell(row, 3).numFmt = NUM_FMT.integer;
+      sheet.getCell(row, 4).numFmt = NUM_FMT.currency2;
+      sheet.getCell(row, 5).numFmt = NUM_FMT.currency0;
+      for (let c = 1; c <= totalCols; c += 1) {
+        sheet.getCell(row, c).alignment = { horizontal: c >= 2 && c <= 5 ? "right" : "left", vertical: "middle", wrapText: true };
+      }
+      styleTableBodyRow(sheet, row, 1, totalCols, row % 2 === 0);
+      row += 1;
+    });
+  }
+
+  applyExcelPageSetup(sheet, {
+    landscape: false,
+    lastRow: Math.max(row, headerRow + 2),
+    lastCol: totalCols,
+    repeatHeaderRow: headerRow,
+    fitToHeight: 1,
+  });
+}
+
+async function writeSourceDocumentsSheet(
+  workbook: ExcelJS.Workbook,
+  abstract: CompletedLeaseAbstractView,
+  branding: ResolvedCompletedLeaseBranding,
+): Promise<void> {
+  const sheet = workbook.addWorksheet("Source Documents", { views: [{ state: "frozen", ySplit: 6, showGridLines: false }] });
+  sheet.columns = [
+    { width: 14 },
+    { width: 34 },
+    { width: 14 },
+    { width: 14 },
+    { width: 18 },
+    { width: 32 },
+  ];
+  const totalCols = 6;
+  let row = await addBrandedHeader(
+    workbook,
+    sheet,
+    "Source Documents",
+    "Document stack used to build the controlling abstract and amendment precedence",
+    totalCols,
+    branding,
+  );
+
+  const headers = ["Type", "Document", "Uploaded", "Role", "Detected Type", "Warnings"];
+  headers.forEach((header, idx) => {
+    sheet.getCell(row, idx + 1).value = header;
+  });
+  styleTableHeader(sheet, row, 1, totalCols);
+  const headerRow = row;
+  row += 1;
+
+  abstract.sourceDocuments.forEach((doc) => {
+    sheet.getCell(row, 1).value = doc.kind === "amendment" ? "Amendment" : "Lease";
+    sheet.getCell(row, 2).value = doc.fileName;
+    sheet.getCell(row, 3).value = toDateLabel(doc.uploadedAtIso.slice(0, 10));
+    sheet.getCell(row, 4).value = doc.id === abstract.controllingDocumentId ? "Controlling" : "Reference";
+    sheet.getCell(row, 5).value = asDisplayText(doc.extractionSummary?.document_type_detected);
+    sheet.getCell(row, 6).value = doc.warnings.length > 0 ? doc.warnings.join(" | ") : "None";
+    for (let c = 1; c <= totalCols; c += 1) {
+      sheet.getCell(row, c).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    }
+    styleTableBodyRow(sheet, row, 1, totalCols, row % 2 === 0);
+    row += 1;
+  });
+
+  applyExcelPageSetup(sheet, {
+    landscape: false,
+    lastRow: Math.max(row, headerRow + 2),
+    lastCol: totalCols,
+    repeatHeaderRow: headerRow,
+    fitToHeight: 1,
+  });
+}
+
+async function writeAuditSheet(
+  workbook: ExcelJS.Workbook,
+  abstract: CompletedLeaseAbstractView,
+  branding: ResolvedCompletedLeaseBranding,
+): Promise<void> {
+  const sheet = workbook.addWorksheet("Audit Notes", { views: [{ showGridLines: false }] });
+  sheet.columns = [
+    { width: 18 },
+    { width: 54 },
+  ];
+  const totalCols = 2;
+  let row = await addBrandedHeader(
+    workbook,
+    sheet,
+    "Audit Notes",
+    "Override history and amendment commentary for internal traceability",
+    totalCols,
+    branding,
+  );
+
+  sheet.getCell(row, 1).value = "Source";
+  sheet.getCell(row, 2).value = "Audit Note";
+  styleTableHeader(sheet, row, 1, totalCols);
+  const headerRow = row;
+  row += 1;
+
+  const auditRows: Array<[string, string]> = [];
+  if (abstract.overrideNotes.length > 0) {
+    abstract.overrideNotes.forEach((note) => {
+      auditRows.push(["Override", note]);
+    });
+  }
+  abstract.sourceDocuments
+    .filter((doc) => doc.kind === "amendment")
+    .forEach((doc, index) => {
+      auditRows.push([amendmentOrdinal(index), summarizeAmendmentTerms(doc)]);
+    });
+
+  if (auditRows.length === 0) {
+    auditRows.push(["System", "No amendment override notes were generated for this abstract."]);
+  }
+
+  auditRows.forEach(([source, note]) => {
+    sheet.getCell(row, 1).value = source;
+    sheet.getCell(row, 2).value = note;
+    sheet.getCell(row, 1).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    sheet.getCell(row, 2).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    styleTableBodyRow(sheet, row, 1, totalCols, row % 2 === 0);
+    row += 1;
+  });
+
+  applyExcelPageSetup(sheet, {
+    landscape: false,
+    lastRow: Math.max(row, headerRow + 2),
+    lastCol: totalCols,
+    repeatHeaderRow: headerRow,
+    fitToHeight: 1,
+  });
 }
 
 export async function buildCompletedLeaseAbstractWorkbook(
   abstract: CompletedLeaseAbstractView,
   branding: CompletedLeaseExportBranding = {},
 ): Promise<ArrayBuffer> {
-  const canonical = abstract.controllingCanonical;
-  const notes = [asText(canonical.notes), asText(canonical.options), asText(canonical.notice_dates)].filter(Boolean).join("\n");
-  const resolvedBranding = {
-    brokerageName: valueOrNa(branding.brokerageName),
-    clientName: valueOrNa(branding.clientName),
-    reportDate: String(branding.reportDate || new Date().toLocaleDateString("en-US")).trim() || "N/A",
-    preparedBy: valueOrNa(branding.preparedBy || branding.brokerageName),
-  };
-  const templateResponse = await fetch(LEASE_CLOSEOUT_TEMPLATE_PATH, { cache: "no-store" });
-  if (!templateResponse.ok) {
-    throw new Error("Lease closeout template could not be loaded.");
-  }
-  const templateBytes = await templateResponse.arrayBuffer();
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(templateBytes as unknown as ExcelJS.Buffer);
+  const resolvedBranding = resolveCompletedLeaseBranding(branding);
   workbook.creator = resolvedBranding.brokerageName;
   workbook.lastModifiedBy = resolvedBranding.preparedBy;
   workbook.company = resolvedBranding.brokerageName;
   workbook.created = new Date();
   workbook.modified = new Date();
 
-  const addressSheet = workbook.getWorksheet(LEASE_CLOSEOUT_ADDRESS_SHEET);
-  const referenceSheet = workbook.getWorksheet(LEASE_CLOSEOUT_REFERENCE_SHEET);
-  if (!addressSheet || !referenceSheet) {
-    throw new Error("Lease closeout template sheets were not found.");
-  }
-
-  const lookupPairs: Array<[string, string | number]> = [
-    ["Property Name", valueOrNa(canonical.premises_name || canonical.building_name)],
-    ["Property Address", valueOrNa(canonical.address)],
-    ["Landlord", valueOrNa(canonical.landlord_name)],
-    ["Landlord Entity", valueOrNa(canonical.landlord_name)],
-    ["Building Square Footage", "N/A"],
-    ["Place of Rent Payment", joinMatches(findMatchingNotes(notes, /\bplace of payment\b|\brent payment\b|\bpayable at\b/i, 2))],
-    ["Tenant Name", valueOrNa(canonical.tenant_name || branding.clientName)],
-    ["Effective Date", "N/A"],
-    ["Guarantor", valueOrNa(canonical.guaranty)],
-    ["Delivery Date", "N/A"],
-    ["Suite Numbers", valueOrNa([canonical.suite, canonical.floor].filter(Boolean).join(" / "))],
-    ["Square Footage", formatTemplateNumber(toNumber(canonical.rsf), 0)],
-    ["Improvement Allowance", summarizeImprovementAllowance(canonical)],
-    ["Expiration", formatTemplateDate(canonical.expiration_date)],
-    ["Expiration of Allowance", joinMatches(findMatchingNotes(notes, /\ballowance\b.{0,40}\bexpir/i, 2))],
-    ["Term", toNumber(canonical.term_months) > 0 ? `${formatTemplateNumber(toNumber(canonical.term_months), 0)} months` : "N/A"],
-    ["Extension Commencement Date", joinMatches(findMatchingNotes(notes, /\bextension commencement\b|\brenewal commencement\b/i, 2))],
-    ["Extension Term Length", summarizeRenewal(canonical, notes)],
-    ["Security Deposit", summarizeSecurityDeposit(canonical)],
-    ["First Month's Rent", formatTemplateMonthlyRent(canonical)],
-    ["Abated Rent (Gross or Net)", summarizeAbatedRent(canonical)],
-    ["Other Concessions", summarizeConcessions(canonical, notes)],
-    ["Moving Allowance", joinMatches(findMatchingNotes(notes, /\bmoving allowance\b|\brelocation allowance\b/i, 2))],
-    ["Cap on Controllable", summarizeExpenseCaps(notes)],
-    ["2018 Estimate", toNumber(canonical.opex_psf_year_1) > 0 ? `${formatTemplateCurrency(toNumber(canonical.opex_psf_year_1))}/RSF/YR` : "N/A"],
-    ["Operating Expense Provisions/Exclusions", summarizeExpenseExclusions(notes)],
-    ["Other Expenses Paid By Tenant", summarizeOtherTenantExpenses(notes)],
-    ["Operating Expenses", summarizeOperatingExpenses(canonical)],
-    ["Parking", summarizeParking(canonical, notes)],
-    ["Parking Charges", summarizeParkingCharges(canonical, notes)],
-    ["HVAC After Hour Charges and Notice", summarizeHvac(notes)],
-    ["Late Charges", summarizeLateCharges(notes)],
-    ["Renewal Option (and notice date)", summarizeRenewal(canonical, notes)],
-    ["Right of First Refusal", summarizeRofr(canonical, notes)],
-    ["ROFO or Expansion Right", summarizeRofo(canonical, notes)],
-    ["Early Termination", summarizeTermination(canonical, notes)],
-    ["Sublease and Assignment AND Terms of LL Consent", summarizeAssignment(canonical, notes)],
-    ["Signage", summarizeSignage(notes)],
-    ["Furniture", summarizeFurniture(notes)],
-    ["Holdover", summarizeHoldover(notes)],
-    ["Notes", formatCloseoutNotes(notes)],
-  ];
-  let nextReferenceRow = writeLookupPairs(referenceSheet, lookupPairs);
-  referenceSheet.getCell(`A${nextReferenceRow}`).value = "Period";
-  referenceSheet.getCell(`B${nextReferenceRow}`).value = "Annual Rate Per Square Foot";
-  referenceSheet.getCell(`C${nextReferenceRow}`).value = "Monthly Base Rent";
-  nextReferenceRow += 1;
-  const rsf = toNumber(canonical.rsf);
-  const rentSteps = Array.isArray(canonical.rent_schedule) ? canonical.rent_schedule.slice(0, LEASE_CLOSEOUT_MAX_SCHEDULE_ROWS) : [];
-  rentSteps.forEach((step) => {
-    const annualRate = toNumber(step.rent_psf_annual);
-    referenceSheet.getCell(`A${nextReferenceRow}`).value = schedulePeriodLabel(
-      toNumber(step.start_month),
-      toNumber(step.end_month),
-    );
-    referenceSheet.getCell(`B${nextReferenceRow}`).value = annualRate > 0 ? annualRate : "N/A";
-    referenceSheet.getCell(`C${nextReferenceRow}`).value = annualRate > 0 && rsf > 0 ? (annualRate * rsf) / 12 : "N/A";
-    nextReferenceRow += 1;
-  });
-
-  addressSheet.getCell("A1").value = "Lease Closeout";
-  addressSheet.getCell("D4").value = resolvedBranding.brokerageName;
-  addressSheet.getCell("D4").font = {
-    name: EXCEL_THEME.font.family,
-    bold: true,
-    size: 14,
-    color: { argb: COLORS.text },
-  };
-  addressSheet.getCell("D4").alignment = { horizontal: "right", vertical: "middle" };
-  setCellValue(addressSheet, "D65", resolvedBranding.preparedBy);
-  setCellValue(addressSheet, "I65", resolvedBranding.reportDate);
-  setCellValue(addressSheet, "C23", summarizeConcessions(canonical, notes));
-  setCellValue(addressSheet, "K23", joinMatches(findMatchingNotes(notes, /\bmoving allowance\b|\brelocation allowance\b/i, 2)));
-
-  const amendments = abstract.sourceDocuments.filter((doc) => doc.kind === "amendment").slice(0, 2);
-  if (amendments.length === 0) {
-    setCellValue(addressSheet, "C25", "None");
-    setCellValue(addressSheet, "F25", "N/A");
-    setCellValue(addressSheet, "I25", "N/A");
-    setCellValue(addressSheet, "C26", "N/A");
-    setCellValue(addressSheet, "F26", "N/A");
-    setCellValue(addressSheet, "I26", "N/A");
-  } else {
-    amendments.forEach((doc, index) => {
-      const row = 25 + index;
-      const label = amendmentOrdinal(index);
-      setCellValue(addressSheet, `C${row}`, label);
-      setCellValue(addressSheet, `F${row}`, "N/A");
-      setCellValue(addressSheet, `H${row}`, `${label} Terms:`);
-      setCellValue(addressSheet, `I${row}`, summarizeAmendmentTerms(doc));
-    });
-    if (amendments.length === 1) {
-      setCellValue(addressSheet, "C26", "N/A");
-      setCellValue(addressSheet, "F26", "N/A");
-      setCellValue(addressSheet, "I26", "N/A");
-    }
-  }
-
-  const clientLogo = await normalizeLogoForExcel(branding.clientLogoDataUrl || branding.brokerageLogoDataUrl);
-  if (clientLogo) {
-    const imageId = workbook.addImage(clientLogo);
-    addressSheet.getCell("A4").value = "";
-    addressSheet.addImage(imageId, {
-      tl: { col: 0.1, row: 3.1 },
-      ext: { width: 155, height: 70 },
-      editAs: "oneCell",
-    });
-  } else {
-    addressSheet.getCell("A4").value = resolvedBranding.clientName;
-  }
-
-  const brokerageLogo = await normalizeLogoForExcel(branding.brokerageLogoDataUrl);
-  if (brokerageLogo) {
-    const imageId = workbook.addImage(brokerageLogo);
-    addressSheet.addImage(imageId, {
-      tl: { col: 10.2, row: 0.35 },
-      ext: { width: 150, height: 42 },
-      editAs: "oneCell",
-    });
-  }
+  await writeSummarySheet(workbook, abstract, resolvedBranding);
+  await writeAbstractSheet(workbook, abstract, resolvedBranding);
+  await writeRentScheduleSheet(workbook, abstract, resolvedBranding);
+  await writeSourceDocumentsSheet(workbook, abstract, resolvedBranding);
+  await writeAuditSheet(workbook, abstract, resolvedBranding);
 
   const buffer = await workbook.xlsx.writeBuffer();
   return buffer as ArrayBuffer;
+}
+
+function logoHtml(dataUrl: string, alt: string): string {
+  const safe = String(dataUrl || "").trim();
+  if (!safe) return "";
+  return `<img src="${safe}" alt="${escapeHtml(alt)}" />`;
 }
 
 function buildPdfHtml(
   abstract: CompletedLeaseAbstractView,
   branding: CompletedLeaseExportBranding = {},
 ): string {
+  const resolvedBranding = resolveCompletedLeaseBranding(branding);
   const canonical = abstract.controllingCanonical;
-  const rows = abstractRows(canonical);
-  const metaLine = buildExportMetaLine(branding);
+  const notes = [asText(canonical.notes), asText(canonical.options), asText(canonical.notice_dates)].filter(Boolean).join("\n");
+  const sections = buildAbstractSections(canonical);
+  const clauseRows = buildClauseSummaryRows(canonical, notes)
+    .slice(0, 8)
+    .map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`)
+    .join("");
 
-  const tableRows = rows
-    .map((item) => `<tr><th>${escapeHtml(item.label)}</th><td>${escapeHtml(item.value)}</td></tr>`)
+  const scheduleRows = (Array.isArray(canonical.rent_schedule) ? canonical.rent_schedule : [])
+    .map((step) => {
+      const annualRate = toNumber(step.rent_psf_annual);
+      const monthlyRent = annualRate > 0 && toNumber(canonical.rsf) > 0 ? (annualRate * toNumber(canonical.rsf)) / 12 : 0;
+      return `<tr>
+        <td>${escapeHtml(schedulePeriodLabel(toNumber(step.start_month), toNumber(step.end_month)))}</td>
+        <td class="num">${escapeHtml(String(toNumber(step.start_month) + 1))}</td>
+        <td class="num">${escapeHtml(String(toNumber(step.end_month) + 1))}</td>
+        <td class="num">${escapeHtml(toCurrency(annualRate, 2))}</td>
+        <td class="num">${escapeHtml(toCurrency(monthlyRent))}</td>
+      </tr>`;
+    })
     .join("");
 
   const sourceRows = abstract.sourceDocuments
-    .map(
-      (doc) =>
-        `<tr><td>${escapeHtml(doc.kind === "amendment" ? "Amendment" : "Lease")}</td><td>${escapeHtml(doc.fileName)}</td><td>${escapeHtml(toDateLabel(doc.uploadedAtIso.slice(0, 10)))}</td><td>${doc.id === abstract.controllingDocumentId ? "Controlling" : "Reference"}</td></tr>`
-    )
+    .map((doc) => `<tr>
+      <td>${escapeHtml(doc.kind === "amendment" ? "Amendment" : "Lease")}</td>
+      <td>${escapeHtml(doc.fileName)}</td>
+      <td>${escapeHtml(toDateLabel(doc.uploadedAtIso.slice(0, 10)))}</td>
+      <td>${escapeHtml(doc.id === abstract.controllingDocumentId ? "Controlling" : "Reference")}</td>
+    </tr>`)
     .join("");
 
-  const overrides = abstract.overrideNotes
+  const auditList = (abstract.overrideNotes.length > 0 ? abstract.overrideNotes : ["No amendment override notes were generated for this abstract."])
     .map((note) => `<li>${escapeHtml(note)}</li>`)
+    .join("");
+
+  const sectionTables = sections
+    .map((section) => `<article class="detail-card">
+      <h2>${escapeHtml(section.title)}</h2>
+      <table>
+        <tbody>${section.rows.map((row) => `<tr><th>${escapeHtml(row.label)}</th><td>${escapeHtml(row.value)}</td></tr>`).join("")}</tbody>
+      </table>
+    </article>`)
     .join("");
 
   return `<!doctype html>
@@ -662,7 +1041,8 @@ function buildPdfHtml(
       <meta charset="utf-8" />
       <title>${escapeHtml(buildCompletedLeaseAbstractFileName("pdf", branding).replace(/\.pdf$/i, ""))}</title>
       <style>
-        @page { size: letter portrait; margin: 0.45in; }
+        @page { size: letter portrait; margin: 0.42in; }
+        * { box-sizing: border-box; }
         body {
           margin: 0;
           font-family: ${EXPORT_BRAND.pdf.fonts.family};
@@ -670,69 +1050,163 @@ function buildPdfHtml(
           background: white;
         }
         .page {
+          page-break-after: always;
+        }
+        .page:last-child {
+          page-break-after: auto;
+        }
+        .hero {
           border: 1px solid ${EXPORT_BRAND.pdf.colors.border};
-          padding: 20px;
+          background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 48%, #ffffff 100%);
+          padding: 22px;
         }
-        .title {
-          font-size: 30px;
-          font-weight: 700;
-          margin: 0 0 8px;
+        .hero-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          min-height: 38px;
         }
-        .meta {
-          margin: 0 0 18px;
+        .hero-top img {
+          max-height: 30px;
+          max-width: 140px;
+          object-fit: contain;
+        }
+        .hero h1 {
+          margin: 16px 0 8px;
+          font-size: 26px;
+          line-height: 1.08;
+        }
+        .hero p {
+          margin: 0;
           color: ${EXPORT_BRAND.pdf.colors.subtext};
           font-size: 12px;
+          line-height: 1.6;
         }
-        h2 {
-          font-size: 15px;
+        .kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 16px;
+        }
+        .kpi-card {
+          border: 1px solid ${EXPORT_BRAND.pdf.colors.border};
+          background: rgba(255,255,255,0.88);
+          padding: 12px;
+        }
+        .kpi-card span {
+          display: block;
+          font-size: 10px;
           letter-spacing: 0.08em;
           text-transform: uppercase;
-          margin: 20px 0 10px;
+          color: ${EXPORT_BRAND.pdf.colors.subtext};
+          margin-bottom: 6px;
+        }
+        .kpi-card strong {
+          display: block;
+          font-size: 16px;
+          line-height: 1.22;
+        }
+        .section {
+          margin-top: 14px;
+          border: 1px solid ${EXPORT_BRAND.pdf.colors.border};
+          padding: 14px;
+        }
+        .section h2, .detail-card h2 {
+          margin: 0 0 10px;
+          font-size: 13px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
         }
         table {
           width: 100%;
           border-collapse: collapse;
-          font-size: 12px;
+          font-size: 11px;
         }
         th, td {
           border: 1px solid ${EXPORT_BRAND.pdf.colors.border};
-          padding: 6px 8px;
+          padding: 6px 7px;
           text-align: left;
           vertical-align: top;
         }
         th {
-          width: 34%;
-          background: ${EXPORT_BRAND.pdf.colors.mutedFill};
+          width: 38%;
+          background: ${EXPORT_BRAND.pdf.colors.panelFill};
         }
-        .source th, .source td { width: auto; }
+        .detail-grid {
+          display: grid;
+          gap: 12px;
+        }
+        .detail-card {
+          border: 1px solid ${EXPORT_BRAND.pdf.colors.border};
+          padding: 12px;
+          break-inside: avoid;
+        }
+        .num {
+          text-align: right;
+          white-space: nowrap;
+        }
         ul {
-          margin: 8px 0 0 18px;
-          padding: 0;
+          margin: 0;
+          padding-left: 18px;
           font-size: 11px;
+          line-height: 1.6;
           color: ${EXPORT_BRAND.pdf.colors.subtext};
         }
       </style>
     </head>
     <body>
       <section class="page">
-        <p class="title">Completed Lease Abstract</p>
-        <p class="meta">${escapeHtml(metaLine)}</p>
-        <h2>Controlling Terms</h2>
-        <table>
-          <tbody>${tableRows}</tbody>
-        </table>
-        <h2>Source Documents</h2>
-        <table class="source">
-          <thead>
-            <tr><th>Type</th><th>Document</th><th>Uploaded</th><th>Status</th></tr>
-          </thead>
-          <tbody>${sourceRows}</tbody>
-        </table>
-        ${
-          overrides
-            ? `<h2>Override Audit Notes</h2><ul>${overrides}</ul>`
-            : ""
-        }
+        <div class="hero">
+          <div class="hero-top">
+            <div>${logoHtml(resolvedBranding.brokerageLogoDataUrl, `${resolvedBranding.brokerageName} logo`)}</div>
+            <div>${logoHtml(resolvedBranding.clientLogoDataUrl, `${resolvedBranding.clientName} logo`)}</div>
+          </div>
+          <h1>Lease Abstract Presentation</h1>
+          <p>${escapeHtml(buildExportMetaLine(resolvedBranding))}</p>
+          <p>Controlling lease terms summarized into a client-ready abstract with source-document context and amendment traceability.</p>
+          <div class="kpi-grid">
+            <div class="kpi-card"><span>Tenant</span><strong>${escapeHtml(asDisplayText(canonical.tenant_name))}</strong></div>
+            <div class="kpi-card"><span>Premises</span><strong>${escapeHtml(asDisplayText(canonical.premises_name || canonical.building_name))}</strong></div>
+            <div class="kpi-card"><span>RSF</span><strong>${escapeHtml(formatTemplateNumber(toNumber(canonical.rsf), 0))}</strong></div>
+            <div class="kpi-card"><span>Term</span><strong>${escapeHtml(`${toNumber(canonical.term_months) || monthDiffInclusive(canonical.commencement_date, canonical.expiration_date)} months`)}</strong></div>
+            <div class="kpi-card"><span>Year 1 Base Rent</span><strong>${escapeHtml(formatTemplateRatePerSf(getBaseRentYearOne(canonical)))}</strong></div>
+            <div class="kpi-card"><span>Concessions</span><strong>${escapeHtml(summarizeConcessions(canonical, notes))}</strong></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>Key Clauses</h2>
+          <table><tbody>${clauseRows}</tbody></table>
+        </div>
+      </section>
+
+      <section class="page">
+        <div class="detail-grid">${sectionTables}</div>
+
+        <div class="section">
+          <h2>Rent Schedule</h2>
+          <table>
+            <thead>
+              <tr><th>Period</th><th>Start</th><th>End</th><th>Annual Rate / SF</th><th>Monthly Base Rent</th></tr>
+            </thead>
+            <tbody>${scheduleRows || `<tr><td colspan="5">No rent schedule available.</td></tr>`}</tbody>
+          </table>
+        </div>
+
+        <div class="section">
+          <h2>Source Documents</h2>
+          <table>
+            <thead>
+              <tr><th>Type</th><th>Document</th><th>Uploaded</th><th>Role</th></tr>
+            </thead>
+            <tbody>${sourceRows}</tbody>
+          </table>
+        </div>
+
+        <div class="section">
+          <h2>Override Audit Notes</h2>
+          <ul>${auditList}</ul>
+        </div>
       </section>
     </body>
   </html>`;
@@ -743,7 +1217,7 @@ export function printCompletedLeaseAbstract(
   branding: CompletedLeaseExportBranding = {},
 ): void {
   const html = buildPdfHtml(abstract, branding);
-  openPrintWindow(html, { width: 1280, height: 900 });
+  openPrintWindow(html, { width: 1280, height: 960 });
 }
 
 export function downloadArrayBuffer(arrayBuffer: ArrayBuffer, fileName: string, mimeType: string): void {

@@ -1241,7 +1241,7 @@ export function BuildingsWorkspace({ clientId, clientName }: { clientId: string;
 
             <PlatformPanel kicker="Results" title="Filtered Buildings">
               <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-                {displayedBuildings.length === 0 ? <p className="text-sm text-slate-400">No buildings match the current filters.</p> : displayedBuildings.map((building, index) => (
+                {displayedBuildings.length === 0 ? <p className="text-sm text-slate-400">No buildings found — adjust filters or click Add Building to create a new one.</p> : displayedBuildings.map((building, index) => (
                   (() => {
                     const designatedImage = getDesignatedBuildingImage(building);
                     const imageUrl = resolveBuildingImageUrl(designatedImage?.imageUrl || "", designatedImage?.sourceUrl || "");

@@ -80,7 +80,7 @@ export function ScenarioList({
       <div className="surface-card p-5">
         <p className="heading-kicker mb-2">Scenarios</p>
         <h2 className="heading-section mb-2">Scenario list</h2>
-        <p className="text-sm text-slate-300">No scenarios yet.</p>
+        <p className="text-sm text-slate-300">No scenarios yet — upload a lease or click New Scenario to begin.</p>
       </div>
     );
   }

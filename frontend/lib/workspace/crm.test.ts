@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildCrmWorkspaceState, type CrmBuilding } from "@/lib/workspace/crm";
+import { buildCrmWorkspaceState, type CrmBuilding, type CrmCompany } from "@/lib/workspace/crm";
 import { getWorkspaceBuildingDeletionKey } from "@/lib/workspace/deletions";
 import { LANDLORD_REP_MODE } from "@/lib/workspace/representation-mode";
-import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
+import type { ClientWorkspaceDeal, ClientWorkspaceDocument } from "@/lib/workspace/types";
 
 const documents: ClientWorkspaceDocument[] = [
   {
@@ -183,6 +183,99 @@ describe("workspace/crm stacking-plan ingest", () => {
 
     expect(state.buildings.some((building) => building.id === "shared_1")).toBe(true);
     expect(state.buildings.find((building) => building.id === "shared_1")?.name).toBe("Shared Tower");
+  });
+
+  it("links manually created CRM companies to pipeline deals by company id", () => {
+    const manualCompany: CrmCompany = {
+      id: "company_prospect_1",
+      clientId: "client_1",
+      name: "Pipeline Prospect",
+      type: "prospect",
+      industry: "Technology",
+      market: "Austin",
+      submarket: "CBD",
+      buildingId: "",
+      floor: "",
+      suite: "",
+      squareFootage: 0,
+      currentLeaseExpiration: "",
+      noticeDeadline: "",
+      renewalProbability: 0.5,
+      prospectStatus: "New Lead",
+      relationshipOwner: "Broker Team",
+      source: "manual",
+      notes: "",
+      createdAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+      linkedDocumentIds: [],
+      linkedDealIds: [],
+      linkedObligationIds: [],
+      linkedSurveyIds: [],
+      linkedAnalysisIds: [],
+      linkedLeaseAbstractIds: [],
+      lastTouchDate: "",
+      nextFollowUpDate: "",
+      landlordName: "",
+      brokerRelationship: "",
+    };
+    const deal: ClientWorkspaceDeal = {
+      id: "deal_prospect_1",
+      clientId: "client_1",
+      companyId: manualCompany.id,
+      dealName: "Pipeline Prospect Requirement",
+      requirementName: "Pipeline Prospect requirement",
+      dealType: "Tenant Rep",
+      stage: "New Lead",
+      status: "open",
+      priority: "medium",
+      targetMarket: "Austin",
+      submarket: "CBD",
+      city: "",
+      squareFootageMin: 0,
+      squareFootageMax: 0,
+      budget: 0,
+      occupancyDateGoal: "",
+      expirationDate: "",
+      selectedProperty: "",
+      selectedSuite: "",
+      selectedLandlord: "",
+      tenantRepBroker: "Broker Team",
+      notes: "",
+      linkedSurveyIds: [],
+      linkedAnalysisIds: [],
+      linkedDocumentIds: [],
+      linkedObligationIds: [],
+      linkedLeaseAbstractIds: [],
+      timeline: [],
+      tasks: [],
+      createdAt: "2026-03-20T00:00:00.000Z",
+      updatedAt: "2026-03-20T00:00:00.000Z",
+    };
+
+    const state = buildCrmWorkspaceState({
+      clientId: "client_1",
+      clientName: "Workspace Client",
+      documents: [],
+      deals: [deal],
+      properties: [],
+      spaces: [],
+      obligations: [],
+      surveys: [],
+      surveyEntries: [],
+      financialAnalyses: [],
+      leaseAbstracts: [],
+      existingState: {
+        companies: [manualCompany],
+      },
+    });
+
+    const prospect = state.companies.find((company) => company.id === manualCompany.id);
+    const workspace = state.companies.find((company) => company.name === "Workspace Client");
+
+    expect(prospect?.name).toBe("Pipeline Prospect");
+    expect(prospect?.linkedDealIds).toContain(deal.id);
+    expect(state.prospectingRecords.find((record) => record.companyId === manualCompany.id)?.prospectStage).toBe("New Lead");
+    expect(workspace?.linkedDealIds).not.toContain(deal.id);
   });
 
   it("preserves shortlist and tour workflow records from existing state", () => {

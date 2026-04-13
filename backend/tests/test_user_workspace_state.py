@@ -41,13 +41,19 @@ def test_put_user_workspace_state_uploads_envelope(monkeypatch) -> None:
     )
 
     captured: dict[str, object] = {}
+    uploaded_sections: dict[str, object] = {}
 
     def _capture_upload(user_id: str, workspace_state: dict) -> dict[str, object]:
         captured["user_id"] = user_id
         captured["workspace_state"] = workspace_state
         return {"object_path": "workspace/user_999/state.json", "bytes": 123}
 
+    def _capture_section_upload(user_id: str, section_key: str, value: object) -> dict[str, object]:
+        uploaded_sections[section_key] = value
+        return {"object_path": f"workspace/{user_id}/sections/{section_key}.json", "bytes": 64}
+
     monkeypatch.setattr(main, "_storage_upload_workspace_state", _capture_upload)
+    monkeypatch.setattr(main, "_storage_upload_workspace_section", _capture_section_upload)
 
     client = TestClient(main.app)
     body = {
@@ -68,8 +74,14 @@ def test_put_user_workspace_state_uploads_envelope(monkeypatch) -> None:
     assert captured["user_id"] == "user_999"
     uploaded = captured["workspace_state"]
     assert isinstance(uploaded, dict)
-    assert uploaded.get("version") == 1
-    assert uploaded.get("workspace_state") == body["workspace_state"]
+    assert uploaded.get("version") == 2
+    assert uploaded.get("workspace_state") == {"activeClientId": "c1"}
+    assert uploaded.get("external_sections") == {
+        "clients": "workspace/user_999/sections/clients.json",
+        "documents": "workspace/user_999/sections/documents.json",
+    }
+    assert uploaded_sections["clients"] == body["workspace_state"]["clients"]
+    assert uploaded_sections["documents"] == []
 
 
 def test_get_workspace_section_returns_value(monkeypatch) -> None:
@@ -80,13 +92,22 @@ def test_get_workspace_section_returns_value(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         main,
-        "_storage_download_workspace_state",
+        "_storage_download_workspace_envelope",
         lambda user_id: (
             {
-                "obligations_module_v1::client_1": {"documents": [{"id": "doc_1"}]},
+                "version": 2,
+                "workspace_state": {},
+                "external_sections": {
+                    "obligations_module_v1::client_1": "workspace/user_abc/sections/obligations.json",
+                },
             },
             "2026-03-11T13:00:00Z",
         ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_storage_download_workspace_section_by_path",
+        lambda object_path: (True, {"documents": [{"id": "doc_1"}]}),
     )
 
     client = TestClient(main.app)
@@ -108,24 +129,36 @@ def test_put_workspace_section_merges_and_saves(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         main,
-        "_storage_download_workspace_state",
+        "_storage_download_workspace_envelope",
         lambda user_id: (
             {
-                "clients": [{"id": "c1"}],
-                "documents": [{"id": "d1"}],
+                "version": 2,
+                "workspace_state": {
+                    "activeClientId": "c1",
+                },
+                "external_sections": {
+                    "clients": "workspace/user_xyz/sections/clients.json",
+                    "documents": "workspace/user_xyz/sections/documents.json",
+                },
             },
             "2026-03-11T13:00:00Z",
         ),
     )
 
     captured: dict[str, object] = {}
+    uploaded_sections: dict[str, object] = {}
 
     def _capture_upload(user_id: str, workspace_state: dict) -> dict[str, object]:
         captured["user_id"] = user_id
         captured["workspace_state"] = workspace_state
         return {"object_path": "workspace/user_xyz/state.json", "bytes": 250}
 
+    def _capture_section_upload(user_id: str, section_key: str, value: object) -> dict[str, object]:
+        uploaded_sections[section_key] = value
+        return {"object_path": f"workspace/{user_id}/sections/{section_key}.json", "bytes": 90}
+
     monkeypatch.setattr(main, "_storage_upload_workspace_state", _capture_upload)
+    monkeypatch.setattr(main, "_storage_upload_workspace_section", _capture_section_upload)
 
     client = TestClient(main.app)
     response = client.put(
@@ -142,11 +175,109 @@ def test_put_workspace_section_merges_and_saves(monkeypatch) -> None:
 
     uploaded = captured["workspace_state"]
     assert isinstance(uploaded, dict)
-    assert uploaded.get("version") == 1
+    assert uploaded.get("version") == 2
     assert isinstance(uploaded.get("workspace_state"), dict)
-    assert uploaded["workspace_state"]["clients"] == [{"id": "c1"}]
-    assert uploaded["workspace_state"]["documents"] == [{"id": "d1"}]
-    assert uploaded["workspace_state"]["sublease_recovery_analysis_scenarios_v2::client_1"] == {
+    assert uploaded["workspace_state"]["activeClientId"] == "c1"
+    assert uploaded.get("external_sections") == {
+        "clients": "workspace/user_xyz/sections/clients.json",
+        "documents": "workspace/user_xyz/sections/documents.json",
+        "sublease_recovery_analysis_scenarios_v2::client_1": "workspace/user_xyz/sections/sublease_recovery_analysis_scenarios_v2::client_1.json",
+    }
+    assert uploaded_sections["sublease_recovery_analysis_scenarios_v2::client_1"] == {
         "seed": "abc123",
         "scenarios": [{"id": "s1"}],
     }
+
+
+def test_storage_download_workspace_state_hydrates_external_sections(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main,
+        "_storage_download_workspace_envelope",
+        lambda user_id: (
+            {
+                "version": 2,
+                "updated_at": "2026-03-11T14:00:00Z",
+                "workspace_state": {
+                    "activeClientId": "c1",
+                },
+                "external_sections": {
+                    "clients": "workspace/user_123/sections/clients.json",
+                    "documents": "workspace/user_123/sections/documents.json",
+                },
+            },
+            "2026-03-11T14:00:00Z",
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_storage_download_workspace_section_by_path",
+        lambda object_path: (
+            True,
+            [{"id": "c1", "name": "Client A"}]
+            if object_path.endswith("clients.json")
+            else [{"id": "d1", "name": "Lease.pdf"}],
+        ),
+    )
+
+    state, updated_at = main._storage_download_workspace_state("user_123")
+
+    assert updated_at == "2026-03-11T14:00:00Z"
+    assert state == {
+        "activeClientId": "c1",
+        "clients": [{"id": "c1", "name": "Client A"}],
+        "documents": [{"id": "d1", "name": "Lease.pdf"}],
+    }
+
+
+def test_storage_download_workspace_envelope_uses_authenticated_storage_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(main, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(main, "SUPABASE_WORKSPACE_BUCKET", "workspace-bucket")
+    monkeypatch.setattr(main, "_admin_headers", lambda: {"authorization": "Bearer service"})
+    monkeypatch.setattr(main, "_storage_signed_object_url", lambda bucket, object_path, expires_seconds=3600: None)
+
+    captured_urls: list[str] = []
+
+    def _capture_request(url: str, **kwargs):
+        captured_urls.append(url)
+        return 404, b""
+
+    monkeypatch.setattr(main, "_http_bytes_request", _capture_request)
+
+    payload, updated_at = main._storage_download_workspace_envelope("user_123")
+
+    assert payload is None
+    assert updated_at is None
+    assert captured_urls[0] == (
+        "https://example.supabase.co/storage/v1/object/authenticated/"
+        "workspace-bucket/workspace/user_123/state.json"
+    )
+
+
+def test_storage_download_object_bytes_uses_signed_url_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(main, "SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setattr(main, "_admin_headers", lambda: {"authorization": "Bearer service"})
+    monkeypatch.setattr(
+        main,
+        "_storage_signed_object_url",
+        lambda bucket, object_path, expires_seconds=3600: "https://signed.example.test/object",
+    )
+
+    requested_urls: list[str] = []
+
+    def _capture_request(url: str, **kwargs):
+        requested_urls.append(url)
+        if url == "https://signed.example.test/object":
+            return 200, b'{"ok":true}'
+        return 403, b'{"message":"private bucket"}'
+
+    monkeypatch.setattr(main, "_http_bytes_request", _capture_request)
+
+    status, body = main._storage_download_object_bytes("workspace-bucket", "workspace/user_123/state.json")
+
+    assert status == 200
+    assert body == b'{"ok":true}'
+    assert requested_urls == [
+        "https://example.supabase.co/storage/v1/object/authenticated/workspace-bucket/workspace/user_123/state.json",
+        "https://example.supabase.co/storage/v1/object/workspace-bucket/workspace/user_123/state.json",
+        "https://signed.example.test/object",
+    ]

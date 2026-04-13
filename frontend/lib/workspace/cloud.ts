@@ -1,6 +1,5 @@
 import { fetchApiProxy, getAuthHeaders } from "@/lib/api";
 import { getAccessToken } from "@/lib/auth-token";
-import { signOut } from "@/lib/supabase";
 
 export interface WorkspaceCloudStateResponse {
   user_id: string;
@@ -41,24 +40,6 @@ function toWorkspaceError(message: string, fallback: string): Error {
   return new Error(message || fallback);
 }
 
-let authExpirySignOutPromise: Promise<void> | null = null;
-
-function hasAuthExpired(status: number, message: string): boolean {
-  const normalized = String(message || "").trim().toLowerCase();
-  return status === 401
-    || status === 403
-    || normalized.includes("not authenticated")
-    || normalized.includes("invalid or expired");
-}
-
-function queueSignOutOnAuthFailure(status: number, message: string): void {
-  if (!hasAuthExpired(status, message)) return;
-  if (authExpirySignOutPromise) return;
-  authExpirySignOutPromise = signOut().finally(() => {
-    authExpirySignOutPromise = null;
-  });
-}
-
 export async function fetchWorkspaceCloudState(): Promise<WorkspaceCloudStateResponse> {
   if (!getAccessToken()) {
     throw new Error("Session expired. Please sign in again.");
@@ -69,7 +50,6 @@ export async function fetchWorkspaceCloudState(): Promise<WorkspaceCloudStateRes
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text());
-    queueSignOutOnAuthFailure(res.status, body);
     throw toWorkspaceError(body, `Workspace fetch failed (${res.status}).`);
   }
   return (await res.json()) as WorkspaceCloudStateResponse;
@@ -86,7 +66,6 @@ export async function saveWorkspaceCloudState(workspaceState: Record<string, unk
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text());
-    queueSignOutOnAuthFailure(res.status, body);
     throw toWorkspaceError(body, `Workspace save failed (${res.status}).`);
   }
   return (await res.json()) as WorkspaceCloudStateResponse;
@@ -103,7 +82,6 @@ export async function fetchWorkspaceCloudSection(sectionKey: string): Promise<Wo
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text());
-    queueSignOutOnAuthFailure(res.status, body);
     throw toWorkspaceError(body, `Workspace section fetch failed (${res.status}).`);
   }
   return (await res.json()) as WorkspaceCloudSectionResponse;
@@ -124,7 +102,6 @@ export async function saveWorkspaceCloudSection(
   });
   if (!res.ok) {
     const body = parseBodyText(await res.text());
-    queueSignOutOnAuthFailure(res.status, body);
     throw toWorkspaceError(body, `Workspace section save failed (${res.status}).`);
   }
   return (await res.json()) as WorkspaceCloudSectionResponse;

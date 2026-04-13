@@ -35,7 +35,7 @@ async function main() {
 <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
   <rect width="${W}" height="${H}" fill="${BG}"/>
   <image href="data:image/png;base64,${logoBase64}" x="${logoX}" y="${logoY}" width="${lw}" height="${lh}"/>
-  <text x="${W / 2}" y="${taglineY}" text-anchor="middle" fill="#e5e5e5" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="400">${escapeXml(TAGLINE)}</text>
+  <text x="${W / 2}" y="${taglineY}" text-anchor="middle" fill="#e5e5e5" font-family="DM Mono" font-size="32" font-weight="400">${escapeXml(TAGLINE)}</text>
 </svg>`;
 
   const png = await sharp(Buffer.from(svg))

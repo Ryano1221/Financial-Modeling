@@ -4,13 +4,23 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import { DocumentIngestionLoader } from "@/components/workspace/DocumentIngestionLoader";
 import { repairNormalizerResponse } from "@/lib/lease-extraction-repair";
+import type { NormalizerResponse } from "@/lib/types";
 import { isParseableWorkspaceDocument, normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { getNormalizeIntakeDecision } from "@/lib/normalize-review";
+import { fetchWorkspaceCloudSection } from "@/lib/workspace/cloud";
+import {
+  getDocumentFileSectionKey,
+  getDocumentSnapshotSectionKey,
+  parseCloudDocumentFilePayload,
+  toDocumentNormalizeSnapshot,
+} from "@/lib/workspace/document-cloud-payloads";
 import {
   CLIENT_DOCUMENT_TYPES,
   type ClientDocumentType,
   type ClientDocumentSourceModule,
   type ClientWorkspaceDocument,
+  type DocumentNormalizeSnapshot,
+  type UpdateClientDocumentInput,
 } from "@/lib/workspace/types";
 import { getDisplayErrorMessage } from "@/lib/api";
 import {
@@ -108,7 +118,7 @@ export function ClientDocumentCenter({
     const target = documents.find((doc) => doc.id === docId);
     if (!target) return;
     if (!target.previewDataUrl) {
-      setError("This document was indexed, but its original file payload is not available in this browser yet. Re-upload it once and future refreshes will keep it openable here.");
+      setError("This document is still missing its cloud file payload in this browser. Keep the workspace online for a moment, then refresh and try Open again.");
       return;
     }
     const fileMimeType = inferDocumentMimeType(target.name, target.fileMimeType);
@@ -187,6 +197,62 @@ export function ClientDocumentCenter({
     if (contextualActionTypes.size === 0) return true;
     return contextualActionTypes.has(doc.type);
   }, [contextualActionLabel, contextualActionTypes, onContextualAction]);
+
+  const hydrateDocumentForAction = useCallback(async (doc: ClientWorkspaceDocument): Promise<ClientWorkspaceDocument> => {
+    let nextDoc = doc;
+    const patch: UpdateClientDocumentInput = {};
+
+    if (!nextDoc.normalizeSnapshot) {
+      try {
+        const section = await fetchWorkspaceCloudSection(getDocumentSnapshotSectionKey(nextDoc.id));
+        const snapshot = toDocumentNormalizeSnapshot(
+          section.value as NormalizerResponse | DocumentNormalizeSnapshot | null,
+        );
+        if (snapshot?.canonical_lease) {
+          patch.normalizeSnapshot = snapshot;
+          patch.parsed = true;
+          nextDoc = {
+            ...nextDoc,
+            normalizeSnapshot: snapshot,
+            parsed: true,
+          };
+        }
+      } catch (error) {
+        console.warn("[document-center] cloud_snapshot_hydration_failed", nextDoc.id, error);
+      }
+    }
+
+    if (!nextDoc.previewDataUrl) {
+      try {
+        const section = await fetchWorkspaceCloudSection(getDocumentFileSectionKey(nextDoc.id));
+        const filePayload = parseCloudDocumentFilePayload(section.value);
+        if (filePayload?.previewDataUrl) {
+          patch.previewDataUrl = filePayload.previewDataUrl;
+          patch.fileMimeType = nextDoc.fileMimeType || filePayload.fileMimeType;
+          nextDoc = {
+            ...nextDoc,
+            fileMimeType: nextDoc.fileMimeType || filePayload.fileMimeType,
+            previewDataUrl: filePayload.previewDataUrl,
+          };
+        }
+      } catch (error) {
+        console.warn("[document-center] cloud_file_hydration_failed", nextDoc.id, error);
+      }
+    }
+
+    if (Object.keys(patch).length > 0) {
+      updateDocument(nextDoc.id, patch);
+    }
+
+    return nextDoc;
+  }, [updateDocument]);
+
+  const runContextualAction = useCallback(async (doc: ClientWorkspaceDocument) => {
+    if (!onContextualAction) return;
+    setError("");
+    const hydrated = await hydrateDocumentForAction(doc);
+    await onContextualAction(hydrated);
+  }, [hydrateDocumentForAction, onContextualAction]);
 
   const renderEditFields = useCallback(() => (
     <>
@@ -540,7 +606,7 @@ export function ClientDocumentCenter({
                             type="button"
                             className="btn-premium btn-premium-primary w-full justify-center text-xs"
                             onClick={() => {
-                              void onContextualAction?.(doc);
+                              void runContextualAction(doc);
                             }}
                           >
                             {contextualActionLabel}
@@ -589,7 +655,7 @@ export function ClientDocumentCenter({
                     <th className="hidden md:table-cell w-[23%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Building</th>
                     <th className="hidden sm:table-cell w-[10%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Suite</th>
                     <th className="w-[13%] text-left py-2 pr-2 sm:pr-3 text-slate-300 font-medium">Uploaded</th>
-                    <th className="sticky right-0 z-10 border-l border-white/10 bg-black/90 w-[372px] text-left py-2 pl-2 pr-2 sm:pr-3 text-slate-300 font-medium">Actions</th>
+                    <th className="sticky right-0 z-10 border-l border-white/10 bg-black/90 w-[280px] text-left py-2 pl-2 pr-2 text-slate-300 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -608,14 +674,14 @@ export function ClientDocumentCenter({
                             <td className="hidden md:table-cell py-3 pr-2 sm:pr-3 text-slate-300 align-top truncate" title={doc.building || "-"}>{doc.building || "-"}</td>
                             <td className="hidden sm:table-cell py-3 pr-2 sm:pr-3 text-slate-300 align-top truncate" title={doc.suite || "-"}>{doc.suite || "-"}</td>
                             <td className="py-3 pr-2 sm:pr-3 text-slate-300 break-words align-top">{formatDateTime(doc.uploadedAt)}</td>
-                            <td className="sticky right-0 border-l border-white/10 bg-black/90 py-3 pl-2 pr-2 sm:pr-3 text-slate-300 align-top whitespace-nowrap">
-                              <div className="grid w-full max-w-[272px] grid-cols-2 gap-2">
+                            <td className="sticky right-0 w-[280px] border-l border-white/10 bg-black/90 py-2 pl-2 pr-2 text-slate-300 align-top">
+                              <div className="grid w-full grid-cols-2 gap-2">
                                 {canRunContextualAction(doc) ? (
                                   <button
                                     type="button"
                                     className="btn-premium btn-premium-primary !h-8 !min-h-8 !w-full !px-0 !py-0 text-[11px] inline-flex items-center justify-center"
                                     onClick={() => {
-                                      void onContextualAction?.(doc);
+                                      void runContextualAction(doc);
                                     }}
                                   >
                                     {contextualActionLabel}

@@ -1,5 +1,19 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-profile";
+
+export const metadata: Metadata = {
+  title: "About The CRE Model",
+  description:
+    "Learn how The CRE Model connects commercial real estate CRM, lease documents, financial analysis, surveys, lease abstracts, obligations, and broker workflow automation.",
+  alternates: { canonical: "/about" },
+  openGraph: {
+    title: "About The CRE Model",
+    description:
+      "A connected commercial real estate CRM and lease analysis workspace for brokerage teams.",
+    url: "https://thecremodel.com/about",
+  },
+};
 
 const profiles = [
   REPRESENTATION_MODE_PROFILES.tenant_rep,

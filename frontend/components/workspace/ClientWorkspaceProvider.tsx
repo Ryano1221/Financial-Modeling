@@ -12,7 +12,6 @@ import {
 import {
   getSession,
   getSessionFromStorage,
-  signOut,
   subscribeAuthSession,
   type SupabaseAuthSession,
 } from "@/lib/supabase";
@@ -37,7 +36,20 @@ import {
   saveDocumentCache,
 } from "@/lib/workspace/document-cache";
 import { getDealDocumentStageTransition } from "@/lib/workspace/deal-stage-automation";
-import { fetchWorkspaceCloudState, saveWorkspaceCloudState } from "@/lib/workspace/cloud";
+import {
+  fetchWorkspaceCloudSection,
+  fetchWorkspaceCloudState,
+  saveWorkspaceCloudSection,
+  saveWorkspaceCloudState,
+} from "@/lib/workspace/cloud";
+import {
+  getDocumentFileSectionKey,
+  getDocumentSnapshotSectionKey,
+  parseCloudDocumentFilePayload,
+  toCloudDocumentFilePayload,
+  toDocumentNormalizeSnapshot,
+  type CloudDocumentFilePayload,
+} from "@/lib/workspace/document-cloud-payloads";
 import { mergeHydratedWorkspaceState, type HydratedWorkspaceState } from "@/lib/workspace/account-sync";
 import { filterDocumentsByDeletedIds, normalizeDeletionIds } from "@/lib/workspace/deletions";
 import { normalizeRepresentationMode, type RepresentationMode } from "@/lib/workspace/representation-mode";
@@ -89,6 +101,7 @@ interface ClientWorkspaceContextValue {
   setRepresentationMode: (mode: RepresentationMode) => void;
   createClient: (input: CreateClientInput) => ClientWorkspaceClient | null;
   updateClient: (clientId: string, input: UpdateClientInput) => void;
+  removeClient: (clientId: string) => void;
   createDeal: (input: CreateDealInput) => ClientWorkspaceDeal | null;
   updateDeal: (dealId: string, input: UpdateDealInput) => void;
   removeDeal: (dealId: string) => void;
@@ -133,21 +146,7 @@ function sameSession(a: SupabaseAuthSession | null, b: SupabaseAuthSession | nul
 function toNormalizeSnapshot(
   normalize: NormalizerResponse | DocumentNormalizeSnapshot | null | undefined,
 ): DocumentNormalizeSnapshot | undefined {
-  if (!normalize || typeof normalize !== "object") return undefined;
-
-  if ("canonical_lease" in normalize && normalize.canonical_lease) {
-    return {
-      canonical_lease: normalize.canonical_lease,
-      extraction_summary: "extraction_summary" in normalize ? normalize.extraction_summary : undefined,
-      review_tasks: "review_tasks" in normalize ? normalize.review_tasks : undefined,
-      field_confidence: "field_confidence" in normalize ? normalize.field_confidence : undefined,
-      warnings: "warnings" in normalize ? normalize.warnings : undefined,
-      confidence_score: "confidence_score" in normalize ? normalize.confidence_score : undefined,
-      option_variants: "option_variants" in normalize ? normalize.option_variants : undefined,
-    };
-  }
-
-  return undefined;
+  return toDocumentNormalizeSnapshot(normalize);
 }
 
 function readDataUrl(file: File): Promise<string> {
@@ -192,6 +191,88 @@ function getDeletedDocumentStorageKey(session: SupabaseAuthSession | null): stri
 function getWorkspaceStorageKey(baseKey: string, session: SupabaseAuthSession | null): string {
   const userId = asText(session?.user?.id);
   return userId ? `${baseKey}:${userId}` : baseKey;
+}
+
+async function hydrateCloudDocumentSnapshots(
+  documents: ClientWorkspaceDocument[],
+): Promise<ClientWorkspaceDocument[]> {
+  const targets = documents.filter((doc) => !doc.normalizeSnapshot);
+  if (targets.length === 0) return documents;
+
+  const snapshotEntries = await Promise.all(
+    targets.map(async (doc): Promise<[string, DocumentNormalizeSnapshot] | null> => {
+      try {
+        const section = await fetchWorkspaceCloudSection(getDocumentSnapshotSectionKey(doc.id));
+        const snapshot = toNormalizeSnapshot(section.value as NormalizerResponse | DocumentNormalizeSnapshot | null);
+        if (!snapshot?.canonical_lease) return null;
+        return [doc.id, snapshot];
+      } catch (error) {
+        console.warn("workspace_document_snapshot_fetch_failed", doc.id, error);
+        return null;
+      }
+    }),
+  );
+  const snapshotsById = new Map<string, DocumentNormalizeSnapshot>(
+    snapshotEntries.filter((entry): entry is [string, DocumentNormalizeSnapshot] => Boolean(entry)),
+  );
+  if (snapshotsById.size === 0) return documents;
+
+  return documents.map((doc) => {
+    const snapshot = snapshotsById.get(doc.id);
+    if (!snapshot) return doc;
+    return {
+      ...doc,
+      parsed: true,
+      normalizeSnapshot: snapshot,
+    };
+  });
+}
+
+async function hydrateCloudDocumentFiles(
+  documents: ClientWorkspaceDocument[],
+): Promise<ClientWorkspaceDocument[]> {
+  const targets = documents.filter((doc) => !doc.previewDataUrl);
+  if (targets.length === 0) return documents;
+
+  const fileEntries = await Promise.all(
+    targets.map(async (doc): Promise<[string, CloudDocumentFilePayload] | null> => {
+      try {
+        const section = await fetchWorkspaceCloudSection(getDocumentFileSectionKey(doc.id));
+        const filePayload = parseCloudDocumentFilePayload(section.value);
+        if (!filePayload?.previewDataUrl) return null;
+        return [doc.id, filePayload];
+      } catch (error) {
+        console.warn("workspace_document_file_fetch_failed", doc.id, error);
+        return null;
+      }
+    }),
+  );
+  const filesById = new Map<string, CloudDocumentFilePayload>(
+    fileEntries.filter((entry): entry is [string, CloudDocumentFilePayload] => Boolean(entry)),
+  );
+  if (filesById.size === 0) return documents;
+
+  return documents.map((doc) => {
+    const filePayload = filesById.get(doc.id);
+    if (!filePayload) return doc;
+    return {
+      ...doc,
+      fileMimeType: doc.fileMimeType || filePayload.fileMimeType,
+      previewDataUrl: filePayload.previewDataUrl,
+    };
+  });
+}
+
+function cloudSyncSuccessMessage(failedSnapshotCount: number, failedFileCount: number): string {
+  const issues: string[] = [];
+  if (failedSnapshotCount > 0) {
+    issues.push(`${failedSnapshotCount} parsed document${failedSnapshotCount === 1 ? "" : "s"} could not sync for cross-device Apply`);
+  }
+  if (failedFileCount > 0) {
+    issues.push(`${failedFileCount} original file${failedFileCount === 1 ? "" : "s"} could not sync for cross-device Open`);
+  }
+  if (issues.length === 0) return "Workspace synced to cloud.";
+  return `Workspace synced, but ${issues.join(" and ")}.`;
 }
 
 function mergeDocumentPayloads(
@@ -280,6 +361,7 @@ function parseStoredClients(raw: string | null): ClientWorkspaceClient[] {
         industry: asText(obj.industry),
         contactName: asText(obj.contactName),
         contactEmail: asText(obj.contactEmail),
+        website: asText(obj.website),
         brokerage: asText(obj.brokerage),
         notes: asText(obj.notes),
         createdAt: asText(obj.createdAt) || new Date().toISOString(),
@@ -599,7 +681,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     return Boolean(getSessionFromStorage());
   });
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>("idle");
-  const [cloudSyncMessage, setCloudSyncMessage] = useState("Cloud sync ready.");
+  const [cloudSyncMessage, setCloudSyncMessage] = useState("Cloud sync is ready.");
   const [cloudLastSyncedAt, setCloudLastSyncedAt] = useState<string | null>(null);
   const [cloudLocalFallback, setCloudLocalFallback] = useState(false);
   const [representationMode, setRepresentationModeState] = useState<RepresentationMode | null>(null);
@@ -748,7 +830,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       if (session) {
         setCloudLocalFallback(false);
         setCloudSyncStatus("idle");
-        setCloudSyncMessage("Loading cloud workspace...");
+        setCloudSyncMessage("Loading your cloud workspace...");
         try {
           const remote = await fetchWorkspaceCloudState();
           if (cancelled) return;
@@ -757,10 +839,22 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
               ? remote.workspace_state
               : {};
           const remoteState = parseWorkspaceState(workspaceState);
-          applyHydratedWorkspaceState(mergeHydratedWorkspaceState(remoteState, localState));
+          const remoteDocumentsWithSnapshots = await hydrateCloudDocumentSnapshots(remoteState.documents);
+          if (cancelled) return;
+          const remoteDocuments = await hydrateCloudDocumentFiles(remoteDocumentsWithSnapshots);
+          if (cancelled) return;
+          applyHydratedWorkspaceState(
+            mergeHydratedWorkspaceState(
+              {
+                ...remoteState,
+                documents: remoteDocuments,
+              },
+              localState,
+            ),
+          );
           setCloudLocalFallback(false);
           setCloudSyncStatus("synced");
-          setCloudSyncMessage("Cloud workspace loaded.");
+          setCloudSyncMessage("Cloud workspace loaded successfully.");
           setCloudLastSyncedAt(asText(remote.updated_at) || null);
           try {
             window.localStorage.removeItem(getWorkspaceStorageKey(CLIENTS_STORAGE_KEY, session));
@@ -786,14 +880,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           console.warn("workspace_cloud_load_failed", error);
           if (cancelled) return;
           const message = String(error instanceof Error ? error.message : error || "").trim();
-          if (message.toLowerCase().includes("session expired")) {
-            void signOut();
-            return;
-          }
           setCloudLocalFallback(true);
           applyHydratedWorkspaceState(localState);
           setCloudSyncStatus("local");
-          setCloudSyncMessage(message || "Cloud unavailable. Using local device workspace.");
+          setCloudSyncMessage(message || "Cloud sync is unavailable. Saving on this device only.");
           setCloudLastSyncedAt(null);
           setReady(true);
           return;
@@ -802,7 +892,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setCloudLocalFallback(false);
       applyHydratedWorkspaceState(localState);
       setCloudSyncStatus("local");
-      setCloudSyncMessage("Local device only (sign in for cloud sync).");
+      setCloudSyncMessage("Local device only. Sign in to sync this workspace across devices.");
       setCloudLastSyncedAt(null);
       setReady(true);
     }
@@ -956,8 +1046,38 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     if (!ready || !session || cloudLocalFallback) return;
     let cancelled = false;
     setCloudSyncStatus("saving");
-    setCloudSyncMessage("Syncing to cloud...");
+    setCloudSyncMessage("Syncing latest workspace changes to cloud...");
     const handle = window.setTimeout(() => {
+      const saveDocumentSnapshots = async (): Promise<number> => {
+        const parsedDocuments = allDocuments.filter((doc) => doc.normalizeSnapshot?.canonical_lease);
+        if (parsedDocuments.length === 0) return 0;
+        let failedCount = 0;
+        for (const doc of parsedDocuments) {
+          try {
+            await saveWorkspaceCloudSection(getDocumentSnapshotSectionKey(doc.id), doc.normalizeSnapshot);
+          } catch (error) {
+            failedCount += 1;
+            console.warn("workspace_document_snapshot_save_failed", doc.id, error);
+          }
+        }
+        return failedCount;
+      };
+      const saveDocumentFiles = async (): Promise<number> => {
+        const fileDocuments = allDocuments
+          .map((doc) => ({ doc, payload: toCloudDocumentFilePayload(doc) }))
+          .filter((entry): entry is { doc: ClientWorkspaceDocument; payload: CloudDocumentFilePayload } => Boolean(entry.payload));
+        if (fileDocuments.length === 0) return 0;
+        let failedCount = 0;
+        for (const { doc, payload } of fileDocuments) {
+          try {
+            await saveWorkspaceCloudSection(getDocumentFileSectionKey(doc.id), payload);
+          } catch (error) {
+            failedCount += 1;
+            console.warn("workspace_document_file_save_failed", doc.id, error);
+          }
+        }
+        return failedCount;
+      };
       const workspaceState = serializeWorkspaceStateForCloud(
         representationMode,
         clients,
@@ -968,16 +1088,18 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         deletedDocumentIds,
         activeClientId,
         {
-          includeSnapshots: true,
+          includeSnapshots: false,
         },
       );
       void (async () => {
         try {
           const saved = await saveWorkspaceCloudState(workspaceState);
+          const failedSnapshotCount = await saveDocumentSnapshots();
+          const failedFileCount = await saveDocumentFiles();
           if (cancelled) return;
           setCloudLocalFallback(false);
           setCloudSyncStatus("synced");
-          setCloudSyncMessage("Synced to cloud.");
+          setCloudSyncMessage(cloudSyncSuccessMessage(failedSnapshotCount, failedFileCount));
           setCloudLastSyncedAt(asText(saved.updated_at) || new Date().toISOString());
           return;
         } catch (error) {
@@ -998,10 +1120,12 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
             );
             try {
               const savedCompact = await saveWorkspaceCloudState(compactState);
+              const failedSnapshotCount = await saveDocumentSnapshots();
+              const failedFileCount = await saveDocumentFiles();
               if (cancelled) return;
               setCloudLocalFallback(false);
               setCloudSyncStatus("synced");
-              setCloudSyncMessage("Synced to cloud (compact mode).");
+              setCloudSyncMessage(cloudSyncSuccessMessage(failedSnapshotCount, failedFileCount));
               setCloudLastSyncedAt(asText(savedCompact.updated_at) || new Date().toISOString());
               console.warn("workspace_cloud_save_compacted", "Saved compact workspace payload without normalize snapshots.");
               return;
@@ -1010,7 +1134,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
               const compactMessage = String(compactError instanceof Error ? compactError.message : compactError || "").trim();
               setCloudLocalFallback(true);
               setCloudSyncStatus("local");
-              setCloudSyncMessage(compactMessage || "Cloud sync failed. Using local workspace.");
+              setCloudSyncMessage(compactMessage || "Cloud sync failed. Saving on this device only.");
               console.warn("workspace_cloud_save_failed_compact", compactError);
               return;
             }
@@ -1018,7 +1142,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           const message = String(error instanceof Error ? error.message : error || "").trim();
           setCloudLocalFallback(true);
           setCloudSyncStatus("local");
-          setCloudSyncMessage(message || "Cloud sync failed. Using local workspace.");
+          setCloudSyncMessage(message || "Cloud sync failed. Saving on this device only.");
           console.warn("workspace_cloud_save_failed", error);
         }
       })();
@@ -1091,6 +1215,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       industry: asText(input.industry),
       contactName: asText(input.contactName),
       contactEmail: asText(input.contactEmail),
+      website: asText(input.website),
       brokerage: asText(input.brokerage),
       notes: asText(input.notes),
       createdAt: new Date().toISOString(),
@@ -1131,6 +1256,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
           industry: hasOwnKey(input, "industry") ? asText(input.industry) : client.industry,
           contactName: hasOwnKey(input, "contactName") ? asText(input.contactName) : client.contactName,
           contactEmail: hasOwnKey(input, "contactEmail") ? asText(input.contactEmail) : client.contactEmail,
+          website: hasOwnKey(input, "website") ? asText(input.website) : client.website,
           brokerage: hasOwnKey(input, "brokerage") ? asText(input.brokerage) : client.brokerage,
           notes: hasOwnKey(input, "notes") ? asText(input.notes) : client.notes,
           logoDataUrl: nextLogoDataUrl,
@@ -1138,6 +1264,25 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         };
       }),
     );
+  }, []);
+
+  const removeClient = useCallback((clientId: string) => {
+    const id = asText(clientId);
+    if (!id) return;
+    setClients((prev) => prev.filter((client) => client.id !== id));
+    setAllDeals((prev) => prev.filter((deal) => deal.clientId !== id));
+    setAllDocuments((prev) => prev.filter((doc) => doc.clientId !== id));
+    setDealStageMap((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setCrmSettingsMap((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setActiveClientId((prev) => (prev === id ? null : prev));
   }, []);
 
   const getDealsForClient = useCallback((clientId?: string | null) => {
@@ -1496,6 +1641,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setRepresentationMode,
       createClient,
       updateClient,
+      removeClient,
       createDeal,
       updateDeal,
       removeDeal,
@@ -1530,6 +1676,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setRepresentationMode,
       createClient,
       updateClient,
+      removeClient,
       createDeal,
       updateDeal,
       removeDeal,

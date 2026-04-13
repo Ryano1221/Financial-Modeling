@@ -1,75 +1,86 @@
+import type { Metadata } from "next";
 import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-profile";
+
+export const metadata: Metadata = {
+  title: "Contact The CRE Model",
+  description:
+    "Contact The CRE Model for support with commercial real estate CRM workflows, lease analysis, document intake, surveys, lease abstracts, obligations, branded exports, and workspace sync.",
+  alternates: { canonical: "/contact" },
+  openGraph: {
+    title: "Contact The CRE Model",
+    description:
+      "Support for The CRE Model commercial real estate CRM and lease analysis workspace.",
+    url: "https://thecremodel.com/contact",
+  },
+};
 
 const profiles = [
   REPRESENTATION_MODE_PROFILES.tenant_rep,
   REPRESENTATION_MODE_PROFILES.landlord_rep,
 ];
 
+const SUPPORT_CHECKLIST = [
+  "Workspace or client name",
+  "Module or page you were using",
+  "What you clicked, uploaded, or changed",
+  "What you expected to happen",
+  "What happened instead",
+  "Whether you were signed in or had signed out manually",
+  "Whether the footer sync state said Online, Sign in to sync, or Local",
+  "Any file names, deal names, or timestamps involved",
+  "Whether Open or Apply failed on a different signed-in device after the document appeared in the workspace",
+  "Whether a CRM client or prospect appeared in the CRM selector, account settings, linked pipeline deal, and expected pipeline stage",
+  "Whether the issue affected documents, analyses, CRM, surveys, abstracts, or obligations",
+  "Whether the problem appeared in Excel export, PDF export, or both",
+  "Whether the shared client logo or branding asset appeared incorrectly",
+] as const;
+
 export default function ContactPage() {
   return (
-    <main className="relative z-10 section-shell">
-      <div className="app-container max-w-4xl">
-        <section className="section-panel p-6 sm:p-10 space-y-8">
-          <div className="space-y-3">
+    <main className="marketing-page-shell">
+      <div className="app-container">
+        <section className="marketing-page-panel mx-auto max-w-[1100px] space-y-8">
+          <div className="space-y-4">
             <p className="heading-kicker">Contact</p>
-            <h1 className="heading-display !text-[clamp(2rem,5vw,3.5rem)]">Contact support</h1>
-            <p className="body-lead">
-              Email{" "}
-              <a className="brand-link underline" href="mailto:info@thecremodel.com">
-                info@thecremodel.com
-              </a>{" "}
-              for support with any part of your leasing portfolio workspace.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              Include the active client, the module you were in, and the exact action you expected to happen so we can trace the issue quickly across the connected portfolio workflow.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              If the issue was in the document library, include whether you clicked Open, Edit, Delete, or the module-specific Apply action so we can reproduce the exact workspace handoff.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              If the issue was with an export, include whether it was Excel or PDF and whether it came from Financial Analyses, Surveys, or Lease Abstracts.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              If the issue involved a lease, amendment, sublease, or landlord consent, include the document name and whether the problem was extraction, import, or obligation mapping.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              If the problem affected how multiple leases, proposals, or survey options appeared together, mention that it was a portfolio-level issue so we can inspect the full workspace state.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              If a scanned PDF spent a long time processing before failing, mention that it was image-only or non-searchable and include the exact file name so we can trace the OCR-bounded intake path directly.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              If a batch upload failed after the first file or after the page had already saved the documents, include how many files were in the batch and whether the page showed a browser storage or quota error.
-            </p>
-            <p className="text-sm sm:text-base text-slate-300">
-              If sign-in failed, include whether you used a password or emailed sign-in link, which device you were on, and whether the link opened the account page or showed an error.
+            <h1 className="heading-display !text-[clamp(2.4rem,5vw,4.5rem)]">Support for the connected workspace.</h1>
+            <p className="body-lead max-w-4xl text-[var(--muted)]">
+              Email <a className="brand-link underline" href="mailto:info@thecremodel.com">info@thecremodel.com</a> for support with thecremodel.com, including document intake, account cloud sync, deal flow, branded exports, and workspace access from another device.
             </p>
           </div>
 
-          <section className="grid gap-4 md:grid-cols-2">
-            <div className="surface-card brand-panel p-5">
-              <p className="heading-kicker">Helpful details</p>
-              <ul className="mt-3 space-y-2 text-sm text-slate-300">
-                <li>Client or workspace name</li>
-                <li>Module: CRM, Buildings, Financial Analyses, Surveys, Lease Abstracts, or Obligations</li>
-                <li>Whether the issue was in the Excel export, PDF export, or on-screen review</li>
-                <li>Whether the top bar showed cloud sync or LOCAL MODE</li>
-                <li>How many files were in the upload batch when it failed</li>
-                <li>Whether the editor was open or still in review mode</li>
-                <li>What you clicked or uploaded</li>
-                <li>Whether sign-in used password or an emailed sign-in link</li>
-                <li>What you expected to happen</li>
-                <li>What happened instead</li>
+          <section className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+            <article className="marketing-card">
+              <p className="heading-kicker">Helpful Details</p>
+              <ul className="mt-4 space-y-3 text-sm leading-7 text-[var(--muted)]">
+                {SUPPORT_CHECKLIST.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
               </ul>
-            </div>
+            </article>
+
             <div className="grid gap-4">
               {profiles.map((profile) => (
-                <div key={profile.mode} className="surface-card brand-panel p-5">
+                <article key={profile.mode} className="marketing-card">
                   <p className="heading-kicker">{profile.label}</p>
-                  <p className="mt-2 text-sm text-slate-300">{profile.docs.contactSummary}</p>
-                </div>
+                  <p className="mt-3 text-sm leading-7 text-[var(--muted)]">{profile.docs.contactSummary}</p>
+                </article>
               ))}
             </div>
+          </section>
+
+          <section className="grid gap-4 md:grid-cols-2">
+            <article className="marketing-card">
+              <p className="heading-kicker">Account And Access</p>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                If sign-in fails, a device signs out before 30 days, or a workspace does not appear on another device, tell us whether you used a password or an emailed sign-in link, which device you were on, and whether the footer changed to Online after login.
+              </p>
+            </article>
+            <article className="marketing-card">
+              <p className="heading-kicker">CRM, Exports, And Security</p>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                For CRM pipeline regressions, prospect stage movement, client selector issues, export regressions, or security concerns, use the same inbox and clearly mark whether the issue affected a newly created client or prospect, survey output, lease abstract output, the shared client logo, or account security so it can be prioritized with the right internal context.
+              </p>
+            </article>
           </section>
         </section>
       </div>

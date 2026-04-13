@@ -14,6 +14,7 @@ export interface ClientWorkspaceClient {
   industry: string;
   contactName: string;
   contactEmail: string;
+  website: string;
   brokerage: string;
   notes: string;
   createdAt: string;
@@ -79,6 +80,7 @@ export interface CreateClientInput {
   industry?: string;
   contactName?: string;
   contactEmail?: string;
+  website?: string;
   brokerage?: string;
   notes?: string;
   logoDataUrl?: string;
@@ -91,6 +93,7 @@ export interface UpdateClientInput {
   industry?: string;
   contactName?: string;
   contactEmail?: string;
+  website?: string;
   brokerage?: string;
   notes?: string;
   logoDataUrl?: string;
