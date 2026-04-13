@@ -54,7 +54,7 @@ export function FeedbackBubble() {
     return (
       <div className="fixed bottom-6 right-6 z-50">
         <div className="bg-cyan-500/20 border border-cyan-500/50 rounded-xl px-6 py-4 text-cyan-100 text-sm font-medium backdrop-blur-sm">
-          Thanks! We'll be in touch.
+          Thanks! We&apos;ll be in touch.
         </div>
       </div>
     );
@@ -132,7 +132,7 @@ export function FeedbackBubble() {
                         Report an issue
                       </p>
                       <p className="text-xs text-zinc-400 mt-1">
-                        Something's not working right
+                        Something&apos;s not working right
                       </p>
                     </div>
                   </div>
