@@ -25,7 +25,8 @@
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "recharts": "^2.15.4"
+    "recharts": "^2.15.4",
+    "resend": "^6.11.0"
   },
   "overrides": {
     "rimraf": "^5.0.0",
