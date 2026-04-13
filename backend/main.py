@@ -12235,7 +12235,7 @@ def _marketing_draw_wrapped(c, text: str, x: float, y: float, width: float, font
     return y
 
 
-def _marketing_draw_image(c, data_url: Any, x: float, y: float, width: float, height: float, placeholder: str) -> None:
+def _marketing_draw_image(c, data_url: Any, x: float, y: float, width: float, height: float, placeholder: str, fit: str = "cover") -> None:
     from reportlab.lib.colors import HexColor
     from reportlab.lib.utils import ImageReader
 
@@ -12244,7 +12244,8 @@ def _marketing_draw_image(c, data_url: Any, x: float, y: float, width: float, he
         try:
             reader = ImageReader(BytesIO(payload[0]))
             iw, ih = reader.getSize()
-            scale = max(width / max(iw, 1), height / max(ih, 1))
+            scale_fn = min if fit == "contain" else max
+            scale = scale_fn(width / max(iw, 1), height / max(ih, 1))
             draw_w = iw * scale
             draw_h = ih * scale
             c.saveState()
@@ -12264,6 +12265,95 @@ def _marketing_draw_image(c, data_url: Any, x: float, y: float, width: float, he
     c.drawCentredString(x + width / 2, y + height / 2, placeholder.upper())
 
 
+def _marketing_flyer_style(form: dict[str, Any]) -> dict[str, str | float]:
+    style = _marketing_text(form.get("layout_style")).lower()
+    if style == "classic":
+        return {
+            "name": "classic",
+            "paper": "#FBFAF7",
+            "ink": "#1F2933",
+            "muted": "#667085",
+            "line": "#C9BFAE",
+            "panel": "#FFFFFF",
+            "dark": "#27313C",
+            "font": "Times-Roman",
+            "bold": "Times-Bold",
+            "margin": 46,
+        }
+    if style == "minimal":
+        return {
+            "name": "minimal",
+            "paper": "#FFFFFF",
+            "ink": "#111111",
+            "muted": "#5E6670",
+            "line": "#D7DBE0",
+            "panel": "#F7F8FA",
+            "dark": "#111111",
+            "font": "Helvetica",
+            "bold": "Helvetica-Bold",
+            "margin": 54,
+        }
+    return {
+        "name": "modern",
+        "paper": "#F3F7FA",
+        "ink": "#07141F",
+        "muted": "#5A6876",
+        "line": "#CBD5E1",
+        "panel": "#FFFFFF",
+        "dark": "#07141F",
+        "font": "Helvetica",
+        "bold": "Helvetica-Bold",
+        "margin": 38,
+    }
+
+
+def _marketing_rsf(value: Any) -> str:
+    raw = _marketing_text(value).replace(",", "")
+    try:
+        num = float(raw)
+        if num > 0:
+            return f"{int(round(num)):,} RSF"
+    except Exception:
+        pass
+    return _marketing_text(value)
+
+
+def _marketing_bullets(values: Any, fallback: list[str]) -> list[str]:
+    if isinstance(values, list):
+        bullets = [_marketing_text(item) for item in values]
+    else:
+        bullets = re.split(r"\n|;|•", _marketing_text(values))
+    cleaned = [re.sub(r"^[-*.\d\s)]+", "", bullet).strip(" .;") for bullet in bullets]
+    unique = []
+    for bullet in cleaned:
+        if bullet and bullet not in unique:
+            unique.append(bullet)
+    return (unique or fallback)[:7]
+
+
+def _marketing_likely_logo(data_url: Any) -> bool:
+    payload = _marketing_data_url_bytes(data_url)
+    if not payload:
+        return False
+    try:
+        from PIL import Image
+
+        image = Image.open(BytesIO(payload[0])).convert("RGB")
+        width, height = image.size
+        if width < 1 or height < 1:
+            return False
+        sample = image.resize((24, 24))
+        colors = sample.getcolors(maxcolors=24 * 24) or []
+        colors.sort(reverse=True)
+        dominant = colors[0][0] / float(24 * 24) if colors else 0
+        unique_colors = len(colors)
+        ratio = width / max(height, 1)
+        # Logo art extracted from flyers is often a large, flat, high-contrast rectangle.
+        return dominant > 0.42 and unique_colors < 220 and 1.8 <= ratio <= 3.6
+    except Exception:
+        return False
+
+
 def _render_marketing_flyer_pdf(snapshot: dict[str, Any]) -> bytes:
     from reportlab.lib.colors import HexColor, white
     from reportlab.lib.pagesizes import letter
@@ -12275,120 +12365,211 @@ def _render_marketing_flyer_pdf(snapshot: dict[str, Any]) -> bytes:
     floorplan = snapshot.get("floorplan") if isinstance(snapshot.get("floorplan"), dict) else None
     primary = _marketing_color(form.get("primary_color"), "#00A7C8")
     secondary = _marketing_color(form.get("secondary_color"), "#6A8F2A")
+    style = _marketing_flyer_style(form)
     disclaimer = _marketing_text(snapshot.get("disclaimer")) or "Information deemed reliable; tenant and landlord to verify all terms."
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     page_w, page_h = letter
-    margin = 42
+    margin = float(style["margin"])
+    ink = str(style["ink"])
+    muted = str(style["muted"])
+    line = str(style["line"])
+    panel = str(style["panel"])
+    paper = str(style["paper"])
+    dark = str(style["dark"])
+    font = str(style["font"])
+    bold = str(style["bold"])
+    style_name = str(style["name"])
 
     def footer(page_no: int) -> None:
-        c.setStrokeColor(HexColor("#D1D5DB"))
+        c.setStrokeColor(HexColor(line))
         c.line(margin, 32, page_w - margin, 32)
-        c.setFillColor(HexColor("#6B7280"))
-        c.setFont("Helvetica", 6.5)
+        c.setFillColor(HexColor(muted))
+        c.setFont(font, 6.8)
         c.drawString(margin, 20, disclaimer[:145])
         c.drawRightString(page_w - margin, 20, f"Page {page_no}")
 
+    def page_bg() -> None:
+        c.setFillColor(HexColor(paper))
+        c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
+
+    def section_label(text: str, x: float, y: float, color: str | None = None) -> None:
+        c.setFillColor(HexColor(color or primary))
+        c.setFont(bold, 8.5)
+        c.drawString(x, y, _marketing_text(text).upper())
+
+    def logo(x: float, y: float, w: float = 108, h: float = 46) -> None:
+        logo_data = _marketing_text(snapshot.get("logoDataUrl") or snapshot.get("logo_data_url"))
+        if logo_data:
+            _marketing_draw_image(c, logo_data, x, y, w, h, "Logo", fit="contain")
+
+    raw_photo_urls = [
+        _marketing_text(item.get("dataUrl") or item.get("data_url"))
+        for item in photos
+        if isinstance(item, dict)
+    ]
+    display_photo_urls = [url for url in raw_photo_urls if not _marketing_likely_logo(url)] or raw_photo_urls
+
     def photo(index: int) -> str:
-        item = photos[index] if index < len(photos) and isinstance(photos[index], dict) else {}
-        return _marketing_text(item.get("dataUrl") or item.get("data_url"))
+        if index < len(display_photo_urls):
+            return display_photo_urls[index]
+        return display_photo_urls[-1] if display_photo_urls else ""
 
     offer_label = "For Sublease" if _marketing_text(form.get("lease_type")).lower().startswith("sub") else "For Lease"
     headline = _marketing_text(copy.get("headline")) or f"{offer_label} at {_marketing_text(form.get('building_name')) or 'this suite'}"
-
-    c.setFillColor(HexColor(primary))
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin, page_h - 64, offer_label.upper())
-    c.setFillColor(HexColor("#111827"))
-    _marketing_draw_wrapped(c, headline, margin, page_h - 108, page_w - margin * 2 - 130, "Helvetica-Bold", 32, 34, max_lines=3)
-    logo_data = _marketing_text(snapshot.get("logoDataUrl") or snapshot.get("logo_data_url"))
-    if logo_data:
-        _marketing_draw_image(c, logo_data, page_w - margin - 112, page_h - 98, 112, 56, "Logo")
-    _marketing_draw_image(c, photo(0), margin, 150, page_w - margin * 2, 405, "Hero photo")
-    c.setFillColor(HexColor("#111827"))
-    c.setFont("Helvetica-Bold", 18)
-    c.drawString(margin, 108, _marketing_text(form.get("building_name")) or "Building name")
-    c.setFont("Helvetica", 12)
-    c.drawString(margin, 88, _marketing_text(form.get("address")) or "Property address")
-    c.setFont("Helvetica-Bold", 20)
-    c.drawRightString(page_w - margin, 95, f"Suite {_marketing_text(form.get('suite_number')) or '-'}")
-    footer(1)
-    c.showPage()
-
-    c.setFillColor(HexColor(primary))
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin, page_h - 64, "SUITE DETAILS")
-    c.setFillColor(HexColor("#111827"))
-    c.setFont("Helvetica-Bold", 24)
-    c.drawString(margin, page_h - 100, "The essentials at a glance.")
+    building = _marketing_text(form.get("building_name")) or "Building name"
+    address = _marketing_text(form.get("address")) or "Property address"
+    suite = _marketing_text(form.get("suite_number")) or "-"
     details = [
-        ("RSF", _marketing_text(form.get("rsf"))),
+        ("RSF", _marketing_rsf(form.get("rsf"))),
         ("Rate", _marketing_text(form.get("rate"))),
         ("Availability", _marketing_text(form.get("availability"))),
         ("Term", _marketing_text(form.get("term_expiration"))),
         ("Floor", _marketing_text(form.get("floor"))),
         ("OPEX", _marketing_text(form.get("opex"))),
     ]
-    box_w = (page_w - margin * 2 - 20) / 3
+
+    page_bg()
+    if style_name == "modern":
+        _marketing_draw_image(c, photo(0), 0, 270, page_w, page_h - 270, "Hero photo")
+        c.setFillColor(HexColor(dark))
+        c.rect(0, 0, page_w, 300, fill=1, stroke=0)
+        c.setFillColor(HexColor(primary))
+        c.rect(0, 296, page_w, 4, fill=1, stroke=0)
+        section_label(offer_label, margin, 242)
+        c.setFillColor(white)
+        _marketing_draw_wrapped(c, headline, margin, 204, page_w - margin * 2 - 130, bold, 29, 31, max_lines=3)
+        c.setFillColor(HexColor(secondary))
+        c.setFont(bold, 10)
+        c.drawString(margin, 105, building)
+        c.setFillColor(white)
+        c.setFont(font, 10)
+        c.drawString(margin, 87, address)
+        c.setFont(bold, 22)
+        c.drawRightString(page_w - margin, 96, f"Suite {suite}")
+        logo(page_w - margin - 112, 205, 112, 48)
+    elif style_name == "classic":
+        c.setStrokeColor(HexColor(line))
+        c.rect(margin - 12, 54, page_w - (margin - 12) * 2, page_h - 108, stroke=1, fill=0)
+        section_label(offer_label, margin, page_h - 78)
+        logo(page_w - margin - 110, page_h - 94, 110, 42)
+        c.setFillColor(HexColor(ink))
+        _marketing_draw_wrapped(c, headline, margin, page_h - 122, page_w - margin * 2 - 110, bold, 28, 30, max_lines=3)
+        _marketing_draw_image(c, photo(0), margin, 188, page_w - margin * 2, 370, "Hero photo")
+        c.setFillColor(HexColor(ink))
+        c.setFont(bold, 18)
+        c.drawString(margin, 135, building)
+        c.setFont(font, 11)
+        c.drawString(margin, 116, address)
+        c.setStrokeColor(HexColor(primary))
+        c.setLineWidth(2)
+        c.line(page_w - margin - 130, 122, page_w - margin - 130, 166)
+        c.setFont(bold, 22)
+        c.drawRightString(page_w - margin, 136, f"Suite {suite}")
+    else:
+        section_label(offer_label, margin, page_h - 82)
+        logo(page_w - margin - 108, page_h - 96, 108, 40)
+        c.setFillColor(HexColor(ink))
+        _marketing_draw_wrapped(c, headline, margin, page_h - 128, page_w - margin * 2 - 120, bold, 30, 32, max_lines=3)
+        c.setFillColor(HexColor(primary))
+        c.rect(margin, page_h - 232, 70, 3, fill=1, stroke=0)
+        _marketing_draw_image(c, photo(0), margin, 185, page_w - margin * 2, 325, "Hero photo")
+        c.setFillColor(HexColor(ink))
+        c.setFont(bold, 16)
+        c.drawString(margin, 132, building)
+        c.setFillColor(HexColor(muted))
+        c.setFont(font, 10)
+        c.drawString(margin, 114, address)
+        c.setFillColor(HexColor(ink))
+        c.setFont(bold, 20)
+        c.drawRightString(page_w - margin, 124, f"Suite {suite}")
+    footer(1)
+    c.showPage()
+
+    page_bg()
+    section_label("Suite Details", margin, page_h - 66)
+    c.setFillColor(HexColor(ink))
+    c.setFont(bold, 23)
+    c.drawString(margin, page_h - 102, "The essentials at a glance.")
+    box_w = (page_w - margin * 2 - 24) / 3
     for idx, (label, value) in enumerate(details):
         col = idx % 3
         row = idx // 3
-        x = margin + col * (box_w + 10)
-        y = page_h - 188 - row * 78
-        c.setStrokeColor(HexColor("#D1D5DB"))
-        c.rect(x, y, box_w, 56, stroke=1, fill=0)
-        c.setFillColor(HexColor("#6B7280"))
-        c.setFont("Helvetica-Bold", 7)
-        c.drawString(x + 10, y + 36, label)
-        c.setFillColor(HexColor("#111827"))
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(x + 10, y + 18, value or "-")
-    _marketing_draw_image(c, photo(1), margin, 150, (page_w - margin * 2 - 14) / 2, 270, "Interior photo")
-    _marketing_draw_image(c, photo(2), margin + (page_w - margin * 2 + 14) / 2, 150, (page_w - margin * 2 - 14) / 2, 270, "Interior photo")
+        x = margin + col * (box_w + 12)
+        y = page_h - 190 - row * 74
+        c.setFillColor(HexColor(panel if style_name != "modern" else "#FFFFFF"))
+        c.setStrokeColor(HexColor(line))
+        c.rect(x, y, box_w, 58, stroke=1, fill=1)
+        c.setFillColor(HexColor(primary if idx == 0 else muted))
+        c.setFont(bold, 7.5)
+        c.drawString(x + 12, y + 38, label.upper())
+        c.setFillColor(HexColor(ink))
+        c.setFont(bold, 10.5)
+        _marketing_draw_wrapped(c, value or "-", x + 12, y + 20, box_w - 24, bold, 10.5, 12, max_lines=1)
+    _marketing_draw_image(c, photo(1), margin, 142, (page_w - margin * 2 - 16) / 2, 290, "Interior photo")
+    _marketing_draw_image(c, photo(2), margin + (page_w - margin * 2 + 16) / 2, 142, (page_w - margin * 2 - 16) / 2, 290, "Interior photo")
     footer(2)
     c.showPage()
 
-    suite_bullets = copy.get("suite_bullets") if isinstance(copy.get("suite_bullets"), list) else []
-    building_bullets = copy.get("building_bullets") if isinstance(copy.get("building_bullets"), list) else []
-    for page_no, title, bullets, image_index in ((3, "SUITE FEATURES", suite_bullets, 3), (4, "BUILDING FEATURES", building_bullets, 0)):
-        c.setFillColor(HexColor(primary))
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(margin, page_h - 64, title)
-        c.setFillColor(HexColor("#111827"))
-        c.setFont("Helvetica-Bold", 24)
-        c.drawString(margin, page_h - 100, "Built for fast review." if page_no == 3 else "A setting that supports the deal.")
-        y = page_h - 148
-        for bullet in [_marketing_text(item) for item in bullets][:7]:
-            if not bullet:
-                continue
-            c.setStrokeColor(HexColor(secondary if page_no == 3 else primary))
-            c.setLineWidth(3)
-            c.line(margin, y + 4, margin, y - 22)
-            c.setFillColor(HexColor("#111827"))
-            y = _marketing_draw_wrapped(c, bullet, margin + 14, y, page_w - margin * 2 - 26, "Helvetica", 12, 16, max_lines=2) - 8
-        _marketing_draw_image(c, photo(image_index), margin, 94, page_w - margin * 2, 270, "Flyer photo")
+    suite_bullets = _marketing_bullets(copy.get("suite_bullets"), ["Move-in ready suite", "Flexible layout", "Professional office environment"])
+    building_bullets = _marketing_bullets(copy.get("building_bullets"), ["Quality building amenities", "Convenient access", "Professional property setting"])
+    for page_no, title, subtitle, bullets, image_index, accent in (
+        (3, "Suite Features", "Space highlights", suite_bullets, 3, secondary),
+        (4, "Building Features", "Building advantages", building_bullets, 0, primary),
+    ):
+        page_bg()
+        section_label(title, margin, page_h - 66)
+        c.setFillColor(HexColor(ink))
+        c.setFont(bold, 24)
+        c.drawString(margin, page_h - 104, subtitle)
+        image_w = 245 if style_name != "minimal" else 225
+        text_w = page_w - margin * 2 - image_w - 28
+        _marketing_draw_image(c, photo(image_index), page_w - margin - image_w, 150, image_w, 480, "Flyer photo")
+        y = page_h - 160
+        for idx, bullet in enumerate(bullets):
+            if style_name == "classic":
+                c.setFillColor(HexColor(primary if idx % 2 == 0 else secondary))
+                c.circle(margin + 4, y - 3, 2.5, fill=1, stroke=0)
+                c.setFillColor(HexColor(ink))
+                y = _marketing_draw_wrapped(c, bullet, margin + 16, y, text_w, font, 12, 16, max_lines=2) - 13
+            elif style_name == "minimal":
+                c.setStrokeColor(HexColor(accent))
+                c.line(margin, y + 5, margin + 28, y + 5)
+                c.setFillColor(HexColor(ink))
+                y = _marketing_draw_wrapped(c, bullet, margin + 42, y, text_w - 36, font, 11.5, 15, max_lines=2) - 15
+            else:
+                c.setFillColor(HexColor(panel))
+                c.setStrokeColor(HexColor(line))
+                c.rect(margin, y - 36, text_w, 48, fill=1, stroke=1)
+                c.setFillColor(HexColor(accent))
+                c.rect(margin, y - 36, 4, 48, fill=1, stroke=0)
+                c.setFillColor(HexColor(ink))
+                _marketing_draw_wrapped(c, bullet, margin + 16, y - 7, text_w - 30, font, 10.8, 13, max_lines=2)
+                y -= 60
         footer(page_no)
         c.showPage()
 
-    c.setFillColor(HexColor(primary))
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(margin, page_h - 64, "FLOORPLAN AND CONTACTS")
-    c.setFillColor(HexColor("#111827"))
-    c.setFont("Helvetica-Bold", 24)
-    c.drawString(margin, page_h - 100, "Review the layout, then reach out.")
-    floor_data = _marketing_text((floorplan or {}).get("dataUrl") or (floorplan or {}).get("data_url")) if floorplan else ""
-    _marketing_draw_image(c, floor_data, margin, 220, page_w - margin * 2, 350, "Floorplan")
+    page_bg()
+    section_label("Floorplan and Contacts", margin, page_h - 66)
+    c.setFillColor(HexColor(ink))
+    c.setFont(bold, 23)
+    c.drawString(margin, page_h - 104, "Review the layout, then reach out.")
+    include_floorplan = form.get("include_floorplan") is not False
+    floor_data = _marketing_text((floorplan or {}).get("dataUrl") or (floorplan or {}).get("data_url")) if floorplan and include_floorplan else ""
+    _marketing_draw_image(c, floor_data, margin, 238, page_w - margin * 2, 330, "Floorplan" if include_floorplan else "Floorplan hidden", fit="contain")
     brokers = [form.get("broker")] + (form.get("co_brokers") if isinstance(form.get("co_brokers"), list) else [])
     x = margin
     for broker in [b for b in brokers if isinstance(b, dict)][:3]:
-        c.setFillColor(HexColor("#001726"))
-        c.rect(x, 86, 165, 82, fill=1, stroke=0)
-        c.setFillColor(white)
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(x + 12, 142, _marketing_text(broker.get("name")) or "Broker")
-        c.setFont("Helvetica", 8)
-        c.drawString(x + 12, 122, _marketing_text(broker.get("email"))[:28])
-        c.drawString(x + 12, 106, _marketing_text(broker.get("phone"))[:24])
+        card_w = (page_w - margin * 2 - 24) / 3
+        c.setFillColor(HexColor(dark if style_name == "modern" else panel))
+        c.setStrokeColor(HexColor(primary if style_name != "minimal" else line))
+        c.rect(x, 92, card_w, 86, fill=1, stroke=1)
+        c.setFillColor(white if style_name == "modern" else HexColor(ink))
+        c.setFont(bold, 10.5)
+        c.drawString(x + 12, 148, _marketing_text(broker.get("name")) or "Broker")
+        c.setFont(font, 8)
+        c.drawString(x + 12, 126, _marketing_text(broker.get("email"))[:31])
+        c.drawString(x + 12, 110, _marketing_text(broker.get("phone"))[:26])
         x += 177
     footer(5)
     c.save()

@@ -58,7 +58,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Are marketing flyer and lease abstract exports client-ready?",
-    a: "Yes. Marketing flyers and lease abstract exports are generated as branded presentation outputs with structured summary sections, detail views, and review visibility so they stay aligned with the financial analysis export standard.",
+    a: "Yes. Marketing flyers and lease abstract exports are generated as branded presentation outputs with structured summary sections, detail views, and review visibility. Marketing flyers can be downloaded or shared after generation, and the PDF is only added to Saved Documents when you choose Save to client workspace.",
   },
   {
     q: "Does each client need more than one logo?",
@@ -91,14 +91,14 @@ export default function DocsPage() {
               <p className="heading-kicker">Capture</p>
               <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Start from the source record</h2>
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                Bring in leases, proposals, flyers, amendments, and related files so the rest of the workflow inherits real workspace context and keeps both the source file and parsed Apply payload available across signed-in devices. Lease uploads and saved document Apply actions surface expiration, notice, renewal, and termination rights for obligation tracking, while marketing intake can pull visible business terms, suite photos, and floorplans into branded lease or sublease flyers.
+                Bring in leases, proposals, flyers, amendments, and related files so the rest of the workflow inherits real workspace context and keeps both the source file and parsed Apply payload available across signed-in devices. Lease uploads and saved document Apply actions surface expiration, notice, renewal, and termination rights for obligation tracking, while marketing intake can pull visible business terms, suite photos, and floorplans into branded lease or sublease flyers without saving the finished PDF until you approve it.
               </p>
             </article>
             <article className="marketing-card">
               <p className="heading-kicker">Connect</p>
               <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Keep every module in sync</h2>
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                Documents, parsed terms, CRM records, profile selectors, newly created pipeline deals, marketing flyers, lease abstracts, and obligations stay associated with the same active workspace and sync through account-backed cloud storage instead of branching into device-local copies. Deleted source documents are also pruned from linked obligation records so stale repository items do not reappear.
+                Documents, parsed terms, CRM records, profile selectors, newly created pipeline deals, saved marketing PDFs, lease abstracts, and obligations stay associated with the same active workspace and sync through account-backed cloud storage instead of branching into device-local copies. Deleted source documents are also pruned from linked obligation records so stale repository items do not reappear.
               </p>
             </article>
             <article className="marketing-card">

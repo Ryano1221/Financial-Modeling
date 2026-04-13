@@ -74,7 +74,7 @@ const SECURITY_PILLARS = [
   },
   {
     title: "White-label marketing output",
-    body: "Generated lease and sublease flyers use account branding and saved workspace context instead of hardcoded brokerage identity, while extracted flyer photos and floorplans stay scoped to the generated workspace document and share link.",
+    body: "Generated lease and sublease flyers use account branding instead of hardcoded brokerage identity. Extracted flyer photos, floorplans, and generated PDFs stay scoped to the active workflow, share link, or saved client workspace record only after the user explicitly saves the PDF.",
   },
   {
     title: "Canonical production host",

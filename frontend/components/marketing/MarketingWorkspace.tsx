@@ -28,7 +28,6 @@ import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
 import { downloadBlob } from "@/lib/export-runtime";
 import type { ClientWorkspaceDocument, DocumentNormalizeSnapshot, RepresentationMode } from "@/lib/workspace/types";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
-import { toDocumentNormalizeSnapshot } from "@/lib/workspace/document-cloud-payloads";
 
 type MarketingExportBranding = {
   brokerageName?: string;
@@ -307,30 +306,21 @@ export function MarketingWorkspace({
       if (!appliedMarketingFields && /\.(pdf|docx|doc)$/i.test(file.name)) {
         normalize = await normalizeWorkspaceDocument(file);
       }
-      const saved = await registerDocument({
-        clientId: activeClient?.id || clientId,
-        name: file.name,
-        file,
-        sourceModule: "marketing",
-        normalize,
-        parsed: Boolean(normalize?.canonical_lease),
-      });
-      const snapshotValue = saved?.normalizeSnapshot || toDocumentNormalizeSnapshot(normalize);
       if (!appliedMarketingFields) {
-        applySnapshot(snapshotValue, file.name);
+        applySnapshot(normalize, file.name);
       }
       if (/^image\//i.test(file.type) && extractedPhotos.length === 0) {
         const asset = await toAsset(file);
         setPhotos((prev) => [asset, ...prev].slice(0, 4));
       }
-      setStatus("Document intake complete.");
+      setStatus("Document intake complete. Nothing was saved to the client workspace yet.");
     } catch (err) {
       setError(getDisplayErrorMessage(err));
       setSummary("We could not auto-fill from that document. Fill the required fields manually and generate when ready.");
     } finally {
       setReading(false);
     }
-  }, [activeClient?.id, applyMarketingFields, applySnapshot, clientId, reading, registerDocument]);
+  }, [applyMarketingFields, applySnapshot, reading]);
 
   useEffect(() => {
     if (!pendingDocumentImport) return;
@@ -356,10 +346,35 @@ export function MarketingWorkspace({
     const copy = generateMarketingCopy(form);
     const nextSnapshot = buildSnapshot({ form, copy, photos, floorplan, branding: exportBranding });
     setSnapshot(nextSnapshot);
+    setStatus("Preview generated. Download, share, or save the PDF to the client workspace.");
+  }, [exportBranding, floorplan, form, photos]);
+
+  const buildPdfBlob = useCallback(async (): Promise<Blob> => {
+    const res = await fetchApi("/marketing/flyer/pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ snapshot }),
+    });
+    if (!res.ok) {
+      throw new Error((await res.text()) || `PDF export failed (${res.status}).`);
+    }
+    return res.blob();
+  }, [snapshot]);
+
+  const pdfFileName = useCallback(() => (
+    `${generatedDocumentName.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "marketing-flyer"}.pdf`
+  ), [generatedDocumentName]);
+
+  const saveToWorkspace = useCallback(async () => {
+    setError("");
+    setStatus("Saving PDF to client workspace...");
     try {
+      const blob = await buildPdfBlob();
+      const file = new File([blob], pdfFileName(), { type: "application/pdf" });
       await registerDocument({
         clientId: activeClient?.id || clientId,
-        name: `${generatedDocumentName} - ${new Date().toLocaleDateString()}`,
+        name: `${generatedDocumentName} - ${new Date().toLocaleDateString()}.pdf`,
+        file,
         type: "flyers",
         building: form.building_name,
         address: form.address,
@@ -367,34 +382,25 @@ export function MarketingWorkspace({
         parsed: true,
         sourceModule: "marketing",
       });
-      setStatus("Generated and saved to workspace documents.");
+      setStatus("Saved PDF to client workspace documents.");
     } catch (err) {
-      setStatus("Generated preview. Workspace auto-save could not complete.");
       setError(getDisplayErrorMessage(err));
+      setStatus("");
     }
-  }, [activeClient?.id, clientId, exportBranding, floorplan, form, generatedDocumentName, photos, registerDocument]);
+  }, [activeClient?.id, buildPdfBlob, clientId, form.address, form.building_name, form.suite_number, generatedDocumentName, pdfFileName, registerDocument]);
 
   const downloadPdf = useCallback(async () => {
     setError("");
     setStatus("Building PDF...");
     try {
-      const res = await fetchApi("/marketing/flyer/pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshot }),
-      });
-      if (!res.ok) {
-        throw new Error((await res.text()) || `PDF export failed (${res.status}).`);
-      }
-      const blob = await res.blob();
-      const safeName = `${generatedDocumentName.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "marketing-flyer"}.pdf`;
-      downloadBlob(blob, safeName);
+      const blob = await buildPdfBlob();
+      downloadBlob(blob, pdfFileName());
       setStatus("PDF downloaded.");
     } catch (err) {
       setError(getDisplayErrorMessage(err));
       setStatus("");
     }
-  }, [generatedDocumentName, snapshot]);
+  }, [buildPdfBlob, pdfFileName]);
 
   const copyShareLink = useCallback(async () => {
     try {
@@ -435,6 +441,7 @@ export function MarketingWorkspace({
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-premium btn-premium-secondary" onClick={downloadPdf}>Download PDF</button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={copyShareLink}>Copy share link</button>
+          <button type="button" className="btn-premium btn-premium-primary" onClick={saveToWorkspace}>Save to client workspace</button>
         </div>
       }
     >
