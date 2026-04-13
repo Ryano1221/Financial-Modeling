@@ -58,7 +58,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Are marketing flyer and lease abstract exports client-ready?",
-    a: "Yes. Marketing flyers and lease abstract exports are generated as branded presentation outputs with structured summary sections, detail views, and review visibility. Marketing flyers can be downloaded or shared after generation, and the PDF is only added to Saved Documents when you choose Save to client workspace.",
+    a: "Yes. Marketing flyers and lease abstract exports are generated as branded presentation outputs with structured summary sections, detail views, and review visibility. Marketing flyer settings save the default style, colors, broker cards, co-brokers, and floorplan preference for the active client workspace. Flyers can be downloaded or shared after generation, and the PDF is only added to Saved Documents when you choose Save to client workspace.",
   },
   {
     q: "Does each client need more than one logo?",

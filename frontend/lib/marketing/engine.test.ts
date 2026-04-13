@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDefaultMarketingForm,
   canGenerateMarketingFlyer,
+  cleanMarketingBullets,
   mapCanonicalLeaseToMarketingForm,
   marketingLeaseTypeForMode,
   marketingOfferLabel,
@@ -51,5 +52,17 @@ describe("marketing/engine", () => {
     const form = buildDefaultMarketingForm();
     expect(canGenerateMarketingFlyer(form)).toBe(false);
     expect(canGenerateMarketingFlyer({ ...form, building_name: "A", address: "B", suite_number: "100", rsf: "1000" })).toBe(true);
+  });
+
+  it("preserves leading quantities in marketing bullets", () => {
+    expect(cleanMarketingBullets("2.5/1,000 parking\n1,200 SF amenity deck\n3,400 SF conference center", [])).toEqual([
+      "2.5/1,000 parking",
+      "1,200 SF amenity deck",
+      "3,400 SF conference center",
+    ]);
+    expect(cleanMarketingBullets("1. First numbered bullet\n2) Second numbered bullet", [])).toEqual([
+      "First numbered bullet",
+      "Second numbered bullet",
+    ]);
   });
 });

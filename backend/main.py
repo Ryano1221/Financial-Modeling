@@ -12323,7 +12323,11 @@ def _marketing_bullets(values: Any, fallback: list[str]) -> list[str]:
         bullets = [_marketing_text(item) for item in values]
     else:
         bullets = re.split(r"\n|;|•", _marketing_text(values))
-    cleaned = [re.sub(r"^[-*.\d\s)]+", "", bullet).strip(" .;") for bullet in bullets]
+    cleaned = []
+    for bullet in bullets:
+        text = re.sub(r"^\s*[-*•]\s+", "", _marketing_text(bullet))
+        text = re.sub(r"^\s*\d{1,2}[.)]\s+", "", text)
+        cleaned.append(text.strip(" .;"))
     unique = []
     for bullet in cleaned:
         if bullet and bullet not in unique:

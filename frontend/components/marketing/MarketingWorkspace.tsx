@@ -28,6 +28,7 @@ import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
 import { downloadBlob } from "@/lib/export-runtime";
 import type { ClientWorkspaceDocument, DocumentNormalizeSnapshot, RepresentationMode } from "@/lib/workspace/types";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
+import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
 
 type MarketingExportBranding = {
   brokerageName?: string;
@@ -41,6 +42,11 @@ type MarketingExportBranding = {
   disclaimer?: string;
 };
 
+type MarketingWorkspaceSettings = Pick<
+  MarketingFlyerForm,
+  "layout_style" | "primary_color" | "secondary_color" | "broker" | "co_brokers" | "include_floorplan"
+>;
+
 interface MarketingWorkspaceProps {
   clientId: string;
   clientName?: string | null;
@@ -52,6 +58,8 @@ interface MarketingWorkspaceProps {
 
 const ACCEPTED_DOCUMENT_TYPES = ".pdf,.doc,.docx,.png,.jpg,.jpeg,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,image/png,image/jpeg";
 const REQUIRED_FIELDS: Array<keyof MarketingFlyerForm> = ["building_name", "address", "suite_number", "rsf"];
+const MARKETING_SETTINGS_SECTION_PREFIX = "marketingSettings";
+const MARKETING_SETTINGS_LOCAL_PREFIX = "lease_deck_marketing_settings_v1";
 
 function asText(value: unknown): string {
   return String(value || "").trim();
@@ -93,6 +101,55 @@ function fieldLabel(key: keyof MarketingFlyerForm): string {
 function normalizeHexColor(value: string, fallback: string): string {
   const raw = asText(value);
   return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw : fallback;
+}
+
+function normalizeBroker(value: unknown, fallback: MarketingBroker): MarketingBroker {
+  const obj = value && typeof value === "object" ? value as Partial<MarketingBroker> : {};
+  return {
+    name: asText(obj.name) || fallback.name,
+    email: asText(obj.email) || fallback.email,
+    phone: asText(obj.phone) || fallback.phone,
+  };
+}
+
+function marketingSettingsFromForm(form: MarketingFlyerForm): MarketingWorkspaceSettings {
+  return {
+    layout_style: form.layout_style,
+    primary_color: form.primary_color,
+    secondary_color: form.secondary_color,
+    broker: { ...form.broker },
+    co_brokers: form.co_brokers.map((broker) => ({ ...broker })).slice(0, 2),
+    include_floorplan: form.include_floorplan,
+  };
+}
+
+function normalizeMarketingSettings(value: unknown, fallback: MarketingWorkspaceSettings): MarketingWorkspaceSettings {
+  const obj = value && typeof value === "object" ? value as Partial<MarketingWorkspaceSettings> : {};
+  const layout = obj.layout_style === "Classic" || obj.layout_style === "Modern" || obj.layout_style === "Minimal"
+    ? obj.layout_style
+    : fallback.layout_style;
+  const coBrokers = Array.isArray(obj.co_brokers)
+    ? obj.co_brokers
+      .map((broker) => normalizeBroker(broker, { name: "", email: "", phone: "" }))
+      .filter((broker) => asText(broker.name) || asText(broker.email) || asText(broker.phone))
+      .slice(0, 2)
+    : fallback.co_brokers;
+  return {
+    layout_style: layout,
+    primary_color: normalizeHexColor(asText(obj.primary_color), fallback.primary_color),
+    secondary_color: normalizeHexColor(asText(obj.secondary_color), fallback.secondary_color),
+    broker: normalizeBroker(obj.broker, fallback.broker),
+    co_brokers: coBrokers,
+    include_floorplan: typeof obj.include_floorplan === "boolean" ? obj.include_floorplan : fallback.include_floorplan,
+  };
+}
+
+function marketingSettingsSectionKey(clientId: string): string {
+  return `${MARKETING_SETTINGS_SECTION_PREFIX}::${asText(clientId) || "workspace"}`;
+}
+
+function marketingSettingsLocalKey(clientId: string): string {
+  return `${MARKETING_SETTINGS_LOCAL_PREFIX}::${asText(clientId) || "workspace"}`;
 }
 
 function marketingFieldText(value: unknown): string {
@@ -178,7 +235,7 @@ export function MarketingWorkspace({
   onPendingDocumentImportHandled,
   exportBranding,
 }: MarketingWorkspaceProps) {
-  const { activeClient, session, registerDocument } = useClientWorkspace();
+  const { activeClient, session, isAuthenticated, registerDocument } = useClientWorkspace();
   const defaultForm = useMemo(() => buildDefaultMarketingForm({
     representationMode,
     brokerName: exportBranding?.preparedBy || session?.user?.name || "",
@@ -195,12 +252,17 @@ export function MarketingWorkspace({
   const [dragActive, setDragActive] = useState(false);
   const [photos, setPhotos] = useState<MarketingMediaAsset[]>([]);
   const [floorplan, setFloorplan] = useState<MarketingMediaAsset | null>(null);
+  const [settingsStatus, setSettingsStatus] = useState("");
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [snapshot, setSnapshot] = useState<MarketingFlyerSnapshot>(() =>
     buildSnapshot({ form: defaultForm, copy: generateMarketingCopy(defaultForm), photos: [], floorplan: null, branding: exportBranding }),
   );
   const documentInputRef = useRef<HTMLInputElement | null>(null);
   const photosInputRef = useRef<HTMLInputElement | null>(null);
   const floorplanInputRef = useRef<HTMLInputElement | null>(null);
+  const settingsClientId = activeClient?.id || clientId || "workspace";
+  const defaultMarketingSettings = useMemo(() => marketingSettingsFromForm(defaultForm), [defaultForm]);
 
   useEffect(() => {
     setForm((prev) => ({
@@ -215,6 +277,70 @@ export function MarketingWorkspace({
       secondary_color: normalizeHexColor(prev.secondary_color, defaultForm.secondary_color),
     }));
   }, [defaultForm]);
+
+  const applyMarketingSettings = useCallback((settings: MarketingWorkspaceSettings) => {
+    setForm((prev) => ({
+      ...prev,
+      layout_style: settings.layout_style,
+      primary_color: settings.primary_color,
+      secondary_color: settings.secondary_color,
+      broker: { ...settings.broker },
+      co_brokers: settings.co_brokers.map((broker) => ({ ...broker })).slice(0, 2),
+      include_floorplan: settings.include_floorplan,
+    }));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sectionKey = marketingSettingsSectionKey(settingsClientId);
+    const localKey = marketingSettingsLocalKey(settingsClientId);
+    let foundLocalSettings = false;
+    setSettingsError("");
+    setSettingsStatus("");
+
+    const applyStoredValue = (value: unknown, message: string) => {
+      if (cancelled) return;
+      const settings = normalizeMarketingSettings(value, defaultMarketingSettings);
+      applyMarketingSettings(settings);
+      setSettingsStatus(message);
+    };
+
+    try {
+      const localValue = typeof window !== "undefined" ? window.localStorage.getItem(localKey) : null;
+      if (localValue) {
+        foundLocalSettings = true;
+        applyStoredValue(JSON.parse(localValue), "Loaded saved marketing settings for this workspace.");
+      }
+    } catch {
+      // Ignore malformed local fallback and let cloud/default settings win.
+    }
+
+    if (!isAuthenticated) return () => {
+      cancelled = true;
+    };
+
+    fetchWorkspaceCloudSection(sectionKey)
+      .then((response) => {
+        if (response.value && typeof response.value === "object") {
+          applyStoredValue(response.value, "Loaded saved marketing settings for this workspace.");
+          try {
+            window.localStorage.setItem(localKey, JSON.stringify(response.value));
+          } catch {
+            // Local persistence is best-effort.
+          }
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (!foundLocalSettings) {
+          setSettingsError(err instanceof Error ? err.message : "Unable to load saved marketing settings.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyMarketingSettings, defaultMarketingSettings, isAuthenticated, settingsClientId]);
 
   const generatedDocumentName = useMemo(() => {
     const suite = asText(form.suite_number) ? `Suite ${form.suite_number}` : "Suite";
@@ -414,6 +540,28 @@ export function MarketingWorkspace({
     }
   }, [snapshot]);
 
+  const saveMarketingSettings = useCallback(async () => {
+    const settings = marketingSettingsFromForm(form);
+    const sectionKey = marketingSettingsSectionKey(settingsClientId);
+    const localKey = marketingSettingsLocalKey(settingsClientId);
+    setSettingsSaving(true);
+    setSettingsStatus("");
+    setSettingsError("");
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(localKey, JSON.stringify(settings));
+      }
+      if (isAuthenticated) {
+        await saveWorkspaceCloudSection(sectionKey, settings);
+      }
+      setSettingsStatus("Marketing settings saved for future flyers in this workspace.");
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Unable to save marketing settings.");
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [form, isAuthenticated, settingsClientId]);
+
   const readyCount = countRequiredMarketingFields(form);
   const canGenerate = canGenerateMarketingFlyer(form);
   const requiredClass = (key: keyof MarketingFlyerForm) => (
@@ -597,6 +745,26 @@ export function MarketingWorkspace({
                 <input type="checkbox" checked={form.include_floorplan} onChange={(e) => setField("include_floorplan", e.target.checked)} />
                 Include floorplan
               </label>
+              <div className="mt-4 border border-cyan-200/20 bg-cyan-400/10 p-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-cyan-50">Marketing settings</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">
+                      Saves flyer style, colors, broker cards, co-brokers, and floorplan preference for this client workspace.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-premium btn-premium-secondary text-xs"
+                    onClick={() => void saveMarketingSettings()}
+                    disabled={settingsSaving}
+                  >
+                    {settingsSaving ? "Saving..." : "Save marketing settings"}
+                  </button>
+                </div>
+                {settingsStatus ? <p className="mt-3 text-xs text-cyan-200">{settingsStatus}</p> : null}
+                {settingsError ? <p className="mt-3 text-xs text-red-300">{settingsError}</p> : null}
+              </div>
             </div>
 
             <button

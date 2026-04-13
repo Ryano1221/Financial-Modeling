@@ -107,7 +107,8 @@ export function mapCanonicalLeaseToMarketingForm(input: {
 
 function normalizeBulletLine(line: string): string {
   return line
-    .replace(/^[-*•\d.)\s]+/, "")
+    .replace(/^\s*[-*•]\s+/, "")
+    .replace(/^\s*\d{1,2}[.)]\s+/, "")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[.;,\s]+$/g, "");
