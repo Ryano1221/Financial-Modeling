@@ -14,7 +14,7 @@ import {
   marketingOfferLabel,
 } from "@/lib/marketing/engine";
 import { extractMarketingDocument, type MarketingExtractedFields } from "@/lib/marketing/extraction";
-import { buildMarketingShareLink } from "@/lib/marketing/share";
+import { createMarketingShareLink } from "@/lib/marketing/share";
 import type {
   MarketingAutoFilledFields,
   MarketingBroker,
@@ -24,7 +24,8 @@ import type {
   MarketingLayoutStyle,
   MarketingMediaAsset,
 } from "@/lib/marketing/types";
-import { getDisplayErrorMessage } from "@/lib/api";
+import { fetchApi, getDisplayErrorMessage } from "@/lib/api";
+import { downloadBlob } from "@/lib/export-runtime";
 import type { ClientWorkspaceDocument, DocumentNormalizeSnapshot, RepresentationMode } from "@/lib/workspace/types";
 import { normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
 import { toDocumentNormalizeSnapshot } from "@/lib/workspace/document-cloud-payloads";
@@ -144,29 +145,6 @@ function buildSnapshot(input: {
     generatedAtIso: new Date().toISOString(),
     disclaimer: input.branding?.disclaimer || "",
   };
-}
-
-function snapshotHtml(snapshot: MarketingFlyerSnapshot): string {
-  const payload = JSON.stringify(snapshot).replace(/</g, "\\u003c");
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Marketing Flyer</title>
-<style>
-body{margin:0;background:#111;font-family:Arial,Helvetica,sans-serif}.page{width:8.5in;min-height:11in;margin:0 auto 24px;background:#fff;color:#111;box-sizing:border-box;padding:.45in;page-break-after:always}.k{font-size:10px;text-transform:uppercase;letter-spacing:.2em;color:${snapshot.form.primary_color}}h1{font-size:42px;line-height:.96;margin:18px 0 24px;letter-spacing:-.04em}.hero,.photo,.floor{border:1px solid #ddd;background:#f3f3f3;display:flex;align-items:center;justify-content:center;color:#777;text-transform:uppercase;letter-spacing:.12em}.hero{height:6.7in}.photo{height:2.5in}.floor{height:5in}.grid{display:grid;gap:14px}.g2{grid-template-columns:1fr 1fr}.details{grid-template-columns:1fr 1fr 1fr}.box{border:1px solid #ddd;padding:12px}.label{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#666}.value{font-weight:700;margin-top:5px}.bullet{border-left:4px solid ${snapshot.form.secondary_color};padding-left:12px;margin:12px 0;font-size:16px;line-height:1.5}.footer{margin-top:18px;border-top:1px solid #ddd;padding-top:10px;font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#666;display:flex;justify-content:space-between;gap:16px}.logo{max-height:.6in;max-width:1.7in;object-fit:contain}.top{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}@media print{body{background:#fff}.page{margin:0;box-shadow:none}}
-</style></head><body>
-<script>window.__SNAPSHOT__=${payload};</script>
-${[1,2,3,4,5].map((page) => {
-  const f = snapshot.form;
-  const photo = (i: number, cls = "photo") => snapshot.photos[i]?.dataUrl ? `<img src="${snapshot.photos[i].dataUrl}" class="${cls}" style="width:100%;object-fit:cover">` : `<div class="${cls}">Photo</div>`;
-  const footer = `<div class="footer"><span>${snapshot.disclaimer || "Information deemed reliable; tenant and landlord to verify all terms."}</span><span>Page ${page}</span></div>`;
-  if (page === 1) return `<section class="page"><div class="top"><div><div class="k">${marketingOfferLabel(f.lease_type)}</div><h1>${snapshot.copy.headline}</h1></div>${snapshot.logoDataUrl ? `<img class="logo" src="${snapshot.logoDataUrl}">` : ""}</div>${photo(0, "hero")}<h2>${f.building_name}</h2><p>${f.address}</p><h2>Suite ${f.suite_number}</h2>${footer}</section>`;
-  if (page === 2) return `<section class="page"><div class="k">Suite Details</div><h1>The essentials at a glance.</h1><div class="grid details">${[
-    ["RSF", f.rsf], ["Rate", f.rate], ["Availability", f.availability], ["Term", f.term_expiration], ["Floor", f.floor], ["OPEX", f.opex],
-  ].map(([label, value]) => `<div class="box"><div class="label">${label}</div><div class="value">${value || "-"}</div></div>`).join("")}</div><div class="grid g2" style="margin-top:24px">${photo(1)}${photo(2)}</div>${footer}</section>`;
-  if (page === 3) return `<section class="page"><div class="k">Suite Features</div><h1>Built for fast review.</h1>${snapshot.copy.suite_bullets.map((b) => `<div class="bullet">${b}</div>`).join("")}<div class="grid g2" style="margin-top:24px">${photo(3)}${photo(0)}</div>${footer}</section>`;
-  if (page === 4) return `<section class="page"><div class="k">Building Features</div><h1>A setting that supports the deal.</h1>${snapshot.copy.building_bullets.map((b) => `<div class="bullet">${b}</div>`).join("")}${photo(0, "hero")}${footer}</section>`;
-  return `<section class="page"><div class="k">Floorplan And Contacts</div><h1>Review the layout, then reach out.</h1>${f.include_floorplan && snapshot.floorplan?.dataUrl ? `<img src="${snapshot.floorplan.dataUrl}" class="floor" style="width:100%;object-fit:contain">` : `<div class="floor">${f.include_floorplan ? "Floorplan" : "Floorplan hidden"}</div>`}<div class="grid g2" style="margin-top:18px">${[f.broker, ...f.co_brokers].filter((b) => b.name || b.email || b.phone).slice(0,3).map((b) => `<div class="box"><strong>${b.name || "Broker"}</strong><p>${b.email || ""}</p><p>${b.phone || ""}</p></div>`).join("")}</div>${footer}</section>`;
-}).join("")}
-</body></html>`;
 }
 
 function FieldShell({
@@ -396,65 +374,33 @@ export function MarketingWorkspace({
     }
   }, [activeClient?.id, clientId, exportBranding, floorplan, form, generatedDocumentName, photos, registerDocument]);
 
-  const downloadPdf = useCallback(() => {
-    const popup = window.open("", "_blank", "noopener,noreferrer");
-    if (!popup) {
-      setError("Popup was blocked. Allow popups to print or save the flyer PDF.");
-      return;
-    }
-    popup.document.write(snapshotHtml(snapshot));
-    popup.document.close();
-    popup.focus();
-    window.setTimeout(() => popup.print(), 400);
-  }, [snapshot]);
-
-  const downloadPng = useCallback(async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 2550;
-    canvas.height = 3300;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = form.primary_color;
-    ctx.font = "bold 48px Arial";
-    ctx.fillText(marketingOfferLabel(form.lease_type).toUpperCase(), 140, 170);
-    ctx.fillStyle = "#111111";
-    ctx.font = "bold 124px Arial";
-    const headline = snapshot.copy.headline || generatedDocumentName;
-    headline.match(/.{1,28}(\s|$)/g)?.slice(0, 3).forEach((line, index) => ctx.fillText(line.trim(), 140, 340 + index * 130));
-    const hero = snapshot.photos[0]?.dataUrl;
-    if (hero) {
-      const img = new Image();
-      await new Promise<void>((resolve) => {
-        img.onload = () => resolve();
-        img.onerror = () => resolve();
-        img.src = hero;
+  const downloadPdf = useCallback(async () => {
+    setError("");
+    setStatus("Building PDF...");
+    try {
+      const res = await fetchApi("/marketing/flyer/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshot }),
       });
-      if (img.width > 0) ctx.drawImage(img, 140, 740, 2270, 1680);
-    } else {
-      ctx.fillStyle = "#f0f0f0";
-      ctx.fillRect(140, 740, 2270, 1680);
-      ctx.fillStyle = "#777";
-      ctx.font = "40px Arial";
-      ctx.fillText("HERO PHOTO", 1020, 1580);
+      if (!res.ok) {
+        throw new Error((await res.text()) || `PDF export failed (${res.status}).`);
+      }
+      const blob = await res.blob();
+      const safeName = `${generatedDocumentName.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "marketing-flyer"}.pdf`;
+      downloadBlob(blob, safeName);
+      setStatus("PDF downloaded.");
+    } catch (err) {
+      setError(getDisplayErrorMessage(err));
+      setStatus("");
     }
-    ctx.fillStyle = "#111";
-    ctx.font = "bold 72px Arial";
-    ctx.fillText(form.building_name || "Building name", 140, 2600);
-    ctx.font = "44px Arial";
-    ctx.fillText(form.address || "Property address", 140, 2680);
-    ctx.font = "bold 84px Arial";
-    ctx.fillText(`Suite ${form.suite_number || "-"}`, 140, 2835);
-    const link = document.createElement("a");
-    link.href = canvas.toDataURL("image/png");
-    link.download = `${generatedDocumentName.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "marketing-flyer"}.png`;
-    link.click();
-  }, [form.address, form.building_name, form.lease_type, form.primary_color, form.suite_number, generatedDocumentName, snapshot.copy.headline, snapshot.photos]);
+  }, [generatedDocumentName, snapshot]);
 
   const copyShareLink = useCallback(async () => {
     try {
-      const link = buildMarketingShareLink(snapshot);
+      setError("");
+      setStatus("Creating share link...");
+      const link = await createMarketingShareLink(snapshot);
       await navigator.clipboard.writeText(link);
       setStatus("Share link copied.");
     } catch (err) {
@@ -488,7 +434,6 @@ export function MarketingWorkspace({
       actions={
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-premium btn-premium-secondary" onClick={downloadPdf}>Download PDF</button>
-          <button type="button" className="btn-premium btn-premium-secondary" onClick={downloadPng}>Download PNG</button>
           <button type="button" className="btn-premium btn-premium-secondary" onClick={copyShareLink}>Copy share link</button>
         </div>
       }

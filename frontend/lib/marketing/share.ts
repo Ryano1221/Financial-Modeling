@@ -1,33 +1,28 @@
+import { fetchApi } from "@/lib/api";
 import type { MarketingFlyerSnapshot } from "@/lib/marketing/types";
 
-function encodeBase64Url(input: string): string {
-  if (typeof window === "undefined") return "";
-  return window
-    .btoa(unescape(encodeURIComponent(input)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
-
-function decodeBase64Url(input: string): string {
-  if (typeof window === "undefined") return "";
-  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  return decodeURIComponent(escape(window.atob(padded)));
-}
-
-export function buildMarketingShareLink(snapshot: MarketingFlyerSnapshot): string {
-  if (typeof window === "undefined") return "";
-  const encoded = encodeBase64Url(JSON.stringify(snapshot));
-  return `${window.location.origin}/marketing/share?data=${encoded}`;
-}
-
-export function parseMarketingShareData(raw: string | null | undefined): MarketingFlyerSnapshot | null {
-  const value = String(raw || "").trim();
-  if (!value) return null;
-  try {
-    return JSON.parse(decodeBase64Url(value)) as MarketingFlyerSnapshot;
-  } catch {
-    return null;
+export async function createMarketingShareLink(snapshot: MarketingFlyerSnapshot): Promise<string> {
+  const res = await fetchApi("/marketing/flyer/share", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ snapshot }),
+  });
+  if (!res.ok) {
+    throw new Error((await res.text()) || `Share request failed (${res.status}).`);
   }
+  const payload = (await res.json()) as { id?: string; url?: string };
+  const path = payload.url || (payload.id ? `/marketing/share?id=${encodeURIComponent(payload.id)}` : "");
+  if (!path) throw new Error("Share link was not returned.");
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return path.startsWith("http") ? path : `${origin}${path}`;
+}
+
+export async function fetchMarketingShareSnapshot(id: string): Promise<MarketingFlyerSnapshot> {
+  const res = await fetchApi(`/marketing/flyer/share/${encodeURIComponent(id)}`, {
+    method: "GET",
+  });
+  if (!res.ok) {
+    throw new Error((await res.text()) || `Flyer link failed (${res.status}).`);
+  }
+  return (await res.json()) as MarketingFlyerSnapshot;
 }

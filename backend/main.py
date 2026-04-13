@@ -12175,6 +12175,265 @@ def _fallback_marketing_terms(parsed: dict[str, Any], text: str) -> dict[str, An
     return parsed
 
 
+def _marketing_snapshot_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    snapshot = payload.get("snapshot") if isinstance(payload.get("snapshot"), dict) else payload
+    if not isinstance(snapshot, dict):
+        raise HTTPException(status_code=400, detail="Marketing flyer snapshot required.")
+    form = snapshot.get("form")
+    copy = snapshot.get("copy")
+    if not isinstance(form, dict) or not isinstance(copy, dict):
+        raise HTTPException(status_code=400, detail="Marketing flyer snapshot is missing form or copy.")
+    return snapshot
+
+
+def _marketing_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    return str(value).strip()
+
+
+def _marketing_color(value: Any, fallback: str) -> str:
+    raw = _marketing_text(value)
+    return raw if re.fullmatch(r"#[0-9a-fA-F]{6}", raw) else fallback
+
+
+def _marketing_data_url_bytes(data_url: Any) -> tuple[bytes, str] | None:
+    raw = _marketing_text(data_url)
+    match = re.match(r"^data:([^;]+);base64,(.+)$", raw, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        return base64.b64decode(match.group(2), validate=False), match.group(1)
+    except Exception:
+        return None
+
+
+def _marketing_draw_wrapped(c, text: str, x: float, y: float, width: float, font: str, size: float, leading: float, max_lines: int = 4) -> float:
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    words = _marketing_text(text).split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if stringWidth(candidate, font, size) <= width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+        if len(lines) >= max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    c.setFont(font, size)
+    for line in lines:
+        c.drawString(x, y, line)
+        y -= leading
+    return y
+
+
+def _marketing_draw_image(c, data_url: Any, x: float, y: float, width: float, height: float, placeholder: str) -> None:
+    from reportlab.lib.colors import HexColor
+    from reportlab.lib.utils import ImageReader
+
+    payload = _marketing_data_url_bytes(data_url)
+    if payload:
+        try:
+            reader = ImageReader(BytesIO(payload[0]))
+            iw, ih = reader.getSize()
+            scale = max(width / max(iw, 1), height / max(ih, 1))
+            draw_w = iw * scale
+            draw_h = ih * scale
+            c.saveState()
+            p = c.beginPath()
+            p.rect(x, y, width, height)
+            c.clipPath(p, stroke=0, fill=0)
+            c.drawImage(reader, x + (width - draw_w) / 2, y + (height - draw_h) / 2, draw_w, draw_h, mask="auto")
+            c.restoreState()
+            return
+        except Exception:
+            pass
+    c.setStrokeColor(HexColor("#D8DEE9"))
+    c.setFillColor(HexColor("#F4F6F8"))
+    c.rect(x, y, width, height, fill=1, stroke=1)
+    c.setFillColor(HexColor("#6B7280"))
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(x + width / 2, y + height / 2, placeholder.upper())
+
+
+def _render_marketing_flyer_pdf(snapshot: dict[str, Any]) -> bytes:
+    from reportlab.lib.colors import HexColor, white
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    form = snapshot.get("form") if isinstance(snapshot.get("form"), dict) else {}
+    copy = snapshot.get("copy") if isinstance(snapshot.get("copy"), dict) else {}
+    photos = snapshot.get("photos") if isinstance(snapshot.get("photos"), list) else []
+    floorplan = snapshot.get("floorplan") if isinstance(snapshot.get("floorplan"), dict) else None
+    primary = _marketing_color(form.get("primary_color"), "#00A7C8")
+    secondary = _marketing_color(form.get("secondary_color"), "#6A8F2A")
+    disclaimer = _marketing_text(snapshot.get("disclaimer")) or "Information deemed reliable; tenant and landlord to verify all terms."
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    page_w, page_h = letter
+    margin = 42
+
+    def footer(page_no: int) -> None:
+        c.setStrokeColor(HexColor("#D1D5DB"))
+        c.line(margin, 32, page_w - margin, 32)
+        c.setFillColor(HexColor("#6B7280"))
+        c.setFont("Helvetica", 6.5)
+        c.drawString(margin, 20, disclaimer[:145])
+        c.drawRightString(page_w - margin, 20, f"Page {page_no}")
+
+    def photo(index: int) -> str:
+        item = photos[index] if index < len(photos) and isinstance(photos[index], dict) else {}
+        return _marketing_text(item.get("dataUrl") or item.get("data_url"))
+
+    offer_label = "For Sublease" if _marketing_text(form.get("lease_type")).lower().startswith("sub") else "For Lease"
+    headline = _marketing_text(copy.get("headline")) or f"{offer_label} at {_marketing_text(form.get('building_name')) or 'this suite'}"
+
+    c.setFillColor(HexColor(primary))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, page_h - 64, offer_label.upper())
+    c.setFillColor(HexColor("#111827"))
+    _marketing_draw_wrapped(c, headline, margin, page_h - 108, page_w - margin * 2 - 130, "Helvetica-Bold", 32, 34, max_lines=3)
+    logo_data = _marketing_text(snapshot.get("logoDataUrl") or snapshot.get("logo_data_url"))
+    if logo_data:
+        _marketing_draw_image(c, logo_data, page_w - margin - 112, page_h - 98, 112, 56, "Logo")
+    _marketing_draw_image(c, photo(0), margin, 150, page_w - margin * 2, 405, "Hero photo")
+    c.setFillColor(HexColor("#111827"))
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(margin, 108, _marketing_text(form.get("building_name")) or "Building name")
+    c.setFont("Helvetica", 12)
+    c.drawString(margin, 88, _marketing_text(form.get("address")) or "Property address")
+    c.setFont("Helvetica-Bold", 20)
+    c.drawRightString(page_w - margin, 95, f"Suite {_marketing_text(form.get('suite_number')) or '-'}")
+    footer(1)
+    c.showPage()
+
+    c.setFillColor(HexColor(primary))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, page_h - 64, "SUITE DETAILS")
+    c.setFillColor(HexColor("#111827"))
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(margin, page_h - 100, "The essentials at a glance.")
+    details = [
+        ("RSF", _marketing_text(form.get("rsf"))),
+        ("Rate", _marketing_text(form.get("rate"))),
+        ("Availability", _marketing_text(form.get("availability"))),
+        ("Term", _marketing_text(form.get("term_expiration"))),
+        ("Floor", _marketing_text(form.get("floor"))),
+        ("OPEX", _marketing_text(form.get("opex"))),
+    ]
+    box_w = (page_w - margin * 2 - 20) / 3
+    for idx, (label, value) in enumerate(details):
+        col = idx % 3
+        row = idx // 3
+        x = margin + col * (box_w + 10)
+        y = page_h - 188 - row * 78
+        c.setStrokeColor(HexColor("#D1D5DB"))
+        c.rect(x, y, box_w, 56, stroke=1, fill=0)
+        c.setFillColor(HexColor("#6B7280"))
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(x + 10, y + 36, label)
+        c.setFillColor(HexColor("#111827"))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(x + 10, y + 18, value or "-")
+    _marketing_draw_image(c, photo(1), margin, 150, (page_w - margin * 2 - 14) / 2, 270, "Interior photo")
+    _marketing_draw_image(c, photo(2), margin + (page_w - margin * 2 + 14) / 2, 150, (page_w - margin * 2 - 14) / 2, 270, "Interior photo")
+    footer(2)
+    c.showPage()
+
+    suite_bullets = copy.get("suite_bullets") if isinstance(copy.get("suite_bullets"), list) else []
+    building_bullets = copy.get("building_bullets") if isinstance(copy.get("building_bullets"), list) else []
+    for page_no, title, bullets, image_index in ((3, "SUITE FEATURES", suite_bullets, 3), (4, "BUILDING FEATURES", building_bullets, 0)):
+        c.setFillColor(HexColor(primary))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(margin, page_h - 64, title)
+        c.setFillColor(HexColor("#111827"))
+        c.setFont("Helvetica-Bold", 24)
+        c.drawString(margin, page_h - 100, "Built for fast review." if page_no == 3 else "A setting that supports the deal.")
+        y = page_h - 148
+        for bullet in [_marketing_text(item) for item in bullets][:7]:
+            if not bullet:
+                continue
+            c.setStrokeColor(HexColor(secondary if page_no == 3 else primary))
+            c.setLineWidth(3)
+            c.line(margin, y + 4, margin, y - 22)
+            c.setFillColor(HexColor("#111827"))
+            y = _marketing_draw_wrapped(c, bullet, margin + 14, y, page_w - margin * 2 - 26, "Helvetica", 12, 16, max_lines=2) - 8
+        _marketing_draw_image(c, photo(image_index), margin, 94, page_w - margin * 2, 270, "Flyer photo")
+        footer(page_no)
+        c.showPage()
+
+    c.setFillColor(HexColor(primary))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, page_h - 64, "FLOORPLAN AND CONTACTS")
+    c.setFillColor(HexColor("#111827"))
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(margin, page_h - 100, "Review the layout, then reach out.")
+    floor_data = _marketing_text((floorplan or {}).get("dataUrl") or (floorplan or {}).get("data_url")) if floorplan else ""
+    _marketing_draw_image(c, floor_data, margin, 220, page_w - margin * 2, 350, "Floorplan")
+    brokers = [form.get("broker")] + (form.get("co_brokers") if isinstance(form.get("co_brokers"), list) else [])
+    x = margin
+    for broker in [b for b in brokers if isinstance(b, dict)][:3]:
+        c.setFillColor(HexColor("#001726"))
+        c.rect(x, 86, 165, 82, fill=1, stroke=0)
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(x + 12, 142, _marketing_text(broker.get("name")) or "Broker")
+        c.setFont("Helvetica", 8)
+        c.drawString(x + 12, 122, _marketing_text(broker.get("email"))[:28])
+        c.drawString(x + 12, 106, _marketing_text(broker.get("phone"))[:24])
+        x += 177
+    footer(5)
+    c.save()
+    return buffer.getvalue()
+
+
+@app.post("/marketing/flyer/share")
+def create_marketing_flyer_share(payload: dict[str, Any]) -> dict[str, str]:
+    snapshot = _marketing_snapshot_from_payload(payload)
+    share_id = save_report({
+        "kind": "marketing_flyer",
+        "snapshot": snapshot,
+        "created_at": datetime.now(UTC).isoformat(),
+    })
+    return {"id": share_id, "url": f"/marketing/share?id={share_id}"}
+
+
+@app.get("/marketing/flyer/share/{share_id}")
+def get_marketing_flyer_share(share_id: str) -> dict[str, Any]:
+    if not re.fullmatch(r"[0-9a-fA-F-]{32,40}", share_id or ""):
+        raise HTTPException(status_code=404, detail="Flyer not found")
+    data = load_report(share_id)
+    if not isinstance(data, dict) or data.get("kind") != "marketing_flyer" or not isinstance(data.get("snapshot"), dict):
+        raise HTTPException(status_code=404, detail="Flyer not found")
+    return data["snapshot"]
+
+
+@app.post("/marketing/flyer/pdf")
+def download_marketing_flyer_pdf(payload: dict[str, Any]) -> Response:
+    snapshot = _marketing_snapshot_from_payload(payload)
+    pdf_bytes = _render_marketing_flyer_pdf(snapshot)
+    form = snapshot.get("form") if isinstance(snapshot.get("form"), dict) else {}
+    name = re.sub(r"[^a-zA-Z0-9]+", "-", _marketing_text(form.get("building_name")) or "marketing-flyer").strip("-").lower()
+    suite = re.sub(r"[^a-zA-Z0-9]+", "-", _marketing_text(form.get("suite_number"))).strip("-").lower()
+    filename = f"{name}{f'-suite-{suite}' if suite else ''}-flyer.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.post("/marketing/extract")
 def marketing_extract_endpoint(
     request: Request,
