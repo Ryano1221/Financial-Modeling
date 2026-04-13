@@ -16,7 +16,7 @@ export async function POST(request: Request) {
 
     if (process.env.RESEND_API_KEY) {
       await resend.emails.send({
-        from: "CRE Model Feedback <feedback@thecremodel.com>",
+        from: "CRE Model Feedback <onboarding@resend.dev>",
         to: "ryan@thecremodel.com",
         subject: `${typeLabel} — CRE Model Feedback`,
         html: `
