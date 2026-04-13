@@ -12072,6 +12072,109 @@ def _first_pdf_pages_text(contents: bytes, max_pages: int = 5) -> str:
     return "\n\n".join(parts).strip()
 
 
+def _marketing_asset_payload(name: str, image_bytes: bytes, ext: str) -> dict[str, str]:
+    extension = (ext or "png").strip().lower().replace("jpg", "jpeg")
+    media_type = f"image/{extension if extension in {'png', 'jpeg', 'webp'} else 'png'}"
+    return {
+        "name": name,
+        "data_url": f"data:{media_type};base64,{base64.b64encode(image_bytes).decode('ascii')}",
+    }
+
+
+def _extract_pdf_marketing_assets(contents: bytes, filename: str) -> dict[str, Any]:
+    try:
+        import fitz  # PyMuPDF
+    except Exception:
+        return {"extracted_photos": [], "floorplan_image": None}
+
+    try:
+        doc = fitz.open(stream=contents, filetype="pdf")
+    except Exception:
+        return {"extracted_photos": [], "floorplan_image": None}
+
+    base_name = Path(filename or "flyer").stem
+    candidates: list[dict[str, Any]] = []
+    seen_xrefs: set[int] = set()
+    page_count = len(doc)
+    for page_index in range(page_count):
+        page = doc[page_index]
+        page_text = (page.get_text("text") or "").lower()
+        for image_index, image_info in enumerate(page.get_images(full=True)):
+            xref = int(image_info[0])
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+            try:
+                extracted = doc.extract_image(xref)
+            except Exception:
+                continue
+            image_bytes = extracted.get("image") or b""
+            width = int(extracted.get("width") or 0)
+            height = int(extracted.get("height") or 0)
+            ext = str(extracted.get("ext") or "png").lower()
+            if not image_bytes or width < 600 or height < 250:
+                continue
+            ratio = width / max(height, 1)
+            if height < 140 or ratio > 7:
+                continue
+
+            floorplan_score = 0
+            if page_index == page_count - 1:
+                floorplan_score += 3
+            if any(token in page_text for token in ("floorplan", "floor plan", "click to tour", "suite ")):
+                floorplan_score += 2
+            if ratio >= 1.45:
+                floorplan_score += 1
+            if width >= 850 and height >= 400:
+                floorplan_score += 1
+
+            candidates.append(
+                {
+                    "page_index": page_index,
+                    "image_index": image_index,
+                    "width": width,
+                    "height": height,
+                    "area": width * height,
+                    "floorplan_score": floorplan_score,
+                    "payload": _marketing_asset_payload(f"{base_name} image {len(candidates) + 1}.{ext}", image_bytes, ext),
+                }
+            )
+
+    floorplan_candidate = None
+    if candidates:
+        scored = sorted(candidates, key=lambda item: (item["floorplan_score"], item["page_index"], item["area"]), reverse=True)
+        if scored[0]["floorplan_score"] >= 4:
+            floorplan_candidate = scored[0]
+
+    photos = [
+        item["payload"]
+        for item in sorted(candidates, key=lambda item: (item["page_index"], item["image_index"]))
+        if item is not floorplan_candidate
+    ][:4]
+
+    return {
+        "extracted_photos": photos,
+        "floorplan_image": floorplan_candidate["payload"] if floorplan_candidate else None,
+    }
+
+
+def _fallback_marketing_terms(parsed: dict[str, Any], text: str) -> dict[str, Any]:
+    if parsed.get("term_expiration"):
+        return parsed
+    haystack = str(text or "")
+    patterns = [
+        r"\bterm\s*:\s*(?:through|thru|until|to)?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"\b(?:expiration|expires|expires on)\s*[:\-]?\s*([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"\bthrough\s+([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, haystack, flags=re.IGNORECASE)
+        if match:
+            parsed["term_expiration"] = match.group(1).strip()
+            break
+    return parsed
+
+
 @app.post("/marketing/extract")
 def marketing_extract_endpoint(
     request: Request,
@@ -12092,8 +12195,11 @@ def marketing_extract_endpoint(
     lower_name = filename.lower()
     prompt = MARKETING_EXTRACT_PROMPT
     content: list[dict[str, Any]]
+    extracted_assets: dict[str, Any] = {"extracted_photos": [], "floorplan_image": None}
+    extracted_text = ""
     if content_type.startswith("image/") or lower_name.endswith((".png", ".jpg", ".jpeg")):
         media_type = "image/png" if lower_name.endswith(".png") else "image/jpeg"
+        extracted_assets["extracted_photos"] = [_marketing_asset_payload(filename, contents, "png" if media_type == "image/png" else "jpeg")]
         content = [
             {"type": "text", "text": prompt},
             {
@@ -12108,12 +12214,14 @@ def marketing_extract_endpoint(
     else:
         if lower_name.endswith(".pdf"):
             text = _first_pdf_pages_text(contents, max_pages=5)
+            extracted_assets = _extract_pdf_marketing_assets(contents, filename)
         elif lower_name.endswith((".docx", ".doc")):
             text, _source = extract_text_from_word(BytesIO(contents), filename=filename)
         else:
             raise HTTPException(status_code=400, detail="Marketing extraction accepts PDF, DOCX, DOC, PNG, JPG, or JPEG.")
         if not text.strip():
             raise HTTPException(status_code=422, detail="No readable text found in document.")
+        extracted_text = text
         content = [{"type": "text", "text": f"{prompt}\n\nDocument text:\n{text[:28000]}"}]
 
     try:
@@ -12129,7 +12237,8 @@ def marketing_extract_endpoint(
             for block in (getattr(message, "content", None) or [])
             if getattr(block, "type", "") == "text"
         ).strip()
-        parsed = _parse_marketing_json(response_text)
+        parsed = _fallback_marketing_terms(_parse_marketing_json(response_text), extracted_text)
+        parsed.update(extracted_assets)
         _LOG.info("MARKETING_EXTRACT_DONE rid=%s filename=%s keys=%s", rid, filename, sorted(parsed.keys()))
         return parsed
     except HTTPException:

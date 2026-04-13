@@ -34,6 +34,7 @@ const SUPPORT_CHECKLIST = [
   "Whether a CRM client or prospect appeared in the CRM selector, account settings, linked pipeline deal, and expected pipeline stage",
   "Whether the issue affected documents, analyses, CRM, marketing flyers, abstracts, or obligations",
   "Whether Marketing generated the right lease or sublease wording for tenant rep or landlord rep mode",
+  "Whether Marketing missed a visible term, suite photo, or floorplan from an uploaded flyer",
   "For obligation imports, whether the missing item was an expiration, notice deadline, renewal option, termination right, or saved document Apply result",
   "Whether the problem appeared in Excel export, PDF export, or both",
   "Whether the shared client logo or branding asset appeared incorrectly",

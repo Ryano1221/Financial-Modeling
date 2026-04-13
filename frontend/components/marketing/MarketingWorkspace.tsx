@@ -101,6 +101,33 @@ function marketingFieldText(value: unknown): string {
   return asText(value);
 }
 
+function normalizeDateForDateInput(value: string): string {
+  const raw = asText(value);
+  const numeric = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (numeric) {
+    const year = numeric[3].length === 2 ? `20${numeric[3]}` : numeric[3];
+    return `${year}-${numeric[1].padStart(2, "0")}-${numeric[2].padStart(2, "0")}`;
+  }
+  const named = raw.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (named) {
+    const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].findIndex((prefix) =>
+      named[1].toLowerCase().startsWith(prefix),
+    );
+    if (month >= 0) return `${named[3]}-${String(month + 1).padStart(2, "0")}-${named[2].padStart(2, "0")}`;
+  }
+  return raw;
+}
+
+function marketingAssetFromExtraction(asset: { name: string; data_url: string } | null | undefined): MarketingMediaAsset | null {
+  const dataUrl = asText(asset?.data_url);
+  if (!dataUrl) return null;
+  return {
+    id: `asset-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name: asText(asset?.name) || "Extracted image",
+    dataUrl,
+  };
+}
+
 function buildSnapshot(input: {
   form: MarketingFlyerForm;
   copy: MarketingGeneratedCopy;
@@ -260,7 +287,9 @@ export function MarketingWorkspace({
     setForm((prev) => {
       const next = { ...prev };
       for (const [key, raw] of mapped) {
-        const value = marketingFieldText(raw);
+        const value = key === "term_expiration"
+          ? normalizeDateForDateInput(marketingFieldText(raw))
+          : marketingFieldText(raw);
         if (!value) continue;
         next[key] = value as never;
         found[key] = true;
@@ -286,6 +315,16 @@ export function MarketingWorkspace({
     try {
       const marketingFields = await extractMarketingDocument(file);
       const appliedMarketingFields = applyMarketingFields(marketingFields, file.name);
+      const extractedPhotos = (marketingFields?.extracted_photos || [])
+        .map(marketingAssetFromExtraction)
+        .filter((asset): asset is MarketingMediaAsset => Boolean(asset));
+      if (extractedPhotos.length > 0) {
+        setPhotos(extractedPhotos.slice(0, 4));
+      }
+      const extractedFloorplan = marketingAssetFromExtraction(marketingFields?.floorplan_image);
+      if (extractedFloorplan) {
+        setFloorplan(extractedFloorplan);
+      }
       let normalize = null;
       if (!appliedMarketingFields && /\.(pdf|docx|doc)$/i.test(file.name)) {
         normalize = await normalizeWorkspaceDocument(file);
@@ -302,7 +341,7 @@ export function MarketingWorkspace({
       if (!appliedMarketingFields) {
         applySnapshot(snapshotValue, file.name);
       }
-      if (/^image\//i.test(file.type)) {
+      if (/^image\//i.test(file.type) && extractedPhotos.length === 0) {
         const asset = await toAsset(file);
         setPhotos((prev) => [asset, ...prev].slice(0, 4));
       }

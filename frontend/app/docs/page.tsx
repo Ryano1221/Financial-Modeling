@@ -91,7 +91,7 @@ export default function DocsPage() {
               <p className="heading-kicker">Capture</p>
               <h2 className="mt-3 text-2xl font-bold tracking-[-0.04em] text-[var(--text)]">Start from the source record</h2>
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                Bring in leases, proposals, flyers, amendments, and related files so the rest of the workflow inherits real workspace context and keeps both the source file and parsed Apply payload available across signed-in devices. Lease uploads and saved document Apply actions surface expiration, notice, renewal, and termination rights for obligation tracking, while marketing intake can generate branded lease or sublease flyers.
+                Bring in leases, proposals, flyers, amendments, and related files so the rest of the workflow inherits real workspace context and keeps both the source file and parsed Apply payload available across signed-in devices. Lease uploads and saved document Apply actions surface expiration, notice, renewal, and termination rights for obligation tracking, while marketing intake can pull visible business terms, suite photos, and floorplans into branded lease or sublease flyers.
               </p>
             </article>
             <article className="marketing-card">

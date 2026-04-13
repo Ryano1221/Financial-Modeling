@@ -16,6 +16,8 @@ export interface MarketingExtractedFields {
   broker_names: string[] | null;
   broker_emails: string[] | null;
   broker_phones: string[] | null;
+  extracted_photos?: Array<{ name: string; data_url: string }> | null;
+  floorplan_image?: { name: string; data_url: string } | null;
 }
 
 export async function extractMarketingDocument(file: File): Promise<MarketingExtractedFields | null> {
