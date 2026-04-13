@@ -53,9 +53,9 @@ const FEATURE_CARDS = [
   },
   {
     index: "04",
-    title: "SURVEYS",
+    title: "MARKETING",
     description:
-      "Tenant reps generate market surveys from shortlisted buildings in seconds. Landlord reps build competitive positioning reports from the same workspace. Touchpoints log automatically as the deal moves.",
+      "Tenant reps generate sublease flyers from uploaded collateral in seconds. Landlord reps publish lease flyers from the same workspace. Photos, floorplans, and deal terms stay attached to the output.",
   },
   {
     index: "05",
@@ -102,7 +102,7 @@ export function HomeLanding({
                   Commercial real estate workflows, <em className="landing-gradient-text not-italic">without the clutter.</em>
                 </h1>
                 <p className="max-w-3xl text-sm leading-7 text-[var(--muted)] sm:text-[15px] 2xl:max-w-[50rem] 2xl:text-[16px] 3xl:max-w-[56rem] 3xl:text-[17px]">
-                  The CRE Model keeps commercial real estate CRM, documents, lease analyses, surveys, lease abstracts, and obligations in one connected workspace so brokerage teams can move faster without losing context.
+                  The CRE Model keeps commercial real estate CRM, documents, lease analyses, marketing flyers, lease abstracts, and obligations in one connected workspace so brokerage teams can move faster without losing context.
                 </p>
               </div>
 

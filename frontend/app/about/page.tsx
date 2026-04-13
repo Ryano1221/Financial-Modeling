@@ -5,7 +5,7 @@ import { REPRESENTATION_MODE_PROFILES } from "@/lib/workspace/representation-pro
 export const metadata: Metadata = {
   title: "About The CRE Model",
   description:
-    "Learn how The CRE Model connects commercial real estate CRM, lease documents, financial analysis, surveys, lease abstracts, obligations, and broker workflow automation.",
+    "Learn how The CRE Model connects commercial real estate CRM, lease documents, financial analysis, marketing flyers, lease abstracts, obligations, and broker workflow automation.",
   alternates: { canonical: "/about" },
   openGraph: {
     title: "About The CRE Model",
@@ -27,9 +27,9 @@ const portfolioSections = [
       "Store proposals, signed leases, amendments, subleases, landlord consents, abstracts, and supporting files under the same client workspace instead of scattering them across folders and inboxes.",
   },
   {
-    title: "Analysis, surveys, and deal execution",
+    title: "Analysis, marketing, and deal execution",
     copy:
-      "Move from intake to financial comparison, building review, survey packages, and CRM follow-up without rebuilding the same context in separate tools.",
+      "Move from intake to financial comparison, building review, marketing flyers, and CRM follow-up without rebuilding the same context in separate tools.",
   },
   {
     title: "Ongoing obligations and reporting",
@@ -70,7 +70,7 @@ export default function AboutPage() {
                 Leasing teams rarely work from one document at a time. They need to see proposals beside current leases, track renewals beside market alternatives, connect building research to live deals, and produce client deliverables without losing the underlying source record. theCREmodel is designed around that real workflow.
               </p>
               <p className="mt-3 text-sm text-slate-300 sm:text-base">
-                A user can keep the full leasing portfolio in one place: the active client, the saved document library, financial analyses, surveys, lease abstracts, obligations, building context, and CRM follow-up all stay linked so the team is working from the same operating picture from intake through decision and execution.
+                A user can keep the full leasing portfolio in one place: the active client, the saved document library, financial analyses, marketing flyers, lease abstracts, obligations, building context, and CRM follow-up all stay linked so the team is working from the same operating picture from intake through decision and execution.
               </p>
             </div>
             <div className="surface-card brand-panel p-6 sm:p-7">

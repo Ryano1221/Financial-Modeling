@@ -84,7 +84,7 @@ export function FeatureTiles({
         step: "Step 2",
         title: "Run Workflows",
         description:
-          "Create financial analyses, sublease recoveries, surveys, lease abstracts, deal tracking, and obligation views all inside one client workspace.",
+          "Create financial analyses, sublease recoveries, marketing flyers, lease abstracts, deal tracking, and obligation views all inside one client workspace.",
         metric: `${workflowCount} workflow${workflowCount === 1 ? "" : "s"} active for ${activeClientName}`,
         ctaLabel: "Open CRM",
         href: "/?module=deals",
@@ -98,7 +98,7 @@ export function FeatureTiles({
         step: "Step 3",
         title: "Deliver Insights",
         description:
-          "Generate branded reports, dashboards, lease abstracts, survey comparisons, and shareable client outputs.",
+          "Generate branded reports, dashboards, lease abstracts, marketing flyers, and shareable client outputs.",
         metric: `${insightCount} live insight stream${insightCount === 1 ? "" : "s"} ready`,
         ctaLabel: "Open Financial Analyses",
         href: "/?module=financial-analyses",
