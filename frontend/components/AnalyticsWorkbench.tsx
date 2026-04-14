@@ -385,8 +385,9 @@ function DualMetricComboChart({
   }));
   const maxBarValue = Math.max(0, ...chartData.map((row) => toNumber(row.barValue)));
   const maxLineValue = Math.max(0, ...chartData.map((row) => toNumber(row.lineValue)));
+  const maxTotalObligation = Math.max(0, ...chartData.map((row) => toNumber(row.totalObligation)));
   const leftAxisMax = maxBarValue > 0 ? maxBarValue * 1.15 : 1;
-  const rightAxisMax = maxLineValue > 0 ? maxLineValue * 1.15 : 1;
+  const rightAxisMax = Math.max(maxLineValue, maxTotalObligation) > 0 ? Math.max(maxLineValue, maxTotalObligation) * 1.15 : 1;
   const dualPlacedLabelRects: LabelRect[] = [];
 
   return (
@@ -397,6 +398,10 @@ function DualMetricComboChart({
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
           <span className="inline-block h-2.5 w-2.5 bg-cyan-400" />
           <span>{barMetric.label} (bar)</span>
+        </div>
+        <div className="inline-flex items-center gap-2 text-xs text-slate-300">
+          <span className="inline-block h-2.5 w-2.5 bg-violet-500" />
+          <span>Total Estimated Obligation (bar)</span>
         </div>
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
           <span className="inline-block h-[2px] w-3 bg-amber-400" />
@@ -435,6 +440,7 @@ function DualMetricComboChart({
               labelStyle={{ color: "#e2e8f0", fontWeight: 600 }}
               formatter={(value: number, name: string) => {
                 if (name === barMetric.label) return [barMetric.format(toNumber(value)), name];
+                if (name === "Total Estimated Obligation") return [formatCurrency(toNumber(value)), name];
                 return [lineMetric.format(toNumber(value)), name];
               }}
             />
@@ -492,6 +498,15 @@ function DualMetricComboChart({
                   );
                 }}
               />
+            </Bar>
+            <Bar
+              yAxisId="right"
+              dataKey="totalObligation"
+              name="Total Estimated Obligation"
+              fill="#8b5cf6"
+              radius={[2, 2, 0, 0]}
+              maxBarSize={42}
+            >
               <LabelList
                 dataKey="totalObligation"
                 position="insideBottom"
@@ -513,15 +528,15 @@ function DualMetricComboChart({
                         width={labelWidth}
                         height={labelHeight}
                         rx={4}
-                        fill="#0e7490"
-                        stroke="#22d3ee"
+                        fill="#4c1d95"
+                        stroke="#8b5cf6"
                         strokeWidth={1}
                       />
                       <text
                         x={centerX}
                         y={rectY + 13}
                         textAnchor="middle"
-                        fill="#f0f9ff"
+                        fill="#ede9fe"
                         fontSize={10}
                         fontWeight={700}
                       >
