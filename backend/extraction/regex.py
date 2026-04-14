@@ -674,7 +674,21 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
             if "premises" in low and ("located" in low or "at" in low):
                 out["address"].append(_mk_candidate("address", ln, page.page_number, ln, "pdf_text_regex", 0.6))
 
-            if any(x in low for x in ["building", "tower", "plaza", "center", "centre"]) and len(ln) < 120:
+            # Capture lines that look like a branded building/project name.
+            # Pattern 1: line contains classic property-type keywords.
+            _bldg_keywords = ["building", "tower", "plaza", "center", "centre", "park", "commons", "campus",
+                               "square", "pointe", "point", "place", "court", "exchange", "hub", "district",
+                               "gateway", "heights", "ridge", "terrace", "atrium", "pavilion", "galleria"]
+            if any(x in low for x in _bldg_keywords) and len(ln) < 120:
                 out["building_name"].append(_mk_candidate("building_name", ln, page.page_number, ln, "pdf_text_regex", 0.58))
+            # Pattern 2: "at THE NAME" / "lease at NAME" / "located at NAME" — picks up branded names
+            # that don't contain structural keywords (e.g. "The Stratum", "The Domain Tower").
+            import re as _re
+            _at_name = _re.search(r'\b(?:at|lease\s+at|space\s+at|located\s+at)\s+((?:the\s+)?[A-Z][A-Za-z0-9 \-]{2,40})', ln)
+            if _at_name and len(ln) < 160:
+                candidate_name = _at_name.group(1).strip()
+                # Exclude pure addresses (contains digits followed by a street word)
+                if not _re.search(r'\d+\s+\w+\s+(?:blvd|st|ave|dr|rd|ln|way|pkwy|hwy)', candidate_name.lower()):
+                    out["building_name"].append(_mk_candidate("building_name", candidate_name, page.page_number, ln, "pdf_text_regex", 0.72))
 
     return out
