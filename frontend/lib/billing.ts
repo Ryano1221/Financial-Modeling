@@ -21,6 +21,7 @@ export interface PlanLimits {
   sublease_recovery_module: boolean;
   completed_leases_module: boolean;
   api_access: boolean;
+  priority_support: boolean;
   excel_export: boolean;
   trial_days: number;
   highlights: string[];
@@ -77,6 +78,7 @@ export const PLANS_STATIC: Record<PlanTier, PlanLimits> = {
     sublease_recovery_module: false,
     completed_leases_module: false,
     api_access: false,
+    priority_support: false,
     excel_export: true,
     trial_days: 0,
     highlights: [
@@ -104,6 +106,7 @@ export const PLANS_STATIC: Record<PlanTier, PlanLimits> = {
     sublease_recovery_module: false,
     completed_leases_module: true,
     api_access: false,
+    priority_support: false,
     excel_export: true,
     trial_days: 0,
     highlights: [
@@ -133,6 +136,7 @@ export const PLANS_STATIC: Record<PlanTier, PlanLimits> = {
     sublease_recovery_module: true,
     completed_leases_module: true,
     api_access: true,
+    priority_support: true,
     excel_export: true,
     trial_days: 30,
     highlights: [

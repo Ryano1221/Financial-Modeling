@@ -248,7 +248,7 @@ export default function PricingPage() {
                   <td className="py-3.5 px-6 text-slate-300">{row.label}</td>
                   {tiers.map((t) => {
                     const plan = PLANS_STATIC[t];
-                    const val = (plan as Record<string, unknown>)[row.key];
+                    const val = (plan as unknown as Record<string, unknown>)[row.key];
                     const formatted = row.format(val as never);
                     return (
                       <td
