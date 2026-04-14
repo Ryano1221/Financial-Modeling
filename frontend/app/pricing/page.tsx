@@ -61,9 +61,7 @@ export default function PricingPage() {
     if (url) {
       window.location.href = url;
     } else {
-      // Fallback: redirect to sign-up
-      window.location.href = "/sign-up";
-      setError(null);
+      setError("Unable to start checkout right now. Make sure you're signed in and try again.");
     }
     setLoading(null);
   };

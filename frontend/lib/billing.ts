@@ -2,6 +2,7 @@
  * Billing utilities — plan definitions mirroring the backend.
  * Feature gating is enforced server-side; this is for UI hints only.
  */
+import { fetchApiProxy, getAuthHeaders } from "./api";
 
 export type PlanTier = "starter" | "pro" | "enterprise";
 
@@ -163,9 +164,9 @@ export function getPlanBadge(tier: PlanTier, isTrial: boolean): string {
 
 export async function fetchOrgPlan(): Promise<OrgPlanInfo | null> {
   try {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://127.0.0.1:8010";
-    const res = await fetch(`${backendUrl}/api/v1/billing/plan`, {
-      credentials: "include",
+    const res = await fetchApiProxy("/api/v1/billing/plan", {
+      method: "GET",
+      headers: getAuthHeaders(),
     });
     if (!res.ok) return null;
     return res.json();
@@ -176,11 +177,9 @@ export async function fetchOrgPlan(): Promise<OrgPlanInfo | null> {
 
 export async function startCheckout(tier: PlanTier, trial = false): Promise<string | null> {
   try {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://127.0.0.1:8010";
-    const res = await fetch(`${backendUrl}/api/v1/billing/checkout`, {
+    const res = await fetchApiProxy("/api/v1/billing/checkout", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
+      headers: getAuthHeaders(),
       body: JSON.stringify({ plan_tier: tier, start_trial: trial }),
     });
     if (!res.ok) return null;
@@ -193,10 +192,9 @@ export async function startCheckout(tier: PlanTier, trial = false): Promise<stri
 
 export async function openBillingPortal(): Promise<string | null> {
   try {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://127.0.0.1:8010";
-    const res = await fetch(`${backendUrl}/api/v1/billing/portal`, {
+    const res = await fetchApiProxy("/api/v1/billing/portal", {
       method: "POST",
-      credentials: "include",
+      headers: getAuthHeaders(),
     });
     if (!res.ok) return null;
     const data = await res.json();
