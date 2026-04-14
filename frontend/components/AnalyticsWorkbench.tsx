@@ -395,7 +395,7 @@ function DualMetricComboChart({
       <p className="text-xs text-slate-400 mb-3">Bar: Total Obligation | Line: {lineMetric.label}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3">
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
-          <span className="inline-block h-2.5 w-2.5 bg-violet-500" />
+          <span className="inline-block h-2.5 w-2.5 bg-blue-500" />
           <span>Total Estimated Obligation (bar)</span>
         </div>
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
@@ -436,18 +436,31 @@ function DualMetricComboChart({
             />
             <Tooltip
               contentStyle={{ backgroundColor: "#020617", border: "1px solid #334155", color: "#e2e8f0" }}
-              labelStyle={{ color: "#e2e8f0", fontWeight: 600 }}
-              formatter={(value: number, name: string) => {
-                if (name === "Total Estimated Obligation") return [formatCurrency(toNumber(value)), name];
-                if (name === barMetric.label) return [barMetric.format(toNumber(value)), name];
-                return [lineMetric.format(toNumber(value)), name];
+              labelStyle={{ color: "#e2e8f0", fontWeight: 600, marginBottom: 6 }}
+              content={({ label }) => {
+                const row = chartData.find((d) => d.scenarioName === label);
+                if (!row) return null;
+                return (
+                  <div style={{ backgroundColor: "#020617", border: "1px solid #334155", padding: "10px 14px", borderRadius: 6, fontSize: 13 }}>
+                    <p style={{ color: "#e2e8f0", fontWeight: 700, marginBottom: 8 }}>{label}</p>
+                    <p style={{ color: "#60a5fa", margin: "3px 0" }}>
+                      Total Estimated Obligation : {formatCurrency(toNumber(row.totalObligation))}
+                    </p>
+                    <p style={{ color: "#22d3ee", margin: "3px 0" }}>
+                      {barMetric.label} : {barMetric.format(toNumber(row.barValue))}
+                    </p>
+                    <p style={{ color: "#fde68a", margin: "3px 0" }}>
+                      {lineMetric.label} : {lineMetric.format(toNumber(row.lineValue))}
+                    </p>
+                  </div>
+                );
               }}
             />
             <Bar
               yAxisId="left"
               dataKey="totalObligation"
               name="Total Estimated Obligation"
-              fill="#8b5cf6"
+              fill="#3b82f6"
               radius={[2, 2, 0, 0]}
               maxBarSize={48}
             />
@@ -519,8 +532,8 @@ function DualMetricComboChart({
                   const { rectX, rectY, displaced } = smartPlace(cx, naturalY, lw, "down", barBottom);
                   els.push(
                     <g key={`ob-${i}`}>
-                      {displaced && <line x1={cx} y1={barBottom} x2={cx} y2={rectY} stroke="#8b5cf6" strokeWidth={1} strokeDasharray="3 2" />}
-                      <rect x={rectX} y={rectY} width={lw} height={LH} rx={4} fill="#4c1d95" stroke="#8b5cf6" strokeWidth={1} />
+                      {displaced && <line x1={cx} y1={barBottom} x2={cx} y2={rectY} stroke="#3b82f6" strokeWidth={1} strokeDasharray="3 2" />}
+                      <rect x={rectX} y={rectY} width={lw} height={LH} rx={4} fill="#1e3a5f" stroke="#3b82f6" strokeWidth={1} />
                       <text x={cx} y={rectY + 13} textAnchor="middle" fill="#ede9fe" fontSize={10} fontWeight={700}>{text}</text>
                     </g>
                   );
