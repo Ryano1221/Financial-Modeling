@@ -243,8 +243,7 @@ def _has_non_ti_allowance_context(line: str) -> bool:
         "work letter",
         "landlord work",
         "landlord's work",
-        "turnkey",
-        "turn-key",
+        # NOTE: turn-key IS a TI delivery method — do NOT exclude it
     )
     return any(cue in low for cue in excluded_cues)
 
@@ -510,11 +509,24 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 out["abatement_classification"].append(
                     _mk_candidate("abatement_classification", "rent_abatement", page.page_number, ln, "pdf_text_regex", 0.76)
                 )
-                for free_match in re.finditer(r"(?i)\b(\d{1,2})\s+months?\b", scan_line):
+                _WORD_TO_NUM = {
+                    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+                    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+                }
+                # Match numeric: "5 months", "(5) months", "( 5 ) months", "5) months"
+                for free_match in re.finditer(r"(?i)\(?\s*(\d{1,2})\s*\)?\s+months?\b", scan_line):
                     months = int(free_match.group(1))
                     if 0 < months <= 24:
                         out["free_rent_months"].append(
                             _mk_candidate("free_rent_months", months, page.page_number, ln, "pdf_text_regex", 0.73)
+                        )
+                # Match spelled-out: "five months", "five (5) months", "seven months"
+                for word, num in _WORD_TO_NUM.items():
+                    if re.search(rf"(?i)\b{word}\b.{{0,20}}\bmonths?\b", scan_line):
+                        out["free_rent_months"].append(
+                            _mk_candidate("free_rent_months", num, page.page_number, ln, "pdf_text_regex", 0.70)
                         )
 
             # Definitions: use for abatement scope disambiguation where "Rent" includes additional rent.
@@ -553,10 +565,18 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                     _mk_candidate("opex_growth_rate", float(growth_match.group(1)) / 100.0, page.page_number, ln, "pdf_text_regex", 0.69)
                 )
 
+            _SF_UNIT = r"(?:/\s*(?:rsf|sf)|per\s+(?:rsf|sf|sq\.?\s*ft\.?))"
             ti_psf_match = re.search(
-                r"(?i)(?:tenant\s+improvement(?:s)?|improvement\s+allowance|tia?|allowance)\D{0,40}\$\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/\s*(?:rsf|sf)|per\s+(?:rsf|sf))",
+                r"(?i)(?:tenant\s+improvement(?:s)?|improvement\s+allowance|tia?|allowance)\D{0,40}\$\s*([0-9]+(?:\.[0-9]+)?)\s*" + _SF_UNIT,
                 scan_line,
             )
+            # Also catch turn-key / "cost not to exceed $X per sq ft" constructions
+            _turnkey_psf_match = re.search(
+                r"(?i)(?:turn.?key|build.?out|landlord.{0,20}work).{0,120}?(?:cost\s+not\s+to\s+exceed|at\s+a\s+cost\s+of|at\s+\$)\s*\$?\s*([0-9]+(?:\.[0-9]+)?)\s*" + _SF_UNIT,
+                scan_line,
+            )
+            if not ti_psf_match and _turnkey_psf_match:
+                ti_psf_match = _turnkey_psf_match
             if (
                 ti_psf_match
                 and "operating" not in low
