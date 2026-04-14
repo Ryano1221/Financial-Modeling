@@ -9,6 +9,7 @@ import {
   BarChart,
   ComposedChart,
   CartesianGrid,
+  Customized,
   LabelList,
   Line,
   ResponsiveContainer,
@@ -387,7 +388,6 @@ function DualMetricComboChart({
   const maxTotalObligation = Math.max(0, ...chartData.map((row) => toNumber(row.totalObligation)));
   const leftAxisMax = maxTotalObligation > 0 ? maxTotalObligation * 1.15 : 1;
   const rightAxisMax = maxLineValue > 0 ? maxLineValue * 1.15 : 1;
-  const dualPlacedLabelRects: LabelRect[] = [];
 
   return (
     <div className="surface-card p-4 sm:p-5">
@@ -450,98 +450,7 @@ function DualMetricComboChart({
               fill="#8b5cf6"
               radius={[2, 2, 0, 0]}
               maxBarSize={48}
-            >
-              {/* Total Obligation dollar callout — violet badge at base, registered FIRST so $/SF can check against it */}
-              <LabelList
-                dataKey="totalObligation"
-                position="insideBottom"
-                content={(props: any) => {
-                  const { x, y, width, height, value } = props;
-                  if (!value) return null;
-                  const text = formatCurrency(toNumber(value));
-                  const lw = Math.max(70, Math.round(text.length * 6.8) + 10);
-                  const lh = 18;
-                  const cx = x + width / 2;
-                  const barBottom = y + height;
-                  // Natural: just inside bottom edge
-                  let rectY = barBottom - lh - 4;
-                  let displaced = false;
-                  const natural: LabelRect = { x1: cx - lw / 2, x2: cx + lw / 2, y1: rectY, y2: rectY + lh };
-                  if (dualPlacedLabelRects.some((r) => rectsOverlap(natural, r))) {
-                    // Displace below the bar
-                    rectY = barBottom + 4;
-                    displaced = true;
-                  }
-                  const rectX = cx - lw / 2;
-                  dualPlacedLabelRects.push({ x1: rectX, x2: rectX + lw, y1: rectY, y2: rectY + lh });
-                  return (
-                    <g>
-                      {displaced && (
-                        <line x1={cx} y1={barBottom} x2={cx} y2={rectY} stroke="#8b5cf6" strokeWidth={1} strokeDasharray="3 2" />
-                      )}
-                      <rect x={rectX} y={rectY} width={lw} height={lh} rx={4} fill="#4c1d95" stroke="#8b5cf6" strokeWidth={1} />
-                      <text x={cx} y={rectY + 13} textAnchor="middle" fill="#ede9fe" fontSize={10} fontWeight={700}>
-                        {text}
-                      </text>
-                    </g>
-                  );
-                }}
-              />
-              {/* $/SF callout — cyan badge centered in bar; displaced above with connector if it would overlap */}
-              <LabelList
-                dataKey="barValue"
-                position="center"
-                content={(props: any) => {
-                  const { x, y, width, height, value } = props;
-                  const text = barMetric.format(toNumber(value));
-                  const lw = Math.max(60, Math.round(text.length * 6.8) + 12);
-                  const lh = 18;
-                  const cx = x + width / 2;
-                  const barCenterY = y + height / 2;
-                  const barTop = y;
-                  // Natural: vertically centered in bar
-                  let rectY = barCenterY - lh / 2;
-                  let displaced = false;
-                  let connectorY2 = barTop; // where connector touches the bar
-                  const natural: LabelRect = { x1: cx - lw / 2, x2: cx + lw / 2, y1: rectY, y2: rectY + lh };
-                  if (dualPlacedLabelRects.some((r) => rectsOverlap(natural, r))) {
-                    // Try above bar first
-                    const aboveY = Math.max(2, barTop - lh - 6);
-                    const above: LabelRect = { x1: cx - lw / 2, x2: cx + lw / 2, y1: aboveY, y2: aboveY + lh };
-                    if (!dualPlacedLabelRects.some((r) => rectsOverlap(above, r))) {
-                      rectY = aboveY;
-                    } else {
-                      // Use placeLabelRect to find any free spot above
-                      const found = placeLabelRect({
-                        centerX: cx,
-                        width: lw,
-                        height: lh,
-                        anchorY: barTop - lh - 6,
-                        minY: 2,
-                        liftStep: lh + 2,
-                        placedRects: dualPlacedLabelRects,
-                      });
-                      rectY = found.y1;
-                    }
-                    displaced = true;
-                    connectorY2 = barCenterY;
-                  }
-                  const rectX = cx - lw / 2;
-                  if (!displaced) dualPlacedLabelRects.push({ x1: rectX, x2: rectX + lw, y1: rectY, y2: rectY + lh });
-                  return (
-                    <g>
-                      {displaced && (
-                        <line x1={cx} y1={rectY + lh} x2={cx} y2={connectorY2} stroke="#22d3ee" strokeWidth={1} strokeDasharray="3 2" />
-                      )}
-                      <rect x={rectX} y={rectY} width={lw} height={lh} rx={4} fill="#083344" stroke="#22d3ee" strokeWidth={1} />
-                      <text x={cx} y={rectY + 13} textAnchor="middle" fill="#22d3ee" fontSize={11} fontWeight={700}>
-                        {text}
-                      </text>
-                    </g>
-                  );
-                }}
-              />
-            </Bar>
+            />
             <Line
               yAxisId="right"
               type="linear"
@@ -549,49 +458,113 @@ function DualMetricComboChart({
               name={lineMetric.label}
               stroke="#f59e0b"
               strokeWidth={2}
-              dot={(props: any) => {
-                const { cx, cy, value } = props;
-                if (!Number.isFinite(cx) || !Number.isFinite(cy)) return <g />;
-                const text = lineMetric.format(toNumber(value));
-                const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
-                const placed = placeLabelRect({
-                  centerX: cx,
-                  width: labelWidth,
-                  height: 18,
-                  anchorY: cy - 26,
-                  minY: 2,
-                  liftStep: 16,
-                  placedRects: dualPlacedLabelRects,
-                });
-                const rectX = placed.x1;
-                const rectY = placed.y1;
-                return (
-                  <g>
-                    <circle cx={cx} cy={cy} r={3} fill="#f59e0b" />
-                    <rect
-                      x={rectX}
-                      y={rectY}
-                      width={labelWidth}
-                      height={18}
-                      rx={4}
-                      fill="#020617"
-                      stroke="#7c2d12"
-                      strokeWidth={1}
-                    />
-                    <text
-                      x={cx}
-                      y={rectY + 13}
-                      textAnchor="middle"
-                      fill="#fde68a"
-                      fontSize={11}
-                      fontWeight={600}
-                    >
-                      {text}
-                    </text>
-                  </g>
-                );
-              }}
+              dot={{ r: 3, fill: "#f59e0b", strokeWidth: 0 }}
               activeDot={{ r: 5 }}
+            />
+            {/* All labels rendered in one pass so collision detection is reliable */}
+            <Customized
+              component={(rechartProps: any) => {
+                const items: any[] = rechartProps.formattedGraphicalItems ?? [];
+                const barItem = items.find((it: any) => it.item?.props?.dataKey === "totalObligation");
+                const lineItem = items.find((it: any) => it.item?.props?.dataKey === "lineValue");
+                if (!barItem && !lineItem) return null;
+
+                const barPoints: any[] = barItem?.props?.data ?? [];
+                const linePoints: any[] = lineItem?.props?.points ?? [];
+
+                const placed: LabelRect[] = [];
+                const LH = 18;
+                const PAD = 4;
+
+                // --- helper: find free rect near anchor, with connector if displaced ---
+                function smartPlace(
+                  cx: number,
+                  naturalY: number,
+                  lw: number,
+                  direction: "up" | "down",
+                  anchorPointY: number // where the connector touches the data element
+                ): { rectX: number; rectY: number; connectorY: number; displaced: boolean } {
+                  const rectX = cx - lw / 2;
+                  const nat: LabelRect = { x1: rectX, x2: rectX + lw, y1: naturalY, y2: naturalY + LH };
+                  if (!placed.some((r) => rectsOverlap(nat, r, PAD))) {
+                    placed.push(nat);
+                    return { rectX, rectY: naturalY, connectorY: anchorPointY, displaced: false };
+                  }
+                  // Search in the given direction for a free slot
+                  const step = LH + PAD;
+                  for (let i = 1; i <= 20; i++) {
+                    const tryY = direction === "up" ? Math.max(2, naturalY - i * step) : naturalY + i * step;
+                    const candidate: LabelRect = { x1: rectX, x2: rectX + lw, y1: tryY, y2: tryY + LH };
+                    if (!placed.some((r) => rectsOverlap(candidate, r, PAD))) {
+                      placed.push(candidate);
+                      return { rectX, rectY: tryY, connectorY: anchorPointY, displaced: true };
+                    }
+                  }
+                  // Fallback
+                  return { rectX, rectY: naturalY, connectorY: anchorPointY, displaced: false };
+                }
+
+                const els: React.ReactNode[] = [];
+
+                // 1. Total obligation base labels (violet) — placed first
+                barPoints.forEach((pt: any, i: number) => {
+                  if (!pt || !Number.isFinite(pt.x)) return;
+                  const val = toNumber(chartData[i]?.totalObligation);
+                  if (!val) return;
+                  const text = formatCurrency(val);
+                  const lw = Math.max(70, Math.round(text.length * 6.8) + 10);
+                  const cx = pt.x + pt.width / 2;
+                  const barBottom = pt.y + pt.height;
+                  const naturalY = barBottom - LH - PAD;
+                  const { rectX, rectY, displaced } = smartPlace(cx, naturalY, lw, "down", barBottom);
+                  els.push(
+                    <g key={`ob-${i}`}>
+                      {displaced && <line x1={cx} y1={barBottom} x2={cx} y2={rectY} stroke="#8b5cf6" strokeWidth={1} strokeDasharray="3 2" />}
+                      <rect x={rectX} y={rectY} width={lw} height={LH} rx={4} fill="#4c1d95" stroke="#8b5cf6" strokeWidth={1} />
+                      <text x={cx} y={rectY + 13} textAnchor="middle" fill="#ede9fe" fontSize={10} fontWeight={700}>{text}</text>
+                    </g>
+                  );
+                });
+
+                // 2. $/SF center labels (cyan) — displaced upward if they'd hit the base label
+                barPoints.forEach((pt: any, i: number) => {
+                  if (!pt || !Number.isFinite(pt.x)) return;
+                  const val = toNumber(chartData[i]?.barValue);
+                  const text = barMetric.format(val);
+                  const lw = Math.max(60, Math.round(text.length * 6.8) + 12);
+                  const cx = pt.x + pt.width / 2;
+                  const barCenterY = pt.y + pt.height / 2;
+                  const naturalY = barCenterY - LH / 2;
+                  const { rectX, rectY, displaced } = smartPlace(cx, naturalY, lw, "up", barCenterY);
+                  els.push(
+                    <g key={`sf-${i}`}>
+                      {displaced && <line x1={cx} y1={rectY + LH} x2={cx} y2={barCenterY} stroke="#22d3ee" strokeWidth={1} strokeDasharray="3 2" />}
+                      <rect x={rectX} y={rectY} width={lw} height={LH} rx={4} fill="#083344" stroke="#22d3ee" strokeWidth={1} />
+                      <text x={cx} y={rectY + 13} textAnchor="middle" fill="#22d3ee" fontSize={11} fontWeight={700}>{text}</text>
+                    </g>
+                  );
+                });
+
+                // 3. NPV line labels (amber) — displaced upward, avoid everything above
+                linePoints.forEach((pt: any, i: number) => {
+                  if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
+                  const val = toNumber(chartData[i]?.lineValue);
+                  const text = lineMetric.format(val);
+                  const lw = Math.max(54, Math.round(text.length * 6.8) + 10);
+                  const cx = pt.x;
+                  const naturalY = pt.y - LH - 8;
+                  const { rectX, rectY, displaced } = smartPlace(cx, naturalY, lw, "up", pt.y);
+                  els.push(
+                    <g key={`npv-${i}`}>
+                      {displaced && <line x1={cx} y1={rectY + LH} x2={cx} y2={pt.y} stroke="#f59e0b" strokeWidth={1} strokeDasharray="3 2" />}
+                      <rect x={rectX} y={rectY} width={lw} height={LH} rx={4} fill="#020617" stroke="#7c2d12" strokeWidth={1} />
+                      <text x={cx} y={rectY + 13} textAnchor="middle" fill="#fde68a" fontSize={11} fontWeight={600}>{text}</text>
+                    </g>
+                  );
+                });
+
+                return <g>{els}</g>;
+              }}
             />
           </ComposedChart>
         </ResponsiveContainer>
