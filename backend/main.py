@@ -83,10 +83,17 @@ from services.input_normalizer import (
     _dict_to_canonical,
     _compute_confidence_and_missing,
 )
+from services.feature_gates import PLANS as FEATURE_PLANS
 from services.costar_inventory import (
     build_market_inventory_envelope,
     merge_market_inventory,
     parse_costar_inventory_workbook,
+)
+from stripe_billing import (
+    PRICE_ID_MAP,
+    create_billing_portal_session,
+    create_checkout_session,
+    get_stripe,
 )
 try:
     from cache.disk_cache import (
@@ -234,6 +241,11 @@ class UserWorkspaceStateUpdateRequest(BaseModel):
 
 class UserWorkspaceSectionUpdateRequest(BaseModel):
     value: Any = None
+
+
+class BillingCheckoutRequest(BaseModel):
+    plan_tier: str
+    start_trial: bool = False
 
 
 class ContactSubmissionRequest(BaseModel):
@@ -591,6 +603,58 @@ def _upsert_user_settings(user_id: str, *, brokerage_name: Optional[str], broker
     if status >= 400:
         raise HTTPException(status_code=503, detail="Failed to save user settings to Supabase")
     return _load_user_settings(user_id)
+
+
+def _ensure_billing_customer_for_user(user: dict[str, str]) -> str:
+    st = get_stripe()
+    if not st:
+        raise HTTPException(status_code=503, detail="Billing is not configured right now.")
+
+    user_id = str(user.get("id") or "").strip()
+    email = str(user.get("email") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    metadata = {"supabase_user_id": user_id}
+    search_query = f"metadata['supabase_user_id']:'{user_id}'"
+    customer = None
+
+    try:
+        results = st.Customer.search(query=search_query, limit=1)
+        if getattr(results, "data", None):
+            customer = results.data[0]
+    except Exception:
+        customer = None
+
+    if not customer and email:
+        try:
+            listed = st.Customer.list(email=email, limit=10)
+            for row in getattr(listed, "data", []) or []:
+                row_meta = getattr(row, "metadata", {}) or {}
+                if str(row_meta.get("supabase_user_id") or "").strip() == user_id:
+                    customer = row
+                    break
+        except Exception:
+            customer = None
+
+    if customer:
+        customer_id = str(getattr(customer, "id", "") or "").strip()
+        if customer_id:
+            return customer_id
+
+    try:
+        created = st.Customer.create(
+            email=email or None,
+            metadata=metadata,
+            name=email or f"user_{user_id[:12]}",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to initialize billing account.") from exc
+
+    customer_id = str(getattr(created, "id", "") or "").strip()
+    if not customer_id:
+        raise HTTPException(status_code=503, detail="Unable to initialize billing account.")
+    return customer_id
 
 
 def _guess_extension(content_type: str, filename: str) -> str:
@@ -1456,6 +1520,115 @@ def patch_user_settings(body: UserSettingsUpdateRequest, request: Request):
         "brokerage_logo_url": settings.get("brokerage_logo_url") or "",
         "updated_at": settings.get("updated_at") or None,
     }
+
+
+@app.post("/billing/checkout")
+def billing_checkout(body: BillingCheckoutRequest, request: Request):
+    user = _require_supabase_user(request)
+    tier = str(body.plan_tier or "").strip().lower()
+    if tier not in {"starter", "pro", "enterprise"}:
+        raise HTTPException(status_code=400, detail="Invalid plan tier.")
+    if not PRICE_ID_MAP.get(tier):
+        raise HTTPException(status_code=503, detail="Billing prices are not configured.")
+
+    customer_id = _ensure_billing_customer_for_user(user)
+    trial = bool(body.start_trial) and tier == "enterprise"
+    checkout_url = create_checkout_session(
+        customer_id,
+        tier,
+        success_url="https://thecremodel.com/account?billing=success",
+        cancel_url="https://thecremodel.com/pricing",
+        trial=trial,
+    )
+    if not checkout_url:
+        raise HTTPException(status_code=503, detail="Unable to start checkout right now.")
+    return {"checkout_url": checkout_url}
+
+
+@app.get("/billing/plan")
+def billing_plan(request: Request):
+    user = _require_supabase_user(request)
+    customer_id = _ensure_billing_customer_for_user(user)
+    tier: str = "starter"
+    status = "none"
+    is_trial = False
+    trial_ends_at: str | None = None
+
+    st = get_stripe()
+    if st:
+        try:
+            subscriptions = st.Subscription.list(customer=customer_id, status="all", limit=10)
+            ranked = sorted(
+                list(getattr(subscriptions, "data", []) or []),
+                key=lambda sub: (
+                    0 if str(getattr(sub, "status", "") or "") in {"trialing", "active", "past_due", "unpaid"} else 1,
+                    -int(getattr(sub, "created", 0) or 0),
+                ),
+            )
+            sub = ranked[0] if ranked else None
+            if sub:
+                status = str(getattr(sub, "status", "none") or "none")
+                trial_end_ts = int(getattr(sub, "trial_end", 0) or 0)
+                if trial_end_ts > 0:
+                    trial_ends_at = datetime.fromtimestamp(trial_end_ts, UTC).isoformat()
+                    is_trial = status == "trialing"
+                items = getattr(sub, "items", None)
+                data = getattr(items, "data", []) if items else []
+                if data:
+                    price = getattr(data[0], "price", None)
+                    price_id = str(getattr(price, "id", "") or "")
+                    if price_id:
+                        reverse_price = {value: key for key, value in PRICE_ID_MAP.items() if value}
+                        tier = str(reverse_price.get(price_id, tier))
+        except Exception:
+            pass
+
+    plan = FEATURE_PLANS.get(tier, FEATURE_PLANS["starter"])
+    return {
+        "plan_tier": tier,
+        "subscription_status": status,
+        "is_trial": is_trial,
+        "trial_days_remaining": None,
+        "trial_ends_at": trial_ends_at,
+        "plan": {
+            "name": plan.name,
+            "price_monthly": plan.price_monthly,
+            "max_deals": plan.max_deals,
+            "max_scenarios_per_deal": plan.max_scenarios_per_deal,
+            "max_team_members": plan.max_team_members,
+            "max_pdf_exports_per_month": plan.max_pdf_exports_per_month,
+            "max_ai_extractions_per_month": plan.max_ai_extractions_per_month,
+            "advanced_compute": plan.advanced_compute,
+            "ai_extraction": plan.ai_extraction,
+            "white_label_branding": plan.white_label_branding,
+            "surveys_module": plan.surveys_module,
+            "obligations_module": plan.obligations_module,
+            "sublease_recovery_module": plan.sublease_recovery_module,
+            "completed_leases_module": plan.completed_leases_module,
+            "api_access": plan.api_access,
+            "priority_support": plan.priority_support,
+            "excel_export": plan.excel_export,
+            "trial_days": plan.trial_days,
+            "highlights": plan.highlights,
+        },
+        "usage": {
+            "monthly_pdf_exports": 0,
+            "monthly_ai_extractions": 0,
+        },
+    }
+
+
+@app.post("/billing/portal")
+def billing_portal(request: Request):
+    user = _require_supabase_user(request)
+    customer_id = _ensure_billing_customer_for_user(user)
+    portal_url = create_billing_portal_session(
+        customer_id,
+        return_url="https://thecremodel.com/account?section=settings&settings=billing",
+    )
+    if not portal_url:
+        raise HTTPException(status_code=503, detail="Unable to open billing portal right now.")
+    return {"portal_url": portal_url}
 
 
 @app.get("/user-settings/workspace")

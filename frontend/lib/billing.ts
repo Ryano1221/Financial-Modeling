@@ -162,9 +162,15 @@ export function getPlanBadge(tier: PlanTier, isTrial: boolean): string {
   return PLANS_STATIC[tier]?.name ?? tier;
 }
 
+async function fetchBillingProxy(path: string, init: RequestInit): Promise<Response> {
+  const res = await fetchApiProxy(path, init);
+  if (res.status !== 404) return res;
+  return fetchApiProxy(`/api/v1${path}`, init);
+}
+
 export async function fetchOrgPlan(): Promise<OrgPlanInfo | null> {
   try {
-    const res = await fetchApiProxy("/api/v1/billing/plan", {
+    const res = await fetchBillingProxy("/billing/plan", {
       method: "GET",
       headers: getAuthHeaders(),
     });
@@ -177,7 +183,7 @@ export async function fetchOrgPlan(): Promise<OrgPlanInfo | null> {
 
 export async function startCheckout(tier: PlanTier, trial = false): Promise<string | null> {
   try {
-    const res = await fetchApiProxy("/api/v1/billing/checkout", {
+    const res = await fetchBillingProxy("/billing/checkout", {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ plan_tier: tier, start_trial: trial }),
@@ -192,7 +198,7 @@ export async function startCheckout(tier: PlanTier, trial = false): Promise<stri
 
 export async function openBillingPortal(): Promise<string | null> {
   try {
-    const res = await fetchApiProxy("/api/v1/billing/portal", {
+    const res = await fetchBillingProxy("/billing/portal", {
       method: "POST",
       headers: getAuthHeaders(),
     });
