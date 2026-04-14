@@ -383,25 +383,24 @@ function DualMetricComboChart({
     lineValue: toNumber((row.metrics as OptionMetrics)[lineMetric.key]),
     totalObligation: toNumber((row.metrics as OptionMetrics)["totalObligation"]),
   }));
-  const maxBarValue = Math.max(0, ...chartData.map((row) => toNumber(row.barValue)));
   const maxLineValue = Math.max(0, ...chartData.map((row) => toNumber(row.lineValue)));
   const maxTotalObligation = Math.max(0, ...chartData.map((row) => toNumber(row.totalObligation)));
-  const leftAxisMax = maxBarValue > 0 ? maxBarValue * 1.15 : 1;
-  const rightAxisMax = Math.max(maxLineValue, maxTotalObligation) > 0 ? Math.max(maxLineValue, maxTotalObligation) * 1.15 : 1;
+  const leftAxisMax = maxTotalObligation > 0 ? maxTotalObligation * 1.15 : 1;
+  const rightAxisMax = maxLineValue > 0 ? maxLineValue * 1.15 : 1;
   const dualPlacedLabelRects: LabelRect[] = [];
 
   return (
     <div className="surface-card p-4 sm:p-5">
       <h3 className="text-base font-semibold text-slate-100 mb-1 tracking-tight">{resolvedTitle}</h3>
-      <p className="text-xs text-slate-400 mb-3">Bar: {barMetric.label} | Line: {lineMetric.label}</p>
+      <p className="text-xs text-slate-400 mb-3">Bar: Total Obligation | Line: {lineMetric.label}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-2 mb-3">
-        <div className="inline-flex items-center gap-2 text-xs text-slate-300">
-          <span className="inline-block h-2.5 w-2.5 bg-cyan-400" />
-          <span>{barMetric.label} (bar)</span>
-        </div>
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
           <span className="inline-block h-2.5 w-2.5 bg-violet-500" />
           <span>Total Estimated Obligation (bar)</span>
+        </div>
+        <div className="inline-flex items-center gap-2 text-xs text-slate-300">
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-cyan-400" style={{ border: "1px solid #22d3ee" }} />
+          <span>{barMetric.label} (label)</span>
         </div>
         <div className="inline-flex items-center gap-2 text-xs text-slate-300">
           <span className="inline-block h-[2px] w-3 bg-amber-400" />
@@ -423,7 +422,7 @@ function DualMetricComboChart({
             <YAxis
               yAxisId="left"
               tick={{ fill: "#cbd5e1", fontSize: 12 }}
-              tickFormatter={(value) => formatAxisValue(barMetric, toNumber(value))}
+              tickFormatter={(value) => formatCompactCurrency(toNumber(value))}
               width={80}
               domain={[0, leftAxisMax]}
             />
@@ -439,26 +438,27 @@ function DualMetricComboChart({
               contentStyle={{ backgroundColor: "#020617", border: "1px solid #334155", color: "#e2e8f0" }}
               labelStyle={{ color: "#e2e8f0", fontWeight: 600 }}
               formatter={(value: number, name: string) => {
-                if (name === barMetric.label) return [barMetric.format(toNumber(value)), name];
                 if (name === "Total Estimated Obligation") return [formatCurrency(toNumber(value)), name];
+                if (name === barMetric.label) return [barMetric.format(toNumber(value)), name];
                 return [lineMetric.format(toNumber(value)), name];
               }}
             />
             <Bar
               yAxisId="left"
-              dataKey="barValue"
-              name={barMetric.label}
-              fill="#22d3ee"
+              dataKey="totalObligation"
+              name="Total Estimated Obligation"
+              fill="#8b5cf6"
               radius={[2, 2, 0, 0]}
-              maxBarSize={42}
+              maxBarSize={48}
             >
+              {/* $/SF callout — cyan badge at the top of each bar */}
               <LabelList
                 dataKey="barValue"
                 position="top"
                 content={(props: any) => {
                   const { x, y, width, value } = props;
                   const text = barMetric.format(toNumber(value));
-                  const labelWidth = Math.max(54, Math.round(text.length * 6.8) + 10);
+                  const labelWidth = Math.max(60, Math.round(text.length * 6.8) + 12);
                   const labelHeight = 18;
                   const centerX = x + width / 2;
                   const placed = placeLabelRect({
@@ -480,64 +480,16 @@ function DualMetricComboChart({
                         width={labelWidth}
                         height={labelHeight}
                         rx={4}
-                        fill="#020617"
-                        stroke="#334155"
+                        fill="#083344"
+                        stroke="#22d3ee"
                         strokeWidth={1}
                       />
                       <text
                         x={centerX}
                         y={rectY + 13}
                         textAnchor="middle"
-                        fill="#f8fafc"
+                        fill="#22d3ee"
                         fontSize={11}
-                        fontWeight={600}
-                      >
-                        {text}
-                      </text>
-                    </g>
-                  );
-                }}
-              />
-            </Bar>
-            <Bar
-              yAxisId="right"
-              dataKey="totalObligation"
-              name="Total Estimated Obligation"
-              fill="#8b5cf6"
-              radius={[2, 2, 0, 0]}
-              maxBarSize={42}
-            >
-              <LabelList
-                dataKey="totalObligation"
-                position="insideBottom"
-                content={(props: any) => {
-                  const { x, y, width, height, value } = props;
-                  if (!value) return null;
-                  const text = formatCurrency(toNumber(value));
-                  const labelWidth = Math.max(70, Math.round(text.length * 6.8) + 10);
-                  const labelHeight = 18;
-                  const centerX = x + width / 2;
-                  const barBottom = y + height;
-                  const rectX = centerX - labelWidth / 2;
-                  const rectY = barBottom - labelHeight - 4;
-                  return (
-                    <g>
-                      <rect
-                        x={rectX}
-                        y={rectY}
-                        width={labelWidth}
-                        height={labelHeight}
-                        rx={4}
-                        fill="#4c1d95"
-                        stroke="#8b5cf6"
-                        strokeWidth={1}
-                      />
-                      <text
-                        x={centerX}
-                        y={rectY + 13}
-                        textAnchor="middle"
-                        fill="#ede9fe"
-                        fontSize={10}
                         fontWeight={700}
                       >
                         {text}
