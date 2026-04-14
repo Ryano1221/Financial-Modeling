@@ -451,46 +451,7 @@ function DualMetricComboChart({
               radius={[2, 2, 0, 0]}
               maxBarSize={48}
             >
-              {/* $/SF callout — cyan badge centered vertically inside the bar */}
-              <LabelList
-                dataKey="barValue"
-                position="center"
-                content={(props: any) => {
-                  const { x, y, width, height, value } = props;
-                  const text = barMetric.format(toNumber(value));
-                  const labelWidth = Math.max(60, Math.round(text.length * 6.8) + 12);
-                  const labelHeight = 18;
-                  const centerX = x + width / 2;
-                  const centerY = y + height / 2;
-                  const rectX = centerX - labelWidth / 2;
-                  const rectY = centerY - labelHeight / 2;
-                  return (
-                    <g>
-                      <rect
-                        x={rectX}
-                        y={rectY}
-                        width={labelWidth}
-                        height={labelHeight}
-                        rx={4}
-                        fill="#083344"
-                        stroke="#22d3ee"
-                        strokeWidth={1}
-                      />
-                      <text
-                        x={centerX}
-                        y={rectY + 13}
-                        textAnchor="middle"
-                        fill="#22d3ee"
-                        fontSize={11}
-                        fontWeight={700}
-                      >
-                        {text}
-                      </text>
-                    </g>
-                  );
-                }}
-              />
-              {/* Total Obligation dollar callout — violet badge at the base of each bar */}
+              {/* Total Obligation dollar callout — violet badge at base, registered FIRST so $/SF can check against it */}
               <LabelList
                 dataKey="totalObligation"
                 position="insideBottom"
@@ -498,32 +459,82 @@ function DualMetricComboChart({
                   const { x, y, width, height, value } = props;
                   if (!value) return null;
                   const text = formatCurrency(toNumber(value));
-                  const labelWidth = Math.max(70, Math.round(text.length * 6.8) + 10);
-                  const labelHeight = 18;
-                  const centerX = x + width / 2;
+                  const lw = Math.max(70, Math.round(text.length * 6.8) + 10);
+                  const lh = 18;
+                  const cx = x + width / 2;
                   const barBottom = y + height;
-                  const rectX = centerX - labelWidth / 2;
-                  const rectY = barBottom - labelHeight - 4;
+                  // Natural: just inside bottom edge
+                  let rectY = barBottom - lh - 4;
+                  let displaced = false;
+                  const natural: LabelRect = { x1: cx - lw / 2, x2: cx + lw / 2, y1: rectY, y2: rectY + lh };
+                  if (dualPlacedLabelRects.some((r) => rectsOverlap(natural, r))) {
+                    // Displace below the bar
+                    rectY = barBottom + 4;
+                    displaced = true;
+                  }
+                  const rectX = cx - lw / 2;
+                  dualPlacedLabelRects.push({ x1: rectX, x2: rectX + lw, y1: rectY, y2: rectY + lh });
                   return (
                     <g>
-                      <rect
-                        x={rectX}
-                        y={rectY}
-                        width={labelWidth}
-                        height={labelHeight}
-                        rx={4}
-                        fill="#4c1d95"
-                        stroke="#8b5cf6"
-                        strokeWidth={1}
-                      />
-                      <text
-                        x={centerX}
-                        y={rectY + 13}
-                        textAnchor="middle"
-                        fill="#ede9fe"
-                        fontSize={10}
-                        fontWeight={700}
-                      >
+                      {displaced && (
+                        <line x1={cx} y1={barBottom} x2={cx} y2={rectY} stroke="#8b5cf6" strokeWidth={1} strokeDasharray="3 2" />
+                      )}
+                      <rect x={rectX} y={rectY} width={lw} height={lh} rx={4} fill="#4c1d95" stroke="#8b5cf6" strokeWidth={1} />
+                      <text x={cx} y={rectY + 13} textAnchor="middle" fill="#ede9fe" fontSize={10} fontWeight={700}>
+                        {text}
+                      </text>
+                    </g>
+                  );
+                }}
+              />
+              {/* $/SF callout — cyan badge centered in bar; displaced above with connector if it would overlap */}
+              <LabelList
+                dataKey="barValue"
+                position="center"
+                content={(props: any) => {
+                  const { x, y, width, height, value } = props;
+                  const text = barMetric.format(toNumber(value));
+                  const lw = Math.max(60, Math.round(text.length * 6.8) + 12);
+                  const lh = 18;
+                  const cx = x + width / 2;
+                  const barCenterY = y + height / 2;
+                  const barTop = y;
+                  // Natural: vertically centered in bar
+                  let rectY = barCenterY - lh / 2;
+                  let displaced = false;
+                  let connectorY2 = barTop; // where connector touches the bar
+                  const natural: LabelRect = { x1: cx - lw / 2, x2: cx + lw / 2, y1: rectY, y2: rectY + lh };
+                  if (dualPlacedLabelRects.some((r) => rectsOverlap(natural, r))) {
+                    // Try above bar first
+                    const aboveY = Math.max(2, barTop - lh - 6);
+                    const above: LabelRect = { x1: cx - lw / 2, x2: cx + lw / 2, y1: aboveY, y2: aboveY + lh };
+                    if (!dualPlacedLabelRects.some((r) => rectsOverlap(above, r))) {
+                      rectY = aboveY;
+                    } else {
+                      // Use placeLabelRect to find any free spot above
+                      const found = placeLabelRect({
+                        centerX: cx,
+                        width: lw,
+                        height: lh,
+                        anchorY: barTop - lh - 6,
+                        minY: 2,
+                        liftStep: lh + 2,
+                        placedRects: dualPlacedLabelRects,
+                      });
+                      rectY = found.y1;
+                    }
+                    displaced = true;
+                    connectorY2 = barCenterY;
+                  }
+                  const rectX = cx - lw / 2;
+                  if (!displaced) dualPlacedLabelRects.push({ x1: rectX, x2: rectX + lw, y1: rectY, y2: rectY + lh });
+                  return (
+                    <g>
+                      {displaced && (
+                        <line x1={cx} y1={rectY + lh} x2={cx} y2={connectorY2} stroke="#22d3ee" strokeWidth={1} strokeDasharray="3 2" />
+                      )}
+                      <rect x={rectX} y={rectY} width={lw} height={lh} rx={4} fill="#083344" stroke="#22d3ee" strokeWidth={1} />
+                      <text x={cx} y={rectY + 13} textAnchor="middle" fill="#22d3ee" fontSize={11} fontWeight={700}>
                         {text}
                       </text>
                     </g>
