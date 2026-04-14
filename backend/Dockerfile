@@ -63,4 +63,4 @@ RUN ls -la /app && ls -la /app/services && test -f /app/services/input_normalize
 RUN ls -la /app/models && test -f /app/models/legacy.py
 RUN ls -la /app/cache && test -f /app/cache/disk_cache.py && test -f /app/cache/__init__.py
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
