@@ -5844,6 +5844,16 @@ def _extract_option_counter_terms(text: str) -> dict:
         ),
         stop_heading_patterns=stop_headings,
     )
+    ti_section = _extract_labeled_section(
+        flat,
+        heading_patterns=(
+            r"tenant\s+improvement\s+allowance",
+            r"tenant\s+improvements?",
+            r"tia?",
+            r"improvement\s+allowance",
+        ),
+        stop_heading_patterns=stop_headings,
+    )
     if not term_section:
         term_section = flat
     if not base_section:
@@ -5964,6 +5974,34 @@ def _extract_option_counter_terms(text: str) -> dict:
         if block_escalation_start is not None:
             data["escalation_start_month_1"] = int(block_escalation_start)
 
+    # Parse TI allowance per option from the TI section
+    _SF_UNIT_PAT = r"(?:/\s*(?:rsf|sf)|per\s+(?:rsf|sf|sq\.?\s*ft\.?))"
+    for raw_label, block in _extract_option_blocks(ti_section or flat):
+        key = _normalize_option_key(raw_label)
+        if not key:
+            continue
+        data = option_data.setdefault(key, {"option_key": key, "option_label": _option_display_label(key)})
+        # Pattern 1: explicit $/sf TIA amount
+        ti_psf_match = re.search(
+            rf"(?i)(?:\$\s*([0-9]+(?:\.[0-9]+)?)\s*{_SF_UNIT_PAT}|(?:allowance|tia?|allowance\s+of)\D{{0,20}}\$\s*([0-9]+(?:\.[0-9]+)?)\s*{_SF_UNIT_PAT})",
+            block,
+        )
+        # Pattern 2: turn-key with cost cap
+        if not ti_psf_match:
+            ti_psf_match = re.search(
+                rf"(?i)(?:turn.?key|build.?out).{{0,120}}?(?:cost\s+not\s+to\s+exceed|at\s+a\s+cost\s+of|at\s+\$)\s*\$?\s*([0-9]+(?:\.[0-9]+)?)\s*{_SF_UNIT_PAT}",
+                block,
+            )
+        if ti_psf_match:
+            val_str = next((g for g in ti_psf_match.groups() if g is not None), None)
+            if val_str:
+                ti_val = _coerce_float_token(val_str, 0.0) or 0.0
+                if 5.0 <= ti_val <= 500.0:
+                    data["ti_allowance_psf"] = float(ti_val)
+        # Pattern 3: "turn-key" with no dollar cap → mark as turn_key_no_cap
+        elif re.search(r"(?i)\bturn.?key\b", block) and "ti_allowance_psf" not in data:
+            data["ti_turnkey_no_cap"] = True
+
     if not option_data:
         return {}
 
@@ -5975,6 +6013,7 @@ def _extract_option_counter_terms(text: str) -> dict:
         escalation_pct = _coerce_float_token(raw.get("escalation_pct"), escalation_pct_default) or escalation_pct_default
         escalation_amount_psf_yr = _coerce_float_token(raw.get("escalation_amount_psf_yr"), 0.0) or 0.0
         escalation_start_month_1 = _coerce_int_token(raw.get("escalation_start_month_1"), None)
+        ti_allowance_psf = _coerce_float_token(raw.get("ti_allowance_psf"), None)
         option_entry = {
             "option_key": key,
             "option_label": str(raw.get("option_label") or _option_display_label(key)),
@@ -5983,6 +6022,8 @@ def _extract_option_counter_terms(text: str) -> dict:
             "escalation_pct": escalation_pct,
             "escalation_amount_psf_yr": float(escalation_amount_psf_yr),
             "escalation_start_month_1": int(escalation_start_month_1) if escalation_start_month_1 is not None else None,
+            "ti_allowance_psf": float(ti_allowance_psf) if ti_allowance_psf is not None else None,
+            "ti_turnkey_no_cap": bool(raw.get("ti_turnkey_no_cap", False)),
         }
         option_free_periods = _normalize_option_free_rent_periods(raw.get("free_rent_periods"), term_months=term_months)
         if not option_free_periods and free_rent_months > 0:
@@ -6018,7 +6059,8 @@ def _extract_option_counter_terms(text: str) -> dict:
     if not options:
         return {}
 
-    preferred_key = "b" if "b" in option_data else options[0]["option_key"]
+    # Default to Option A (shortest term / first option) as the primary scenario
+    preferred_key = "a" if "a" in option_data else options[0]["option_key"]
     preferred = option_data.get(preferred_key) or {}
     if not preferred:
         return {}
@@ -6182,6 +6224,7 @@ def _build_canonical_option_variants(
                 if int(last.end_month) != target_end:
                     rent_schedule[-1] = last.model_copy(update={"end_month": target_end})
 
+        variant_ti_psf = _coerce_float_token(raw.get("ti_allowance_psf"), None)
         updates: dict = {
             "scenario_name": _build_option_variant_scenario_name(base_name, option_label),
             "term_months": int(term_months),
@@ -6199,6 +6242,12 @@ def _build_canonical_option_variants(
         }
         if rent_schedule:
             updates["rent_schedule"] = rent_schedule
+        # Apply per-option TI allowance if explicitly extracted; otherwise inherit from canonical
+        if variant_ti_psf is not None and variant_ti_psf > 0:
+            updates["ti_allowance_psf"] = float(variant_ti_psf)
+            rsf_v = _coerce_float_token(getattr(canonical, "rsf", None), None)
+            if rsf_v and rsf_v > 0:
+                updates["ti_budget_total"] = float(round(variant_ti_psf * rsf_v, 2))
         variant = canonical.model_copy(update=updates)
         try:
             variant, _ = normalize_canonical_lease(variant)
@@ -8178,6 +8227,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
                 escalation_start_month_1=variant_escalation_start_month_1,
                 escalation_amount_psf_yr=float(variant_escalation_amount_psf_yr),
             )
+        variant_ti_psf = _coerce_float_token(raw_variant.get("ti_allowance_psf"), None)
         variant_entry: dict = {
             "option_key": option_key,
             "option_label": str(raw_variant.get("option_label") or _option_display_label(option_key)).strip() or _option_display_label(option_key),
@@ -8190,6 +8240,7 @@ def _extract_lease_hints(text: str, filename: str, rid: str) -> dict:
             "escalation_amount_psf_yr": float(variant_escalation_amount_psf_yr),
             "escalation_start_month_1": int(variant_escalation_start_month_1) if variant_escalation_start_month_1 is not None else None,
             "rent_schedule": variant_rent_schedule,
+            "ti_allowance_psf": float(variant_ti_psf) if variant_ti_psf is not None else None,
         }
         if hints.get("commencement_date"):
             try:

@@ -3205,14 +3205,32 @@ def _llm_extract_scenario(text: str, prefill: dict) -> dict:
         prefill_hint = f"\nPre-extracted values (use these when confident, else null + warning): {json.dumps(prefill_for_model)}"
 
     prompt = f"""Extract lease terms as JSON only. No markdown, no prose.
-- Output a single JSON object: {{ "scenario": {{ ... }}, "confidence": {{ "rsf": 0.9, ... }}, "warnings": [] }}
-- Scenario fields to fill when present: name, rsf, commencement, expiration, rent_steps, free_rent_months, ti_allowance_psf, opex_mode, base_opex_psf_yr, base_year_opex_psf_yr, opex_growth.
-- Treat lease year tables correctly: Year 1 = months 1-12 (stored internally as 0-11), Year 2 = months 13-24, etc.
-- rent_steps must be month-index ranges only: [{{"start": 0, "end": 59, "rate_psf_yr": number}}, ...]
+
+MULTI-OPTION DOCUMENTS: If the document presents Option A and Option B (or multiple scenarios), output ALL of them.
+- Output: {{ "scenario": {{...Option A fields...}}, "options": [{{"label": "Option A", "scenario": {{...}}}}, {{"label": "Option B", "scenario": {{...}}}}], "confidence": {{...}}, "warnings": [] }}
+- If only one option exists, "options" may be omitted or contain a single entry.
+- Each option scenario must be FULLY populated — do not leave fields null if the document states them.
+
+SINGLE-OPTION: {{ "scenario": {{ ... }}, "confidence": {{ "rsf": 0.9, ... }}, "warnings": [] }}
+
+Scenario fields (fill for EACH option separately):
+- name: descriptive label (e.g. "Option A - 65 months")
+- rsf: rentable square feet (shared across options unless stated otherwise)
+- commencement, expiration: YYYY-MM-DD dates
+- rent_steps: [{{"start": 0, "end": 59, "rate_psf_yr": number}}, ...] — contiguous, no gaps, 0-indexed months
+- free_rent_months: integer months of base rent abatement. "abated for X months" = X.
+- ti_allowance_psf: $/sf TI budget. "turn-key at cost not to exceed $X/sf" = X. "turn-key" with no cap = null.
+- opex_mode: "nnn", "base_year", or "full_service"
+- base_opex_psf_yr: annual opex $/sf
+- base_year_opex_psf_yr: expense stop $/sf (base_year only)
+- opex_growth: annual escalation as decimal (0.03 = 3%)
+
+Rules:
+- Year 1 = months 0-11, Year 2 = months 12-23, etc.
 - rent_steps must be contiguous, no overlaps/gaps, sorted ascending.
-- Prefer the subject Premises/Suite/Space for RSF and dates; ignore ROFR/ROFO/expansion/option spaces unless they are explicitly the leased premises.
-- Do not invent values. Use null and add a warning when unknown.
-- If only monthly rent and RSF are provided, infer annual PSF rent.
+- Spelled-out numbers count: "five months" = 5, "seven months" = 7.
+- Prefer subject Premises RSF and dates; ignore ROFR/expansion spaces.
+- Do not invent values. Use null when unknown.
 {prefill_hint}
 
 Text:
@@ -3781,8 +3799,33 @@ def extract_scenario_from_text(text: str, source: str) -> ExtractionResponse:
 
         warnings = extra_warnings + warnings
         scenario = Scenario.model_validate(scenario_dict)
+
+        # Build extracted_options from LLM "options" array if present
+        extracted_options: list = []
+        raw_options = (raw or {}).get("options") if raw else None
+        if isinstance(raw_options, list) and len(raw_options) >= 2:
+            for opt in raw_options:
+                if not isinstance(opt, dict):
+                    continue
+                opt_scenario_dict = opt.get("scenario")
+                opt_label = str(opt.get("label") or "").strip()
+                if not isinstance(opt_scenario_dict, dict) or not opt_label:
+                    continue
+                try:
+                    # Apply prefill for fields not specified per-option
+                    for k, v in prefill_for_model.items() if prefill_for_model else []:
+                        if v is not None and (opt_scenario_dict.get(k) is None or opt_scenario_dict.get(k) == ""):
+                            opt_scenario_dict[k] = v
+                    opt_s_dict, _, _ = _apply_safe_defaults({"scenario": opt_scenario_dict, "confidence": {}, "warnings": []}, prefill=prefill)
+                    opt_scenario = Scenario.model_validate(opt_s_dict)
+                    from models import ExtractedScenarioOption
+                    extracted_options.append(ExtractedScenarioOption(label=opt_label, scenario=opt_scenario))
+                except Exception as e:
+                    logger.warning("[extract] failed to parse option %r: %s", opt_label, e)
+
         return ExtractionResponse(
             scenario=scenario,
+            extracted_options=extracted_options,
             confidence=confidence,
             warnings=warnings,
             source=source,

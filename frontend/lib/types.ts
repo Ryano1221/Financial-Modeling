@@ -314,9 +314,17 @@ export interface ReportData {
 /** How extraction was produced: text-only, forced OCR, or auto-triggered OCR */
 export type ExtractionSource = "text" | "ocr" | "auto_ocr";
 
+/** One fully-populated option extracted from a multi-option document */
+export interface ExtractedScenarioOption {
+  label: string;
+  scenario: ScenarioInput;
+}
+
 /** Response from POST /extract (PDF/DOCX/DOC extraction) */
 export interface ExtractionResponse {
   scenario: ScenarioInput;
+  /** Present when document has multiple options (Option A, Option B, etc.) — each fully populated */
+  extracted_options?: ExtractedScenarioOption[];
   confidence: Record<string, number>;
   warnings: string[];
   source: "pdf_text" | "ocr" | "pdf_text+ocr" | "docx" | "doc";

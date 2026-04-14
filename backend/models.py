@@ -378,9 +378,16 @@ class CreateReportResponse(BaseModel):
 ExtractionSource = Literal["text", "ocr", "auto_ocr"]
 
 
+class ExtractedScenarioOption(BaseModel):
+    """One fully-populated scenario option extracted from a multi-option document."""
+    label: str
+    scenario: "Scenario"
+
+
 class ExtractionResponse(BaseModel):
     """Response from POST /extract: scenario for user review, field-level confidence, and warnings."""
-    scenario: Scenario
+    scenario: "Scenario"
+    extracted_options: List["ExtractedScenarioOption"] = Field(default_factory=list)
     confidence: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     source: str  # one of: "pdf_text", "ocr", "pdf_text+ocr", "docx", "doc"
