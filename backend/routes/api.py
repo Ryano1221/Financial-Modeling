@@ -34,7 +34,27 @@ from db.models import (
     JobStatus,
 )
 from audit import log as audit_log
-from stripe_billing import ensure_customer, report_usage_runs, report_usage_pdf_export
+from stripe_billing import (
+    ensure_customer,
+    report_usage_runs,
+    report_usage_pdf_export,
+    create_subscription,
+    cancel_subscription,
+    change_subscription_plan,
+    create_billing_portal_session,
+    create_checkout_session,
+)
+from services.feature_gates import (
+    effective_plan,
+    is_on_active_trial,
+    days_left_on_trial,
+    require_deal_limit,
+    require_scenario_limit,
+    require_pdf_export_limit,
+    require_ai_extraction_limit,
+    require_feature,
+    PLANS,
+)
 from s3_client import upload_fileobj, presigned_url, S3_BUCKET
 from models import Scenario as ScenarioPydantic, CashflowResult
 from engine.compute import compute_cashflows
@@ -76,6 +96,227 @@ class ReportCreate(BaseModel):
 
 ALLOWED_LOGO_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
 MAX_LOGO_BYTES = 1_500_000
+
+
+# ── Billing schemas ───────────────────────────────────────────────────────────
+
+class SubscribeRequest(BaseModel):
+    plan_tier: str  # starter | pro | enterprise
+    start_trial: bool = False
+
+
+class ChangePlanRequest(BaseModel):
+    plan_tier: str
+
+
+# ── Billing endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/billing/plan")
+def get_current_plan(
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+):
+    """Return the org's current plan, limits, and usage."""
+    _, org, _ = rbac
+    plan = effective_plan(org)
+    trial_active = is_on_active_trial(org)
+    trial_days = days_left_on_trial(org)
+    return {
+        "plan_tier": org.plan_tier,
+        "subscription_status": org.subscription_status,
+        "is_trial": trial_active,
+        "trial_days_remaining": trial_days,
+        "trial_ends_at": org.trial_ends_at.isoformat() if org.trial_ends_at else None,
+        "plan": {
+            "name": plan.name,
+            "price_monthly": plan.price_monthly,
+            "max_deals": plan.max_deals,
+            "max_scenarios_per_deal": plan.max_scenarios_per_deal,
+            "max_team_members": plan.max_team_members,
+            "max_pdf_exports_per_month": plan.max_pdf_exports_per_month,
+            "max_ai_extractions_per_month": plan.max_ai_extractions_per_month,
+            "advanced_compute": plan.advanced_compute,
+            "ai_extraction": plan.ai_extraction,
+            "white_label_branding": plan.white_label_branding,
+            "surveys_module": plan.surveys_module,
+            "obligations_module": plan.obligations_module,
+            "sublease_recovery_module": plan.sublease_recovery_module,
+            "completed_leases_module": plan.completed_leases_module,
+            "api_access": plan.api_access,
+            "excel_export": plan.excel_export,
+        },
+        "usage": {
+            "monthly_pdf_exports": org.monthly_pdf_exports or 0,
+            "monthly_ai_extractions": org.monthly_ai_extractions or 0,
+        },
+    }
+
+
+@router.get("/billing/plans")
+def list_plans():
+    """Return all available plans (public, no auth needed for pricing page)."""
+    return {
+        tier: {
+            "name": p.name,
+            "price_monthly": p.price_monthly,
+            "max_deals": p.max_deals,
+            "max_scenarios_per_deal": p.max_scenarios_per_deal,
+            "max_team_members": p.max_team_members,
+            "max_pdf_exports_per_month": p.max_pdf_exports_per_month,
+            "max_ai_extractions_per_month": p.max_ai_extractions_per_month,
+            "advanced_compute": p.advanced_compute,
+            "ai_extraction": p.ai_extraction,
+            "white_label_branding": p.white_label_branding,
+            "surveys_module": p.surveys_module,
+            "obligations_module": p.obligations_module,
+            "sublease_recovery_module": p.sublease_recovery_module,
+            "completed_leases_module": p.completed_leases_module,
+            "api_access": p.api_access,
+            "excel_export": p.excel_export,
+            "trial_days": p.trial_days,
+            "highlights": p.highlights,
+        }
+        for tier, p in PLANS.items()
+        if tier != "free_trial"  # don't expose the internal trial tier
+    }
+
+
+@router.post("/billing/subscribe")
+def subscribe(
+    body: SubscribeRequest,
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    """Subscribe org to a plan (or start enterprise trial)."""
+    claims, org, member = rbac
+    if member.role not in (Role.owner.value, Role.admin.value):
+        raise HTTPException(status_code=403, detail="Only owners/admins can manage billing")
+
+    valid_tiers = {"starter", "pro", "enterprise"}
+    if body.plan_tier not in valid_tiers:
+        raise HTTPException(status_code=400, detail=f"Invalid plan tier. Choose from: {valid_tiers}")
+
+    # Ensure Stripe customer
+    stripe_id = ensure_customer(org.id, org.name, org.stripe_customer_id)
+    if stripe_id and not org.stripe_customer_id:
+        org.stripe_customer_id = stripe_id
+        db.commit()
+
+    start_trial = body.start_trial and body.plan_tier == "enterprise"
+    result = create_subscription(stripe_id or f"local_{org.id}", body.plan_tier, trial=start_trial)
+
+    if result:
+        from datetime import timezone
+        org.plan_tier = body.plan_tier
+        org.stripe_subscription_id = result["subscription_id"]
+        org.subscription_status = result["status"]
+        if result.get("trial_end"):
+            org.trial_ends_at = result["trial_end"]
+        db.commit()
+
+    audit_log(db, org.id, claims.sub, "subscribe", "billing", org.id, {"plan": body.plan_tier, "trial": start_trial})
+    return {
+        "ok": True,
+        "plan_tier": org.plan_tier,
+        "subscription_status": org.subscription_status,
+        "client_secret": result.get("client_secret") if result else None,
+        "trial_ends_at": org.trial_ends_at.isoformat() if org.trial_ends_at else None,
+    }
+
+
+@router.post("/billing/checkout")
+def billing_checkout(
+    body: SubscribeRequest,
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    """Create a Stripe Checkout session URL for the plan."""
+    claims, org, member = rbac
+    if member.role not in (Role.owner.value, Role.admin.value):
+        raise HTTPException(status_code=403, detail="Only owners/admins can manage billing")
+
+    stripe_id = ensure_customer(org.id, org.name, org.stripe_customer_id)
+    if stripe_id and not org.stripe_customer_id:
+        org.stripe_customer_id = stripe_id
+        db.commit()
+
+    base_url = "https://thecremodel.com"
+    url = create_checkout_session(
+        stripe_id or "",
+        body.plan_tier,
+        success_url=f"{base_url}/account?billing=success",
+        cancel_url=f"{base_url}/pricing",
+        trial=body.start_trial and body.plan_tier == "enterprise",
+    )
+    if not url:
+        raise HTTPException(status_code=500, detail="Could not create checkout session")
+    return {"checkout_url": url}
+
+
+@router.post("/billing/portal")
+def billing_portal(
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    """Return a Stripe Customer Portal URL for self-service billing."""
+    _, org, member = rbac
+    if member.role not in (Role.owner.value, Role.admin.value):
+        raise HTTPException(status_code=403, detail="Only owners/admins can manage billing")
+    if not org.stripe_customer_id:
+        raise HTTPException(status_code=400, detail="No billing account found")
+    url = create_billing_portal_session(
+        org.stripe_customer_id,
+        return_url="https://thecremodel.com/account",
+    )
+    if not url:
+        raise HTTPException(status_code=500, detail="Could not create portal session")
+    return {"portal_url": url}
+
+
+@router.post("/billing/cancel")
+def cancel_plan(
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    """Cancel subscription at period end."""
+    claims, org, member = rbac
+    if member.role not in (Role.owner.value, Role.admin.value):
+        raise HTTPException(status_code=403, detail="Only owners/admins can manage billing")
+    if org.stripe_subscription_id:
+        cancel_subscription(org.stripe_subscription_id)
+    org.subscription_status = "canceled"
+    db.commit()
+    audit_log(db, org.id, claims.sub, "cancel", "billing", org.id, {})
+    return {"ok": True}
+
+
+@router.post("/billing/change-plan")
+def change_plan(
+    body: ChangePlanRequest,
+    rbac: tuple[ClerkClaims, Organization, OrganizationMember] = Depends(rbac_require_org),
+    db: Session = Depends(get_db),
+):
+    """Upgrade or downgrade plan."""
+    claims, org, member = rbac
+    if member.role not in (Role.owner.value, Role.admin.value):
+        raise HTTPException(status_code=403, detail="Only owners/admins can manage billing")
+    valid_tiers = {"starter", "pro", "enterprise"}
+    if body.plan_tier not in valid_tiers:
+        raise HTTPException(status_code=400, detail="Invalid plan tier")
+
+    if org.stripe_subscription_id:
+        result = change_subscription_plan(org.stripe_subscription_id, body.plan_tier)
+        if result:
+            org.plan_tier = body.plan_tier
+            org.subscription_status = result["status"]
+            db.commit()
+    else:
+        org.plan_tier = body.plan_tier
+        db.commit()
+
+    audit_log(db, org.id, claims.sub, "change_plan", "billing", org.id, {"plan": body.plan_tier})
+    return {"ok": True, "plan_tier": org.plan_tier}
+
+
 
 
 def _ensure_branding_table(db: Session) -> None:
@@ -239,6 +480,10 @@ def create_deal(
     db: Session = Depends(get_db),
 ):
     claims, org, _ = rbac
+    # Feature gate: check deal limit
+    current_count = db.query(DealModel).filter(DealModel.organization_id == org.id).count()
+    require_deal_limit(org, current_count)
+
     deal_id = str(uuid.uuid4())
     deal = DealModel(
         id=deal_id,
@@ -328,6 +573,10 @@ def create_scenario(
     deal = db.query(DealModel).filter(DealModel.id == deal_id, DealModel.organization_id == org.id).first()
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
+    # Feature gate: check scenario limit per deal
+    current_count = db.query(ScenarioModel).filter(ScenarioModel.deal_id == deal_id).count()
+    require_scenario_limit(org, current_count)
+
     scenario_id = str(uuid.uuid4())
     scenario = ScenarioModel(
         id=scenario_id,
@@ -537,6 +786,9 @@ def request_report_pdf(
 ):
     """Enqueue PDF export job; return job_id. Client can poll job status or get PDF URL when ready."""
     claims, org, _ = rbac
+    # Feature gate: PDF export limit
+    require_pdf_export_limit(org)
+
     report = db.query(ReportModel).filter(ReportModel.id == report_id, ReportModel.organization_id == org.id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -559,6 +811,9 @@ def request_report_pdf(
             pdf_export_task.delay(job_id, report_id, org.id)
     except Exception:
         pass
+    # Increment usage counter
+    org.monthly_pdf_exports = (org.monthly_pdf_exports or 0) + 1
+    db.commit()
     # Stripe usage when PDF is requested
     stripe_id = ensure_customer(org.id, org.name, org.stripe_customer_id)
     if stripe_id:

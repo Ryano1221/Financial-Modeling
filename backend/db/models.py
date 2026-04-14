@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, LargeBinary
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, LargeBinary, Integer, Boolean
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
@@ -14,6 +14,22 @@ class Role(str, enum.Enum):
     owner = "owner"
     admin = "admin"
     member = "member"
+
+
+class PlanTier(str, enum.Enum):
+    starter = "starter"      # $10/month
+    pro = "pro"              # $20/month
+    enterprise = "enterprise"  # $50/month
+    free_trial = "free_trial"  # enterprise trial
+
+
+class SubscriptionStatus(str, enum.Enum):
+    active = "active"
+    trialing = "trialing"
+    past_due = "past_due"
+    canceled = "canceled"
+    unpaid = "unpaid"
+    none = "none"
 
 
 class JobType(str, enum.Enum):
@@ -35,6 +51,14 @@ class Organization(Base):
     clerk_org_id = Column("clerk_org_id", String, unique=True, nullable=False)
     name = Column(String, nullable=False)
     stripe_customer_id = Column("stripe_customer_id", String, nullable=True)
+    stripe_subscription_id = Column("stripe_subscription_id", String, nullable=True)
+    plan_tier = Column("plan_tier", String, nullable=False, default=PlanTier.starter.value)
+    subscription_status = Column("subscription_status", String, nullable=False, default=SubscriptionStatus.none.value)
+    trial_ends_at = Column("trial_ends_at", DateTime, nullable=True)
+    # Usage counters (reset monthly)
+    monthly_pdf_exports = Column("monthly_pdf_exports", Integer, nullable=False, default=0)
+    monthly_ai_extractions = Column("monthly_ai_extractions", Integer, nullable=False, default=0)
+    usage_reset_at = Column("usage_reset_at", DateTime, nullable=True)
     created_at = Column("created_at", DateTime, default=datetime.utcnow)
     updated_at = Column("updated_at", DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -40,6 +40,8 @@ const SUPPORT_CHECKLIST = [
   "For obligation imports, whether the missing item was an expiration, notice deadline, renewal option, termination right, or saved document Apply result",
   "Whether the problem appeared in Excel export, PDF export, or both",
   "Whether the shared client logo or branding asset appeared incorrectly",
+  "For billing issues: your plan tier (Starter/Pro/Enterprise), whether you're on a free trial, and the exact error or limit message shown",
+  "For upgrade/downgrade issues: the plan you're on, the plan you're moving to, and any error from the Stripe checkout or billing portal",
 ] as const;
 
 export default function ContactPage() {
@@ -86,6 +88,18 @@ export default function ContactPage() {
               <p className="heading-kicker">CRM, Exports, And Security</p>
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
                 For CRM pipeline regressions, prospect stage movement, client selector issues, obligation timeline dates, export regressions, marketing flyer generation, or security concerns, use the same inbox and clearly mark whether the issue affected a newly created client or prospect, flyer output, lease abstract output, the shared client logo, or account security so it can be prioritized with the right internal context.
+              </p>
+            </article>
+            <article className="marketing-card">
+              <p className="heading-kicker">Billing And Plans</p>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                For billing questions — plan upgrades, downgrades, trial activation, payment method updates, or invoice issues — email <a className="brand-link underline" href="mailto:info@thecremodel.com">info@thecremodel.com</a> and include your current plan tier, the action you attempted, and any message or error shown. Billing is processed through Stripe; we can also direct you to the self-service portal at <a className="brand-link underline" href="/account">Account → Billing</a>.
+              </p>
+            </article>
+            <article className="marketing-card">
+              <p className="heading-kicker">Plans Overview</p>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                <strong>Starter ($10/mo)</strong> — 3 deals, 5 scenarios, 2 PDF exports, 1 user. <strong>Pro ($20/mo)</strong> — 15 deals, unlimited scenarios, AI extraction, 10 PDF exports, 3 seats, Surveys &amp; Obligations. <strong>Enterprise ($50/mo)</strong> — unlimited everything, white-label branding, sublease recovery, API access, priority support. Enterprise starts with a free 30-day trial. See <a className="brand-link underline" href="/pricing">full pricing</a>.
               </p>
             </article>
           </section>

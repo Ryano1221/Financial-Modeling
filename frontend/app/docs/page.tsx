@@ -64,6 +64,18 @@ const FAQ_ITEMS = [
     q: "Does each client need more than one logo?",
     a: "No. Each client uses one shared logo asset that carries through PDF covers and branded client-facing exports so branding stays consistent instead of diverging by output type.",
   },
+  {
+    q: "What plans are available?",
+    a: "Three tiers: Starter ($10/mo, 3 deals, basic NPV, 2 PDF exports), Pro ($20/mo, 15 deals, AI extraction, advanced modeling, surveys & obligations), and Enterprise ($50/mo, unlimited everything + white-label branding + sublease recovery + API access). Enterprise starts with a 30-day free trial.",
+  },
+  {
+    q: "How does the 30-day Enterprise free trial work?",
+    a: "Sign up for Enterprise and get full access for 30 days — unlimited deals, AI lease extraction, white-label PDF reports, all modules — at no charge. A payment method is required before the trial ends to continue.",
+  },
+  {
+    q: "Can I upgrade or downgrade at any time?",
+    a: "Yes. Upgrades apply immediately with prorated billing. Downgrades take effect at the next billing cycle. All billing is managed through a secure Stripe Customer Portal.",
+  },
 ] as const;
 
 export default function DocsPage() {
@@ -143,6 +155,61 @@ export default function DocsPage() {
                   <p className="mt-3 text-sm leading-7 text-[var(--muted)]">{item.a}</p>
                 </article>
               ))}
+            </div>
+          </section>
+
+          {/* Pricing summary */}
+          <section className="space-y-4">
+            <h2 className="heading-section">Plans &amp; Pricing</h2>
+            <div className="grid gap-4 sm:grid-cols-3">
+              {[
+                {
+                  name: "Starter",
+                  price: "$10/mo",
+                  color: "border-slate-600",
+                  highlights: ["3 active deals", "5 scenarios/deal", "2 PDF exports/mo", "Basic NPV modeling", "1 user"],
+                },
+                {
+                  name: "Pro",
+                  price: "$20/mo",
+                  color: "border-blue-500",
+                  highlights: ["15 active deals", "Unlimited scenarios", "10 PDF exports/mo", "AI extraction (5 docs)", "3 team seats", "Surveys & Obligations"],
+                },
+                {
+                  name: "Enterprise",
+                  price: "$50/mo",
+                  badge: "30-day free trial",
+                  color: "border-amber-500",
+                  highlights: ["Unlimited everything", "AI extraction unlimited", "White-label branding", "Sublease Recovery", "API access", "Priority support"],
+                },
+              ].map((plan) => (
+                <article key={plan.name} className={`marketing-card border-2 ${plan.color} relative`}>
+                  {plan.badge && (
+                    <span className="absolute -top-3 right-3 bg-amber-500 text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
+                      {plan.badge}
+                    </span>
+                  )}
+                  <div className="flex items-baseline justify-between mb-3">
+                    <h3 className="text-lg font-bold text-[var(--text)]">{plan.name}</h3>
+                    <span className="text-[var(--muted)] text-sm font-mono">{plan.price}</span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {plan.highlights.map((h) => (
+                      <li key={h} className="text-xs text-[var(--muted)] flex gap-1.5 items-start">
+                        <span className="text-blue-400 mt-0.5">✓</span> {h}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+            <div className="text-center pt-2">
+              <a
+                href="/pricing"
+                className="btn-premium btn-premium-primary inline-flex"
+              >
+                View full pricing →
+              </a>
             </div>
           </section>
         </section>

@@ -198,16 +198,27 @@ export function TopNav() {
                 </select>
               ) : null}
               {!ready ? null : session ? (
-                <Link
-                  href="/account"
-                  className={`btn-premium shrink-0 !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
-                    accountTabActive ? "btn-premium-primary" : "btn-premium-secondary"
-                  }`}
-                >
-                  Account
-                </Link>
+                <>
+                  <Link
+                    href="/pricing"
+                    className="btn-premium shrink-0 !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] btn-premium-secondary"
+                  >
+                    Upgrade
+                  </Link>
+                  <Link
+                    href="/account"
+                    className={`btn-premium shrink-0 !min-h-8 !px-2 !py-1.5 text-[10px] lg:text-[11px] ${
+                      accountTabActive ? "btn-premium-primary" : "btn-premium-secondary"
+                    }`}
+                  >
+                    Account
+                  </Link>
+                </>
               ) : (
                 <>
+                  <Link href="/pricing" className="btn-premium btn-premium-secondary !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm">
+                    Pricing
+                  </Link>
                   <Link href="/sign-in" className="btn-premium btn-premium-secondary !min-h-9 !px-3 !py-2 text-[11px] sm:text-xs md:text-sm">
                     Sign in
                   </Link>

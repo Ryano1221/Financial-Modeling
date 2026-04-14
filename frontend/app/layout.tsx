@@ -9,6 +9,7 @@ import { DebugBackendUrl } from "@/components/DebugBackendUrl";
 import { ClientWorkspaceProvider } from "@/components/workspace/ClientWorkspaceProvider";
 import { BrokerOsProvider } from "@/components/workspace/BrokerOsProvider";
 import { FeedbackBubble } from "@/components/FeedbackBubble";
+import TrialBanner from "@/components/billing/TrialBanner";
 
 const syne = Syne({
   subsets: ["latin"],
@@ -131,11 +132,35 @@ const structuredData = {
       publisher: {
         "@id": "https://thecremodel.com/#organization",
       },
-      offers: {
-        "@type": "Offer",
-        category: "Commercial real estate software",
-        availability: "https://schema.org/InStock",
-      },
+      offers: [
+        {
+          "@type": "Offer",
+          name: "Starter",
+          price: "10",
+          priceCurrency: "USD",
+          priceSpecification: { "@type": "UnitPriceSpecification", billingDuration: "P1M" },
+          availability: "https://schema.org/InStock",
+          url: "https://thecremodel.com/pricing",
+        },
+        {
+          "@type": "Offer",
+          name: "Pro",
+          price: "20",
+          priceCurrency: "USD",
+          priceSpecification: { "@type": "UnitPriceSpecification", billingDuration: "P1M" },
+          availability: "https://schema.org/InStock",
+          url: "https://thecremodel.com/pricing",
+        },
+        {
+          "@type": "Offer",
+          name: "Enterprise",
+          price: "50",
+          priceCurrency: "USD",
+          priceSpecification: { "@type": "UnitPriceSpecification", billingDuration: "P1M" },
+          availability: "https://schema.org/InStock",
+          url: "https://thecremodel.com/pricing",
+        },
+      ],
     },
   ],
 };
@@ -157,6 +182,9 @@ export default function RootLayout({
           <BrokerOsProvider>
             <Suspense fallback={null}>
               <TopNav />
+            </Suspense>
+            <Suspense fallback={null}>
+              <TrialBanner />
             </Suspense>
             {children}
             <Footer />

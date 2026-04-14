@@ -30,10 +30,35 @@ async def stripe_webhook(
         event = stripe.Webhook.construct_event(payload, stripe_signature, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid signature: {e}")
-    # Optional: handle customer.subscription.created/updated to link subscription to org
-    if event["type"].startswith("customer.subscription."):
-        # event["data"]["object"] has customer, subscription id, etc.
-        pass
+    # Handle subscription lifecycle events
+    subscription_events = {
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "customer.subscription.trial_will_end",
+    }
+    if event["type"] in subscription_events:
+        from db.session import SessionLocal
+        from db.models import Organization
+        from stripe_billing import handle_subscription_event
+
+        update = handle_subscription_event(dict(event))
+        if update:
+            with SessionLocal() as db_sess:
+                sub_obj = event["data"]["object"]
+                customer_id = sub_obj.get("customer")
+                org = db_sess.query(Organization).filter(
+                    Organization.stripe_customer_id == customer_id
+                ).first()
+                if org:
+                    org.stripe_subscription_id = update["subscription_id"]
+                    org.subscription_status = update["status"]
+                    if update.get("trial_end"):
+                        org.trial_ends_at = update["trial_end"]
+                    if update.get("plan_tier"):
+                        org.plan_tier = update["plan_tier"]
+                    db_sess.commit()
+
     return {"received": True}
 
 

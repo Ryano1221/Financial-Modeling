@@ -73,6 +73,18 @@ const SECURITY_PILLARS = [
     body: "Marketing flyers and lease abstract exports preserve analyst review status and source-document context so client-ready packages do not silently hide unresolved extraction issues.",
   },
   {
+    title: "Stripe-secured billing",
+    body: "Subscription payments are processed entirely through Stripe — card data never touches our servers. Plan limits are enforced server-side via authenticated API calls so UI-only workarounds cannot bypass feature gates.",
+  },
+  {
+    title: "Plan-tier feature enforcement",
+    body: "Every feature gate (deal limits, PDF export quotas, AI extraction access, module visibility) is validated on the backend against the org's verified subscription status. Downgraded or expired accounts revert to Starter limits automatically.",
+  },
+  {
+    title: "Webhook signature verification",
+    body: "Stripe billing events are verified using signed webhook payloads before updating plan status. This prevents spoofed upgrade events from granting unauthorized access.",
+  },
+  {
     title: "White-label marketing output",
     body: "Generated lease and sublease flyers use account branding and client-scoped marketing settings instead of hardcoded brokerage identity. Extracted flyer photos, floorplans, broker defaults, and generated PDFs stay scoped to the active workflow, share link, or saved client workspace record only after the user explicitly saves the PDF.",
   },
