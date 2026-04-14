@@ -451,27 +451,19 @@ function DualMetricComboChart({
               radius={[2, 2, 0, 0]}
               maxBarSize={48}
             >
-              {/* $/SF callout — cyan badge at the top of each bar */}
+              {/* $/SF callout — cyan badge centered vertically inside the bar */}
               <LabelList
                 dataKey="barValue"
-                position="top"
+                position="center"
                 content={(props: any) => {
-                  const { x, y, width, value } = props;
+                  const { x, y, width, height, value } = props;
                   const text = barMetric.format(toNumber(value));
                   const labelWidth = Math.max(60, Math.round(text.length * 6.8) + 12);
                   const labelHeight = 18;
                   const centerX = x + width / 2;
-                  const placed = placeLabelRect({
-                    centerX,
-                    width: labelWidth,
-                    height: labelHeight,
-                    anchorY: y - 22,
-                    minY: 2,
-                    liftStep: 16,
-                    placedRects: dualPlacedLabelRects,
-                  });
-                  const rectX = placed.x1;
-                  const rectY = placed.y1;
+                  const centerY = y + height / 2;
+                  const rectX = centerX - labelWidth / 2;
+                  const rectY = centerY - labelHeight / 2;
                   return (
                     <g>
                       <rect
