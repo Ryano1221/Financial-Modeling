@@ -84,7 +84,7 @@ function rolledBaseOpexForRemaining(
 ): number {
   const targetYear = yearFromIso(remainingStartDate);
   if (!targetYear) return Math.max(0, Number(scenario.base_opex_psf_yr) || 0);
-  const growth = Math.max(0, Number(scenario.opex_growth) || 0);
+  const growth = Math.max(0, Number(scenario.opex_growth) || 0.03);
   const explicitByYear = normalizeOpexByYear(scenario.opex_by_calendar_year);
   const explicitYears = Object.keys(explicitByYear).map(Number).sort((a, b) => a - b);
   if (explicitYears.length > 0) {

@@ -2,6 +2,7 @@ import type { BackendCanonicalLease, NormalizerResponse } from "@/lib/types";
 import type {
   ObligationCompany,
   ObligationDocumentKind,
+  ObligationDocumentRecord,
   ObligationPortfolioMetrics,
   ObligationRecord,
   ObligationTimelineBucket,
@@ -14,6 +15,10 @@ function asText(value: unknown): string {
 function asNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function annualBaseFromSchedule(canonical: BackendCanonicalLease): number {
@@ -63,23 +68,29 @@ function parseAmbiguousDateToken(rawToken: string): string {
   return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}-${String(parsed.getUTCDate()).padStart(2, "0")}`;
 }
 
-function extractFirstDateInText(rawText: string): string {
+const DATE_TOKEN_PATTERN =
+  /\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2}|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},?\s+\d{2,4})\b/gi;
+
+const DATE_TOKEN_SOURCE =
+  "(?:\\d{1,2}[\\/\\.\\-]\\d{1,2}[\\/\\.\\-]\\d{2,4}|\\d{4}[\\/\\.\\-]\\d{1,2}[\\/\\.\\-]\\d{1,2}|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\s+\\d{1,2},?\\s+\\d{2,4})";
+
+function collectDatesInText(rawText: string): string[] {
   const text = asText(rawText);
-  if (!text) return "";
+  if (!text) return [];
 
-  const numericMatches = text.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}[\/\.-]\d{1,2}[\/\.-]\d{1,2})\b/g) || [];
-  for (const token of numericMatches) {
-    const normalized = parseAmbiguousDateToken(token);
-    if (normalized) return normalized;
+  const dates: string[] = [];
+  DATE_TOKEN_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null = DATE_TOKEN_PATTERN.exec(text);
+  while (match) {
+    const normalized = parseAmbiguousDateToken(match[1] || "");
+    if (normalized) dates.push(normalized);
+    match = DATE_TOKEN_PATTERN.exec(text);
   }
+  return dates;
+}
 
-  const longMatches = text.match(/\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},?\s+\d{2,4}\b/gi) || [];
-  for (const token of longMatches) {
-    const normalized = parseAmbiguousDateToken(token);
-    if (normalized) return normalized;
-  }
-
-  return "";
+function extractFirstDateInText(rawText: string): string {
+  return collectDatesInText(rawText)[0] || "";
 }
 
 function extractDateFromUnknown(value: unknown): string {
@@ -101,6 +112,95 @@ function extractDateFromUnknown(value: unknown): string {
     }
   }
 
+  return "";
+}
+
+function flattenTextValues(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === "string" || typeof value === "number") {
+    const text = asText(value);
+    return text ? [text] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap((entry) => flattenTextValues(entry));
+  if (typeof value === "object") return Object.values(value as Record<string, unknown>).flatMap((entry) => flattenTextValues(entry));
+  return [];
+}
+
+function extractDateByPattern(text: string, pattern: RegExp, groupIndex = 1): string {
+  const match = pattern.exec(text);
+  if (!match) return "";
+  return parseAmbiguousDateToken(match[groupIndex] || "");
+}
+
+function extractDeadlineDateFromText(rawText: string): string {
+  const text = asText(rawText);
+  if (!text) return "";
+
+  const betweenPattern = new RegExp(`\\bbetween\\s+(${DATE_TOKEN_SOURCE})\\s+and\\s+(${DATE_TOKEN_SOURCE})`, "i");
+  const betweenDate = extractDateByPattern(text, betweenPattern, 2);
+  if (betweenDate) return betweenDate;
+
+  const deadlinePatterns = [
+    new RegExp(`\\b(?:no later than|not later than|on or before)\\s+(${DATE_TOKEN_SOURCE})`, "i"),
+    new RegExp(`\\b(?:deadline|due(?:\\s+(?:by|on))?)\\b[^.]{0,80}?(${DATE_TOKEN_SOURCE})`, "i"),
+    new RegExp(`\\bmust\\s+(?:deliver|provide|give)[^.]{0,120}?\\b(?:by|on)\\s+(${DATE_TOKEN_SOURCE})`, "i"),
+    new RegExp(`\\bby\\s+(${DATE_TOKEN_SOURCE})`, "i"),
+  ];
+
+  for (const pattern of deadlinePatterns) {
+    const date = extractDateByPattern(text, pattern);
+    if (date) return date;
+  }
+
+  return "";
+}
+
+function extractEffectiveDateFromText(rawText: string): string {
+  const text = asText(rawText);
+  if (!text) return "";
+
+  const effectivePatterns = [
+    new RegExp(`\\beffective(?:\\s+as\\s+of)?\\s+(${DATE_TOKEN_SOURCE})`, "i"),
+    new RegExp(`\\bcommenc(?:e|ing|es)\\s+(${DATE_TOKEN_SOURCE})`, "i"),
+    new RegExp(`\\bavailable\\s+(?:on|as\\s+of)\\s+(${DATE_TOKEN_SOURCE})`, "i"),
+  ];
+
+  for (const pattern of effectivePatterns) {
+    const date = extractDateByPattern(text, pattern);
+    if (date) return date;
+  }
+  return "";
+}
+
+function earliestIsoDate(dates: string[]): string {
+  return dates.filter(Boolean).sort()[0] || "";
+}
+
+function extractDeadlineDateFromUnknown(value: unknown): string {
+  return earliestIsoDate(flattenTextValues(value).map((text) => extractDeadlineDateFromText(text)).filter(Boolean));
+}
+
+function extractRenewalEventDateFromUnknown(value: unknown): string {
+  for (const text of flattenTextValues(value)) {
+    const deadline = extractDeadlineDateFromText(text);
+    if (deadline) return deadline;
+    const effective = extractEffectiveDateFromText(text);
+    if (effective) return effective;
+    const first = extractFirstDateInText(text);
+    if (first) return first;
+  }
+  return "";
+}
+
+function extractTerminationEventDateFromUnknown(value: unknown): string {
+  for (const text of flattenTextValues(value)) {
+    const effective = extractEffectiveDateFromText(text);
+    if (effective) return effective;
+    const deadline = extractDeadlineDateFromText(text);
+    if (deadline) return deadline;
+    const first = extractFirstDateInText(text);
+    if (first) return first;
+  }
   return "";
 }
 
@@ -137,6 +237,8 @@ export function inferObligationDocumentKind(fileName: string, normalize?: Normal
 export function mapNormalizeToObligationSeed(normalize: NormalizerResponse, sourceFileName: string) {
   const canonical = normalize.canonical_lease;
   const canonicalRecord = canonical as Record<string, unknown>;
+  const canonicalExtraction = asRecord(normalize.canonical_extraction);
+  const rightsOptions = asRecord(canonicalExtraction.rights_options);
   const notes = asText(canonical.notes);
   const building = asText(canonical.building_name || canonical.premises_name);
   const suite = asText(canonical.suite || canonical.floor);
@@ -149,24 +251,38 @@ export function mapNormalizeToObligationSeed(normalize: NormalizerResponse, sour
   const rentCommencementDate = asText(canonical.rent_commencement_date)
     || extractKeywordDate(notes, ["rent commencement", "rental commencement", "commencement"])
     || commencementDate;
-  const noticeDate = extractDateFromUnknown(
-    canonicalRecord.notice_dates
-    ?? canonicalRecord.notice_date
-    ?? canonicalRecord.notice_deadline
-    ?? canonicalRecord.notice_terms
-  ) || extractKeywordDate(notes, ["notice", "notification"]);
-  const renewalDate = extractDateFromUnknown(
-    canonicalRecord.renewal_options
-    ?? canonicalRecord.renewal_option
-    ?? canonicalRecord.renewal_rights
-    ?? canonicalRecord.options
-  ) || extractKeywordDate(notes, ["renewal", "option to renew"]);
-  const terminationRightDate = extractDateFromUnknown(
-    canonicalRecord.termination_rights
-    ?? canonicalRecord.termination_clauses
-    ?? canonicalRecord.termination_option
-    ?? canonicalRecord.termination_options
-  ) || extractKeywordDate(notes, ["termination", "terminate"]);
+  const renewalSources = [
+    canonicalRecord.renewal_options,
+    canonicalRecord.renewal_option,
+    canonicalRecord.renewal_rights,
+    canonicalRecord.options,
+    rightsOptions.renewal_option,
+    notes,
+  ];
+  const terminationSources = [
+    canonicalRecord.termination_rights,
+    canonicalRecord.termination_clauses,
+    canonicalRecord.termination_option,
+    canonicalRecord.termination_options,
+    rightsOptions.termination_right,
+    notes,
+  ];
+  const noticeSources = [
+    canonicalRecord.notice_dates,
+    canonicalRecord.notice_date,
+    canonicalRecord.notice_deadline,
+    canonicalRecord.notice_terms,
+    rightsOptions.renewal_option,
+    rightsOptions.termination_right,
+    notes,
+  ];
+  const noticeDate = extractDeadlineDateFromUnknown(noticeSources)
+    || extractDateFromUnknown(noticeSources)
+    || extractKeywordDate(notes, ["notice", "notification"]);
+  const renewalDate = extractRenewalEventDateFromUnknown(renewalSources)
+    || extractKeywordDate(notes, ["renewal", "option to renew"]);
+  const terminationRightDate = extractTerminationEventDateFromUnknown(terminationSources)
+    || extractKeywordDate(notes, ["termination", "terminate"]);
   const annualObligation = annualBaseFromSchedule(canonical)
     + (Math.max(0, asNumber(canonical.opex_psf_year_1)) * rsf)
     + ((Math.max(0, asNumber(canonical.parking_count)) * Math.max(0, asNumber(canonical.parking_rate_monthly))) * 12);
@@ -221,6 +337,63 @@ export function findMatchingObligation(obligations: ObligationRecord[], companyI
     if (partial) return partial;
   }
   return null;
+}
+
+export function pruneObligationsForAvailableSourceDocuments(
+  obligations: ObligationRecord[],
+  documents: ObligationDocumentRecord[],
+  availableSourceDocumentIds: Iterable<string>,
+  nowIso: string = new Date().toISOString(),
+): {
+  obligations: ObligationRecord[];
+  documents: ObligationDocumentRecord[];
+  removedDocumentCount: number;
+  removedObligationCount: number;
+} {
+  const availableIds = new Set(Array.from(availableSourceDocumentIds).map((id) => asText(id)).filter(Boolean));
+  const affectedObligationIds = new Set<string>();
+  const nextDocuments = documents.filter((doc) => {
+    const sourceDocumentId = asText(doc.sourceDocumentId);
+    if (!sourceDocumentId || availableIds.has(sourceDocumentId)) return true;
+    affectedObligationIds.add(doc.obligationId);
+    return false;
+  });
+
+  const removedDocumentCount = documents.length - nextDocuments.length;
+  if (removedDocumentCount === 0) {
+    return { obligations, documents, removedDocumentCount: 0, removedObligationCount: 0 };
+  }
+
+  const documentNamesByObligation = new Map<string, string[]>();
+  for (const doc of nextDocuments) {
+    const bucket = documentNamesByObligation.get(doc.obligationId) || [];
+    bucket.push(doc.fileName);
+    documentNamesByObligation.set(doc.obligationId, bucket);
+  }
+
+  let removedObligationCount = 0;
+  const nextObligations = obligations.flatMap((item) => {
+    if (!affectedObligationIds.has(item.id)) return [item];
+    const docsForObligation = documentNamesByObligation.get(item.id) || [];
+    if (docsForObligation.length === 0) {
+      removedObligationCount += 1;
+      return [];
+    }
+    const next = {
+      ...item,
+      sourceDocumentIds: docsForObligation,
+      updatedAtIso: nowIso,
+    };
+    next.completenessScore = computeObligationCompleteness(next);
+    return [next];
+  });
+
+  return {
+    obligations: nextObligations,
+    documents: nextDocuments,
+    removedDocumentCount,
+    removedObligationCount,
+  };
 }
 
 export function computeObligationCompleteness(record: ObligationRecord): number {

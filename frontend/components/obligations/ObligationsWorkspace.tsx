@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PlatformPanel, PlatformSection } from "@/components/platform/PlatformShell";
 import { getDisplayErrorMessage } from "@/lib/api";
-import { normalizerResponseFromSnapshot } from "@/lib/lease-extraction-repair";
+import { normalizerResponseFromSnapshot, repairNormalizerResponse } from "@/lib/lease-extraction-repair";
 import type { NormalizerResponse } from "@/lib/types";
 import { ClientDocumentPicker } from "@/components/workspace/ClientDocumentPicker";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import type { ClientWorkspaceDocument } from "@/lib/workspace/types";
+import { isParseableWorkspaceDocument, normalizeWorkspaceDocument } from "@/lib/workspace/ingestion";
+import { toDocumentNormalizeSnapshot } from "@/lib/workspace/document-cloud-payloads";
 import { makeClientScopedStorageKey } from "@/lib/workspace/storage";
 import { fetchWorkspaceCloudSection, saveWorkspaceCloudSection } from "@/lib/workspace/cloud";
 import { preferLocalWhenRemoteEmpty } from "@/lib/workspace/account-sync";
@@ -19,6 +21,7 @@ import {
   findMatchingObligation,
   inferObligationDocumentKind,
   mapNormalizeToObligationSeed,
+  pruneObligationsForAvailableSourceDocuments,
 } from "@/lib/obligations/engine";
 import type {
   ObligationCompany,
@@ -60,6 +63,35 @@ function formatIsoDate(value: string): string {
 
 function toNormalizerResponseFromSnapshot(document: ClientWorkspaceDocument): NormalizerResponse | null {
   return normalizerResponseFromSnapshot(document.normalizeSnapshot);
+}
+
+function timelineDateCount(seed: ReturnType<typeof mapNormalizeToObligationSeed>): number {
+  return [seed.noticeDate, seed.renewalDate, seed.terminationRightDate].filter(Boolean).length;
+}
+
+function obligationTimelineDateCount(obligation: Pick<ObligationRecord, "noticeDate" | "renewalDate" | "terminationRightDate">): number {
+  return [obligation.noticeDate, obligation.renewalDate, obligation.terminationRightDate].filter(Boolean).length;
+}
+
+function fileFromDocumentPreview(document: ClientWorkspaceDocument): File | null {
+  const dataUrl = asText(document.previewDataUrl);
+  if (!dataUrl.startsWith("data:") || !dataUrl.includes(",")) return null;
+
+  const [header, encoded] = dataUrl.split(",", 2);
+  if (!encoded) return null;
+  const mimeMatch = header.match(/^data:([^;]+);base64$/i);
+  if (!mimeMatch) return null;
+
+  try {
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new File([bytes], document.name, { type: asText(document.fileMimeType) || mimeMatch[1] || "application/octet-stream" });
+  } catch {
+    return null;
+  }
 }
 
 function mergeObligation(existing: ObligationRecord, seed: ReturnType<typeof mapNormalizeToObligationSeed>): ObligationRecord {
@@ -178,7 +210,7 @@ export function ObligationsWorkspace({
   pendingDocumentImport = null,
   onPendingDocumentImportHandled,
 }: ObligationsWorkspaceProps) {
-  const { isAuthenticated, documents: clientDocuments } = useClientWorkspace();
+  const { isAuthenticated, documents: clientDocuments, updateDocument } = useClientWorkspace();
   const resolvedClientName = asText(clientName);
   const defaultCompanyName = resolvedClientName || "Default Portfolio";
   const [companies, setCompanies] = useState<ObligationCompany[]>([]);
@@ -194,6 +226,7 @@ export function ObligationsWorkspace({
   const [editingPanelsOpen, setEditingPanelsOpen] = useState(false);
   const obligationsRef = useRef<ObligationRecord[]>([]);
   const documentsRef = useRef<ObligationDocumentRecord[]>([]);
+  const timelineRepairAttemptedRef = useRef<Set<string>>(new Set());
   const scopedStorageKey = useMemo(
     () => makeClientScopedStorageKey(STORAGE_KEY, clientId),
     [clientId],
@@ -346,6 +379,33 @@ export function ObligationsWorkspace({
   const timeline = useMemo(() => buildTimelineBuckets(activeObligations), [activeObligations]);
 
   useEffect(() => {
+    if (!storageHydrated) return;
+    const availableSourceDocumentIds = clientDocuments.map((doc) => doc.id).filter(Boolean);
+    const linkedSourceDocumentIds = documents.map((doc) => doc.sourceDocumentId).filter(Boolean);
+    if (linkedSourceDocumentIds.length === 0) return;
+
+    const pruned = pruneObligationsForAvailableSourceDocuments(
+      obligations,
+      documents,
+      availableSourceDocumentIds,
+    );
+    if (pruned.removedDocumentCount === 0) return;
+
+    setDocuments(pruned.documents);
+    setObligations(pruned.obligations);
+    documentsRef.current = pruned.documents;
+    obligationsRef.current = pruned.obligations;
+    if (selectedObligationId && !pruned.obligations.some((item) => item.id === selectedObligationId)) {
+      const nextSelected = pruned.obligations.find((item) => item.companyId === activeCompanyId)?.id || "";
+      setSelectedObligationId(nextSelected);
+    }
+    const removedObligationText = pruned.removedObligationCount > 0
+      ? ` and ${pruned.removedObligationCount} linked obligation${pruned.removedObligationCount === 1 ? "" : "s"}`
+      : "";
+    setStatus(`Removed ${pruned.removedDocumentCount} deleted source document${pruned.removedDocumentCount === 1 ? "" : "s"}${removedObligationText} from Obligations.`);
+  }, [activeCompanyId, clientDocuments, documents, obligations, selectedObligationId, storageHydrated]);
+
+  useEffect(() => {
     if (!selectedObligation && activeObligations.length > 0) {
       setSelectedObligationId(activeObligations[0].id);
       return;
@@ -452,8 +512,48 @@ export function ObligationsWorkspace({
     setSelectedObligationId(obligationId);
   }, [activeCompanyId, clientId]);
 
-  const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
+  const resolveNormalizeForImport = useCallback(async (document: ClientWorkspaceDocument): Promise<NormalizerResponse | null> => {
     const normalize = toNormalizerResponseFromSnapshot(document);
+    if (!normalize) {
+      return null;
+    }
+
+    const seed = mapNormalizeToObligationSeed(normalize, document.name);
+    if (timelineDateCount(seed) >= 3 || !isParseableWorkspaceDocument(document.name)) {
+      return normalize;
+    }
+
+    const sourceFile = fileFromDocumentPreview(document);
+    if (!sourceFile) return normalize;
+
+    try {
+      setStatus(`Refreshing ${document.name} to capture obligation dates...`);
+      const refreshedRaw = await normalizeWorkspaceDocument(sourceFile);
+      const refreshed = repairNormalizerResponse(refreshedRaw) || refreshedRaw;
+      if (!refreshed?.canonical_lease) return normalize;
+
+      const refreshedSeed = mapNormalizeToObligationSeed(refreshed, document.name);
+      if (timelineDateCount(refreshedSeed) <= timelineDateCount(seed)) return normalize;
+
+      const refreshedSnapshot = toDocumentNormalizeSnapshot(refreshed);
+      if (refreshedSnapshot?.canonical_lease) {
+        updateDocument(document.id, {
+          parsed: true,
+          normalizeSnapshot: refreshedSnapshot,
+          building: refreshedSeed.buildingName || document.building,
+          address: refreshedSeed.address || document.address,
+          suite: refreshedSeed.suite || document.suite,
+        });
+      }
+      return refreshed;
+    } catch (refreshError) {
+      console.warn("[obligations] obligation_date_refresh_failed", document.id, refreshError);
+      return normalize;
+    }
+  }, [updateDocument]);
+
+  const onSelectExistingDocument = useCallback(async (document: ClientWorkspaceDocument) => {
+    const normalize = await resolveNormalizeForImport(document);
     if (!normalize) {
       setError("Selected document has no parsed cloud payload yet. Keep the upload device online, then refresh and try Apply again.");
       return;
@@ -470,7 +570,7 @@ export function ObligationsWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [ingestNormalize]);
+  }, [ingestNormalize, resolveNormalizeForImport]);
 
   useEffect(() => {
     if (!pendingDocumentImport) return;
@@ -478,6 +578,52 @@ export function ObligationsWorkspace({
       onPendingDocumentImportHandled?.();
     });
   }, [onPendingDocumentImportHandled, onSelectExistingDocument, pendingDocumentImport]);
+
+  useEffect(() => {
+    if (!storageHydrated || !activeCompanyId || loading) return;
+
+    const staleLink = activeDocuments.find((doc) => {
+      if (!doc.sourceDocumentId) return false;
+      if (timelineRepairAttemptedRef.current.has(doc.sourceDocumentId)) return false;
+      const obligation = activeObligations.find((item) => item.id === doc.obligationId);
+      return obligation ? obligationTimelineDateCount(obligation) < 3 : false;
+    });
+    if (!staleLink?.sourceDocumentId) return;
+
+    const sourceDocument = clientDocuments.find((doc) => doc.id === staleLink.sourceDocumentId);
+    if (!sourceDocument) return;
+
+    let cancelled = false;
+    timelineRepairAttemptedRef.current.add(sourceDocument.id);
+    void (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        setStatus(`Refreshing ${sourceDocument.name} to fill missing obligation dates...`);
+        const normalize = await resolveNormalizeForImport(sourceDocument);
+        if (!normalize || cancelled) return;
+        await ingestNormalize(sourceDocument.name, normalize, sourceDocument.id);
+        if (!cancelled) setStatus(`Updated obligation dates from ${sourceDocument.name}.`);
+      } catch (err) {
+        if (!cancelled) setError(getDisplayErrorMessage(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeCompanyId,
+    activeDocuments,
+    activeObligations,
+    clientDocuments,
+    ingestNormalize,
+    loading,
+    resolveNormalizeForImport,
+    storageHydrated,
+  ]);
 
   useEffect(() => {
     if (!storageHydrated || !activeCompanyId || loading) return;
@@ -495,7 +641,7 @@ export function ObligationsWorkspace({
       try {
         for (const document of pendingDocs) {
           if (cancelled) return;
-          const normalize = toNormalizerResponseFromSnapshot(document);
+          const normalize = await resolveNormalizeForImport(document);
           if (!normalize) continue;
           await ingestNormalize(document.name, normalize, document.id);
         }
@@ -512,7 +658,7 @@ export function ObligationsWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [activeCompanyId, clientDocuments, documents, ingestNormalize, loading, storageHydrated]);
+  }, [activeCompanyId, clientDocuments, documents, ingestNormalize, loading, resolveNormalizeForImport, storageHydrated]);
 
   const onReassignDocument = useCallback((documentId: string, nextObligationId: string) => {
     const target = obligationsRef.current.find((o) => o.id === nextObligationId);

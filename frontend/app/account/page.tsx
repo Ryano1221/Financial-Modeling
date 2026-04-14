@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AuthPanel } from "@/components/AuthPanel";
-import { signOut } from "@/lib/supabase";
+import { signOut, updatePersonalInfo } from "@/lib/supabase";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 import {
   LANDLORD_REP_MODE,
@@ -30,7 +30,7 @@ function asText(value: unknown): string {
 }
 
 type AccountSection = "dashboard" | "settings";
-type SettingsPanel = "general" | "crm";
+type SettingsPanel = "personal" | "general" | "crm";
 
 export default function AccountPage() {
   const router = useRouter();
@@ -73,7 +73,15 @@ export default function AccountPage() {
   const [inventoryStatus, setInventoryStatus] = useState("");
   const [inventoryError, setInventoryError] = useState("");
   const [activeSection, setActiveSection] = useState<AccountSection>("dashboard");
-  const [activeSettingsPanel, setActiveSettingsPanel] = useState<SettingsPanel>("general");
+  const [activeSettingsPanel, setActiveSettingsPanel] = useState<SettingsPanel>("personal");
+  const [personalForm, setPersonalForm] = useState({ name: "", email: "" });
+  const [passwordForm, setPasswordForm] = useState({ password: "", confirmPassword: "" });
+  const [personalSaving, setPersonalSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [personalStatus, setPersonalStatus] = useState("");
+  const [personalError, setPersonalError] = useState("");
+  const [passwordStatus, setPasswordStatus] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const settingsRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -91,10 +99,24 @@ export default function AccountPage() {
     }
     if (settings === "crm" || legacyTab === "crm") {
       setActiveSettingsPanel("crm");
-    } else {
+    } else if (settings === "general") {
       setActiveSettingsPanel("general");
+    } else {
+      setActiveSettingsPanel("personal");
     }
   }, []);
+
+  useEffect(() => {
+    setPersonalForm({
+      name: asText(session?.user.name),
+      email: asText(session?.user.email),
+    });
+    setPasswordForm({ password: "", confirmPassword: "" });
+    setPersonalStatus("");
+    setPersonalError("");
+    setPasswordStatus("");
+    setPasswordError("");
+  }, [session?.user.email, session?.user.name]);
 
   useEffect(() => {
     if (activeSection !== "settings") return;
@@ -244,6 +266,73 @@ export default function AccountPage() {
     setCrmSettings({ defaultDealsView: nextView }, activeClient.id);
     const label = modeProfile.crm.viewLabels[nextView] || nextView.replace("_", " ");
     setCrmSettingsStatus(`Default CRM view set to ${label} for ${activeClient.name}.`);
+  }
+
+  async function savePersonalInfo() {
+    const nextName = asText(personalForm.name);
+    const nextEmail = asText(personalForm.email);
+    const currentName = asText(session?.user.name);
+    const currentEmail = asText(session?.user.email);
+
+    setPersonalError("");
+    setPersonalStatus("");
+    if (!nextName) {
+      setPersonalError("Enter your name before saving.");
+      return;
+    }
+    if (!nextEmail || !nextEmail.includes("@")) {
+      setPersonalError("Enter a valid email address.");
+      return;
+    }
+    if (nextName === currentName && nextEmail.toLowerCase() === currentEmail.toLowerCase()) {
+      setPersonalStatus("Personal info is already up to date.");
+      return;
+    }
+
+    setPersonalSaving(true);
+    try {
+      const result = await updatePersonalInfo({
+        ...(nextName !== currentName ? { name: nextName } : {}),
+        ...(nextEmail.toLowerCase() !== currentEmail.toLowerCase() ? { email: nextEmail } : {}),
+      });
+      setPersonalForm({
+        name: asText(result.user.name),
+        email: asText(result.user.email || nextEmail),
+      });
+      setPersonalStatus(
+        result.emailConfirmationRequired
+          ? "Saved. Check the new email address to confirm the email change."
+          : "Personal info saved.",
+      );
+    } catch (err) {
+      setPersonalError(err instanceof Error ? err.message : "Unable to save personal info.");
+    } finally {
+      setPersonalSaving(false);
+    }
+  }
+
+  async function savePassword() {
+    setPasswordError("");
+    setPasswordStatus("");
+    if (passwordForm.password.length < 8) {
+      setPasswordError("Password must be at least 8 characters.");
+      return;
+    }
+    if (passwordForm.password !== passwordForm.confirmPassword) {
+      setPasswordError("Passwords do not match.");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      await updatePersonalInfo({ password: passwordForm.password });
+      setPasswordForm({ password: "", confirmPassword: "" });
+      setPasswordStatus("Password updated.");
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : "Unable to update password.");
+    } finally {
+      setPasswordSaving(false);
+    }
   }
 
   function openAccountSection(section: AccountSection, settingsPanel?: SettingsPanel) {
@@ -534,6 +623,13 @@ export default function AccountPage() {
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
+              className={`btn-premium text-center ${activeSettingsPanel === "personal" ? "btn-premium-primary" : "btn-premium-secondary"}`}
+              onClick={() => openAccountSection("settings", "personal")}
+            >
+              Personal info
+            </button>
+            <button
+              type="button"
               className={`btn-premium text-center ${activeSettingsPanel === "general" ? "btn-premium-primary" : "btn-premium-secondary"}`}
               onClick={() => openAccountSection("settings", "general")}
             >
@@ -548,7 +644,91 @@ export default function AccountPage() {
             </button>
           </div>
 
-          {activeSettingsPanel === "general" ? (
+          {activeSettingsPanel === "personal" ? (
+            <div className="mt-5 space-y-5">
+              <section className="border border-white/15 bg-black/30 p-4 sm:p-5">
+                <p className="heading-kicker mb-2">Personal Info</p>
+                <p className="text-sm text-slate-300 mb-3">
+                  Keep the account identity used across the workspace current.
+                </p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-xs text-slate-300">Name</span>
+                    <input
+                      type="text"
+                      className="input-premium mt-1"
+                      value={personalForm.name}
+                      onChange={(event) => setPersonalForm((prev) => ({ ...prev, name: event.target.value }))}
+                      autoComplete="name"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-300">Email</span>
+                    <input
+                      type="email"
+                      className="input-premium mt-1"
+                      value={personalForm.email}
+                      onChange={(event) => setPersonalForm((prev) => ({ ...prev, email: event.target.value }))}
+                      autoComplete="email"
+                    />
+                  </label>
+                </div>
+                {personalError ? <p className="mt-3 text-xs text-red-300">{personalError}</p> : null}
+                {personalStatus ? <p className="mt-3 text-xs text-cyan-200">{personalStatus}</p> : null}
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    className="btn-premium btn-premium-primary text-xs"
+                    onClick={() => void savePersonalInfo()}
+                    disabled={personalSaving}
+                  >
+                    {personalSaving ? "Saving..." : "Save personal info"}
+                  </button>
+                </div>
+              </section>
+
+              <section className="border border-white/15 bg-black/30 p-4 sm:p-5">
+                <p className="heading-kicker mb-2">Password</p>
+                <p className="text-sm text-slate-300 mb-3">
+                  Set a new password for this account.
+                </p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-xs text-slate-300">New password</span>
+                    <input
+                      type="password"
+                      className="input-premium mt-1"
+                      value={passwordForm.password}
+                      onChange={(event) => setPasswordForm((prev) => ({ ...prev, password: event.target.value }))}
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-300">Confirm password</span>
+                    <input
+                      type="password"
+                      className="input-premium mt-1"
+                      value={passwordForm.confirmPassword}
+                      onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                      autoComplete="new-password"
+                    />
+                  </label>
+                </div>
+                {passwordError ? <p className="mt-3 text-xs text-red-300">{passwordError}</p> : null}
+                {passwordStatus ? <p className="mt-3 text-xs text-cyan-200">{passwordStatus}</p> : null}
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    className="btn-premium btn-premium-secondary text-xs"
+                    onClick={() => void savePassword()}
+                    disabled={passwordSaving}
+                  >
+                    {passwordSaving ? "Updating..." : "Update password"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : activeSettingsPanel === "general" ? (
             <div className="mt-5 space-y-5">
               <section className="border border-white/15 bg-black/30 p-4 sm:p-5">
                 <p className="heading-kicker mb-2">Representation Mode</p>

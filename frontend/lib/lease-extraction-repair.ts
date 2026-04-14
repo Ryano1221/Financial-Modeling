@@ -310,6 +310,7 @@ export function repairNormalizerResponse(
     warnings: response.warnings || [],
     confidence_score: response.confidence_score,
     option_variants: response.option_variants || [],
+    canonical_extraction: response.canonical_extraction,
   });
   if (!repairedSnapshot?.canonical_lease) return response;
 
@@ -332,6 +333,7 @@ export function repairNormalizerResponse(
     warnings: repairedSnapshot.warnings || [],
     confidence_score: overall,
     option_variants: repairedSnapshot.option_variants || [],
+    canonical_extraction: response.canonical_extraction || repairedSnapshot.canonical_extraction,
     missing_fields: sanitizedMissing.missingFields,
     clarification_questions: sanitizedMissing.missingFields.length === 0 ? [] : response.clarification_questions,
     export_allowed: !hasBlockers,
@@ -359,6 +361,7 @@ export function normalizerResponseFromSnapshot(
     warnings: repaired.warnings || [],
     extraction_summary: repaired.extraction_summary,
     review_tasks: repaired.review_tasks || [],
+    canonical_extraction: repaired.canonical_extraction,
   });
 }
 

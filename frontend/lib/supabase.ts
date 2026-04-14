@@ -35,6 +35,17 @@ export interface SupabaseAuthSession {
   user: SupabaseAuthUser;
 }
 
+export interface UpdatePersonalInfoInput {
+  name?: string;
+  email?: string;
+  password?: string;
+}
+
+export interface UpdatePersonalInfoResult {
+  user: SupabaseAuthUser;
+  emailConfirmationRequired: boolean;
+}
+
 type SessionListener = (session: SupabaseAuthSession | null) => void;
 const sessionListeners = new Set<SessionListener>();
 
@@ -483,6 +494,92 @@ export async function signOut(): Promise<void> {
     }
   }
   persistSession(null);
+}
+
+function isAuthFailure(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+function buildPersonalInfoUpdateBody(input: UpdatePersonalInfoInput): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const name = typeof input.name === "string" ? input.name.trim() : undefined;
+  const email = typeof input.email === "string" ? input.email.trim() : undefined;
+  const password = typeof input.password === "string" ? input.password : undefined;
+
+  if (typeof name === "string") {
+    if (!name) throw new Error("Enter your name before saving.");
+    body.data = {
+      full_name: name,
+      name,
+      display_name: name,
+    };
+  }
+  if (typeof email === "string") {
+    if (!email || !email.includes("@")) throw new Error("Enter a valid email address.");
+    body.email = email;
+  }
+  if (typeof password === "string") {
+    if (password.length < 8) throw new Error("Password must be at least 8 characters.");
+    body.password = password;
+  }
+  if (Object.keys(body).length === 0) {
+    throw new Error("Change your name, email, or password before saving.");
+  }
+  return body;
+}
+
+export async function updatePersonalInfo(input: UpdatePersonalInfoInput): Promise<UpdatePersonalInfoResult> {
+  let token = getAccessToken();
+  if (!token) {
+    throw new Error("Sign in again before updating personal info.");
+  }
+
+  const body = buildPersonalInfoUpdateBody(input);
+  const doUpdate = (nextToken: string) => requestSupabase("/auth/v1/user", {
+    method: "PUT",
+    token: nextToken,
+    body: JSON.stringify(body),
+  });
+
+  let res = await doUpdate(token);
+  if (isAuthFailure(res.status)) {
+    const refreshed = await refreshPersistedSession();
+    if (refreshed?.access_token) {
+      token = refreshed.access_token;
+      res = await doUpdate(token);
+    }
+  }
+
+  const text = await res.text();
+  const payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  if (!res.ok) {
+    const msg =
+      (typeof payload.msg === "string" && payload.msg) ||
+      (typeof payload.error_description === "string" && payload.error_description) ||
+      (typeof payload.error === "string" && payload.error) ||
+      "Unable to update personal info.";
+    throw new Error(msg);
+  }
+
+  const returnedUser = toUser(payload);
+  const previousUser = getStoredUser();
+  const requestedEmail = typeof input.email === "string" ? input.email.trim() : "";
+  const mergedUser: SupabaseAuthUser = {
+    ...(previousUser || returnedUser),
+    ...returnedUser,
+    email: returnedUser.email || previousUser?.email || null,
+  };
+  const nextSession: SupabaseAuthSession = {
+    access_token: token,
+    refresh_token: getStoredRefreshToken() || undefined,
+    user: mergedUser,
+  };
+  persistSession(nextSession);
+
+  return {
+    user: mergedUser,
+    emailConfirmationRequired: Boolean(requestedEmail && requestedEmail.toLowerCase() !== String(mergedUser.email || "").toLowerCase()),
+  };
 }
 
 export async function refreshSession(refreshToken: string): Promise<SupabaseAuthSession | null> {

@@ -205,4 +205,95 @@ describe("supabase auth helpers", () => {
     expect(storage.getItem("thecremodel_supabase_access_token")).toBe("new-access-token");
     expect(storage.getItem("thecremodel_supabase_refresh_token")).toBe("new-refresh-token");
   });
+
+  it("updates personal info through Supabase and persists the returned user", async () => {
+    const storage = new MemoryStorage();
+    storage.setItem("thecremodel_supabase_access_token", "access-token");
+    storage.setItem("thecremodel_supabase_refresh_token", "refresh-token");
+    storage.setItem("thecremodel_supabase_user", JSON.stringify({ id: "user-1", email: "old@example.com", name: "Old Name" }));
+    storage.setItem("thecremodel_supabase_session_last_active_at", String(Date.now()));
+    let updateBody: Record<string, unknown> | null = null;
+
+    globalThis.window = {
+      localStorage: storage,
+      location: {
+        href: "https://thecremodel.com/account",
+        origin: "https://thecremodel.com",
+        protocol: "https:",
+      },
+    } as Window & typeof globalThis;
+    globalThis.document = { cookie: "", title: "Account" } as Document;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/auth/v1/user") && init?.method === "PUT") {
+        updateBody = JSON.parse(String(init.body || "{}")) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            id: "user-1",
+            email: "broker@example.com",
+            user_metadata: { full_name: "Broker User" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const supabase = await import("@/lib/supabase");
+    const result = await supabase.updatePersonalInfo({
+      name: "Broker User",
+      email: "broker@example.com",
+    });
+
+    expect(updateBody).toEqual({
+      data: {
+        full_name: "Broker User",
+        name: "Broker User",
+        display_name: "Broker User",
+      },
+      email: "broker@example.com",
+    });
+    expect(result.user.name).toBe("Broker User");
+    expect(result.user.email).toBe("broker@example.com");
+    expect(storage.getItem("thecremodel_supabase_user")).toContain("Broker User");
+    expect(storage.getItem("thecremodel_supabase_user")).toContain("broker@example.com");
+  });
+
+  it("updates password through Supabase", async () => {
+    const storage = new MemoryStorage();
+    storage.setItem("thecremodel_supabase_access_token", "access-token");
+    storage.setItem("thecremodel_supabase_user", JSON.stringify({ id: "user-1", email: "user@example.com" }));
+    storage.setItem("thecremodel_supabase_session_last_active_at", String(Date.now()));
+    let updateBody: Record<string, unknown> | null = null;
+
+    globalThis.window = {
+      localStorage: storage,
+      location: {
+        href: "https://thecremodel.com/account",
+        origin: "https://thecremodel.com",
+        protocol: "https:",
+      },
+    } as Window & typeof globalThis;
+    globalThis.document = { cookie: "", title: "Account" } as Document;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/auth/v1/user") && init?.method === "PUT") {
+        updateBody = JSON.parse(String(init.body || "{}")) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            id: "user-1",
+            email: "user@example.com",
+            user_metadata: {},
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    const supabase = await import("@/lib/supabase");
+    await supabase.updatePersonalInfo({ password: "new-password" });
+
+    expect(updateBody).toEqual({ password: "new-password" });
+  });
 });

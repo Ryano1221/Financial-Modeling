@@ -7,8 +7,9 @@ import {
   findMatchingObligation,
   inferObligationDocumentKind,
   mapNormalizeToObligationSeed,
+  pruneObligationsForAvailableSourceDocuments,
 } from "@/lib/obligations/engine";
-import type { ObligationRecord } from "@/lib/obligations/types";
+import type { ObligationDocumentRecord, ObligationRecord } from "@/lib/obligations/types";
 
 function makeNormalize(overrides: Partial<NormalizerResponse> = {}): NormalizerResponse {
   return {
@@ -69,6 +70,23 @@ function makeObligation(overrides: Partial<ObligationRecord> = {}): ObligationRe
   };
 }
 
+function makeObligationDocument(overrides: Partial<ObligationDocumentRecord> = {}): ObligationDocumentRecord {
+  return {
+    id: "obl-doc-1",
+    clientId: "client-1",
+    sourceDocumentId: "doc-1",
+    companyId: "co-1",
+    obligationId: "obl-1",
+    fileName: "proposal.docx",
+    kind: "lease",
+    uploadedAtIso: "2026-01-01T00:00:00.000Z",
+    confidenceScore: 0.95,
+    reviewRequired: false,
+    parseWarnings: [],
+    ...overrides,
+  };
+}
+
 describe("obligations/engine", () => {
   it("maps normalize output into obligation seed values", () => {
     const seed = mapNormalizeToObligationSeed(makeNormalize(), "proposal.docx");
@@ -98,6 +116,31 @@ describe("obligations/engine", () => {
     expect(seed.terminationRightDate).toBe("2036-10-15");
   });
 
+  it("maps deep extraction rights clauses into obligation timeline dates", () => {
+    const seed = mapNormalizeToObligationSeed(
+      makeNormalize({
+        canonical_lease: {
+          ...makeNormalize().canonical_lease,
+          notes: "",
+          expiration_date: "2030-04-30",
+        },
+        canonical_extraction: {
+          rights_options: {
+            renewal_option:
+              "Tenant shall have one (1) option to renew this Lease for one (1) additional period of three (3) years, commencing May 1, 2030 and expiring April 30, 2033. Tenant shall exercise the Renewal Option by delivering written notice no earlier than fifteen (15) months and no later than nine (9) months prior to the Expiration Date (i.e., between February 1, 2029 and July 31, 2029).",
+            termination_right:
+              "Tenant shall have a one-time option to terminate this Lease effective as of April 30, 2028. To exercise the Termination Option, Tenant must deliver written notice to Landlord no later than October 31, 2027.",
+          },
+        },
+      }),
+      "YC_Pier70_Lease.docx",
+    );
+
+    expect(seed.noticeDate).toBe("2027-10-31");
+    expect(seed.renewalDate).toBe("2029-07-31");
+    expect(seed.terminationRightDate).toBe("2028-04-30");
+  });
+
   it("infers document kinds with precedence", () => {
     expect(inferObligationDocumentKind("ATX Tower Lease Amendment 2.docx")).toBe("amendment");
     expect(inferObligationDocumentKind("Counter Proposal.pdf")).toBe("counter");
@@ -108,6 +151,39 @@ describe("obligations/engine", () => {
     const existing = [makeObligation()];
     const match = findMatchingObligation(existing, "co-1", mapNormalizeToObligationSeed(makeNormalize(), "proposal.docx"));
     expect(match?.id).toBe("obl-1");
+  });
+
+  it("removes an obligation when its only source document was deleted", () => {
+    const pruned = pruneObligationsForAvailableSourceDocuments(
+      [makeObligation()],
+      [makeObligationDocument()],
+      [],
+      "2026-02-01T00:00:00.000Z",
+    );
+
+    expect(pruned.documents).toEqual([]);
+    expect(pruned.obligations).toEqual([]);
+    expect(pruned.removedDocumentCount).toBe(1);
+    expect(pruned.removedObligationCount).toBe(1);
+  });
+
+  it("keeps an obligation when another source document remains linked", () => {
+    const pruned = pruneObligationsForAvailableSourceDocuments(
+      [makeObligation({ sourceDocumentIds: ["proposal.docx", "amendment.docx"] })],
+      [
+        makeObligationDocument({ id: "obl-doc-1", sourceDocumentId: "doc-1", fileName: "proposal.docx" }),
+        makeObligationDocument({ id: "obl-doc-2", sourceDocumentId: "doc-2", fileName: "amendment.docx" }),
+      ],
+      ["doc-2"],
+      "2026-02-01T00:00:00.000Z",
+    );
+
+    expect(pruned.documents.map((doc) => doc.sourceDocumentId)).toEqual(["doc-2"]);
+    expect(pruned.obligations).toHaveLength(1);
+    expect(pruned.obligations[0]?.sourceDocumentIds).toEqual(["amendment.docx"]);
+    expect(pruned.obligations[0]?.updatedAtIso).toBe("2026-02-01T00:00:00.000Z");
+    expect(pruned.removedDocumentCount).toBe(1);
+    expect(pruned.removedObligationCount).toBe(0);
   });
 
   it("computes completeness and timeline metrics", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ScenarioWithId } from "@/lib/types";
+import { toDocumentNormalizeSnapshot } from "@/lib/workspace/document-cloud-payloads";
 import type { ClientWorkspaceDocument, DocumentNormalizeSnapshot } from "@/lib/workspace/types";
 import {
   inferUniformGrowthRateFromRentSchedule,
@@ -154,6 +155,42 @@ describe("lease extraction repair", () => {
     expect(response?.review_tasks).toEqual([]);
     expect(response?.export_allowed).toBe(true);
     expect((response?.extraction_confidence as { status?: string } | undefined)?.status).toBe("green");
+  });
+
+  it("preserves deep canonical extraction rights from saved snapshots", () => {
+    const response = normalizerResponseFromSnapshot(makeSnapshot({
+      canonical_extraction: {
+        rights_options: {
+          renewal_option: "Renewal notice no later than July 31, 2029.",
+          termination_right: "Termination effective as of April 30, 2028 with notice no later than October 31, 2027.",
+        },
+      },
+    }));
+
+    expect(response?.canonical_extraction?.rights_options).toEqual({
+      renewal_option: "Renewal notice no later than July 31, 2029.",
+      termination_right: "Termination effective as of April 30, 2028 with notice no later than October 31, 2027.",
+    });
+  });
+
+  it("keeps canonical extraction when converting live normalize responses into document snapshots", () => {
+    const snapshot = toDocumentNormalizeSnapshot({
+      canonical_lease: makeSnapshot().canonical_lease,
+      confidence_score: 0.95,
+      field_confidence: {},
+      missing_fields: [],
+      clarification_questions: [],
+      warnings: [],
+      canonical_extraction: {
+        rights_options: {
+          renewal_option: "Renewal notice no later than July 31, 2029.",
+        },
+      },
+    });
+
+    expect(snapshot?.canonical_extraction?.rights_options).toEqual({
+      renewal_option: "Renewal notice no later than July 31, 2029.",
+    });
   });
 
   it("repairs live normalize payloads before they are gated", () => {

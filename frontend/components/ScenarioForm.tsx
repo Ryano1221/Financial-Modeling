@@ -1196,15 +1196,19 @@ export function ScenarioForm({
           />
         </label>
         <label className="block">
-          <span className="text-sm text-slate-300">Opex growth (e.g. 0.03)</span>
-          <input
-            type="number"
-            min={0}
-            step={0.01}
-            value={scenario.opex_growth}
-            onChange={(e) => update("opex_growth", Number(e.target.value))}
-            className={inputClass}
-          />
+          <span className="text-sm text-slate-300">Opex Escalation (%/YR)</span>
+          <div className="relative">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.1}
+              value={Number(((scenario.opex_growth ?? 0.03) * 100).toFixed(2))}
+              onChange={(e) => update("opex_growth", Number(e.target.value) / 100)}
+              className={inputClass + " pr-8"}
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none">%</span>
+          </div>
         </label>
         <label className="block">
           <span className="text-sm text-slate-300">Discount rate (annual; override for this option, e.g. 0.08 = 8%)</span>

@@ -53,6 +53,7 @@ export interface DocumentNormalizeSnapshot {
   warnings?: string[];
   confidence_score?: number;
   option_variants?: BackendCanonicalLease[];
+  canonical_extraction?: Record<string, unknown>;
 }
 
 export interface ClientWorkspaceDocument {

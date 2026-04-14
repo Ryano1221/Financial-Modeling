@@ -140,7 +140,14 @@ function asCanonical(normalize: unknown): BackendCanonicalLease | null {
 function sameSession(a: SupabaseAuthSession | null, b: SupabaseAuthSession | null): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return a.access_token === b.access_token && a.user.id === b.user.id;
+  return (
+    a.access_token === b.access_token &&
+    a.user.id === b.user.id &&
+    a.user.email === b.user.email &&
+    a.user.name === b.user.name &&
+    a.user.role === b.user.role &&
+    a.user.team === b.user.team
+  );
 }
 
 function toNormalizeSnapshot(

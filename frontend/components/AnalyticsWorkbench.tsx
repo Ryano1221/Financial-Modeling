@@ -381,6 +381,7 @@ function DualMetricComboChart({
     scenarioName: row.scenarioName,
     barValue: toNumber((row.metrics as OptionMetrics)[barMetric.key]),
     lineValue: toNumber((row.metrics as OptionMetrics)[lineMetric.key]),
+    totalObligation: toNumber((row.metrics as OptionMetrics)["totalObligation"]),
   }));
   const maxBarValue = Math.max(0, ...chartData.map((row) => toNumber(row.barValue)));
   const maxLineValue = Math.max(0, ...chartData.map((row) => toNumber(row.lineValue)));
@@ -484,6 +485,45 @@ function DualMetricComboChart({
                         fill="#f8fafc"
                         fontSize={11}
                         fontWeight={600}
+                      >
+                        {text}
+                      </text>
+                    </g>
+                  );
+                }}
+              />
+              <LabelList
+                dataKey="totalObligation"
+                position="insideBottom"
+                content={(props: any) => {
+                  const { x, y, width, height, value } = props;
+                  if (!value) return null;
+                  const text = formatCurrency(toNumber(value));
+                  const labelWidth = Math.max(70, Math.round(text.length * 6.8) + 10);
+                  const labelHeight = 18;
+                  const centerX = x + width / 2;
+                  const barBottom = y + height;
+                  const rectX = centerX - labelWidth / 2;
+                  const rectY = barBottom - labelHeight - 4;
+                  return (
+                    <g>
+                      <rect
+                        x={rectX}
+                        y={rectY}
+                        width={labelWidth}
+                        height={labelHeight}
+                        rx={4}
+                        fill="#0e7490"
+                        stroke="#22d3ee"
+                        strokeWidth={1}
+                      />
+                      <text
+                        x={centerX}
+                        y={rectY + 13}
+                        textAnchor="middle"
+                        fill="#f0f9ff"
+                        fontSize={10}
+                        fontWeight={700}
                       >
                         {text}
                       </text>

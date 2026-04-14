@@ -117,6 +117,33 @@ def _normalize_keyword_spacing(line: str) -> str:
     return out
 
 
+def _clause_excerpt(line: str, keyword_pattern: str, max_chars: int = 600) -> str:
+    cleaned = " ".join(str(line or "").split()).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    match = re.search(keyword_pattern, cleaned, re.I)
+    center = match.start() if match else 0
+    start = max(0, center - 120)
+    end = min(len(cleaned), start + max_chars)
+    start = max(0, end - max_chars)
+    return cleaned[start:end].strip(" ,.;:-")
+
+
+def _rights_clause_context(lines: list[str], idx: int, follow_tokens: tuple[str, ...]) -> str:
+    parts = [str(lines[idx] or "").strip()]
+    for next_line in lines[idx + 1:min(len(lines), idx + 5)]:
+        next_low = str(next_line or "").lower()
+        current_low = " ".join(parts).lower()
+        if any(token in next_low for token in follow_tokens) or (
+            ("notice" in current_low or "notice" in next_low)
+            and any(token in next_low for token in ("no later than", "not later than", "on or before", "between"))
+        ):
+            parts.append(str(next_line or "").strip())
+            continue
+        break
+    return _normalize_keyword_spacing(" ".join(part for part in parts if part))
+
+
 def _is_phase_in_context(line: str) -> bool:
     low = f" {line.lower()} "
     has_phase_token = any(
@@ -333,9 +360,21 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
 
     for page in normalized.pages:
         lines = [ln.strip() for ln in (page.text or "").splitlines() if ln.strip()]
-        for ln in lines:
+        for idx, ln in enumerate(lines):
             scan_line = _normalize_keyword_spacing(ln)
             low = scan_line.lower()
+            renewal_scan_line = _rights_clause_context(
+                lines,
+                idx,
+                ("renewal notice", "extension notice", "option to renew", "renewal option", "expiration date"),
+            )
+            renewal_low = renewal_scan_line.lower()
+            termination_scan_line = _rights_clause_context(
+                lines,
+                idx,
+                ("termination notice", "termination option", "early termination", "terminate this lease"),
+            )
+            termination_low = termination_scan_line.lower()
 
             # Date fields with keyword anchoring.
             for pat in DATE_PATTERNS:
@@ -568,31 +607,56 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
 
             # Renewal option — multiple pattern forms.
             # Form 1: "2 x 5 year renewal option"
-            renewal_match = re.search(r"(?i)(\d+)\s*x\s*(\d{1,2})\s*[-–]?\s*year\s+(?:renewal|extension)\s+option", scan_line)
+            renewal_current = (
+                "renewal option" in low
+                or "extension option" in low
+                or "option to renew" in low
+                or "renewal notice" in low
+            )
+            renewal_match = None
+            if renewal_current:
+                renewal_match = re.search(r"(?i)(\d+)\s*x\s*(\d{1,2})\s*[-–]?\s*year\s+(?:renewal|extension)\s+option", renewal_scan_line)
             # Form 2: "option to renew for X years" or "X-year renewal/extension option"
-            if not renewal_match:
+            if renewal_current and not renewal_match:
                 renewal_match = re.search(
-                    r"(?i)(?:option\s+to\s+renew|renewal\s+option|extension\s+option)\b[^.\n]{0,80}?\b(\d{1,2})\s*[-–]?\s*year",
-                    scan_line,
+                    r"(?i)(?:option\s+to\s+renew|renewal\s+option|extension\s+option)\b[^.\n]{0,180}?\b(?:\d{1,2}|[A-Za-z-]+\s*\(\s*\d{1,2}\s*\))\s*[-–]?\s*years?",
+                    renewal_scan_line,
                 )
             # Form 3: "renewal term of X years"
-            if not renewal_match:
+            if renewal_current and not renewal_match:
                 renewal_match = re.search(
                     r"(?i)\brenewal\s+term\s+of\s+(\d{1,2})\s+years?\b",
-                    scan_line,
+                    renewal_scan_line,
                 )
             if renewal_match:
+                excerpt = _clause_excerpt(renewal_scan_line, r"(option\s+to\s+renew|renewal\s+option|extension\s+option|renewal\s+notice)")
                 out["renewal_option"].append(
-                    _mk_candidate("renewal_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.76)
+                    _mk_candidate("renewal_option", excerpt, page.page_number, excerpt, "pdf_text_regex", 0.76)
                 )
-            elif ("renewal option" in low or "extension option" in low or "option to renew" in low) and len(scan_line) <= 220:
+            elif "no further renewal option" not in renewal_low and (
+                renewal_current
+                and (
+                    "renewal option" in low
+                    or "extension option" in low
+                    or "option to renew" in low
+                    or ("renewal notice" in low and "no later than" in renewal_low)
+                    or ("renewal notice" in low and "between" in renewal_low)
+                )
+            ):
+                excerpt = _clause_excerpt(renewal_scan_line, r"(option\s+to\s+renew|renewal\s+option|extension\s+option|renewal\s+notice)")
                 out["renewal_option"].append(
-                    _mk_candidate("renewal_option", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.66)
+                    _mk_candidate("renewal_option", excerpt, page.page_number, excerpt, "pdf_text_regex", 0.66)
                 )
 
-            if "termination right" in low or "early termination" in low or "terminate this lease" in low:
+            if (
+                "termination right" in low
+                or "early termination" in low
+                or "terminate this lease" in low
+                or ("termination notice" in low and "no later than" in termination_low)
+            ):
+                excerpt = _clause_excerpt(termination_scan_line, r"(termination\s+right|early\s+termination|terminate\s+this\s+lease|termination\s+notice)")
                 out["termination_right"].append(
-                    _mk_candidate("termination_right", ln.strip(), page.page_number, ln, "pdf_text_regex", 0.68)
+                    _mk_candidate("termination_right", excerpt, page.page_number, excerpt, "pdf_text_regex", 0.68)
                 )
             if "expansion option" in low or "expand into" in low:
                 out["expansion_option"].append(

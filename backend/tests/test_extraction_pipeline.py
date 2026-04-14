@@ -303,6 +303,58 @@ def test_reconcile_extracts_ti_parking_and_rights_into_structured_output() -> No
     assert (resolved.get("concessions") or {}).get("free_rent_months") == 6
 
 
+def test_reconcile_extracts_docx_style_renewal_and_termination_clauses() -> None:
+    renewal_clause = (
+        "Article 6 - Renewal Option 6.1 Option to Renew Provided Tenant is not in default, "
+        "Tenant shall have one (1) option to renew this Lease for one (1) additional period of "
+        "three (3) years, commencing May 1, 2030 and expiring April 30, 2033. "
+        "6.2 Renewal Notice Tenant shall exercise the Renewal Option by delivering written notice "
+        "no earlier than fifteen (15) months and no later than nine (9) months prior to the "
+        "Expiration Date (i.e., between February 1, 2029 and July 31, 2029)."
+    )
+    termination_clause = (
+        "Article 7 - Termination Option 7.1 Early Termination Right Tenant shall have a one-time "
+        "option to terminate this Lease effective as of April 30, 2028. 7.2 Termination Notice "
+        "Tenant must deliver written notice to Landlord no later than October 31, 2027."
+    )
+    normalized = NormalizedDocument(
+        sha256="cre-rights",
+        filename="YC_Pier70_Lease.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        pages=[
+            PageData(
+                page_number=1,
+                text=(
+                    "Article 6 - Renewal Option\n"
+                    "6.1 Option to Renew Provided Tenant is not in default, Tenant shall have one (1) "
+                    "option to renew this Lease for one (1) additional period of three (3) years, "
+                    "commencing May 1, 2030 and expiring April 30, 2033.\n"
+                    "6.2 Renewal Notice Tenant shall exercise the Renewal Option by delivering written "
+                    "notice no earlier than fifteen (15) months and no later than nine (9) months prior "
+                    "to the Expiration Date (i.e., between February 1, 2029 and July 31, 2029).\n"
+                    "Article 7 - Termination Option\n"
+                    "7.1 Early Termination Right Tenant shall have a one-time option to terminate this "
+                    "Lease effective as of April 30, 2028.\n"
+                    "7.2 Termination Notice\n"
+                    "Tenant must deliver written notice to Landlord no later than "
+                    "October 31, 2027."
+                ),
+                words=[],
+                table_regions=[],
+                needs_ocr=False,
+            )
+        ],
+        full_text=f"{renewal_clause}\n{termination_clause}",
+    )
+    candidates = mine_candidates(normalized)
+    reconciled = reconcile(regex_candidates=candidates, rent_step_candidates=[], llm_output=None)
+    rights = (reconciled.get("resolved") or {}).get("rights_options") or {}
+
+    assert "July 31, 2029" in rights.get("renewal_option", "")
+    assert "April 30, 2028" in rights.get("termination_right", "")
+    assert "October 31, 2027" in rights.get("termination_right", "")
+
+
 def test_validate_extraction_reports_missing_information_for_model_ready_fields() -> None:
     extraction = {
         "document": {"doc_type": "proposal", "doc_role": "proposal", "confidence": 0.9, "evidence_spans": []},

@@ -144,7 +144,7 @@ export function scenarioToCanonical(s: ScenarioWithId): LeaseScenarioCanonical {
       baseOpexPsfYr: s.base_opex_psf_yr,
       baseYearOpexPsfYr: s.base_year_opex_psf_yr,
       opexByCalendarYear: s.opex_by_calendar_year,
-      annualEscalationPercent: normalizeDecimalRate(s.opex_growth, 0),
+      annualEscalationPercent: normalizeDecimalRate(s.opex_growth, 0.03),
     },
     parkingSchedule: {
       spacesAllotted: parkingSpaces,

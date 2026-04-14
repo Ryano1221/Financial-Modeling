@@ -42,6 +42,7 @@ export function toDocumentNormalizeSnapshot(
       warnings: "warnings" in normalize ? normalize.warnings : undefined,
       confidence_score: "confidence_score" in normalize ? normalize.confidence_score : undefined,
       option_variants: "option_variants" in normalize ? normalize.option_variants : undefined,
+      canonical_extraction: "canonical_extraction" in normalize ? normalize.canonical_extraction : undefined,
     };
   }
 
