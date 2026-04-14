@@ -24,13 +24,14 @@ import {
   type DealsViewMode,
 } from "@/lib/workspace/types";
 import { getRepresentationModeProfile } from "@/lib/workspace/representation-profile";
+import { fetchOrgPlan, getPlanBadge, openBillingPortal, type OrgPlanInfo } from "@/lib/billing";
 
 function asText(value: unknown): string {
   return String(value || "").trim();
 }
 
 type AccountSection = "dashboard" | "settings";
-type SettingsPanel = "personal" | "general" | "crm";
+type SettingsPanel = "personal" | "general" | "crm" | "billing";
 
 export default function AccountPage() {
   const router = useRouter();
@@ -82,6 +83,11 @@ export default function AccountPage() {
   const [personalError, setPersonalError] = useState("");
   const [passwordStatus, setPasswordStatus] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingError, setBillingError] = useState("");
+  const [billingStatus, setBillingStatus] = useState("");
+  const [planInfo, setPlanInfo] = useState<OrgPlanInfo | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
   const settingsRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -99,6 +105,8 @@ export default function AccountPage() {
     }
     if (settings === "crm" || legacyTab === "crm") {
       setActiveSettingsPanel("crm");
+    } else if (settings === "billing") {
+      setActiveSettingsPanel("billing");
     } else if (settings === "general") {
       setActiveSettingsPanel("general");
     } else {
@@ -124,6 +132,24 @@ export default function AccountPage() {
     if (!target) return;
     target.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [activeSection, activeSettingsPanel]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPlan() {
+      if (activeSection !== "settings" || activeSettingsPanel !== "billing" || !isAuthenticated) return;
+      setPlanLoading(true);
+      setBillingError("");
+      const payload = await fetchOrgPlan();
+      if (!cancelled) {
+        setPlanInfo(payload);
+        setPlanLoading(false);
+      }
+    }
+    void loadPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, activeSettingsPanel, isAuthenticated]);
 
   useEffect(() => {
     setStageDraftList([...dealStages]);
@@ -361,6 +387,23 @@ export default function AccountPage() {
       setInventoryError(text || "Unable to import CoStar inventory right now.");
     } finally {
       setInventoryUploading(false);
+    }
+  }
+
+  async function manageBilling() {
+    setBillingError("");
+    setBillingStatus("");
+    setBillingLoading(true);
+    try {
+      const portalUrl = await openBillingPortal();
+      if (!portalUrl) {
+        setBillingError("Unable to open billing portal right now. Please try again in a moment.");
+        return;
+      }
+      setBillingStatus("Opening billing portal...");
+      window.location.href = portalUrl;
+    } finally {
+      setBillingLoading(false);
     }
   }
 
@@ -642,6 +685,13 @@ export default function AccountPage() {
             >
               CRM settings
             </button>
+            <button
+              type="button"
+              className={`btn-premium text-center ${activeSettingsPanel === "billing" ? "btn-premium-primary" : "btn-premium-secondary"}`}
+              onClick={() => openAccountSection("settings", "billing")}
+            >
+              Billing
+            </button>
           </div>
 
           {activeSettingsPanel === "personal" ? (
@@ -784,7 +834,7 @@ export default function AccountPage() {
                 </div>
               </section>
             </div>
-          ) : (
+          ) : activeSettingsPanel === "crm" ? (
             <section
               id="crm-settings"
               className="mt-5 border border-cyan-300/40 bg-cyan-500/10 p-4"
@@ -991,6 +1041,43 @@ export default function AccountPage() {
               ) : (
                 <p className="text-xs text-slate-400">Select an active client on the dashboard to edit client-specific CRM settings. Shared CoStar inventory publishing is available above for the whole platform.</p>
               )}
+            </section>
+          ) : (
+            <section className="mt-5 border border-white/15 bg-black/30 p-4 sm:p-5">
+              <p className="heading-kicker mb-2">Billing</p>
+              <p className="text-sm text-slate-300">
+                Manage your subscription, payment method, invoices, and billing contact details.
+              </p>
+              <div className="mt-4 border border-white/10 bg-black/20 p-3">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Current Plan</p>
+                <p className="mt-1 text-sm text-white">
+                  {planLoading
+                    ? "Loading..."
+                    : planInfo
+                      ? getPlanBadge(planInfo.plan_tier, planInfo.is_trial)
+                      : "Unavailable"}
+                </p>
+                {planInfo ? (
+                  <p className="mt-1 text-xs text-slate-400">
+                    Subscription status: {String(planInfo.subscription_status || "unknown").replaceAll("_", " ")}
+                  </p>
+                ) : null}
+              </div>
+              {billingError ? <p className="mt-3 text-xs text-red-300">{billingError}</p> : null}
+              {billingStatus ? <p className="mt-3 text-xs text-cyan-200">{billingStatus}</p> : null}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-premium btn-premium-primary text-center"
+                  onClick={() => void manageBilling()}
+                  disabled={billingLoading}
+                >
+                  {billingLoading ? "Opening..." : "Manage billing"}
+                </button>
+                <Link href="/pricing" className="btn-premium btn-premium-secondary text-center">
+                  Compare plans
+                </Link>
+              </div>
             </section>
           )}
         </section>
