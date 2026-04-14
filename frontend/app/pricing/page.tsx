@@ -57,11 +57,16 @@ export default function PricingPage() {
   const handleCTA = async (tier: PlanTier, trial = false) => {
     setLoading(tier);
     setError(null);
-    const url = await startCheckout(tier, trial);
-    if (url) {
-      window.location.href = url;
-    } else {
-      setError("Unable to start checkout right now. Make sure you're signed in and try again.");
+    try {
+      const url = await startCheckout(tier, trial);
+      if (url) {
+        window.location.href = url;
+      } else {
+        setError("Unable to start checkout right now.");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to start checkout right now.";
+      setError(message);
     }
     setLoading(null);
   };

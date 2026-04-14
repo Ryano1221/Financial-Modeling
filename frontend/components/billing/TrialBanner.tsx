@@ -7,6 +7,7 @@ export default function TrialBanner() {
   const [plan, setPlan] = useState<OrgPlanInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [loadingPortal, setLoadingPortal] = useState(false);
+  const [portalError, setPortalError] = useState("");
 
   useEffect(() => {
     fetchOrgPlan().then(setPlan);
@@ -39,9 +40,14 @@ export default function TrialBanner() {
         <div className="flex items-center gap-3">
           <button
             onClick={async () => {
+              setPortalError("");
               setLoadingPortal(true);
-              const url = await openBillingPortal();
-              if (url) window.location.href = url;
+              try {
+                const url = await openBillingPortal();
+                if (url) window.location.href = url;
+              } catch (err) {
+                setPortalError(err instanceof Error ? err.message : "Unable to open billing portal right now.");
+              }
               setLoadingPortal(false);
             }}
             className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${
@@ -59,6 +65,7 @@ export default function TrialBanner() {
             ✕
           </button>
         </div>
+        {portalError ? <span className="ml-2 text-xs">{portalError}</span> : null}
       </div>
     );
   }
@@ -76,9 +83,14 @@ export default function TrialBanner() {
         <div className="flex items-center gap-3">
           <button
             onClick={async () => {
+              setPortalError("");
               setLoadingPortal(true);
-              const url = await openBillingPortal();
-              if (url) window.location.href = url;
+              try {
+                const url = await openBillingPortal();
+                if (url) window.location.href = url;
+              } catch (err) {
+                setPortalError(err instanceof Error ? err.message : "Unable to open billing portal right now.");
+              }
               setLoadingPortal(false);
             }}
             className="px-3 py-1 rounded-md text-xs font-bold bg-white text-red-600 hover:bg-red-50"
@@ -89,6 +101,7 @@ export default function TrialBanner() {
             ✕
           </button>
         </div>
+        {portalError ? <span className="ml-2 text-xs">{portalError}</span> : null}
       </div>
     );
   }

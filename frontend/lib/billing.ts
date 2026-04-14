@@ -165,7 +165,23 @@ export function getPlanBadge(tier: PlanTier, isTrial: boolean): string {
 async function fetchBillingProxy(path: string, init: RequestInit): Promise<Response> {
   const res = await fetchApiProxy(path, init);
   if (res.status !== 404) return res;
-  return fetchApiProxy(`/api/v1${path}`, init);
+  return fetchApiProxy(`/v1${path}`, init);
+}
+
+async function parseBillingError(res: Response, fallback: string): Promise<Error> {
+  try {
+    const text = (await res.text()).trim();
+    if (!text) return new Error(fallback);
+    const parsed = JSON.parse(text) as { detail?: unknown; error?: unknown; message?: unknown };
+    const detail =
+      (typeof parsed.detail === "string" && parsed.detail.trim()) ||
+      (typeof parsed.error === "string" && parsed.error.trim()) ||
+      (typeof parsed.message === "string" && parsed.message.trim()) ||
+      text;
+    return new Error(detail || fallback);
+  } catch {
+    return new Error(fallback);
+  }
 }
 
 export async function fetchOrgPlan(): Promise<OrgPlanInfo | null> {
@@ -188,11 +204,12 @@ export async function startCheckout(tier: PlanTier, trial = false): Promise<stri
       headers: getAuthHeaders(),
       body: JSON.stringify({ plan_tier: tier, start_trial: trial }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) throw await parseBillingError(res, "Unable to start checkout right now.");
     const data = await res.json();
     return data.checkout_url ?? null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error("Unable to start checkout right now.");
   }
 }
 
@@ -202,10 +219,11 @@ export async function openBillingPortal(): Promise<string | null> {
       method: "POST",
       headers: getAuthHeaders(),
     });
-    if (!res.ok) return null;
+    if (!res.ok) throw await parseBillingError(res, "Unable to open billing portal right now.");
     const data = await res.json();
     return data.portal_url ?? null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error("Unable to open billing portal right now.");
   }
 }

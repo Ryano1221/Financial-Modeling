@@ -402,6 +402,8 @@ export default function AccountPage() {
       }
       setBillingStatus("Opening billing portal...");
       window.location.href = portalUrl;
+    } catch (err) {
+      setBillingError(err instanceof Error ? err.message : "Unable to open billing portal right now.");
     } finally {
       setBillingLoading(false);
     }
