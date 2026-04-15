@@ -60,6 +60,7 @@ export const METRIC_LABELS: (keyof OptionMetrics)[] = [
   "opexPsfYr",
   "opexEscalationPercent",
   "parkingSpaces",
+  "parkingAbatementMonths",
   "parkingCostPerSpotMonthlyPreTax",
   "parkingSalesTaxPercent",
   "parkingCostPerSpotMonthly",
@@ -102,6 +103,7 @@ export const METRIC_DISPLAY_NAMES: Record<string, string> = {
   opexPsfYr: "Operating Expenses ($/RSF/YR)",
   opexEscalationPercent: "OpEx Escalation %",
   parkingSpaces: "Parking Spaces",
+  parkingAbatementMonths: "Parking Abatement",
   parkingCostPerSpotMonthlyPreTax: "Parking Cost ($/Spot/Month, Pre-Tax)",
   parkingCostPerSpotMonthly: "Parking Cost ($/Spot/Month, After Tax)",
   parkingSalesTaxPercent: "Parking Sales Tax %",
@@ -483,6 +485,7 @@ export function formatMetricValue(key: string, value: unknown): string {
     if (key === "escalationPercent" || key === "opexEscalationPercent" || key === "parkingSalesTaxPercent") return formatPercent(value);
     if (key === "rsf") return formatRSF(value);
     if (key === "termMonths") return formatMonths(value);
+    if (key === "parkingAbatementMonths") return value > 0 ? `${value} months` : "None";
 if (key === "commencementDate" || key === "expirationDate") return typeof value === "string" ? formatDateISO(value) : String(value ?? "");
   if (key.includes("Psf") || key.includes("psf")) return formatCurrencyPerSF(value);
     if (key.includes("Cost") || key.includes("Rent") || key.includes("Obligation") || key.includes("Npv") || key.includes("Budget") || key.includes("Allowance") || key.includes("Pocket")) return formatCurrency(value);

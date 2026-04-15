@@ -100,6 +100,7 @@ export interface OptionMetrics {
   discountRateUsed: number;
   totalObligation: number;
   equalizedAvgCostPsfYr: number;
+  parkingAbatementMonths: number;
   notes: string;
 }
 
@@ -758,6 +759,10 @@ export function runMonthlyEngine(
     discountRateUsed: discountRate,
     totalObligation,
     equalizedAvgCostPsfYr: equalizedAvgPsfYr,
+    parkingAbatementMonths: normalizedParkingAbatements.reduce(
+      (total, range) => total + (range.end - range.start + 1),
+      0
+    ),
     notes: scenario.notes ?? "",
   };
 
