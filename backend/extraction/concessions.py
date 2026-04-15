@@ -34,6 +34,12 @@ _NUMBER_WORDS: dict[str, int] = {
     "eighty": 80,
     "ninety": 90,
     "hundred": 100,
+    # compound two-word numbers as single tokens (e.g. "twenty-four" after hyphen normalization)
+    "twenty one": 21, "twenty two": 22, "twenty three": 23, "twenty four": 24,
+    "twenty five": 25, "twenty six": 26, "twenty seven": 27, "twenty eight": 28, "twenty nine": 29,
+    "thirty one": 31, "thirty two": 32, "thirty three": 33, "thirty four": 34,
+    "thirty five": 35, "thirty six": 36,
+    "forty eight": 48, "sixty": 60,
 }
 
 
@@ -50,14 +56,28 @@ def _word_token_to_int(value: Any) -> int | None:
     raw = str(value or "").strip().lower()
     if not raw:
         return None
-    # Normalize hyphens and whitespace: "twenty-five" and "twenty five" both work.
+    # Normalize hyphens and whitespace: "twenty-five" → "twenty five"
     raw = re.sub(r"[-\s]+", " ", raw).strip()
     if raw.isdigit():
         return int(raw)
+    # Check compound two-word lookup first (e.g. "twenty four")
+    if raw in _NUMBER_WORDS:
+        return _NUMBER_WORDS[raw]
     total = 0
     current = 0
     seen = False
-    for token in raw.split():
+    tokens = raw.split()
+    i = 0
+    while i < len(tokens):
+        # Try two-token compound first
+        if i + 1 < len(tokens):
+            pair = tokens[i] + " " + tokens[i + 1]
+            if pair in _NUMBER_WORDS:
+                current += _NUMBER_WORDS[pair]
+                seen = True
+                i += 2
+                continue
+        token = tokens[i]
         if token not in _NUMBER_WORDS:
             return None
         seen = True
@@ -66,6 +86,7 @@ def _word_token_to_int(value: Any) -> int | None:
             current = max(1, current) * number
         else:
             current += number
+        i += 1
     if not seen:
         return None
     total += current
@@ -212,6 +233,76 @@ def parse_concession_text(
         start_i = max(0, int(start_month))
         end_i = max(start_i, start_i + count - 1)
         periods.append({"start_month": start_i, "end_month": end_i, "scope": scope, "row_text": row_text})
+
+    # ── Compound sequential abatement ─────────────────────────────────────────
+    # Pattern: "X months of [Gross|Base] Rent abatement, followed by Y months of [Base|Gross] Rent abatement"
+    # Detects the "followed by" divider and parses each half independently.
+    _SEQ_DIVIDER = re.compile(
+        r"(?i)\b(?:followed\s+by|then(?:\s+followed\s+by)?|,\s*then|;\s*followed\s+by)\b"
+    )
+    _HALF_ABATE = re.compile(
+        r"(?i)"
+        r"(?:([a-z][a-z\-\s]+?)\s*\((\d{1,3})\)|(\d{1,3}))"   # count: "three (3)" or "3"
+        r"\s+months?\s+(?:of\s+)?"
+        r"(?:(gross|base)\s+(?:rent\s+)?)?"                      # optional scope before keyword
+        r"(?:free\s+rent|rent\s+abatement|abatement|abated\b)"
+        r"|"
+        r"(?:free\s+rent|rent\s+abatement|abatement|abated)\s+"
+        r"(?:(gross|base)\s+(?:rent\s+)?)?"                      # scope after keyword
+        r"(?:([a-z][a-z\-\s]+?)\s*\((\d{1,3})\)|(\d{1,3}))"    # count after keyword
+        r"\s+months?"
+    )
+
+    def _extract_half(snippet: str) -> tuple[int | None, str]:
+        """Return (count, scope) from a half-sentence like '3 months of abated Gross Rent'."""
+        m = _HALF_ABATE.search(snippet)
+        if not m:
+            return None, default_scope
+        g = m.groups()
+        # Pattern A groups (count before keyword): g[0]=word, g[1]=paren, g[2]=plain, g[3]=scope
+        # Pattern B groups (count after keyword):  g[4]=scope, g[5]=word, g[6]=paren, g[7]=plain
+        if g[2] or g[1] or g[0]:  # Pattern A
+            raw = g[2] if g[2] else (g[1] if g[1] else g[0])
+            cnt = _coerce_int_token(raw, None)
+            if cnt is None and g[0]:
+                cnt = _word_token_to_int(str(g[0]).strip())
+            sc_raw = str(g[3] or "").lower()
+        else:  # Pattern B
+            raw = g[7] if g[7] else (g[6] if g[6] else g[5])
+            cnt = _coerce_int_token(raw, None)
+            if cnt is None and g[5]:
+                cnt = _word_token_to_int(str(g[5]).strip())
+            sc_raw = str(g[4] or "").lower()
+        # If scope still unspecified, scan full snippet for gross/base keywords
+        if not sc_raw:
+            snip_low = snippet.lower()
+            if "gross" in snip_low:
+                sc_raw = "gross"
+            elif "base" in snip_low:
+                sc_raw = "base"
+        scope = "gross" if "gross" in sc_raw else ("base" if "base" in sc_raw else default_scope)
+        return cnt, scope
+
+    for div_match in _SEQ_DIVIDER.finditer(raw_text):
+        # Find the sentence/clause containing this divider
+        line_start = raw_text.rfind("\n", 0, div_match.start())
+        line_start = line_start + 1 if line_start >= 0 else max(0, div_match.start() - 200)
+        line_end = raw_text.find("\n", div_match.end())
+        if line_end < 0:
+            line_end = min(len(raw_text), div_match.end() + 200)
+        full_clause = raw_text[line_start:line_end]
+        low_clause = full_clause.lower()
+        if not any(tok in low_clause for tok in ("abatement", "abated", "free rent")):
+            continue
+        before = raw_text[line_start:div_match.start()]
+        after = raw_text[div_match.end():line_end]
+        count1, scope1 = _extract_half(before)
+        count2, scope2 = _extract_half(after)
+        if not count1 or count1 <= 0 or not count2 or count2 <= 0:
+            continue
+        ctx = _extract_context(raw_text, line_start, line_end)
+        add_period(0, count1, scope1, ctx)
+        add_period(count1, count2, scope2, ctx)
 
     for match in re.finditer(
         r"(?i)\b(?:free\s+rent|rent\s+abatement|abatement)\b[^\n]{0,120}\bmonths?\s*(\d{1,3})\s*(?:-|to|through|thru|–|—)\s*(\d{1,3})\b",
@@ -408,6 +499,46 @@ def parse_concession_text(
         ):
             count = _coerce_int_token(match.group(1), 0) or 0
             if count <= 0:
+                continue
+            parking_periods.append({"start_month": 0, "end_month": max(0, count - 1), "row_text": _extract_context(raw_text, match.start(), match.end())})
+
+    # Handle written-out numbers with optional parenthetical digit:
+    # "abated parking during the initial twenty four (24) months"
+    # "parking shall be free for the first twelve (12) months"
+    if not parking_periods:
+        _PARK_WRITTEN = (
+            r"(?i)\b(?:parking(?:\s+(?:charges?|costs?|rent|fees?))?"
+            r"[^\n]{0,160}?"
+            r"(?:abated|abatement|waived|free|no\s+charge)"
+            r"|(?:abated|abatement|waived|free|no\s+charge)[^\n]{0,80}?"
+            r"parking(?:\s+(?:charges?|costs?|rent|fees?))?)"
+            r"[^\n]{0,80}?"
+            r"\b(?:initial\s+|first\s+)?([a-z][a-z\-\s]+?)\s*\((\d{1,3})\)\s*months?"
+        )
+        for match in re.finditer(_PARK_WRITTEN, raw_text):
+            word_part = str(match.group(1) or "").strip()
+            digit_part = match.group(2)
+            count = _coerce_int_token(digit_part, None)
+            if count is None:
+                count = _word_token_to_int(word_part)
+            if not count or count <= 0:
+                continue
+            parking_periods.append({"start_month": 0, "end_month": max(0, count - 1), "row_text": _extract_context(raw_text, match.start(), match.end())})
+    # Also handle plain "initial X months" parking abatement where X is written-out only
+    if not parking_periods:
+        _PARK_WORD_ONLY = (
+            r"(?i)\b(?:parking(?:\s+(?:charges?|costs?|rent|fees?))?"
+            r"[^\n]{0,160}?"
+            r"(?:abated|abatement|waived|free)"
+            r"|(?:abated|abatement|waived|free)[^\n]{0,80}?"
+            r"parking(?:\s+(?:charges?|costs?|rent|fees?))?)"
+            r"[^\n]{0,80}?"
+            r"\b(?:initial\s+|first\s+)?((?:twenty|thirty|forty|fifty|sixty)\s*(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)?)"
+            r"\s+months?"
+        )
+        for match in re.finditer(_PARK_WORD_ONLY, raw_text):
+            count = _word_token_to_int(match.group(1))
+            if not count or count <= 0:
                 continue
             parking_periods.append({"start_month": 0, "end_month": max(0, count - 1), "row_text": _extract_context(raw_text, match.start(), match.end())})
 
