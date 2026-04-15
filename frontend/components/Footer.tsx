@@ -5,12 +5,21 @@ import Link from "next/link";
 import { useClientWorkspace } from "@/components/workspace/ClientWorkspaceProvider";
 
 export function Footer() {
-  const { ready, session, cloudSyncStatus, cloudSyncMessage } = useClientWorkspace();
+  const { ready, session, cloudSyncStatus, cloudSyncMessage, cloudLastSyncedAt } = useClientWorkspace();
   const isOnline = Boolean(ready && session && cloudSyncStatus !== "local" && cloudSyncStatus !== "error");
-  const syncLabel = isOnline ? "Online" : session ? "Local" : "Sign in to sync";
+  const isSyncing = cloudSyncStatus === "saving";
+  const hasError = cloudSyncStatus === "error";
+
+  let syncLabel: string;
+  if (!ready) syncLabel = "Loading…";
+  else if (!session) syncLabel = "Sign in to sync";
+  else if (isSyncing) syncLabel = "Syncing…";
+  else if (isOnline) syncLabel = "Cloud Synced";
+  else syncLabel = "Sync Unavailable";
+
   const syncTitle = session
-    ? cloudSyncMessage || (isOnline ? "Cloud workspace sync is online." : "Saving on this device only.")
-    : "Local device only. Sign in to sync this workspace across devices.";
+    ? cloudSyncMessage || (isOnline ? "Workspace synced to cloud." : "Cloud sync failed — data is saved locally on this device.")
+    : "Sign in to sync your workspace across all devices.";
 
   return (
     <footer className="relative z-10 mt-0 border-t border-white/8 sm:mt-1">
@@ -61,7 +70,10 @@ export function Footer() {
           </div>
           <p
             className={`absolute bottom-1.5 left-1/2 -translate-x-1/2 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-              isOnline ? "text-[rgba(101,255,198,0.82)]" : "text-[rgba(255,215,89,0.82)]"
+              !ready || !session ? "text-[rgba(148,163,184,0.7)]"
+              : isOnline ? "text-[rgba(101,255,198,0.82)]"
+              : isSyncing ? "text-[rgba(147,197,253,0.82)]"
+              : "text-[rgba(251,191,36,0.82)]"
             }`}
             title={syncTitle}
             aria-live="polite"

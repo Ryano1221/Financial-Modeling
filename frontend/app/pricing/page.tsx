@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { PLANS_STATIC, PLAN_COLORS, PlanTier, startCheckout } from "@/lib/billing";
+import { getAccessToken } from "@/lib/auth-token";
 
 const FEATURE_ROWS = [
   { label: "Active deals", key: "max_deals", format: (v: number) => v === -1 ? "Unlimited" : String(v) },
@@ -53,8 +54,34 @@ const FAQS = [
 export default function PricingPage() {
   const [loading, setLoading] = useState<PlanTier | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    const token = getAccessToken();
+    setIsAuthenticated(Boolean(token));
+    // Auto-launch checkout if user just signed in via redirect from pricing page
+    if (token && typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const plan = params.get("plan") as PlanTier | null;
+      const trial = params.get("trial") === "1";
+      if (plan && ["starter", "pro", "enterprise"].includes(plan)) {
+        // Remove params from URL without reload
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, "", cleanUrl);
+        void handleCTA(plan, trial);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCTA = async (tier: PlanTier, trial = false) => {
+    // Unauthenticated users must sign up / sign in first
+    if (!getAccessToken()) {
+      const returnParam = encodeURIComponent(`/pricing?plan=${tier}${trial ? "&trial=1" : ""}`);
+      window.location.href = `/sign-up?redirect_to=${returnParam}`;
+      return;
+    }
+
     setLoading(tier);
     setError(null);
     try {
@@ -62,10 +89,16 @@ export default function PricingPage() {
       if (url) {
         window.location.href = url;
       } else {
-        setError("Unable to start checkout right now.");
+        setError("Unable to start checkout right now. Please try again.");
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to start checkout right now.";
+      // If the backend says "Not authenticated", re-route to sign-in
+      if (message.toLowerCase().includes("not authenticated") || message.toLowerCase().includes("invalid or expired")) {
+        const returnParam = encodeURIComponent(`/pricing?plan=${tier}${trial ? "&trial=1" : ""}`);
+        window.location.href = `/sign-in?redirect_to=${returnParam}`;
+        return;
+      }
       setError(message);
     }
     setLoading(null);
@@ -207,8 +240,8 @@ export default function PricingPage() {
                     {loading === tier
                       ? "Loading…"
                       : isEnterprise
-                      ? "Start Free Trial"
-                      : `Get ${plan.name}`}
+                      ? (isAuthenticated ? "Start Free Trial" : "Sign up — Free Trial")
+                      : (isAuthenticated ? `Get ${plan.name}` : `Sign up — ${plan.name}`)}
                   </button>
                 </div>
               </div>
@@ -316,7 +349,7 @@ export default function PricingPage() {
           disabled={loading !== null}
           className="bg-amber-500 hover:bg-amber-400 text-slate-900 font-black px-8 py-4 rounded-xl text-lg transition-colors disabled:opacity-60"
         >
-          {loading === "enterprise" ? "Loading…" : "Start Free Trial →"}
+          {loading === "enterprise" ? "Loading…" : isAuthenticated ? "Start Free Trial →" : "Sign up — Free Trial →"}
         </button>
       </div>
 
