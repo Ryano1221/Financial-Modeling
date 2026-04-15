@@ -71,8 +71,7 @@ export default function PricingPage() {
         void handleCTA(plan, trial);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCTA = async (tier: PlanTier, trial = false) => {
     // Unauthenticated users must sign up / sign in first

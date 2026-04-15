@@ -158,6 +158,7 @@ function emptyOptionMetrics(): OptionMetrics {
     discountRateUsed: 0,
     totalObligation: 0,
     equalizedAvgCostPsfYr: 0,
+    parkingAbatementMonths: 0,
     notes: "",
   };
 }

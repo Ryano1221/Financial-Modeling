@@ -779,6 +779,7 @@ export function canonicalResponseToEngineResult(
     discountRateUsed: m.discount_rate_annual ?? 0.08,
     totalObligation: totalObligationEffective,
     equalizedAvgCostPsfYr: m.equalized_avg_cost_psf_year ?? 0,
+    parkingAbatementMonths: 0,
     notes: m.notes ?? "",
   };
   return {
