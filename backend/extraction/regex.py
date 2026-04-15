@@ -375,6 +375,12 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
             )
             termination_low = termination_scan_line.lower()
 
+            # Detect "execution deadline" context — dates like "execute a lease on or before X"
+            # or "execute...by X" are signing deadlines, NOT commencement dates.
+            _is_execution_deadline_line = bool(re.search(
+                r"(?i)\b(?:execute|execution|sign|executed|signing)\b[^.]{0,80}\b(?:on\s+or\s+before|by|no\s+later\s+than|prior\s+to)\b",
+                scan_line,
+            ))
             # Date fields with keyword anchoring.
             for pat in DATE_PATTERNS:
                 for m in re.finditer(pat, scan_line):
@@ -382,6 +388,14 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                     if not dt:
                         continue
                     idx = m.start()
+                    # Suppress a date as commencement if it immediately follows execution-deadline language.
+                    # Only look in the 35 chars BEFORE the date so "January 1, 2027" in
+                    # "...on or before 5/1/2026, is expected to be January 1, 2027" is NOT suppressed.
+                    _local_context_pre = scan_line[max(0, m.start() - 35): m.start()].lower()
+                    _near_execute = bool(re.search(
+                        r"\b(?:on\s+or\s+before|no\s+later\s+than|execute\s+a\s+lease\s+(?:on|by)|sign(?:ed)?\s+(?:on\s+or\s+before|by))\b",
+                        _local_context_pre,
+                    ))
                     comm_dist = _nearest_keyword_distance(
                         low,
                         idx,
@@ -392,6 +406,8 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                             "term start",
                             "rental commencement",
                             "rent commencement",
+                            "expected to be",
+                            "is expected",
                         ),
                     )
                     rent_comm_dist = _nearest_keyword_distance(low, idx, ("rent commenc", "rent start"))
@@ -406,8 +422,10 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                             _mk_candidate("rent_commencement_date", dt, page.page_number, ln, "pdf_text_regex", 0.74)
                         )
                     if comm_dist is not None and (exp_dist is None or comm_dist < exp_dist):
+                        # Suppress commencement candidates that appear in execution-deadline context
+                        comm_conf = 0.40 if (_is_execution_deadline_line and _near_execute) else 0.75
                         out["commencement_date"].append(
-                            _mk_candidate("commencement_date", dt, page.page_number, ln, "pdf_text_regex", 0.75)
+                            _mk_candidate("commencement_date", dt, page.page_number, ln, "pdf_text_regex", comm_conf)
                         )
                     if exp_dist is not None and (comm_dist is None or exp_dist < comm_dist):
                         out["expiration_date"].append(
@@ -429,6 +447,7 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
             _tm_exclusion_tokens = (
                 "abat", "free rent", "notice", "parking", "option", "renewal",
                 "extension", "exercise", "termination", "deposit", "construction",
+                "rofr", "right of first", "expand", "early access", "holdover",
             )
             _is_term_exclusion_line = any(tok in low for tok in _tm_exclusion_tokens)
             tm = re.search(
@@ -463,6 +482,24 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 out["term_months"].append(
                     _mk_candidate("term_months", years * 12, page.page_number, ln, "pdf_text_regex", 0.76)
                 )
+
+            # Term months — word-form with parenthetical digit on SAME line:
+            # "Sixty-six(66) months", "thirty-six (36) months"
+            if not tm and not yr_term and not _is_term_exclusion_line:
+                word_paren = re.search(
+                    r"\b([a-z][a-z\-\s]+?)\s*\((\d{1,3})\)\s*months?\b",
+                    scan_line,
+                    flags=re.IGNORECASE,
+                )
+                if word_paren:
+                    digit_val = int(word_paren.group(2))
+                    if 12 <= digit_val <= 120:
+                        # High confidence if "lease term" label appears on the previous line
+                        prev_line = lines[max(0, idx - 1)] if idx > 0 else ""
+                        is_term_label = bool(re.search(r"(?i)\blease\s+term\b|\binitial\s+term\b", prev_line + scan_line))
+                        conf = 0.84 if is_term_label else 0.65
+                        out["term_months"].append(_mk_candidate("term_months", digit_val, page.page_number, ln, "pdf_text_regex", conf))
+                        tm = word_paren  # prevent duplicate
 
             # Term months — word form with year context ("five-year lease term")
             if not tm and not yr_term:
@@ -630,9 +667,15 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                 )
 
             parking_rate_match = re.search(
-                r"(?i)\$\s*([0-9]+(?:\.[0-9]+)?)\s*(?:/|per)\s*(?:space|stall)\s*(?:/|per)?\s*(?:month|mo)\b",
+                r"(?i)\$\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:/|per)\s*(?:spot|space|stall)\s*(?:/|per)?\s*(?:month|mo)\b",
                 scan_line,
             )
+            if not parking_rate_match:
+                # "initial cost of $185 per spot per month" — allow "cost of $X per spot"
+                parking_rate_match = re.search(
+                    r"(?i)(?:cost|rate|price)\s+(?:of\s+)?\$\s*([0-9]+(?:\.[0-9]{1,2})?)\s+per\s+(?:spot|space|stall)\s+per\s+(?:month|mo)\b",
+                    scan_line,
+                )
             if parking_rate_match and "park" in low:
                 out["parking_rate_monthly"].append(
                     _mk_candidate("parking_rate_monthly", float(parking_rate_match.group(1)), page.page_number, ln, "pdf_text_regex", 0.78)

@@ -502,6 +502,26 @@ def parse_concession_text(
                 continue
             parking_periods.append({"start_month": 0, "end_month": max(0, count - 1), "row_text": _extract_context(raw_text, match.start(), match.end())})
 
+    # Forward-order pattern: "first N months of parking costs shall be abated"
+    # The months appear BEFORE "parking" — this is the most natural English construction.
+    if not parking_periods:
+        _PARK_FORWARD = re.compile(
+            r"(?i)\b(?:first|initial)\s+"
+            r"(?:([a-z][a-z\-\s]+?)\s*\((\d{1,3})\)|(\d{1,3}))"   # count: "twenty four (24)" or "24"
+            r"\s+months?\s+(?:of\s+)?parking"
+            r"[^\n]{0,120}\b(?:abated|abatement|waived|free|shall\s+be\s+abated)\b"
+        )
+        for match in re.finditer(_PARK_FORWARD, raw_text):
+            g = match.groups()
+            # g[0]=word, g[1]=paren-digit, g[2]=plain-digit
+            raw_count = g[2] if g[2] else (g[1] if g[1] else g[0])
+            count = _coerce_int_token(raw_count, None)
+            if count is None and g[0]:
+                count = _word_token_to_int(str(g[0]).strip())
+            if not count or count <= 0:
+                continue
+            parking_periods.append({"start_month": 0, "end_month": max(0, count - 1), "row_text": _extract_context(raw_text, match.start(), match.end())})
+
     # Handle written-out numbers with optional parenthetical digit:
     # "abated parking during the initial twenty four (24) months"
     # "parking shall be free for the first twelve (12) months"
