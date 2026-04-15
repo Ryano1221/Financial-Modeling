@@ -390,15 +390,24 @@ def _collect_term_sets(by_field: dict[str, list[dict[str, Any]]]) -> list[dict[s
                 "evidence": evidence,
             }
 
-    ranked = sorted(
-        term_sets.values(),
-        key=lambda x: (
-            -float(x.get("score") or 0.0),
+    def _term_rank_key(x: dict) -> tuple:
+        score = float(x.get("score") or 0.0)
+        tm = int(x.get("term_months") or 0)
+        # Apply a small bonus for plausible commercial lease lengths (24-120 months).
+        # This prevents a stray 18-month abatement/notice period from beating
+        # a 60-66 month primary term when both have similar raw confidence.
+        if 24 <= tm <= 120:
+            score = min(1.0, score + 0.05)
+        elif tm < 12:
+            score = max(0.0, score - 0.15)
+        return (
+            -score,
             str(x.get("commencement_date") or ""),
             str(x.get("expiration_date") or ""),
-            int(x.get("term_months") or 0),
-        ),
-    )
+            -tm,  # prefer longer term when scores are tied
+        )
+
+    ranked = sorted(term_sets.values(), key=_term_rank_key)
     return ranked[:12] if ranked else [{"commencement_date": None, "expiration_date": None, "term_months": 0, "score": 0.0, "evidence": []}]
 
 

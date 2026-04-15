@@ -425,13 +425,32 @@ def mine_candidates(normalized: NormalizedDocument) -> dict[str, list[dict[str, 
                             )
 
             # Term months — numeric ("60 months", "initial term of 36 months")
+            # Exclude lines that are clearly about abatement, notice, parking, or option periods
+            _tm_exclusion_tokens = (
+                "abat", "free rent", "notice", "parking", "option", "renewal",
+                "extension", "exercise", "termination", "deposit", "construction",
+            )
+            _is_term_exclusion_line = any(tok in low for tok in _tm_exclusion_tokens)
             tm = re.search(
-                r"(?:initial\s+term|lease\s+term|term\s+length|term)\D{0,20}(\d{1,3})\s*(?:months?|mos?)",
+                r"(?:initial\s+term|lease\s+term|term\s+length|term\s+of\s+(?:the\s+)?lease)\D{0,20}(\d{1,3})\s*(?:months?|mos?)",
                 scan_line,
                 flags=re.IGNORECASE,
             )
+            if not tm:
+                # Broader "term" match but only when line doesn't have exclusion context
+                if not _is_term_exclusion_line:
+                    tm = re.search(
+                        r"\bterm\D{0,12}(\d{1,3})\s*(?:months?|mos?)",
+                        scan_line,
+                        flags=re.IGNORECASE,
+                    )
             if tm:
-                out["term_months"].append(_mk_candidate("term_months", int(tm.group(1)), page.page_number, ln, "pdf_text_regex", 0.78))
+                tm_val = int(tm.group(1))
+                # Suppress implausibly short terms (< 12 months) on ambiguous lines
+                tm_conf = 0.78 if not _is_term_exclusion_line else 0.45
+                if tm_val < 12:
+                    tm_conf -= 0.20
+                out["term_months"].append(_mk_candidate("term_months", tm_val, page.page_number, ln, "pdf_text_regex", tm_conf))
 
             # Term months — year-based ("5-year term", "a 5 year lease term")
             yr_term = re.search(
