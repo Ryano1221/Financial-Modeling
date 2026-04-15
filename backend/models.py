@@ -194,7 +194,7 @@ class RelocationInput(BaseModel):
     opex_mode: OpexMode = OpexMode.NNN
     base_opex_psf_yr: float = Field(ge=0.0, default=0.0)
     base_year_opex_psf_yr: float = Field(ge=0.0, default=0.0)
-    opex_growth: float = Field(ge=0.0, default=0.0)
+    opex_growth: float = Field(ge=0.0, default=0.03)
 
 
 class GenerateScenariosRequest(BaseModel):

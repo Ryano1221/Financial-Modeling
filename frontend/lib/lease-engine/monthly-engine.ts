@@ -695,11 +695,11 @@ export function runMonthlyEngine(
     }
   }
   const opexNoEscalationNominal = opexNoEscalation.reduce((a, b) => a + b, 0);
-  const commissionOpexGrowthFactor =
-    1 + Math.max(0, Number(scenario.expenseSchedule.annualEscalationPercent) || 0);
+  // Commission is calculated on flat (non-escalated) opex — you cannot assume
+  // opex escalations when calculating broker commissions.
   const commissionBase =
     commissionBasis === "gross_obligation"
-      ? (baseRentNominal + (opexNoEscalationNominal * commissionOpexGrowthFactor))
+      ? (baseRentNominal + opexNoEscalationNominal)
       : baseRentNominal;
   const commissionAmount = commissionRate > 0 ? commissionBase * commissionRate : 0;
   const parkingNominal = parking.reduce((a, b) => a + b, 0);

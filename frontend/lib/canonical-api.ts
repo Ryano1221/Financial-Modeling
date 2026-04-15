@@ -608,8 +608,19 @@ export function canonicalResponseToEngineResult(
   const sourceCommissionBasis = scenarioSource?.commission_applies_to === "base_rent"
     ? "base_rent"
     : "gross_obligation";
+  // Commission base uses flat (year-1) opex — escalations are never included in
+  // commission calculations since future opex increases cannot be assumed.
+  const flatOpexTotal = (() => {
+    const rsf = Math.max(0, toNumber(m.rsf, 0));
+    const baseOpexPsfYr = Math.max(
+      0,
+      toNumber(scenarioSource?.base_opex_psf_yr, 0) || toNumber(normalized?.opex_psf_year_1, 0)
+    );
+    const months = Math.max(0, termMonths);
+    return (baseOpexPsfYr / 12) * rsf * months;
+  })();
   const fallbackCommissionBase = sourceCommissionBasis === "gross_obligation"
-    ? Math.max(0, toNumber(m.base_rent_total, 0) + toNumber(m.opex_total, 0))
+    ? Math.max(0, toNumber(m.base_rent_total, 0) + flatOpexTotal)
     : Math.max(0, toNumber(m.base_rent_total, 0));
   const commissionPercent = sourceEngineResult
     ? Math.max(0, toNumber(sourceEngineResult.metrics.commissionPercent, 0))

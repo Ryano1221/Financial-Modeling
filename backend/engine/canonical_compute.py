@@ -147,8 +147,8 @@ def normalize_canonical_lease(payload: Dict[str, Any] | CanonicalLease) -> Tuple
         warnings=warnings,
     )
     data["opex_growth_rate"] = _normalize_decimal_rate(
-        data.get("opex_growth_rate", 0.0),
-        default=0.0,
+        data.get("opex_growth_rate", 0.03),
+        default=0.03,
         field_label="opex_growth_rate",
         warnings=warnings,
     )
