@@ -5,22 +5,27 @@ backend/cache/reports/
 backend/.venv/
 backend/__pycache__/
 *.pyc
+__pycache__/
+
+# Root-level venv (never commit virtual environments)
+.venv/
+venv/
+env/
 
 # Frontend
 frontend/.next/
 frontend/node_modules/
+frontend/node_modules_corrupt*/
 
 # OS
 .DS_Store
+Thumbs.db
 
-# secrets
+# Secrets / env
 backend/.env
 .env
 .env.*
-
-# secrets
-backend/.env
-.env
-.env.*
-.vercel
 .env*.local
+
+# Vercel
+.vercel
