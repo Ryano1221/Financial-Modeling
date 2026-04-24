@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
     NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV || "",
   },
+  experimental: {
+    // Enable tree-shaking for packages that don't do it by default
+    optimizePackageImports: ["recharts", "framer-motion", "exceljs"],
+  },
 };
 
 export default nextConfig;

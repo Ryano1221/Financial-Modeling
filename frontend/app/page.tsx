@@ -42,9 +42,14 @@ import type {
   CustomChartExportConfig,
 } from "@/lib/types";
 import { scenarioToCanonical, runMonthlyEngine } from "@/lib/lease-engine";
-import { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } from "@/lib/exportModel";
-import { SummaryMatrix } from "@/components/SummaryMatrix";
-import { AnalyticsWorkbench } from "@/components/AnalyticsWorkbench";
+const SummaryMatrix = dynamic(
+  () => import("@/components/SummaryMatrix").then((m) => ({ default: m.SummaryMatrix })),
+  { ssr: false }
+);
+const AnalyticsWorkbench = dynamic(
+  () => import("@/components/AnalyticsWorkbench").then((m) => ({ default: m.AnalyticsWorkbench })),
+  { ssr: false }
+);
 import { ClientRenderBoundary } from "@/components/ClientRenderBoundary";
 import { formatDateISO } from "@/lib/format";
 import { computeEqualizedComparison, type EqualizedWindowInput } from "@/lib/equalized";
@@ -80,13 +85,34 @@ import {
   type UserBrandingResponse,
   fetchUserBranding,
 } from "@/lib/user-settings";
-import { SubleaseRecoveryAnalysis } from "@/components/sublease-recovery/SubleaseRecoveryAnalysis";
-import { CompletedLeasesWorkspace } from "@/components/completed-leases/CompletedLeasesWorkspace";
-import { MarketingWorkspace } from "@/components/marketing/MarketingWorkspace";
-import { ObligationsWorkspace } from "@/components/obligations/ObligationsWorkspace";
-import { DealsWorkspace } from "@/components/deals/DealsWorkspace";
-import { BuildingsWorkspace } from "@/components/buildings/BuildingsWorkspace";
-import { HomeLanding } from "@/components/home/HomeLanding";
+const SubleaseRecoveryAnalysis = dynamic(
+  () => import("@/components/sublease-recovery/SubleaseRecoveryAnalysis").then((m) => ({ default: m.SubleaseRecoveryAnalysis })),
+  { ssr: false }
+);
+const CompletedLeasesWorkspace = dynamic(
+  () => import("@/components/completed-leases/CompletedLeasesWorkspace").then((m) => ({ default: m.CompletedLeasesWorkspace })),
+  { ssr: false }
+);
+const MarketingWorkspace = dynamic(
+  () => import("@/components/marketing/MarketingWorkspace").then((m) => ({ default: m.MarketingWorkspace })),
+  { ssr: false }
+);
+const ObligationsWorkspace = dynamic(
+  () => import("@/components/obligations/ObligationsWorkspace").then((m) => ({ default: m.ObligationsWorkspace })),
+  { ssr: false }
+);
+const DealsWorkspace = dynamic(
+  () => import("@/components/deals/DealsWorkspace").then((m) => ({ default: m.DealsWorkspace })),
+  { ssr: false }
+);
+const BuildingsWorkspace = dynamic(
+  () => import("@/components/buildings/BuildingsWorkspace").then((m) => ({ default: m.BuildingsWorkspace })),
+  { ssr: false }
+);
+const HomeLanding = dynamic(
+  () => import("@/components/home/HomeLanding").then((m) => ({ default: m.HomeLanding })),
+  { ssr: false }
+);
 import { buildPlatformExportFileName } from "@/lib/export-design";
 import { downloadBlob as downloadBlobFile } from "@/lib/export-runtime";
 import {
@@ -2127,6 +2153,7 @@ function HomeContent() {
         clientLogoDataUrl: clientLogoForExcel,
         customCharts: customChartsForExport,
       };
+      const { buildBrokerWorkbook, buildBrokerWorkbookFromCanonicalResponses } = await import("@/lib/exportModel");
       let buffer: ArrayBuffer | null = null;
       let usedFallback = false;
       try {
