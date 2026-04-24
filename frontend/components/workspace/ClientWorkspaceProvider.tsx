@@ -794,7 +794,8 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
       setActiveClientId(resolvedActive);
     };
 
-    const loadLocalWorkspaceState = async (): Promise<HydratedWorkspaceState> => {
+    // Synchronous: reads everything from localStorage except documents (no IndexedDB).
+    const loadSyncLocalState = (): Omit<HydratedWorkspaceState, "documents"> => {
       const representationModeKey = getWorkspaceStorageKey(REPRESENTATION_MODE_STORAGE_KEY, session);
       const clientsKey = getWorkspaceStorageKey(CLIENTS_STORAGE_KEY, session);
       const dealsKey = getWorkspaceStorageKey(DEAL_LIBRARY_STORAGE_KEY, session);
@@ -817,7 +818,6 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         loadedRepresentationMode,
       );
       const localDeletedDocumentIds = readDeletedDocumentIds(window.localStorage, session);
-      const loadedDocuments = await readCachedDocuments(window.localStorage, session);
       const storedActiveId = asText(window.localStorage.getItem(activeClientKey));
       return {
         representationMode: loadedRepresentationMode,
@@ -825,7 +825,6 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         deals: loadedDeals,
         dealStageMap: loadedDealStages,
         crmSettingsMap: loadedCrmSettings,
-        documents: loadedDocuments,
         deletedDocumentIds: localDeletedDocumentIds,
         activeClientId: storedActiveId || null,
       };
@@ -833,10 +832,10 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
 
     async function hydrate() {
       setReady(false);
-      const localState = await loadLocalWorkspaceState();
 
-      // Apply local state immediately so the app is usable without waiting for the network.
-      applyHydratedWorkspaceState(localState);
+      // Apply sync localStorage state immediately — no I/O, no network, no waiting.
+      const syncState = loadSyncLocalState();
+      applyHydratedWorkspaceState({ ...syncState, documents: [] });
       setCloudLocalFallback(false);
       setCloudLastSyncedAt(null);
 
@@ -844,13 +843,22 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
         setCloudSyncStatus("local");
         setCloudSyncMessage("Local device only. Sign in to sync this workspace across devices.");
         setReady(true);
+        // Load documents from IndexedDB in the background.
+        readCachedDocuments(window.localStorage, session)
+          .then((docs) => { if (!cancelled) setAllDocuments(docs); })
+          .catch(() => undefined);
         return;
       }
 
-      // Mark ready now — cloud sync happens in the background below.
+      // App is usable immediately — cloud sync and IndexedDB load happen in the background.
       setCloudSyncStatus("idle");
       setCloudSyncMessage("Syncing your cloud workspace...");
       setReady(true);
+
+      // Load local documents from IndexedDB in the background (non-blocking).
+      readCachedDocuments(window.localStorage, session)
+        .then((docs) => { if (!cancelled) setAllDocuments(docs); })
+        .catch(() => undefined);
 
       try {
         const remote = await fetchWorkspaceCloudState();
@@ -870,7 +878,7 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
               ...remoteState,
               documents: remoteDocuments,
             },
-            localState,
+            { ...syncState, documents: [] },
           ),
         );
         setCloudLocalFallback(false);
