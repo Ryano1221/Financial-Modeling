@@ -47,7 +47,7 @@ export async function fetchWorkspaceCloudState(): Promise<WorkspaceCloudStateRes
   const res = await fetchApiProxy("/user-settings/workspace", {
     method: "GET",
     headers: getAuthHeaders(),
-  }, 12000);
+  });
   if (!res.ok) {
     const body = parseBodyText(await res.text());
     throw toWorkspaceError(body, `Workspace fetch failed (${res.status}).`);
@@ -63,7 +63,7 @@ export async function saveWorkspaceCloudState(workspaceState: Record<string, unk
     method: "PUT",
     headers: getAuthHeaders(),
     body: JSON.stringify({ workspace_state: workspaceState }),
-  }, 20000);
+  });
   if (!res.ok) {
     const body = parseBodyText(await res.text());
     throw toWorkspaceError(body, `Workspace save failed (${res.status}).`);

@@ -834,74 +834,76 @@ export function ClientWorkspaceProvider({ children }: { children: ReactNode }) {
     async function hydrate() {
       setReady(false);
       const localState = await loadLocalWorkspaceState();
-      if (session) {
-        setCloudLocalFallback(false);
-        setCloudSyncStatus("idle");
-        setCloudSyncMessage("Loading your cloud workspace...");
-        try {
-          const remote = await fetchWorkspaceCloudState();
-          if (cancelled) return;
-          const workspaceState =
-            remote.workspace_state && typeof remote.workspace_state === "object"
-              ? remote.workspace_state
-              : {};
-          const remoteState = parseWorkspaceState(workspaceState);
-          const remoteDocumentsWithSnapshots = await hydrateCloudDocumentSnapshots(remoteState.documents);
-          if (cancelled) return;
-          const remoteDocuments = await hydrateCloudDocumentFiles(remoteDocumentsWithSnapshots);
-          if (cancelled) return;
-          applyHydratedWorkspaceState(
-            mergeHydratedWorkspaceState(
-              {
-                ...remoteState,
-                documents: remoteDocuments,
-              },
-              localState,
-            ),
-          );
-          setCloudLocalFallback(false);
-          setCloudSyncStatus("synced");
-          setCloudSyncMessage("Cloud workspace loaded successfully.");
-          setCloudLastSyncedAt(asText(remote.updated_at) || null);
-          try {
-            window.localStorage.removeItem(getWorkspaceStorageKey(CLIENTS_STORAGE_KEY, session));
-            window.localStorage.removeItem(getWorkspaceStorageKey(DEAL_LIBRARY_STORAGE_KEY, session));
-            window.localStorage.removeItem(getWorkspaceStorageKey(DEAL_STAGE_CONFIG_STORAGE_KEY, session));
-            window.localStorage.removeItem(getWorkspaceStorageKey(CRM_SETTINGS_STORAGE_KEY, session));
-            window.localStorage.removeItem(getWorkspaceStorageKey(ACTIVE_CLIENT_STORAGE_KEY, session));
-            window.localStorage.removeItem(getWorkspaceStorageKey(REPRESENTATION_MODE_STORAGE_KEY, session));
-            if (session) {
-              window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
-              window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
-              window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
-              window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
-              window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
-              window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
-            }
-          } catch {
-            // ignore localStorage errors
-          }
-          setReady(true);
-          return;
-        } catch (error) {
-          console.warn("workspace_cloud_load_failed", error);
-          if (cancelled) return;
-          const message = String(error instanceof Error ? error.message : error || "").trim();
-          setCloudLocalFallback(true);
-          applyHydratedWorkspaceState(localState);
-          setCloudSyncStatus("local");
-          setCloudSyncMessage(message || "Cloud sync is unavailable. Saving on this device only.");
-          setCloudLastSyncedAt(null);
-          setReady(true);
-          return;
-        }
-      }
-      setCloudLocalFallback(false);
+
+      // Apply local state immediately so the app is usable without waiting for the network.
       applyHydratedWorkspaceState(localState);
-      setCloudSyncStatus("local");
-      setCloudSyncMessage("Local device only. Sign in to sync this workspace across devices.");
+      setCloudLocalFallback(false);
       setCloudLastSyncedAt(null);
+
+      if (!session) {
+        setCloudSyncStatus("local");
+        setCloudSyncMessage("Local device only. Sign in to sync this workspace across devices.");
+        setReady(true);
+        return;
+      }
+
+      // Mark ready now — cloud sync happens in the background below.
+      setCloudSyncStatus("idle");
+      setCloudSyncMessage("Syncing your cloud workspace...");
       setReady(true);
+
+      try {
+        const remote = await fetchWorkspaceCloudState();
+        if (cancelled) return;
+        const workspaceState =
+          remote.workspace_state && typeof remote.workspace_state === "object"
+            ? remote.workspace_state
+            : {};
+        const remoteState = parseWorkspaceState(workspaceState);
+        const remoteDocumentsWithSnapshots = await hydrateCloudDocumentSnapshots(remoteState.documents);
+        if (cancelled) return;
+        const remoteDocuments = await hydrateCloudDocumentFiles(remoteDocumentsWithSnapshots);
+        if (cancelled) return;
+        applyHydratedWorkspaceState(
+          mergeHydratedWorkspaceState(
+            {
+              ...remoteState,
+              documents: remoteDocuments,
+            },
+            localState,
+          ),
+        );
+        setCloudLocalFallback(false);
+        setCloudSyncStatus("synced");
+        setCloudSyncMessage("Cloud workspace loaded successfully.");
+        setCloudLastSyncedAt(asText(remote.updated_at) || null);
+        try {
+          window.localStorage.removeItem(getWorkspaceStorageKey(CLIENTS_STORAGE_KEY, session));
+          window.localStorage.removeItem(getWorkspaceStorageKey(DEAL_LIBRARY_STORAGE_KEY, session));
+          window.localStorage.removeItem(getWorkspaceStorageKey(DEAL_STAGE_CONFIG_STORAGE_KEY, session));
+          window.localStorage.removeItem(getWorkspaceStorageKey(CRM_SETTINGS_STORAGE_KEY, session));
+          window.localStorage.removeItem(getWorkspaceStorageKey(ACTIVE_CLIENT_STORAGE_KEY, session));
+          window.localStorage.removeItem(getWorkspaceStorageKey(REPRESENTATION_MODE_STORAGE_KEY, session));
+          if (session) {
+            window.localStorage.removeItem(CLIENTS_STORAGE_KEY);
+            window.localStorage.removeItem(DEAL_LIBRARY_STORAGE_KEY);
+            window.localStorage.removeItem(DEAL_STAGE_CONFIG_STORAGE_KEY);
+            window.localStorage.removeItem(CRM_SETTINGS_STORAGE_KEY);
+            window.localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+            window.localStorage.removeItem(REPRESENTATION_MODE_STORAGE_KEY);
+          }
+        } catch {
+          // ignore localStorage errors
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.warn("workspace_cloud_load_failed", error);
+        const message = String(error instanceof Error ? error.message : error || "").trim();
+        setCloudLocalFallback(true);
+        setCloudSyncStatus("local");
+        setCloudSyncMessage(message || "Cloud sync is unavailable. Saving on this device only.");
+        setCloudLastSyncedAt(null);
+      }
     }
 
     void hydrate();
